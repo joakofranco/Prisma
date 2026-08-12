@@ -1,0 +1,40 @@
+# =====================================================================
+# CODEOWNERS — Reviewers obligatorios por ruta
+# ---------------------------------------------------------------------
+# GitHub asigna automáticamente a los reviewers listados cuando se
+# abre un PR que toca los paths correspondientes. La regla de branch
+# protection "Require review from Code Owners" bloquea el merge si no
+# aprueba al menos uno de los owners de cada archivo modificado.
+#
+# Cambiar los @usernames por los reales de GitHub del equipo.
+# =====================================================================
+
+# ---------- Fallback: cualquier archivo requiere aprobación de al menos uno ----------
+*                                @fernando @federico @joaquin
+
+# ---------- Frontend (Vue 3) ----------
+/apps/frontend/                  @fernando @joaquin
+
+# ---------- Backend Core (Spring Boot) ----------
+/apps/backend-core/              @federico @fernando
+
+# ---------- Backend AI (FastAPI + RAG) ----------
+/apps/backend-ai/                @joaquin @federico
+
+# ---------- Infraestructura / DevOps ----------
+/infra/                          @fernando
+/docker-compose*.yml             @fernando
+/.github/workflows/              @fernando
+
+# ---------- Documentación ----------
+/docs/                           @fernando @federico @joaquin
+*.md                             @fernando @federico @joaquin
+
+# ---------- Configuración crítica de seguridad ----------
+/.github/CODEOWNERS              @fernando
+/.github/branch-protection.yml   @fernando
+/infra/keycloak/                 @fernando @federico
+
+# ---------- Scripts de BD y migraciones (revisión doble) ----------
+/scripts/db/                     @fernando @federico
+/apps/backend-core/src/main/resources/db/migration/  @fernando @federico

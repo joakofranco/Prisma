@@ -1,0 +1,172 @@
+# =====================================================================
+# .gitignore raíz del monorepo PRISMA
+# =====================================================================
+
+# ---------- Sistemas Operativos ----------
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.swo
+*~
+
+# ---------- IDEs / Editores ----------
+.idea/
+.vscode/
+# Config local de Claude Code (settings.local.json, locks de tareas programadas) -- por
+# desarrollador/máquina, igual criterio que .idea//.vscode/ de arriba.
+.claude/
+*.iml
+*.ipr
+*.iws
+.project
+.classpath
+.settings/
+*.sublime-*
+.vs/
+
+# ---------- Variables de entorno / secretos ----------
+.env
+.env.local
+.env.*.local
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+.secrets
+
+# ---------- Node / Frontend ----------
+node_modules/
+dist/
+dist-ssr/
+.nuxt/
+.output/
+.vite/
+coverage/
+coverage.xml
+.nyc_output/
+*.tsbuildinfo
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+
+# ---------- Java / Spring Boot ----------
+target/
+build/
+!.mvn/wrapper/maven-wrapper.jar
+*.class
+*.jar
+!**/gradle/wrapper/gradle-wrapper.jar
+*.war
+*.ear
+hs_err_pid*
+replay_pid*
+.gradle/
+!apps/backend-core/gradle/
+HELP.md
+
+# ---------- Python / FastAPI ----------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+pip-log.txt
+pip-delete-this-directory.txt
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+*.egg-info/
+poetry.lock
+
+# ---------- Docker ----------
+*.pid
+docker-compose-dev.local.yml
+
+# ---------- Kubernetes / Helm ----------
+*.tgz
+charts/
+!infra/kubernetes/**/charts/
+!apps/frontend/src/components/charts/
+
+# ---------- Terraform ----------
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# ---------- Testing / Coverage ----------
+test-results/
+playwright-report/
+playwright/.cache/
+blob-report/
+# Sesión de Keycloak (storageState) persistida por e2e/auth.setup.ts -- tiene tokens, nunca commitear.
+apps/frontend/e2e/.auth/
+allure-results/
+allure-report/
+junit.xml
+
+# ---------- SonarQube ----------
+.scannerwork/
+.sonar/
+
+# ---------- Backups / Datos locales ----------
+backups/
+data/
+volumes/
+*.dump
+*.sql.gz
+
+# ---------- Logs ----------
+logs/
+*.log
+!**/logs/.gitkeep
+
+# ---------- Ollama / Modelos LLM (pesados) ----------
+models/
+*.bin
+*.gguf
+*.safetensors
+
+# ---------- Certificados locales ----------
+infra/nginx/certs/*.crt
+infra/nginx/certs/*.key
+!infra/nginx/certs/.gitkeep
+
+# ---------- K8s: copias generadas por `make sync-k8s-assets` ----------
+# realm-prisma.json vive en infra/keycloak/ (fuente de verdad); esta es una copia gitignorada
+# porque Kustomize no permite leer archivos fuera del árbol de infra/kubernetes/base -- ver
+# infra/kubernetes/README.md.
+infra/kubernetes/base/keycloak-realm.json
+# docs/mcu-5.0 (fuente de verdad) copiado acá para que el Dockerfile de backend-ai lo empaquete
+# en la imagen -- ver infra/docker/backend-ai.Dockerfile.
+apps/backend-ai/knowledge-base/*
+!apps/backend-ai/knowledge-base/.gitkeep
+
+# ---------- K8s: Secret real (nunca commitear) ----------
+infra/kubernetes/**/secret.*.yaml
+!infra/kubernetes/**/secret.example.yaml
+
+# ---------- Archivos temporales ----------
+tmp/
+temp/
+.cache/

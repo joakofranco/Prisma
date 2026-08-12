@@ -1,0 +1,32 @@
+extends: default
+
+rules:
+  line-length:
+    max: 200
+    level: warning
+  indentation:
+    spaces: 2
+    indent-sequences: true
+  comments:
+    min-spaces-from-content: 1
+  document-start: disable
+  truthy:
+    check-keys: false
+  # Los manifiestos de infra/kubernetes/base usan mappings/secuencias en flujo ({ key: value },
+  # [a, b]) con relleno de un espacio, y algunos ConfigMap/Secret alinean los valores en columna
+  # (espacios extra despues de los ":") para que se lean mas facil -- ambos son intencionales, no
+  # errores de formato.
+  braces:
+    max-spaces-inside: 1
+  brackets:
+    max-spaces-inside: 1
+  colons:
+    max-spaces-after: -1
+  commas:
+    max-spaces-after: -1
+
+ignore: |
+  node_modules/
+  target/
+  dist/
+  .github/branch-protection.yml

@@ -1,0 +1,32 @@
+name: 🆕 Feature Request
+description: Proponer una nueva funcionalidad de PRISMA
+title: "[FEAT] "
+labels: ["type: feature", "status: triage"]
+body:
+  - type: input
+    id: rf
+    attributes:
+      label: Requisito funcional relacionado
+      placeholder: ej. RF-EVA-09
+  - type: textarea
+    id: user-story
+    attributes:
+      label: Historia de usuario
+      value: |
+        **Como** <rol>
+        **Quiero** <objetivo>
+        **Para** <beneficio>
+    validations: { required: true }
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Criterios de aceptación
+      value: |
+        - [ ] Criterio 1
+        - [ ] Criterio 2
+    validations: { required: true }
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Prioridad
+      options: [Alta, Media, Baja]

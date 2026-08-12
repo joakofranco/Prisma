@@ -1,0 +1,14 @@
+# =====================================================================
+# .trivyignore — excepciones puntuales, con justificación y seguimiento
+# =====================================================================
+
+# CVE-2026-34070 — langchain-core: path traversal en las funciones legacy load_prompt().
+# Instalado: langchain-core 0.3.86 (via langchain/langchain-community <1.0). Fix: 1.2.22.
+# No lo arreglamos con un simple bump de versión porque langchain/langchain-community/
+# langchain-ollama/langchain-chroma pasarían de la serie 0.x a la 1.x, un cambio de API mayor de
+# LangChain que puede romper el pipeline RAG (app/rag/) de formas que los tests actuales
+# (bastante mockeados) no necesariamente detectan. No usamos load_prompt() en ningún lado del
+# código (grep sin resultados), así que la superficie de ataque real hoy es nula.
+# Seguimiento: migrar a LangChain 1.x en una tarea aparte, con tiempo para probar el pipeline RAG
+# de punta a punta antes de mergear.
+CVE-2026-34070

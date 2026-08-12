@@ -1,0 +1,163 @@
+# =====================================================================
+# branch-protection.yml — Reglas de protección de ramas
+# ---------------------------------------------------------------------
+# NO se aplica automáticamente; es la referencia declarativa que se
+# aplica mediante:
+#
+#   scripts/apply-branch-protection.sh    (usa gh CLI)
+#     — o —
+#   Terraform con el provider `github`    (infra/terraform/github.tf)
+#
+# Estas reglas se corresponden con lo pedido: los PRs DEBEN ser
+# aprobados antes del merge, y todos los checks CI/CD verdes.
+# =====================================================================
+
+# ---------------------------------------------------------------------
+# main — Máxima protección: sólo se toca vía PR desde release/* o hotfix/*
+# ---------------------------------------------------------------------
+main:
+  required_status_checks:
+    strict: true                                # Rama debe estar al día antes de mergear
+    contexts:
+      - "CI Summary"
+      # SonarQube Analysis y CodeQL (*) quedan afuera de los requeridos: el primero necesita
+      # SONAR_HOST_URL/SONAR_TOKEN (servidor accesible desde internet) y el segundo necesita
+      # GitHub Advanced Security comprado para este repo privado -- ver security.yml/sonarqube.yml
+      # (gateados con ENABLE_CODE_SCANNING / SONAR_HOST_URL). Volver a agregarlos aca una vez que
+      # esa infraestructura este lista, para que main los vuelva a exigir.
+      - "Trivy (FS)"
+      - "Trivy (backend-core)"
+      - "Trivy (backend-ai)"
+      - "Trivy (frontend)"
+      - "Gitleaks (secretos)"
+      - "OWASP Dependency-Check"
+      - "Título Conventional Commit"
+  enforce_admins: true                          # NI los admins pueden saltarse las reglas
+  required_pull_request_reviews:
+    required_approving_review_count: 2          # Se piden 2 aprobaciones
+    dismiss_stale_reviews: true                 # Nuevo push → aprobaciones se invalidan
+    require_code_owner_reviews: true            # CODEOWNERS obligatorios
+    require_last_push_approval: true            # Última persona que empujó no puede auto-aprobar
+  restrictions:
+    users: []
+    teams: ["prisma-maintainers"]               # Sólo el equipo maintainers puede pushear directo
+    apps: []
+  required_linear_history: true                 # Sin merges "octopus" — obliga a rebase o squash
+  allow_force_pushes: false
+  allow_deletions: false
+  block_creations: false
+  required_conversation_resolution: true        # Todos los comentarios deben resolverse
+  lock_branch: false
+  allow_fork_syncing: false
+
+# ---------------------------------------------------------------------
+# dev — Rama de integración, protegida pero con menos fricción que main
+# ---------------------------------------------------------------------
+dev:
+  required_status_checks:
+    strict: true
+    contexts:
+      - "CI Summary"
+      # SonarQube Analysis afuera de los requeridos hasta configurar SONAR_HOST_URL/SONAR_TOKEN.
+      - "Trivy (FS)"
+      - "Gitleaks (secretos)"
+      - "Título Conventional Commit"
+      - "Descripción del PR"
+      - "Labels obligatorios"
+  enforce_admins: false
+  required_pull_request_reviews:
+    required_approving_review_count: 1
+    dismiss_stale_reviews: true
+    require_code_owner_reviews: true
+    require_last_push_approval: false
+  restrictions: null                            # Cualquier miembro puede pushear
+  required_linear_history: false
+  allow_force_pushes: false
+  allow_deletions: false
+  required_conversation_resolution: true
+
+# ---------------------------------------------------------------------
+# dev/fernando — Rama personal (sólo Fernando pushea)
+# ---------------------------------------------------------------------
+"dev/fernando":
+  required_status_checks:
+    strict: false
+    contexts:
+      - "CI Summary"
+  enforce_admins: false
+  required_pull_request_reviews:
+    required_approving_review_count: 1
+    dismiss_stale_reviews: false
+    require_code_owner_reviews: false
+  restrictions:
+    users: ["fernando"]                         # Sólo Fernando puede pushear directo
+    teams: []
+    apps: []
+  allow_force_pushes: true                      # Permitido en propia rama personal
+  allow_deletions: false
+
+# ---------------------------------------------------------------------
+# dev/federico — Rama personal (sólo Federico pushea)
+# ---------------------------------------------------------------------
+"dev/federico":
+  required_status_checks:
+    strict: false
+    contexts:
+      - "CI Summary"
+  required_pull_request_reviews:
+    required_approving_review_count: 1
+    dismiss_stale_reviews: false
+    require_code_owner_reviews: false
+  restrictions:
+    users: ["federico"]
+    teams: []
+    apps: []
+  allow_force_pushes: true
+  allow_deletions: false
+
+# ---------------------------------------------------------------------
+# dev/joaquin — Rama personal (sólo Joaquín pushea)
+# ---------------------------------------------------------------------
+"dev/joaquin":
+  required_status_checks:
+    strict: false
+    contexts:
+      - "CI Summary"
+  required_pull_request_reviews:
+    required_approving_review_count: 1
+    dismiss_stale_reviews: false
+    require_code_owner_reviews: false
+  restrictions:
+    users: ["joaquin"]
+    teams: []
+    apps: []
+  allow_force_pushes: true
+  allow_deletions: false
+
+# ---------------------------------------------------------------------
+# release/* y hotfix/* — Protegidas al igual que main
+# ---------------------------------------------------------------------
+"release/*":
+  required_status_checks:
+    strict: true
+    contexts:
+      - "CI Summary"
+      - "Trivy (FS)"
+      - "Gitleaks (secretos)"
+  required_pull_request_reviews:
+    required_approving_review_count: 2
+    dismiss_stale_reviews: true
+    require_code_owner_reviews: true
+  allow_force_pushes: false
+
+"hotfix/*":
+  required_status_checks:
+    strict: true
+    contexts:
+      - "CI Summary"
+      - "Trivy (FS)"
+  required_pull_request_reviews:
+    required_approving_review_count: 2
+    dismiss_stale_reviews: true
+    require_code_owner_reviews: true
+  allow_force_pushes: false
