@@ -1,0 +1,22 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "PRISMA — Postgres",
+      "Group": "PRISMA",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "prisma",
+      "Username": "prisma",
+      "SSLMode": "prefer"
+    },
+    "2": {
+      "Name": "Keycloak DB",
+      "Group": "PRISMA",
+      "Host": "keycloak-db",
+      "Port": 5432,
+      "MaintenanceDB": "keycloak",
+      "Username": "keycloak",
+      "SSLMode": "prefer"
+    }
+  }
+}

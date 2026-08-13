@@ -1,0 +1,52 @@
+# =====================================================================
+# docker-compose.dev.yml
+# ---------------------------------------------------------------------
+# Overrides SÓLO para desarrollo local (se aplica con -f).
+# Habilita hot-reload, montaje de volúmenes de código y modo debug.
+# En producción NO se usa este archivo (se usa docker-compose.prod.yml).
+# =====================================================================
+
+services:
+
+  # ---------- Backend Core en modo dev (hot-reload con Spring DevTools) ----------
+  backend-core:
+    build:
+      target: dev
+    environment:
+      SPRING_DEVTOOLS_RESTART_ENABLED: "true"
+      SPRING_DEVTOOLS_LIVERELOAD_ENABLED: "true"
+      LOGGING_LEVEL_UY_EDU_PRISMA: DEBUG
+    volumes:
+      - ./apps/backend-core/src:/workspace/src:ro
+      - ./apps/backend-core/pom.xml:/workspace/pom.xml:ro
+      - ~/.m2:/root/.m2
+    command: ["mvn", "spring-boot:run", "-Dspring-boot.run.jvmArguments=-Xdebug -Xrunjdwp:transport=dt_socket,server=y,suspend=n,address=*:5005"]
+    ports:
+      - "5005:5005"     # Debugger remoto
+
+  # ---------- Backend AI con auto-reload de uvicorn ----------
+  backend-ai:
+    build:
+      target: dev
+    environment:
+      RELOAD: "true"
+      LOG_LEVEL: debug
+    volumes:
+      - ./apps/backend-ai/app:/app/app
+      - ./apps/backend-ai/tests:/app/tests
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+  # ---------- Frontend con Vite dev server ----------
+  frontend:
+    build:
+      target: dev
+    environment:
+      NODE_ENV: development
+    volumes:
+      - ./apps/frontend/src:/app/src
+      - ./apps/frontend/public:/app/public
+      - ./apps/frontend/index.html:/app/index.html
+      - ./apps/frontend/vite.config.ts:/app/vite.config.ts
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
+    ports:
+      - "5173:5173"     # Vite dev server (HMR)

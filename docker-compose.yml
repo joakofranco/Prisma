@@ -1,0 +1,815 @@
+# =====================================================================
+# PRISMA — Docker Compose principal (desarrollo local)
+# =====================================================================
+# Uso mediante perfiles (--profile) para elegir qué levantar:
+#
+#   docker compose --profile app up -d                           # Sólo la app
+#   docker compose --profile app --profile security up -d        # + Keycloak/MinIO
+#   docker compose --profile full up -d                          # TODO
+#
+# Perfiles disponibles:
+#   app           → frontend, backend-core, backend-ai, postgres, redis, ollama
+#   security      → keycloak, keycloak-db, minio
+#   observability → prometheus, grafana, loki, promtail, cadvisor, node-exporter
+#   elastic       → elasticsearch, kibana, filebeat (logs de seguridad/BD/apps, aparte de Loki)
+#   quality       → sonarqube, sonar-db
+#   management    → portainer, watchtower, pgadmin
+#   proxy         → nginx
+#   full          → todos los anteriores
+# =====================================================================
+
+name: prisma
+
+networks:
+  prisma-net:
+    driver: bridge
+    name: prisma-net
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes:
+  postgres-data:        { name: prisma-postgres-data }
+  redis-data:           { name: prisma-redis-data }
+  minio-data:           { name: prisma-minio-data }
+  ollama-data:          { name: prisma-ollama-data }
+  chroma-data:          { name: prisma-chroma-data }
+  keycloak-db-data:     { name: prisma-keycloak-db-data }
+  sonar-db-data:        { name: prisma-sonar-db-data }
+  sonar-data:           { name: prisma-sonar-data }
+  sonar-extensions:     { name: prisma-sonar-extensions }
+  sonar-logs:           { name: prisma-sonar-logs }
+  prometheus-data:      { name: prisma-prometheus-data }
+  grafana-data:         { name: prisma-grafana-data }
+  loki-data:            { name: prisma-loki-data }
+  elasticsearch-data:   { name: prisma-elasticsearch-data }
+  filebeat-data:        { name: prisma-filebeat-data }
+  portainer-data:       { name: prisma-portainer-data }
+  pgadmin-data:         { name: prisma-pgadmin-data }
+  evidences-data:       { name: prisma-evidences-data }
+
+# =====================================================================
+# SERVICIOS
+# =====================================================================
+services:
+
+  # -------------------------------------------------------------------
+  # 1. BASE DE DATOS PRINCIPAL
+  # -------------------------------------------------------------------
+  postgres:
+    image: postgres:17-alpine
+    container_name: prisma-postgres
+    restart: unless-stopped
+    profiles: [app, full]
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      TZ: ${TZ}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./scripts/db/init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks: [prisma-net]
+    command:
+      - "postgres"
+      - "-c"
+      - "max_connections=${POSTGRES_MAX_CONNECTIONS:-100}"
+      - "-c"
+      - "shared_buffers=256MB"
+      - "-c"
+      - "log_statement=ddl"
+
+  # -------------------------------------------------------------------
+  # 2. CACHÉ / SESIONES / RATE LIMITING
+  # -------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: prisma-redis
+    restart: unless-stopped
+    profiles: [app, full]
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD}
+      --appendonly yes
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [prisma-net]
+
+  # -------------------------------------------------------------------
+  # 3. BACKEND CORE (Spring Boot)
+  # -------------------------------------------------------------------
+  backend-core:
+    build:
+      context: ./apps/backend-core
+      dockerfile: ../../infra/docker/backend-core.Dockerfile
+      target: runtime
+      args:
+        BUILD_ENV: ${ENV:-development}
+    image: ghcr.io/${GHCR_ORG:-prisma}/prisma-backend-core:${TAG:-latest}
+    # Sin esto, Compose ve que el "image:" de arriba apunta a un host real (ghcr.io) y por
+    # default PREFIERE hacer pull antes que build, incluso teniendo el bloque "build:" -- alcanza
+    # con correr "docker compose up" sin "--build" (o el botón "Start" de una IDE/Docker Desktop)
+    # para que intente bajar una imagen que nunca se publicó y falle con "unauthorized". En dev
+    # local esto SIEMPRE se construye desde el código fuente, nunca se baja de GHCR.
+    pull_policy: build
+    container_name: prisma-backend-core
+    restart: unless-stopped
+    profiles: [app, full]
+    depends_on:
+      postgres:  { condition: service_healthy }
+      redis:     { condition: service_healthy }
+    environment:
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-docker}
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      SPRING_DATA_REDIS_PASSWORD: ${REDIS_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_ACCESS_EXPIRATION_MINUTES: ${JWT_ACCESS_EXPIRATION_MINUTES:-15}
+      JWT_REFRESH_EXPIRATION_DAYS: ${JWT_REFRESH_EXPIRATION_DAYS:-7}
+      KEYCLOAK_AUTH_SERVER_URL: http://keycloak:8080
+      # Habilita/deshabilita el JwtDecoder de Keycloak (ver SecurityConfig.MissingIssuerCondition)
+      # -- su valor concreto ya no es lo que valida el claim "iss" (eso lo hace
+      # KEYCLOAK_TRUSTED_ISSUERS más abajo, que admite una lista).
+      KEYCLOAK_ISSUER_URL: ${KEYCLOAK_ISSUER_URL:-https://prisma.local/auth}
+      # Orígenes desde los que Keycloak puede emitir tokens válidos -- con KC_HOSTNAME dinámico
+      # (ver el servicio "keycloak" más arriba) el claim "iss" varía según el host que usó el
+      # navegador para loguearse, así que acá va la lista completa de hosts soportados en vez de
+      # uno solo. Agregar un dominio nuevo (ej. producción) es sumarlo a esta lista, sin tocar
+      # código -- ver docs/Certificados-TLS.md.
+      #
+      # http://localhost:8080 (sin TLS) tiene que estar STA en la lista, no solo los https://: es
+      # la URL que el propio README (tabla del Quickstart) documenta como acceso directo al
+      # contenedor "frontend" sin pasar por el reverse-proxy de nginx+TLS. Sin esta entrada, el
+      # login en sí funciona (ver el fix de X-Forwarded-Host en nginx.conf) pero CADA llamada
+      # autenticada posterior devuelve 401 porque el claim "iss" del token (que Keycloak arma con
+      # ese mismo host) no matchea ninguno de los orígenes confiables -- el dashboard, por ejemplo,
+      # queda reintentando en loop contra /api/dashboard/stats sin poder mostrar nunca datos.
+      KEYCLOAK_TRUSTED_ISSUERS: ${KEYCLOAK_TRUSTED_ISSUERS:-https://prisma.local/auth/realms/prisma,https://localhost/auth/realms/prisma,http://localhost:8080/auth/realms/prisma}
+      KEYCLOAK_REALM: prisma
+      KEYCLOAK_RESOURCE: prisma-backend
+      # Secret del client "prisma-backend" (Service Accounts) -- backend-core lo usa para
+      # provisionar usuarios en Keycloak al crearlos en la app. Debe coincidir con el secret
+      # configurado en Keycloak para ese client (infra/keycloak/realm-prisma.json).
+      KEYCLOAK_ADMIN_CLIENT_SECRET: ${KEYCLOAK_ADMIN_CLIENT_SECRET}
+      MINIO_ENDPOINT: http://minio:9000
+      # Endpoint PÚBLICO (resoluble desde el navegador del usuario), usado solo para firmar las
+      # URLs de descarga de evidencia que ve el frontend -- MINIO_ENDPOINT de arriba es el nombre
+      # DNS interno de Docker (solo resuelve entre contenedores), así que una URL firmada con ese
+      # host da "no se puede resolver" en cualquier navegador real. Si se cambia MINIO_PORT_API en
+      # el .env, este valor lo sigue automáticamente.
+      MINIO_PUBLIC_ENDPOINT: http://localhost:${MINIO_PORT_API:-9001}
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET: ${MINIO_BUCKET_EVIDENCES}
+      AI_SERVICE_URL: http://backend-ai:8000
+      AI_INTERNAL_API_KEY: ${AI_INTERNAL_API_KEY}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:8080,http://localhost:5173,https://localhost,https://prisma.local}
+      JAVA_TOOL_OPTIONS: ${BACKEND_CORE_JVM_OPTS:--Xms512m -Xmx1024m}
+      TZ: ${TZ}
+    ports:
+      - "${BACKEND_CORE_PORT:-8081}:8080"
+    volumes:
+      - evidences-data:/var/prisma/evidences
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+      - "prometheus.scrape=true"
+      - "prometheus.port=8080"
+      - "prometheus.path=/actuator/prometheus"
+    networks: [prisma-net]
+
+  # -------------------------------------------------------------------
+  # 4. BACKEND AI (FastAPI + RAG + Ollama)
+  # -------------------------------------------------------------------
+  backend-ai:
+    build:
+      context: ./apps/backend-ai
+      dockerfile: ../../infra/docker/backend-ai.Dockerfile
+      target: runtime
+    image: ghcr.io/${GHCR_ORG:-prisma}/prisma-backend-ai:${TAG:-latest}
+    # Ver el comentario en el mismo campo de backend-core más arriba.
+    pull_policy: build
+    container_name: prisma-backend-ai
+    restart: unless-stopped
+    profiles: [app, full]
+    depends_on:
+      ollama: { condition: service_healthy }
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3:8b}
+      CHROMA_PERSIST_DIR: /data/chroma
+      RAG_CHUNK_SIZE: ${RAG_CHUNK_SIZE:-1000}
+      RAG_CHUNK_OVERLAP: ${RAG_CHUNK_OVERLAP:-200}
+      RAG_TOP_K: ${RAG_TOP_K:-5}
+      CORE_BACKEND_URL: http://backend-core:8080
+      # Misma clave que AI_INTERNAL_API_KEY en backend-core (ver prisma.ai.internal-api-key):
+      # exigida en X-Internal-Api-Key para cualquier request a /api/v1/* (ver app.core.security).
+      INTERNAL_API_KEY: ${AI_INTERNAL_API_KEY}
+      TZ: ${TZ}
+    ports:
+      - "${BACKEND_AI_PORT:-8000}:8000"
+    volumes:
+      - chroma-data:/data/chroma
+      - ./docs/mcu-5.0:/data/knowledge-base:ro   # Documentación MCU indexada por el RAG
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    networks: [prisma-net]
+
+  # -------------------------------------------------------------------
+  # 5. OLLAMA (LLM local para RAG — Llama 3)
+  # -------------------------------------------------------------------
+  ollama:
+    image: ollama/ollama:latest
+    container_name: prisma-ollama
+    restart: unless-stopped
+    profiles: [app, full]
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    # Descomentar si se dispone de GPU NVIDIA:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+    networks: [prisma-net]
+
+  # -------------------------------------------------------------------
+  # 6. FRONTEND (Vue 3 + Vite)
+  # -------------------------------------------------------------------
+  frontend:
+    build:
+      context: ./apps/frontend
+      dockerfile: ../../infra/docker/frontend.Dockerfile
+      target: runtime
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL}
+        VITE_AI_API_BASE_URL: ${VITE_AI_API_BASE_URL}
+        VITE_KEYCLOAK_URL: ${VITE_KEYCLOAK_URL}
+        VITE_KEYCLOAK_REALM: ${VITE_KEYCLOAK_REALM}
+        VITE_KEYCLOAK_CLIENT_ID: ${VITE_KEYCLOAK_CLIENT_ID}
+    image: ghcr.io/${GHCR_ORG:-prisma}/prisma-frontend:${TAG:-latest}
+    # Ver el comentario en el mismo campo de backend-core más arriba.
+    pull_policy: build
+    container_name: prisma-frontend
+    restart: unless-stopped
+    profiles: [app, full]
+    depends_on:
+      - backend-core
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:80"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    networks: [prisma-net]
+
+  # -------------------------------------------------------------------
+  # 7. KEYCLOAK (Identity & Access Management)
+  # -------------------------------------------------------------------
+  keycloak-db:
+    image: postgres:17-alpine
+    container_name: prisma-keycloak-db
+    restart: unless-stopped
+    profiles: [security, full]
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: ${KEYCLOAK_DB_USER}
+      POSTGRES_PASSWORD: ${KEYCLOAK_DB_PASSWORD}
+    volumes:
+      - keycloak-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${KEYCLOAK_DB_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [prisma-net]
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.7
+    container_name: prisma-keycloak
+    restart: unless-stopped
+    profiles: [security, full]
+    depends_on:
+      keycloak-db: { condition: service_healthy }
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://keycloak-db:5432/keycloak
+      KC_DB_USERNAME: ${KEYCLOAK_DB_USER}
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD}
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+      # "Hostname v2" en modo DINÁMICO: sin KC_HOSTNAME fijo, Keycloak arma cada URL que genera
+      # (login, JWKS, issuer) a partir del Host/esquema de CADA request (via X-Forwarded-Host/
+      # -Proto, gracias a KC_PROXY_HEADERS) en vez de forzar siempre un único hostname -- así el
+      # login funciona entrando por https://prisma.local, https://localhost o cualquier otro host
+      # que nginx tenga configurado, sin que el navegador necesite resolver un nombre fijo (antes,
+      # con KC_HOSTNAME fijo en https://prisma.local, el formulario de login quedaba siempre
+      # apuntando a esa URL aunque se hubiese entrado por https://localhost, y el navegador no
+      # podía resolverla sin una entrada manual en /etc/hosts -- ver docs/Certificados-TLS.md).
+      # backend-core valida el claim "iss" contra una LISTA de orígenes confiables en vez de uno
+      # solo (KEYCLOAK_TRUSTED_ISSUERS en application.yml), ya que ahora el issuer varía según el
+      # host usado para loguearse.
+      KC_HTTP_RELATIVE_PATH: /auth
+      KC_HTTP_ENABLED: "true"
+      # "Hostname v2" (Keycloak 24+) reemplazó KC_PROXY (v1) por KC_PROXY_HEADERS: sin esto,
+      # Keycloak no confía en los X-Forwarded-Host/-Proto que agrega nginx y no puede saber qué
+      # host/esquema vio realmente el navegador (ver infra/nginx/conf.d/prisma.conf).
+      KC_PROXY_HEADERS: xforwarded
+      # Habilita /health/ready en el management interface (puerto 9000, interno -- no publicado
+      # al host) para el healthcheck de abajo. Sin esto "nginx" queda con depends_on satisfecho
+      # apenas el contenedor arranca, no cuando Keycloak termina el import y realmente escucha
+      # (el arranque completo tarda ~30-60s) -- esa ventana es la que daba 502 en /auth/* al
+      # levantar el stack o reiniciar este servicio (ver docs/RUNBOOK.md).
+      KC_HEALTH_ENABLED: "true"
+    ports:
+      - "${KEYCLOAK_PORT:-8180}:8080"
+    volumes:
+      - ./infra/keycloak/realm-prisma.json:/opt/keycloak/data/import/realm-prisma.json:ro
+    networks: [prisma-net]
+    healthcheck:
+      # La imagen no trae curl/wget -- socket TCP crudo vía /dev/tcp (bash), forma recomendada
+      # por el propio proyecto: https://www.keycloak.org/observability/health
+      #
+      # "/auth/health/ready", NO "/health/ready": a diferencia de lo que sugiere esa guía (pensada
+      # para el caso sin KC_HTTP_RELATIVE_PATH), acá el path de salud SÍ hereda el prefijo /auth
+      # configurado arriba -- probado a mano contra este mismo contenedor, "/health/ready" da 404
+      # y "/auth/health/ready" responde 200 con {"status":"UP"}. Si se cambia KC_HTTP_RELATIVE_PATH
+      # hay que actualizar este path también.
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /auth/health/ready HTTP/1.1\r\nhost: localhost\r\nConnection: close\r\n\r\n' >&3 && grep -q '\"status\": \"UP\"' <&3"]
+      interval: 10s
+      timeout: 5s
+      retries: 9
+      start_period: 90s
+
+  # -------------------------------------------------------------------
+  # 8. MINIO (almacenamiento S3-compatible de evidencias)
+  # -------------------------------------------------------------------
+  minio:
+    image: minio/minio:latest
+    container_name: prisma-minio
+    restart: unless-stopped
+    profiles: [security, full]
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    ports:
+      - "${MINIO_PORT_API:-9001}:9000"
+      - "${MINIO_PORT_CONSOLE:-9002}:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks: [prisma-net]
+
+  minio-init:
+    image: minio/mc:latest
+    container_name: prisma-minio-init
+    profiles: [security, full]
+    depends_on:
+      minio: { condition: service_healthy }
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD};
+      mc mb -p local/${MINIO_BUCKET_EVIDENCES} || true;
+      mc mb -p local/${MINIO_BUCKET_REPORTS} || true;
+      mc anonymous set none local/${MINIO_BUCKET_EVIDENCES};
+      mc anonymous set none local/${MINIO_BUCKET_REPORTS};
+      exit 0;
+      "
+    networks: [prisma-net]
+
+  # -------------------------------------------------------------------
+  # 9. SONARQUBE (SAST + Quality Gate)
+  # -------------------------------------------------------------------
+  sonar-db:
+    image: postgres:17-alpine
+    container_name: prisma-sonar-db
+    restart: unless-stopped
+    profiles: [quality, full]
+    environment:
+      POSTGRES_DB: sonar
+      POSTGRES_USER: ${SONAR_DB_USER}
+      POSTGRES_PASSWORD: ${SONAR_DB_PASSWORD}
+    volumes:
+      - sonar-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${SONAR_DB_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [prisma-net]
+
+  sonarqube:
+    image: sonarqube:community
+    container_name: prisma-sonarqube
+    restart: unless-stopped
+    profiles: [quality, full]
+    depends_on:
+      sonar-db: { condition: service_healthy }
+    environment:
+      SONAR_JDBC_URL: jdbc:postgresql://sonar-db:5432/sonar
+      SONAR_JDBC_USERNAME: ${SONAR_DB_USER}
+      SONAR_JDBC_PASSWORD: ${SONAR_DB_PASSWORD}
+    ports:
+      - "${SONAR_PORT:-9003}:9000"
+    volumes:
+      - sonar-data:/opt/sonarqube/data
+      - sonar-extensions:/opt/sonarqube/extensions
+      - sonar-logs:/opt/sonarqube/logs
+    ulimits:
+      nofile: { soft: 65536, hard: 65536 }
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9000/api/system/status | grep -q UP"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 90s
+    networks: [prisma-net]
+
+  # -------------------------------------------------------------------
+  # 10. OBSERVABILITY (Prometheus + Grafana + Loki)
+  # -------------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prisma-prometheus
+    restart: unless-stopped
+    profiles: [observability, full]
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./infra/monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/monitoring/prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+    networks: [prisma-net]
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: prisma-grafana
+    restart: unless-stopped
+    profiles: [observability, full]
+    depends_on: [prometheus, loki]
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GF_SECURITY_ADMIN_USER}
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_INSTALL_PLUGINS: "grafana-clock-panel,grafana-piechart-panel"
+      # datasources.yml usa ${POSTGRES_PASSWORD} — Grafana solo puede interpolar esa
+      # variable en el YAML de provisioning si existe en el entorno de ESTE contenedor
+      # (no alcanza con que este en el .env de docker-compose). Sin esto, el datasource
+      # de PostgreSQL quedaba con la contrasena vacia y fallaba al conectar.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./infra/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    networks: [prisma-net]
+
+  loki:
+    image: grafana/loki:latest
+    container_name: prisma-loki
+    restart: unless-stopped
+    profiles: [observability, full]
+    command: -config.file=/etc/loki/local-config.yaml
+    ports:
+      - "3100:3100"
+    volumes:
+      - loki-data:/loki
+    networks: [prisma-net]
+
+  promtail:
+    image: grafana/promtail:latest
+    container_name: prisma-promtail
+    restart: unless-stopped
+    profiles: [observability, full]
+    command: -config.file=/etc/promtail/config.yml
+    volumes:
+      - ./infra/monitoring/promtail-config.yml:/etc/promtail/config.yml:ro
+      - /var/log:/var/log:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    networks: [prisma-net]
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    container_name: prisma-cadvisor
+    restart: unless-stopped
+    profiles: [observability, full]
+    ports:
+      - "8082:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    networks: [prisma-net]
+
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: prisma-node-exporter
+    restart: unless-stopped
+    profiles: [observability, full]
+    # Sin el bind-mount de "/" y --path.rootfs, node-exporter solo ve su propio filesystem de
+    # contenedor (los 3 archivos que Docker inyecta: /etc/hostname, /etc/hosts,
+    # /etc/resolv.conf) y node_filesystem_* queda sin datos reales de disco del host. CPU/
+    # memoria/load sí funcionan sin esto porque leen /proc del kernel compartido.
+    command:
+      - "--path.rootfs=/host"
+    volumes:
+      - "/:/host:ro"
+    ports:
+      - "9100:9100"
+    networks: [prisma-net]
+
+  # Prometheus no puede scrapear Postgres/Redis directamente (no hablan HTTP/Prometheus
+  # en su puerto nativo): prometheus.yml apuntaba antes a postgres:5432 y redis:6379 y
+  # el target quedaba siempre "down". Estos exporters traducen sus métricas a /metrics.
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:latest
+    container_name: prisma-postgres-exporter
+    restart: unless-stopped
+    profiles: [observability, full]
+    environment:
+      DATA_SOURCE_NAME: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
+    ports:
+      - "9187:9187"
+    networks: [prisma-net]
+
+  redis-exporter:
+    image: oliver006/redis_exporter:latest
+    container_name: prisma-redis-exporter
+    restart: unless-stopped
+    profiles: [observability, full]
+    environment:
+      REDIS_ADDR: redis://redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    ports:
+      - "9121:9121"
+    networks: [prisma-net]
+
+  # -------------------------------------------------------------------
+  # 10b. ELASTICSEARCH + KIBANA + FILEBEAT (logs centralizados)
+  # ---------------------------------------------------------------------
+  # Aparte de Loki/Promtail (arriba): no lo reemplaza, es una segunda vía de logs pensada para
+  # búsqueda/investigación (seguridad, auditoría, debugging entre servicios) con Kibana, mientras
+  # Loki+Grafana sigue siendo el de correlación con métricas/dashboards. Filebeat es a
+  # Elasticsearch lo que Promtail es a Loki: junta los logs de TODOS los contenedores del proyecto
+  # (Keycloak, Postgres, backend-core, backend-ai, nginx, etc.) y se los manda.
+  # -------------------------------------------------------------------
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.5.3
+    container_name: prisma-elasticsearch
+    restart: unless-stopped
+    profiles: [elastic, full]
+    environment:
+      discovery.type: single-node
+      ES_JAVA_OPTS: ${ELASTICSEARCH_JAVA_OPTS:--Xms1g -Xmx1g}
+      # Nodo único de dev: sin TLS entre contenedores (sólo xpack.security para autenticación),
+      # "elastic" queda expuesto sólo dentro de prisma-net (no hay puerto público salvo el que vos
+      # mismo abras). Igual criterio que Postgres/Redis/MinIO en este mismo archivo -- la
+      # superficie externa la cierra nginx.
+      xpack.security.enabled: "true"
+      xpack.security.http.ssl.enabled: "false"
+      ELASTIC_PASSWORD: ${ELASTIC_PASSWORD}
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+    ports:
+      - "${ELASTICSEARCH_PORT:-9200}:9200"
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - >-
+          curl -sf -u elastic:${ELASTIC_PASSWORD} http://localhost:9200/_cluster/health
+          | grep -qE '"status":"(green|yellow)"'
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
+    networks: [prisma-net]
+
+  # Job one-shot (mismo patrón que minio-init): Kibana RECHAZA arrancar si se le configura el
+  # superusuario "elastic" (falla con "this is a superuser account that cannot write to system
+  # indices" -- lo aprendimos por las malas, Kibana entraba en loop de restart). Hace falta el
+  # usuario de servicio reservado "kibana_system", que no trae password por defecto -- este job
+  # se la setea a un valor que nosotros elegimos (KIBANA_SYSTEM_PASSWORD) para que Kibana pueda
+  # loguearse con ella sin coordinar un token generado dinámicamente entre dos contenedores.
+  kibana-init:
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.5.3
+    container_name: prisma-kibana-init
+    profiles: [elastic, full]
+    depends_on:
+      elasticsearch: { condition: service_healthy }
+    entrypoint: >
+      /bin/sh -c "
+      curl -sf -u elastic:$$ELASTIC_PASSWORD -X POST http://elasticsearch:9200/_security/user/kibana_system/_password
+      -H 'Content-Type: application/json'
+      -d '{\"password\":\"'\"$$KIBANA_SYSTEM_PASSWORD\"'\"}';
+      "
+    environment:
+      ELASTIC_PASSWORD: ${ELASTIC_PASSWORD}
+      KIBANA_SYSTEM_PASSWORD: ${KIBANA_SYSTEM_PASSWORD}
+    networks: [prisma-net]
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:9.5.3
+    container_name: prisma-kibana
+    restart: unless-stopped
+    profiles: [elastic, full]
+    depends_on:
+      elasticsearch: { condition: service_healthy }
+      kibana-init: { condition: service_completed_successfully }
+    environment:
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+      ELASTICSEARCH_USERNAME: kibana_system
+      ELASTICSEARCH_PASSWORD: ${KIBANA_SYSTEM_PASSWORD}
+    ports:
+      - "${KIBANA_PORT:-5601}:5601"
+    healthcheck:
+      # "available" recién cuando terminó de levantar sus plugins (saved objects, etc.) -- antes
+      # de eso "Up" en `docker ps` no significa que la API ya responda.
+      test:
+        - "CMD-SHELL"
+        - >-
+          curl -sf http://localhost:5601/api/status
+          | grep -q '"level":"available"'
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 60s
+    networks: [prisma-net]
+
+  # Job one-shot: importa los dashboards versionados en infra/monitoring/kibana/dashboards.ndjson
+  # (overview + seguridad + base de datos + aplicaciones, exportados desde una corrida real -- ver
+  # docs/CI-CD-Infra.md) para que levantar el perfil "elastic" desde cero ya traiga la
+  # observabilidad armada, sin tener que rehacerlos a mano en la UI cada vez.
+  kibana-dashboards-init:
+    image: curlimages/curl:8.11.0
+    container_name: prisma-kibana-dashboards-init
+    profiles: [elastic, full]
+    depends_on:
+      kibana: { condition: service_healthy }
+    volumes:
+      - ./infra/monitoring/kibana/dashboards.ndjson:/dashboards.ndjson:ro
+    entrypoint: >
+      sh -c "
+      curl -sf -u elastic:$$ELASTIC_PASSWORD -X POST 'http://kibana:5601/api/saved_objects/_import?overwrite=true'
+      -H 'kbn-xsrf: true' --form file=@/dashboards.ndjson;
+      "
+    environment:
+      ELASTIC_PASSWORD: ${ELASTIC_PASSWORD}
+    networks: [prisma-net]
+
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:9.5.3
+    container_name: prisma-filebeat
+    # Filebeat corre de entrada como usuario no-root y su entrypoint aborta si filebeat.yml (o el
+    # socket de Docker) no le pertenece -- correrlo como root es lo soportado para este caso
+    # (leer logs/socket montados desde el host, que son de root) en vez de andar ajustando dueños.
+    user: root
+    restart: unless-stopped
+    profiles: [elastic, full]
+    depends_on:
+      elasticsearch: { condition: service_healthy }
+    command: ["--strict.perms=false"]
+    environment:
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+      ELASTICSEARCH_USERNAME: elastic
+      ELASTICSEARCH_PASSWORD: ${ELASTIC_PASSWORD}
+    volumes:
+      - ./infra/monitoring/filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - filebeat-data:/usr/share/filebeat/data
+    networks: [prisma-net]
+
+  # -------------------------------------------------------------------
+  # 11. GESTIÓN DE CONTENEDORES
+  # -------------------------------------------------------------------
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: prisma-portainer
+    restart: unless-stopped
+    profiles: [management, full]
+    ports:
+      - "${PORTAINER_PORT:-9000}:9000"
+      - "9443:9443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer-data:/data
+    networks: [prisma-net]
+
+  watchtower:
+    image: containrrr/watchtower:1.7.1
+    container_name: prisma-watchtower
+    restart: unless-stopped
+    profiles: [management, full]
+    environment:
+      DOCKER_API_VERSION: "1.40"
+      WATCHTOWER_POLL_INTERVAL: ${WATCHTOWER_POLL_INTERVAL:-300}
+      WATCHTOWER_CLEANUP: ${WATCHTOWER_CLEANUP:-true}
+      WATCHTOWER_LABEL_ENABLE: "true"
+      WATCHTOWER_INCLUDE_STOPPED: "false"
+      TZ: ${TZ}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks: [prisma-net]
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: prisma-pgadmin
+    restart: unless-stopped
+    profiles: [management, full]
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+    ports:
+      - "${PGADMIN_PORT:-5050}:80"
+    volumes:
+      - pgadmin-data:/var/lib/pgadmin
+      - ./scripts/db/pgadmin-servers.json:/pgadmin4/servers.json:ro
+    networks: [prisma-net]
+
+  # -------------------------------------------------------------------
+  # 12. NGINX (reverse proxy + HTTPS)
+  # -------------------------------------------------------------------
+  nginx:
+    image: nginx:1.30-alpine
+    container_name: prisma-nginx
+    restart: unless-stopped
+    profiles: [proxy, full]
+    depends_on:
+      frontend: { condition: service_started }
+      backend-core: { condition: service_started }
+      backend-ai: { condition: service_started }
+      # service_healthy, no service_started: el upstream "keycloak_svc" en prisma.conf apunta al
+      # nombre del contenedor, así que si Keycloak todavía no arrancó, nginx igual arranca sin
+      # error (el DNS interno de Docker resuelve al contenedor ya creado aunque su proceso no
+      # esté escuchando) y devuelve 502 en /auth/* hasta que Keycloak termine el import (~30-60s)
+      # -- ver el healthcheck agregado al servicio "keycloak" y docs/RUNBOOK.md.
+      keycloak: { condition: service_healthy }
+    ports:
+      - "${NGINX_HTTP_PORT:-80}:80"
+      - "${NGINX_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./infra/nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./infra/nginx/certs:/etc/nginx/certs:ro
+    networks: [prisma-net]
