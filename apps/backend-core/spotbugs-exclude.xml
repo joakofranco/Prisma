@@ -1,0 +1,18 @@
+<FindBugsFilter>
+    <!--
+    EI_EXPOSE_REP / EI_EXPOSE_REP2 en domain.entity son intencionales:
+    las entidades JPA mantienen referencias compartidas a su grafo de objetos
+    (relaciones bidireccionales) y no aplican copias defensivas.
+    EI_EXPOSE_REP2 en web.controller, application e infrastructure corresponde a la inyeccion
+    por constructor de beans Spring (singletons: services, repos, clientes HTTP) y no
+    constituye exposicion.
+    -->
+    <Match>
+        <Package name="~uy\.edu\.prisma\.domain\.entity"/>
+        <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
+    </Match>
+    <Match>
+        <Package name="~uy\.edu\.prisma\.(web\.controller|application|infrastructure)"/>
+        <Bug pattern="EI_EXPOSE_REP2"/>
+    </Match>
+</FindBugsFilter>

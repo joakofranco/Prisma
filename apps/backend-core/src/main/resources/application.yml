@@ -1,0 +1,168 @@
+spring:
+  application:
+    name: prisma-backend-core
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:local}
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/prisma}
+    username: ${SPRING_DATASOURCE_USERNAME:prisma}
+    password: ${SPRING_DATASOURCE_PASSWORD:prisma}
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+  jpa:
+    hibernate:
+      ddl-auto: none
+    open-in-view: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        jdbc.batch_size: 20
+        format_sql: true
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    locations: classpath:db/migration
+    # Sin esto, Flyway lee los .sql con un charset que no es UTF-8 en este entorno (verificado:
+    # el .sql en el JAR y dentro del contenedor están en UTF-8 correcto, byte a byte -- la
+    # corrupción de tildes/eñes pasaba únicamente al leerlos acá, nunca en el archivo en sí).
+    encoding: UTF-8
+  data:
+    redis:
+      host: ${SPRING_DATA_REDIS_HOST:localhost}
+      port: ${SPRING_DATA_REDIS_PORT:6379}
+      password: ${SPRING_DATA_REDIS_PASSWORD:}
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # Sólo habilita/deshabilita el JwtDecoder de Keycloak (ver
+          # SecurityConfig.MissingIssuerCondition) -- la validación real del claim "iss" la hace
+          # prisma.keycloak.trusted-issuers más abajo, que admite una lista de orígenes.
+          issuer-uri: ${KEYCLOAK_ISSUER_URL:https://prisma.local/auth}/realms/${KEYCLOAK_REALM:prisma}
+
+server:
+  port: 8080
+  compression:
+    enabled: true
+  forward-headers-strategy: framework
+  error:
+    include-message: always
+    include-stacktrace: never
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+      base-path: /actuator
+  endpoint:
+    health:
+      show-details: when_authorized
+      probes:
+        enabled: true
+  metrics:
+    tags:
+      application: ${spring.application.name}
+    distribution:
+      percentiles-histogram:
+        "[http.server.requests]": true
+      # Sin esto, http_server_requests_seconds solo exporta count/sum/max (un Summary):
+      # alcanza para latencia promedio, pero histogram_quantile (p95/p99 reales en
+      # Grafana) necesita los _bucket que solo aparecen con percentiles-histogram.
+      slo:
+        "[http.server.requests]": 100ms,200ms,500ms,1s,2s
+
+springdoc:
+  api-docs:
+    path: /api/v1/docs
+  swagger-ui:
+    path: /swagger-ui
+    tryItOutEnabled: true
+
+prisma:
+  jwt:
+    secret: ${JWT_SECRET:change-me-in-production-at-least-256-bits}
+    access-expiration-minutes: ${JWT_ACCESS_EXPIRATION_MINUTES:15}
+    refresh-expiration-days:  ${JWT_REFRESH_EXPIRATION_DAYS:7}
+  minio:
+    endpoint:   ${MINIO_ENDPOINT:http://localhost:9001}
+    # Ver el comentario en MinioConfig: host desde el que un navegador real puede bajar la
+    # evidencia. Sin MINIO_ENDPOINT/MINIO_PUBLIC_ENDPOINT en el entorno (perfil por defecto, fuera
+    # de Docker) ambos son el mismo localhost:9001, así que no hace falta nada especial ahí.
+    public-endpoint: ${MINIO_PUBLIC_ENDPOINT:http://localhost:9001}
+    access-key: ${MINIO_ACCESS_KEY:minioadmin}
+    secret-key: ${MINIO_SECRET_KEY:minioadmin}
+    bucket:     ${MINIO_BUCKET:prisma-evidences}
+  security:
+    argon2:
+      iterations:  ${ARGON2_ITERATIONS:3}
+      memory-kb:   ${ARGON2_MEMORY_KB:65536}
+      parallelism: ${ARGON2_PARALLELISM:4}
+    login-failure-sync:
+      # El bloqueo en sí (cuántos intentos fallidos antes de bloquear la cuenta) lo hace Keycloak,
+      # no esto -- ver "failureFactor" en infra/keycloak/realm-prisma.json (5 por defecto),
+      # configurable también en vivo desde la consola de Keycloak (Realm Settings > Security
+      # Defenses > Brute Force Detection) sin redeploy. Esto sólo trae a la bitácora propia
+      # (AuditLog, ver LoginFailureAuditSyncService) los eventos LOGIN_ERROR que Keycloak ya
+      # audita solo (eventsEnabled=true en el realm), para que PRISMA_ADMIN/ORG_RESPONSIBLE los
+      # vean en "Actividad del Sistema" sin tener que entrar a la consola de Keycloak.
+      enabled: ${LOGIN_FAILURE_SYNC_ENABLED:true}
+      interval-ms: ${LOGIN_FAILURE_SYNC_INTERVAL_MS:15000}
+  ai:
+    base-url: ${AI_SERVICE_URL:http://localhost:8000}
+    # Compartida con backend-ai (X-Internal-Api-Key): sin ella, backend-ai queda alcanzable por
+    # cualquiera que le pegue directo al puerto expuesto. Vacía en dev local == sin chequeo.
+    internal-api-key: ${AI_INTERNAL_API_KEY:}
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:8080,http://localhost:5173,https://localhost,https://prisma.local}
+  keycloak:
+    # URL interna (resoluble desde este contenedor) para descargar las claves públicas de
+    # verificación de firma JWT. En docker-compose es http://keycloak:8080 (DNS interno). El
+    # prefijo /auth es obligatorio: Keycloak corre con KC_HTTP_RELATIVE_PATH=/auth (ver el
+    # servicio "keycloak" en docker-compose.yml), así que TODAS sus rutas -- también las llamadas
+    # directas por red interna que no pasan por nginx, como esta -- viven bajo ese path.
+    jwks-uri: ${KEYCLOAK_AUTH_SERVER_URL:http://localhost:8180}/auth/realms/${KEYCLOAK_REALM:prisma}/protocol/openid-connect/certs
+    # Orígenes (esquema+host, SIN path) desde los que se acepta un token: con KC_HOSTNAME
+    # dinámico, Keycloak emite el claim "iss" con el mismo host que usó el navegador para
+    # loguearse (https://prisma.local, https://localhost, etc.), así que acá va la lista completa
+    # de hosts soportados en vez de uno solo -- ver SecurityConfig.keycloakJwtDecoder y
+    # docs/Certificados-TLS.md.
+    trusted-issuers: ${KEYCLOAK_TRUSTED_ISSUERS:https://prisma.local/auth/realms/prisma,https://localhost/auth/realms/prisma}
+    admin:
+      # Cliente "prisma-backend" con Service Accounts habilitado (no es un usuario admin humano):
+      # backend-core lo usa para provisionar en Keycloak a los usuarios dados de alta en la app
+      # (sin esto, un usuario creado acá nunca podía loguearse -- ver KeycloakAdminClient). Mismo
+      # comentario que jwks-uri sobre el prefijo /auth obligatorio.
+      base-url: ${KEYCLOAK_AUTH_SERVER_URL:http://localhost:8180}/auth
+      realm: ${KEYCLOAK_REALM:prisma}
+      client-id: ${KEYCLOAK_ADMIN_CLIENT_ID:prisma-backend}
+      client-secret: ${KEYCLOAK_ADMIN_CLIENT_SECRET:}
+
+logging:
+  level:
+    root: INFO
+    uy.edu.prisma: ${LOGGING_LEVEL_UY_EDU_PRISMA:INFO}
+    org.hibernate.SQL: WARN
+
+---
+spring:
+  config:
+    activate:
+      on-profile: docker
+  jpa:
+    show-sql: false
+
+---
+spring:
+  config:
+    activate:
+      on-profile: production
+  jpa:
+    show-sql: false
+    hibernate:
+      ddl-auto: validate
+logging:
+  level:
+    root: WARN
+    uy.edu.prisma: INFO
