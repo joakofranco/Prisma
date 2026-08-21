@@ -1,0 +1,96 @@
+{
+  "realm": "prisma",
+  "displayName": "PRISMA",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": true,
+  "bruteForceProtected": true,
+  "permanentLockout": false,
+  "maxFailureWaitSeconds": 900,
+  "minimumQuickLoginWaitSeconds": 60,
+  "waitIncrementSeconds": 60,
+  "quickLoginCheckMilliSeconds": 1000,
+  "maxDeltaTimeSeconds": 43200,
+  "failureFactor": 5,
+  "eventsEnabled": true,
+  "eventsExpiration": 2592000,
+  "accessTokenLifespan": 900,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 36000,
+  "passwordPolicy": "length(8)",
+  "otpPolicyType": "totp",
+  "otpPolicyAlgorithm": "HmacSHA1",
+  "otpPolicyDigits": 6,
+  "otpPolicyPeriod": 30,
+
+  "roles": {
+    "realm": [
+      { "name": "PRISMA_ADMIN",           "description": "Administrador global del sistema" },
+      { "name": "ORG_RESPONSIBLE",        "description": "Responsable de una organización tenant" },
+      { "name": "INTERNAL_EVALUATOR",     "description": "Evaluador interno de la organización" },
+      { "name": "AUDITOR",                "description": "Auditor externo" },
+      { "name": "VIEWER",                 "description": "Sólo lectura de dashboards" }
+    ]
+  },
+
+  "clients": [
+    {
+      "clientId": "prisma-frontend",
+      "name": "PRISMA Frontend (Vue 3)",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["*"],
+      "webOrigins": ["*"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      }
+    },
+    {
+      "clientId": "prisma-backend",
+      "name": "PRISMA Backend (Spring Boot)",
+      "enabled": true,
+      "bearerOnly": false,
+      "publicClient": false,
+      "secret": "CHANGE_ME_IN_PRODUCTION",
+      "protocol": "openid-connect",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": true
+    }
+  ],
+
+  "users": [
+    {
+      "username": "admin@prisma.local",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "admin@prisma.local",
+      "firstName": "Admin",
+      "lastName": "PRISMA",
+      "credentials": [{ "type": "password", "value": "Admin1234!", "temporary": true }],
+      "realmRoles": ["PRISMA_ADMIN"]
+    },
+    {
+      "username": "service-account-prisma-backend",
+      "enabled": true,
+      "serviceAccountClientId": "prisma-backend",
+      "clientRoles": {
+        "realm-management": [
+          "manage-users",
+          "view-users",
+          "view-realm",
+          "manage-realm",
+          "view-events"
+        ]
+      }
+    }
+  ]
+}
