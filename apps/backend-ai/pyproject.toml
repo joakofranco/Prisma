@@ -1,0 +1,16 @@
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "SIM", "S"]
+ignore = ["S101"]
+
+[tool.black]
+line-length = 100
+target-version = ['py314']
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+ignore_missing_imports = true

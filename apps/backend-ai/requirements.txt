@@ -1,0 +1,46 @@
+# =====================================================================
+# PRISMA — Backend AI (FastAPI + LangChain + Ollama + ChromaDB)
+# =====================================================================
+
+# ---------- Web framework ----------
+fastapi>=0.115.0,<0.150
+uvicorn[standard]>=0.32.0,<0.35
+pydantic>=2.10.0,<2.13
+pydantic-settings>=2.7.0,<2.9
+python-multipart>=0.0.18
+httpx>=0.28.0,<0.29
+
+# ---------- LLM / RAG ----------
+langchain>=0.3.0,<1.0
+langchain-community>=0.3.0,<1.0
+langchain-ollama>=0.3.0,<2.0
+langchain-chroma>=0.2.0,<2.0
+chromadb>=0.6.0,<2.0
+# sentence-transformers no se usa: los embeddings van por Ollama (OllamaEmbeddings, ver
+# vector_store.py); estaba sin usar y traia transformers+torch como dependencias transitivas
+# (con CVEs CRITICAL/HIGH -- CVE-2026-4372, CVE-2026-5241 -- sin ningun uso real que las justifique).
+
+# ---------- Procesamiento de documentos ----------
+# >=6.14.2 por CVE-2026-59935/59936 (DoS con PDF armado); langchain-community declara su propio
+# rango de compatibilidad con pypdf, asi que si algun dia no admite la 6.x el propio pip install
+# fallara con un conflicto de dependencias explicito en vez de romper en runtime.
+pypdf>=6.14.2,<7.0
+python-docx>=1.1.0,<2.0
+openpyxl>=3.1.0,<4.0
+markdown>=3.7
+
+# ---------- Autenticación (JWT) ----------
+python-jose[cryptography]>=3.3.0,<4.0
+passlib[bcrypt]>=1.7.4,<2.0
+
+# ---------- Observabilidad ----------
+prometheus-client>=0.21.0,<1.0
+# 7.x no reconoce cómo FastAPI/Starlette recientes representan un include_router() con prefix
+# (AttributeError: '_IncludedRouter' object has no attribute 'path'), lo que tumbaba con 500
+# CUALQUIER endpoint bajo /api/v1/* -- 8.x lo soporta.
+prometheus-fastapi-instrumentator>=8.0,<9.0
+structlog>=24.0.0,<26.0
+
+# ---------- Storage ----------
+minio>=7.2.0,<8.0
+redis>=5.0.0,<6.0
