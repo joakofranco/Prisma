@@ -1,0 +1,34 @@
+@import 'tailwindcss';
+
+/* Tailwind v4 usa "media" (prefers-color-scheme) por defecto para "dark:" -- esto lo cambia a
+   basarse en una clase (".dark" en <html>), igual que el "darkMode: 'class'" de v3, para que el
+   toggle de tema de stores/theme.ts pueda controlarlo explícitamente en vez de depender sólo de
+   la preferencia del sistema operativo. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+body {
+  font-family:
+    'Inter',
+    system-ui,
+    -apple-system,
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
