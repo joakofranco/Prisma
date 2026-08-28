@@ -1,0 +1,7 @@
+# Colocar aquí los certificados TLS:
+#   prisma.crt   ← certificado
+#   prisma.key   ← llave privada
+#
+# Para desarrollo local usá mkcert:
+#   mkcert -install
+#   mkcert -cert-file prisma.crt -key-file prisma.key prisma.local localhost 127.0.0.1
