@@ -1,0 +1,54 @@
+# Filebeat -- envía a Elasticsearch los logs de TODOS los contenedores del proyecto (seguridad:
+# Keycloak/nginx; base de datos: postgres/keycloak-db; aplicaciones: backend-core/backend-ai/
+# frontend; etc.), igual criterio que infra/monitoring/promtail-config.yml para Loki pero
+# indexado en Elasticsearch/Kibana en vez de LogQL.
+filebeat.autodiscover:
+  providers:
+    - type: docker
+      templates:
+        # Se matchea por nombre de contenedor ("prisma-*", ver container_name en cada servicio de
+        # docker-compose.yml) y no por la label com.docker.compose.project: Docker anida cada
+        # punto de una label como un objeto propio (com.docker.compose.project queda en
+        # labels.com.docker.compose.project.value, no en un campo plano aunque se use
+        # labels.dedot), lo que la vuelve frágil/poco legible como condición. El nombre es más
+        # simple y ya es único del proyecto.
+        - condition:
+            regexp:
+              docker.container.name: "^prisma-"
+          config:
+            # El input "container" quedó deprecado en Beats 8.x y Filebeat 9.x ya lo rechaza
+            # directo ("won't start runner"): hay que usar "filestream" con el parser "container",
+            # que hace el mismo trabajo (entender el formato JSON de un log-line de Docker).
+            - type: filestream
+              id: "prisma-${data.docker.container.id}"
+              paths:
+                - "/var/lib/docker/containers/${data.docker.container.id}/*.log"
+              parsers:
+                - container: ~
+
+processors:
+  # Agrega metadata del contenedor (nombre, imagen, labels) a cada línea, igual que el
+  # relabel_configs de promtail-config.yml para Loki.
+  - add_docker_metadata:
+      host: "unix:///var/run/docker.sock"
+  # backend-core (Logback) y backend-ai (uvicorn/structlog) pueden emitir líneas JSON -- si el
+  # mensaje lo es, lo desanida a campos propios en vez de quedar como un blob de texto sin
+  # estructura. Si no es JSON (nginx, Postgres, Keycloak en texto plano), no hace nada.
+  - decode_json_fields:
+      fields: ["message"]
+      target: ""
+      overwrite_keys: true
+      add_error_key: false
+
+output.elasticsearch:
+  hosts: ["${ELASTICSEARCH_HOSTS}"]
+  username: "${ELASTICSEARCH_USERNAME}"
+  password: "${ELASTICSEARCH_PASSWORD}"
+
+# Sin index/template propio a propósito: usa el data stream ("filebeat-9.5.3") y la política de
+# ILM que Filebeat gestiona solo out-of-the-box. Forzar un nombre de índice manual (el patrón
+# clásico de Beats 6/7) contra el modo data stream de Elasticsearch 8.x+ dispara una carrera real
+# al primer arranque (falla el primer publish con "no matching index template", se autocorrige
+# solo en el reintento, pero ensucia los logs) sin ninguna ganancia real -- en Kibana se filtra
+# igual de fácil por container.name (que empieza con "prisma-") o docker.container.image.
+logging.level: info
