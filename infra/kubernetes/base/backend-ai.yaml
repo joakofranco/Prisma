@@ -1,0 +1,45 @@
+# backend-ai es stateless (el índice RAG vive en el servicio "chroma" aparte, ver chroma.yaml):
+# 2 réplicas para que la caída/reinicio de un pod no deje sin asistente de IA (citas de
+# evidencia, sugerencias de remediación) mientras el otro sigue respondiendo.
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: backend-ai }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app.kubernetes.io/name: backend-ai } }
+  template:
+    metadata: { labels: { app.kubernetes.io/name: backend-ai } }
+    spec:
+      containers:
+        - name: backend-ai
+          image: ghcr.io/prisma/prisma-backend-ai:latest
+          ports: [{ containerPort: 8000, name: http }]
+          envFrom:
+            - configMapRef: { name: prisma-config }
+          env:
+            # backend-ai lee esta variable con OTRO nombre que el Secret (INTERNAL_API_KEY vs
+            # AI_INTERNAL_API_KEY) -- mismo mismatch intencional que ya existe en
+            # docker-compose.yml (header X-Internal-Api-Key compartido con backend-core).
+            - { name: INTERNAL_API_KEY, valueFrom: { secretKeyRef: { name: prisma-secrets, key: AI_INTERNAL_API_KEY } } }
+            # Con esto seteado, backend-ai se conecta al servicio "chroma" por HTTP en vez de
+            # abrir un PersistentClient local -- lo que le permite correr con 2+ réplicas sin
+            # que cada pod tenga su propio índice desincronizado. Ver
+            # apps/backend-ai/app/rag/chroma_client.py.
+            - { name: CHROMA_SERVER_HOST, value: chroma }
+            - { name: CHROMA_SERVER_PORT, value: "8000" }
+          resources:
+            requests: { cpu: "500m", memory: "2Gi" }
+            limits:   { cpu: "2",    memory: "4Gi" }
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 30
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata: { name: backend-ai }
+spec:
+  ports: [{ port: 8000, targetPort: http }]
+  selector: { app.kubernetes.io/name: backend-ai }

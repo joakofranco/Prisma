@@ -1,0 +1,31 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: prisma
+
+commonLabels:
+  app.kubernetes.io/part-of: prisma
+  app.kubernetes.io/managed-by: kustomize
+
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - postgres.yaml
+  - redis.yaml
+  - keycloak.yaml
+  - minio.yaml
+  - minio-init-job.yaml
+  - backend-core.yaml
+  - chroma.yaml
+  - backend-ai.yaml
+  - ollama.yaml
+  - frontend.yaml
+  - ingress.yaml
+
+# realm-prisma.json vive fuera de infra/kubernetes/ (Kustomize no permite leer fuera del árbol
+# de la kustomization) -- keycloak-realm.json es una copia generada por `make sync-k8s-assets`,
+# gitignorada (ver .gitignore). La key fija "realm-prisma.json" es el nombre que Keycloak espera
+# en /opt/keycloak/data/import/ (ver keycloak.yaml).
+configMapGenerator:
+  - name: keycloak-realm-config
+    files:
+      - realm-prisma.json=keycloak-realm.json

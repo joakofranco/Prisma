@@ -1,0 +1,58 @@
+# Servidor ChromaDB standalone: separa el índice RAG del proceso de backend-ai para que este
+# último pueda correr con más de una réplica (ver backend-ai.yaml) sin dos pods escribiendo el
+# mismo SQLite local ni compitiendo por el mismo PVC ReadWriteOnce.
+#
+# Sigue siendo réplica única a propósito -- es el componente con estado real acá (el índice
+# vectorial en sí). Escalarlo horizontalmente necesitaría el modo distribuido de Chroma
+# (particionado + réplicas de un mismo shard), que queda fuera de alcance de este manifiesto; ver
+# docs/Kubernetes-Minikube-Portainer.md para el detalle de qué implicaría llevarlo a un cluster
+# de producción real.
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: chroma }
+spec:
+  replicas: 1
+  strategy: { type: Recreate } # evita 2 pods montando el mismo PVC ReadWriteOnce a la vez durante un rollout
+  selector: { matchLabels: { app.kubernetes.io/name: chroma } }
+  template:
+    metadata: { labels: { app.kubernetes.io/name: chroma } }
+    spec:
+      containers:
+        - name: chroma
+          image: chromadb/chroma:1.5.9
+          ports: [{ containerPort: 8000, name: http }]
+          env:
+            - { name: IS_PERSISTENT, value: "TRUE" }
+            - { name: ANONYMIZED_TELEMETRY, value: "FALSE" }
+          resources:
+            requests: { cpu: "250m", memory: "512Mi" }
+            limits: { cpu: "1", memory: "2Gi" }
+          # Probes por TCP (no HTTP): la ruta de heartbeat cambió entre versiones de la API de
+          # Chroma (v1 vs v2) -- comprobar que el puerto acepta conexiones es suficiente acá y no
+          # queda atado a una ruta puntual.
+          livenessProbe:
+            tcpSocket: { port: http }
+            periodSeconds: 30
+          readinessProbe:
+            tcpSocket: { port: http }
+            periodSeconds: 10
+          volumeMounts:
+            - { name: chroma-data, mountPath: /chroma/chroma }
+      volumes:
+        - name: chroma-data
+          persistentVolumeClaim: { claimName: chroma-pvc }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: chroma }
+spec:
+  ports: [{ port: 8000, targetPort: http }]
+  selector: { app.kubernetes.io/name: chroma }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: chroma-pvc }
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 10Gi } }
+  storageClassName: standard

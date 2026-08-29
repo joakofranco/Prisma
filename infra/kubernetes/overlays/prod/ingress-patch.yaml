@@ -1,0 +1,10 @@
+# JSON6902, no strategic-merge -- ver comentario en overlays/dev/ingress-patch.yaml. El valor es
+# el mismo que ya trae base/ingress.yaml, pero se patchea igual de forma explícita para no
+# depender de "prod es el default implícito" (evita el típico "se me olvidó overridearlo en el
+# próximo ambiente que agreguemos").
+- op: replace
+  path: /spec/rules/0/host
+  value: prisma.example.uy
+- op: replace
+  path: /spec/tls/0/hosts/0
+  value: prisma.example.uy

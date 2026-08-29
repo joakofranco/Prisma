@@ -1,0 +1,7 @@
+# JSON6902, no strategic-merge -- ver comentario en overlays/dev/ingress-patch.yaml.
+- op: replace
+  path: /spec/rules/0/host
+  value: staging.prisma.example.uy
+- op: replace
+  path: /spec/tls/0/hosts/0
+  value: staging.prisma.example.uy

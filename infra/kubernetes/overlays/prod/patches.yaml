@@ -1,0 +1,12 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: backend-core }
+spec:
+  replicas: 4
+  template:
+    spec:
+      containers:
+        - name: backend-core
+          resources:
+            requests: { cpu: "1", memory: "2Gi" }
+            limits:   { cpu: "4", memory: "4Gi" }

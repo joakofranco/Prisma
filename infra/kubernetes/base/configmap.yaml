@@ -1,0 +1,51 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prisma-config
+data:
+  SPRING_PROFILES_ACTIVE: "production"
+  SPRING_DATASOURCE_URL:  "jdbc:postgresql://postgres:5432/prisma"
+  SPRING_DATA_REDIS_HOST: "redis"
+  SPRING_DATA_REDIS_PORT: "6379"
+  KEYCLOAK_AUTH_SERVER_URL: "http://keycloak:8080"
+  KEYCLOAK_REALM: "prisma"
+  KEYCLOAK_RESOURCE: "prisma-backend"
+  KEYCLOAK_ADMIN: "admin"
+  KEYCLOAK_DB_USER: "keycloak"
+  MINIO_ENDPOINT: "http://minio:9000"
+  # TODO: acá falta MINIO_PUBLIC_ENDPOINT (ver prisma.minio.public-endpoint / MinioConfig en
+  # backend-core, y el mismo fix ya aplicado en docker-compose.yml). Sin esto, la URL de descarga
+  # de evidencia que ve el navegador queda firmada con "http://minio:9000" -- el Service interno
+  # de Kubernetes, irresoluble desde fuera del cluster -- y el link de "Descargar" queda roto en
+  # cualquier despliegue real (dev/staging/prod). Falta además: base/ingress.yaml no expone MinIO
+  # en ningún path, así que antes de fijar este valor hay que decidir CÓMO se expone (un path
+  # dedicado en el Ingress con rewrite-target hacia el Service "minio", o -- más seguro, sin
+  # exponer el object store directo a internet -- servir la descarga a través de un endpoint
+  # propio de backend-core que haga de proxy). Sin uno de los dos, cualquier valor acá sería un
+  # link que también da 404.
+  MINIO_BUCKET:   "prisma-evidences"
+  AI_SERVICE_URL: "http://backend-ai:8000"
+  CORE_BACKEND_URL: "http://backend-core:8080"
+  OLLAMA_HOST:    "http://ollama:11434"
+  OLLAMA_MODEL:   "llama3:8b"
+  # CHROMA_PERSIST_DIR queda sin usar acá a propósito: backend-ai corre con CHROMA_SERVER_HOST
+  # seteado (ver backend-ai.yaml), así que usa el cliente HTTP contra el servicio "chroma" en vez
+  # del modo persistente local al que aplicaría esta variable.
+  RAG_CHUNK_SIZE: "1000"
+  RAG_CHUNK_OVERLAP: "200"
+  RAG_TOP_K: "5"
+  TZ: "America/Montevideo"
+  # KEYCLOAK_ISSUER_URL / KEYCLOAK_TRUSTED_ISSUERS / CORS_ALLOWED_ORIGINS dependen del host real
+  # de cada ambiente -- se setean por overlay (ver overlays/<env>/configmap-patch.yaml), no acá.
+---
+# El Secret real ("prisma-secrets") NO vive en este árbol gestionado por Kustomize -- se crea a
+# mano una vez por namespace a partir de secret.example.yaml (ver infra/kubernetes/README.md),
+# así un `kubectl apply -k .` de CI nunca lo pisa de vuelta a valores de ejemplo.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: evidences-pvc }
+spec:
+  accessModes: [ReadWriteMany]
+  resources:
+    requests: { storage: 50Gi }
+  storageClassName: standard

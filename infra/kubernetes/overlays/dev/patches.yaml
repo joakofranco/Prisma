@@ -1,0 +1,34 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: backend-core }
+spec:
+  # replicas: no se pisa acá a propósito -- hereda las 2 de la base (ver
+  # docs/Kubernetes-Minikube-Portainer.md, sección de redundancia). Un minikube con
+  # --cpus=4 --memory=8192 (el usado en esa guía) tiene margen para 2 réplicas de backend-core +
+  # 2 de backend-ai + 2 de frontend a la vez con los requests reducidos de acá abajo; si hiciera
+  # falta bajar el uso de recursos en un equipo con menos memoria, es preferible reducir CPU/RAM
+  # por pod (como ya hace este patch) antes que sacrificar la redundancia.
+  template:
+    spec:
+      containers:
+        - name: backend-core
+          env:
+            - { name: SPRING_PROFILES_ACTIVE, value: docker }
+          resources:
+            requests: { cpu: "200m", memory: "512Mi" }
+            limits:   { cpu: "1",    memory: "1Gi" }
+---
+# Mismo criterio que arriba: acá se reduce memoria por pod, no la cantidad de réplicas (hereda
+# las 2 de la base) -- backend-ai pide 2Gi de más margen en la base pensando en picos de
+# indexación, que en un minikube local no hace falta cubrir con el mismo colchón.
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: backend-ai }
+spec:
+  template:
+    spec:
+      containers:
+        - name: backend-ai
+          resources:
+            requests: { cpu: "250m", memory: "768Mi" }
+            limits:   { cpu: "1",    memory: "1536Mi" }

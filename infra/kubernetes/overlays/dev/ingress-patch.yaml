@@ -1,0 +1,9 @@
+# JSON6902, no strategic-merge: un patch strategic-merge de spec.rules reemplaza la lista
+# COMPLETA y borra http.paths (Kustomize no la trata como merge-key). Con JSON6902 sólo se toca
+# el campo que cambia.
+- op: replace
+  path: /spec/rules/0/host
+  value: dev.prisma.example.uy
+- op: replace
+  path: /spec/tls/0/hosts/0
+  value: dev.prisma.example.uy

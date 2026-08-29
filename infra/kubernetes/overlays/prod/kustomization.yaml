@@ -1,0 +1,26 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: prisma-prod
+namePrefix: ""
+commonLabels:
+  environment: prod
+
+resources:
+  - ../../base
+
+# NOTA: antes de este fix, "patches.yaml" existía en el repo pero nunca se aplicaba -- faltaba
+# este campo "patches:" (Kustomize no auto-descubre patches.yaml, hay que referenciarlo). Prod
+# corría con las réplicas/recursos de base (2, no 4) hasta corregir esto.
+patches:
+  - path: patches.yaml
+  - target: { kind: Ingress, name: prisma-ingress }
+    path: ingress-patch.yaml
+  - path: configmap-patch.yaml
+
+images:
+  - name: ghcr.io/prisma/prisma-frontend
+    newTag: prod
+  - name: ghcr.io/prisma/prisma-backend-core
+    newTag: prod
+  - name: ghcr.io/prisma/prisma-backend-ai
+    newTag: prod

@@ -1,0 +1,27 @@
+# Job de un solo uso -- equivalente al servicio "minio-init" de docker-compose.yml (crea los
+# buckets de evidencias/reportes y les saca el acceso anónimo). spec.template es INMUTABLE: si se
+# edita este archivo hay que `kubectl delete job minio-init -n <ns>` antes del siguiente
+# `kubectl apply -k .` (ver infra/kubernetes/README.md).
+apiVersion: batch/v1
+kind: Job
+metadata: { name: minio-init }
+spec:
+  ttlSecondsAfterFinished: 86400
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: minio-init
+          image: minio/mc:latest
+          env:
+            - { name: MINIO_ROOT_USER, valueFrom: { secretKeyRef: { name: prisma-secrets, key: MINIO_ACCESS_KEY } } }
+            - { name: MINIO_ROOT_PASSWORD, valueFrom: { secretKeyRef: { name: prisma-secrets, key: MINIO_SECRET_KEY } } }
+          command:
+            - /bin/sh
+            - -c
+            - |
+              mc alias set local http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"
+              mc mb -p local/prisma-evidences || true
+              mc mb -p local/prisma-reports || true
+              mc anonymous set none local/prisma-evidences
+              mc anonymous set none local/prisma-reports
