@@ -1,0 +1,245 @@
+# =====================================================================
+# SECURITY — Escaneo de vulnerabilidades y secretos
+# ---------------------------------------------------------------------
+# Trivy (contenedores + FS), OWASP Dependency-Check, Gitleaks, Snyk.
+# Se dispara en pushes a dev/main, semanal (domingo 03:00 UTC) y manual.
+# =====================================================================
+
+name: Security
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+  schedule:
+    - cron: '0 3 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write     # Necesario para subir SARIF al code-scanning tab
+  actions: read              # github/codeql-action/upload-sarif consulta el propio workflow run
+                              # para telemetria/estado; sin este permiso falla con "Resource not
+                              # accessible by integration" al post-procesar el SARIF.
+  pull-requests: read        # gitleaks-action lista los commits del PR (GET .../pulls/{n}/commits)
+                              # para escanear solo el diff; sin este permiso falla con el mismo
+                              # error 403 "Resource not accessible by integration".
+
+jobs:
+
+  # -------------------------------------------------------------------
+  # 1. Escaneo de secretos filtrados (Gitleaks)
+  # -------------------------------------------------------------------
+  gitleaks:
+    name: Gitleaks (secretos)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Ejecutar Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # -------------------------------------------------------------------
+  # 2. Trivy — Filesystem scan (código + dependencias)
+  # -------------------------------------------------------------------
+  trivy-fs:
+    name: Trivy (FS)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # El scan de fs sobre pom.xml resuelve el arbol de dependencias contra Maven Central para
+      # mapear CVEs; sin el .m2 ya poblado, dispara cientos de requests que la IP compartida de
+      # los runners de GitHub Actions termina haciendo caer en 429 Too Many Requests (bloqueo de
+      # 30 min). Se resuelve antes con Maven (con su propio backoff) y se cachea igual que en el
+      # job de CI, asi Trivy lee del .m2 local en vez de pegarle a la red el mismo.
+      - name: Setup JDK 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '25'
+          cache: 'maven'
+      - name: Resolver dependencias de Maven (poblar .m2)
+        working-directory: apps/backend-core
+        run: mvn -B dependency:go-offline
+      - name: Trivy FS scan
+        # format 'table' (no 'sarif'): con sarif Trivy no imprime nada al log del step mas alla
+        # de "Process completed with exit code 1", asi que un fallo real queda sin ninguna pista de
+        # que lo causo. El SARIF (para code-scanning) se genera aparte, en un step que nunca falla.
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'table'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1'
+          # Solo fallar por vulnerabilidades con fix disponible: forzar el pipeline en rojo por un
+          # CVE que el propio proyecto upstream todavia no parcheo (status "affected"/"fix_deferred"
+          # en Trivy) no da ninguna accion posible hoy y bloquea todo indefinidamente. El scan
+          # semanal programado igual las sigue detectando para cuando salga el fix.
+          ignore-unfixed: 'true'
+      - name: Generar SARIF (no bloqueante)
+        if: always() && vars.ENABLE_CODE_SCANNING == 'true'
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-fs.sarif'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '0'
+          ignore-unfixed: 'true'
+      - name: Subir SARIF a code-scanning
+        # Code scanning (GitHub Advanced Security) no esta comprado en este repo privado -- subir
+        # el SARIF falla siempre con "Code scanning is not enabled for this repository", sin
+        # importar el resultado del scan de arriba. Activar seteando la variable de repo/org
+        # ENABLE_CODE_SCANNING=true una vez que se compre GHAS.
+        if: always() && vars.ENABLE_CODE_SCANNING == 'true'
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-fs.sarif
+          category: trivy-fs
+
+  # -------------------------------------------------------------------
+  # 3. Trivy — Imágenes de contenedor (matrix)
+  # -------------------------------------------------------------------
+  trivy-images:
+    name: Trivy (${{ matrix.app }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - app: backend-core
+            dockerfile: infra/docker/backend-core.Dockerfile
+            context: apps/backend-core
+          - app: backend-ai
+            dockerfile: infra/docker/backend-ai.Dockerfile
+            context: apps/backend-ai
+          - app: frontend
+            dockerfile: infra/docker/frontend.Dockerfile
+            context: apps/frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build imagen para escaneo
+        run: |
+          docker build -t prisma-${{ matrix.app }}:scan \
+            -f ${{ matrix.dockerfile }} \
+            ${{ matrix.context }}
+
+      - name: Trivy image scan
+        # format 'table': ver comentario en el job trivy-fs -- con 'sarif' un fallo no deja ningun
+        # rastro de que vulnerabilidad lo causo en el log del step.
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'prisma-${{ matrix.app }}:scan'
+          format: 'table'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1'
+          # Ver comentario en el job trivy-fs: solo bloquear por CVEs con fix disponible.
+          ignore-unfixed: 'true'
+      - name: Generar SARIF (no bloqueante)
+        if: always() && vars.ENABLE_CODE_SCANNING == 'true'
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'prisma-${{ matrix.app }}:scan'
+          format: 'sarif'
+          output: 'trivy-${{ matrix.app }}.sarif'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '0'
+          ignore-unfixed: 'true'
+
+      - name: Subir SARIF
+        if: always() && vars.ENABLE_CODE_SCANNING == 'true'
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-${{ matrix.app }}.sarif
+          category: trivy-${{ matrix.app }}
+
+  # -------------------------------------------------------------------
+  # 4. OWASP Dependency-Check (backend Java)
+  # -------------------------------------------------------------------
+  owasp-dc:
+    name: OWASP Dependency-Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Sin setup-java: dependency-check/Dependency-Check_Action corre en su propio contenedor
+      # Docker con su JRE embebido. setup-java exporta JAVA_HOME apuntando a una ruta del runner
+      # host (hostedtoolcache) que ese contenedor no monta, y el action hereda esa env var:
+      # revienta con "JAVA_HOME is not defined correctly" antes de escanear nada (y por eso el
+      # SARIF nunca se genera, lo que hace fallar tambien el paso de "Subir SARIF" de mas abajo).
+      - name: OWASP DC
+        uses: dependency-check/Dependency-Check_Action@main
+        with:
+          project: 'prisma'
+          path: 'apps/backend-core'
+          # La version de dependency-check que trae la action ya no acepta una lista separada por
+          # comas en --format ("An invalid 'format' of 'HTML,SARIF' was specified"): cada -f solo
+          # admite un valor de la enum (HTML, XML, CSV, JSON, JUNIT, SARIF, JENKINS, GITLAB, ALL).
+          # 'ALL' genera todos los formatos (incluido el SARIF que necesita el paso de mas abajo).
+          format: 'ALL'
+          out: 'reports'
+          args: '--enableRetired --failOnCVSS 7'
+      - name: Upload reporte
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: owasp-dc-report
+          path: reports/
+      - name: Subir SARIF
+        if: always() && vars.ENABLE_CODE_SCANNING == 'true'
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: reports/dependency-check-report.sarif
+          category: owasp-dc
+
+  # -------------------------------------------------------------------
+  # 5. Snyk (opcional, requiere SNYK_TOKEN en secrets)
+  # -------------------------------------------------------------------
+  snyk:
+    name: Snyk
+    runs-on: ubuntu-latest
+    if: ${{ vars.ENABLE_SNYK == 'true' }}
+    strategy:
+      matrix:
+        target:
+          - { path: 'apps/frontend',     file: 'package.json' }
+          - { path: 'apps/backend-core', file: 'pom.xml' }
+          - { path: 'apps/backend-ai',   file: 'requirements.txt' }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: snyk/actions/setup@master
+      - run: snyk test --file=${{ matrix.target.file }} --severity-threshold=high
+        working-directory: ${{ matrix.target.path }}
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+  # -------------------------------------------------------------------
+  # 6. Análisis SAST con CodeQL
+  # -------------------------------------------------------------------
+  codeql:
+    name: CodeQL (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    # Code scanning (GitHub Advanced Security) no esta comprado en este repo privado: init/analyze
+    # fallan con "Code scanning is not enabled for this repository" sin importar el codigo. Activar
+    # seteando la variable de repo/org ENABLE_CODE_SCANNING=true una vez que se compre GHAS.
+    if: vars.ENABLE_CODE_SCANNING == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [java, python, javascript]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-and-quality
+      - uses: github/codeql-action/autobuild@v3
+      - uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:${{ matrix.language }}

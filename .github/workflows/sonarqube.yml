@@ -1,0 +1,81 @@
+# =====================================================================
+# SONARQUBE — Análisis de calidad + Quality Gate obligatorio
+# =====================================================================
+
+name: SonarQube
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  sonarqube-scan:
+    name: SonarQube Analysis
+    runs-on: ubuntu-latest
+    # Sin un servidor SonarQube/SonarCloud accesible desde internet configurado, este job no tiene
+    # a donde escanear (el SonarQube que corre en docker-compose local es solo eso: local). Activar
+    # cargando SONAR_HOST_URL (variable de repo) y SONAR_TOKEN (secret) apuntando a esa instancia.
+    if: vars.SONAR_HOST_URL != ''
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0     # SonarQube necesita el histórico completo para blame
+
+      # ---------- Preparar caches de resultados ----------
+      - name: Descargar cobertura frontend
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: coverage-frontend
+          path: apps/frontend/coverage/
+
+      - name: Descargar cobertura backend-core
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: coverage-backend-core
+          path: apps/backend-core/target/site/jacoco/
+
+      - name: Descargar cobertura backend-ai
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: coverage-backend-ai
+          path: apps/backend-ai/coverage.xml
+
+      # ---------- Ejecutar SonarQube Scanner ----------
+      - name: Cache SonarQube
+        uses: actions/cache@v4
+        with:
+          path: ~/.sonar/cache
+          key: ${{ runner.os }}-sonar
+
+      - name: SonarQube Scan
+        uses: SonarSource/sonarqube-scan-action@v3
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+        with:
+          args: >
+            -Dsonar.projectKey=prisma
+            -Dsonar.projectName=PRISMA
+            -Dsonar.sources=apps/frontend/src,apps/backend-core/src/main,apps/backend-ai/app
+            -Dsonar.tests=apps/frontend/tests,apps/backend-core/src/test,apps/backend-ai/tests
+            -Dsonar.javascript.lcov.reportPaths=apps/frontend/coverage/lcov.info
+            -Dsonar.java.binaries=apps/backend-core/target/classes
+            -Dsonar.coverage.jacoco.xmlReportPaths=apps/backend-core/target/site/jacoco/jacoco.xml
+            -Dsonar.python.coverage.reportPaths=apps/backend-ai/coverage.xml
+            -Dsonar.qualitygate.wait=true
+
+      # ---------- Comentar resultado en el PR ----------
+      - name: Publicar resultado en PR
+        if: github.event_name == 'pull_request'
+        uses: sonarsource/sonarqube-quality-gate-action@master
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
