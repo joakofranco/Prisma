@@ -1,0 +1,134 @@
+# =====================================================================
+# DEPLOY — Despliegue a los distintos entornos
+# ---------------------------------------------------------------------
+# Estrategia:
+#   - dev:     automático al mergear a `dev`
+#   - staging: manual (workflow_dispatch) o tag v*-rc*
+#   - prod:    manual con doble aprobación (GitHub Environments)
+# =====================================================================
+
+name: Deploy
+
+on:
+  push:
+    branches: [dev]
+    tags: ['v*.*.*', 'v*-rc*']
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Entorno destino'
+        required: true
+        type: choice
+        options: [dev, staging, prod]
+      image_tag:
+        description: 'Tag de la imagen a desplegar'
+        required: true
+        default: 'latest'
+
+permissions:
+  contents: read
+  packages: read
+  deployments: write
+  id-token: write
+
+jobs:
+
+  # -------------------------------------------------------------------
+  # Determinar entorno objetivo según el trigger
+  # -------------------------------------------------------------------
+  determine-target:
+    name: Determinar destino
+    runs-on: ubuntu-latest
+    outputs:
+      env: ${{ steps.env.outputs.env }}
+      tag: ${{ steps.env.outputs.tag }}
+    steps:
+      - id: env
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "env=${{ inputs.environment }}" >> "$GITHUB_OUTPUT"
+            echo "tag=${{ inputs.image_tag }}"   >> "$GITHUB_OUTPUT"
+          elif [[ "${{ github.ref }}" == refs/tags/v*-rc* ]]; then
+            echo "env=staging" >> "$GITHUB_OUTPUT"
+            echo "tag=${GITHUB_REF#refs/tags/}"  >> "$GITHUB_OUTPUT"
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            echo "env=prod"    >> "$GITHUB_OUTPUT"
+            echo "tag=${GITHUB_REF#refs/tags/}"  >> "$GITHUB_OUTPUT"
+          else
+            echo "env=dev"     >> "$GITHUB_OUTPUT"
+            echo "tag=dev"     >> "$GITHUB_OUTPUT"
+          fi
+
+  # -------------------------------------------------------------------
+  # Deploy — usa GitHub Environments para exigir aprobaciones
+  # -------------------------------------------------------------------
+  deploy:
+    name: Deploy → ${{ needs.determine-target.outputs.env }}
+    runs-on: ubuntu-latest
+    needs: determine-target
+    environment:
+      name: ${{ needs.determine-target.outputs.env }}
+      url:  ${{ vars.APP_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # -------- Opción A: Deploy a Kubernetes (staging / prod) --------
+      - name: Configurar kubectl
+        if: needs.determine-target.outputs.env != 'dev'
+        uses: azure/setup-kubectl@v4
+
+      - name: Autenticar contra el cluster
+        if: needs.determine-target.outputs.env != 'dev'
+        uses: azure/k8s-set-context@v4
+        with:
+          method: kubeconfig
+          kubeconfig: ${{ secrets.KUBE_CONFIG }}
+
+      - name: Aplicar manifiestos (Kustomize)
+        if: needs.determine-target.outputs.env != 'dev'
+        run: |
+          # Genera infra/kubernetes/base/keycloak-realm.json (Kustomize no puede leer
+          # infra/keycloak/realm-prisma.json directo, está fuera de su árbol -- ver
+          # infra/kubernetes/README.md). El Secret real ("prisma-secrets") NO se toca acá:
+          # se crea a mano una sola vez por namespace, antes del primer deploy.
+          make sync-k8s-assets
+          cd infra/kubernetes/overlays/${{ needs.determine-target.outputs.env }}
+          kustomize edit set image \
+            ghcr.io/${{ github.repository_owner }}/prisma-frontend=ghcr.io/${{ github.repository_owner }}/prisma-frontend:${{ needs.determine-target.outputs.tag }} \
+            ghcr.io/${{ github.repository_owner }}/prisma-backend-core=ghcr.io/${{ github.repository_owner }}/prisma-backend-core:${{ needs.determine-target.outputs.tag }} \
+            ghcr.io/${{ github.repository_owner }}/prisma-backend-ai=ghcr.io/${{ github.repository_owner }}/prisma-backend-ai:${{ needs.determine-target.outputs.tag }}
+          kubectl apply -k .
+          kubectl -n prisma-${{ needs.determine-target.outputs.env }} rollout status deployment/backend-core --timeout=5m
+          kubectl -n prisma-${{ needs.determine-target.outputs.env }} rollout status deployment/backend-ai   --timeout=5m
+          kubectl -n prisma-${{ needs.determine-target.outputs.env }} rollout status deployment/frontend     --timeout=5m
+
+      # -------- Opción B: Deploy a servidor DEV con Docker Compose --------
+      - name: Deploy a servidor DEV (SSH)
+        if: needs.determine-target.outputs.env == 'dev'
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEV_HOST }}
+          username: ${{ secrets.DEV_USER }}
+          key: ${{ secrets.DEV_SSH_KEY }}
+          script: |
+            cd /opt/prisma
+            git pull origin dev
+            docker compose pull
+            docker compose --profile full up -d --remove-orphans
+            docker system prune -f
+
+      # -------- Smoke tests post-deploy --------
+      - name: Smoke tests
+        run: |
+          echo "Esperando 30s a que arranque..."
+          sleep 30
+          curl -f "${{ vars.APP_URL }}/actuator/health" || exit 1
+          echo "✅ Deploy OK"
+
+      # -------- Notificación --------
+      - name: Notificar en el resumen
+        run: |
+          echo "## 🚀 Deploy exitoso" >> $GITHUB_STEP_SUMMARY
+          echo "- **Entorno:** ${{ needs.determine-target.outputs.env }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Tag:** ${{ needs.determine-target.outputs.tag }}"     >> $GITHUB_STEP_SUMMARY
+          echo "- **URL:** ${{ vars.APP_URL }}"                            >> $GITHUB_STEP_SUMMARY

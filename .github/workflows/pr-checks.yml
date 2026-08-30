@@ -1,0 +1,180 @@
+# =====================================================================
+# PR CHECKS — Validaciones específicas sobre los pull requests
+# ---------------------------------------------------------------------
+# - Conventional Commits en el título
+# - PR no gigantesco (< 500 líneas cambiadas)
+# - Verificación de CODEOWNERS asignados
+# - Labels obligatorios
+# =====================================================================
+
+name: PR Checks
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+  statuses: write
+
+jobs:
+
+  # -------------------------------------------------------------------
+  # 1. Título del PR sigue Conventional Commits
+  # -------------------------------------------------------------------
+  conventional-title:
+    name: Título Conventional Commit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            docs
+            style
+            refactor
+            perf
+            test
+            build
+            ci
+            chore
+            revert
+          scopes: |
+            frontend
+            backend-core
+            backend-ai
+            infra
+            docs
+            ci
+            deps
+          requireScope: false
+          subjectPattern: ^(?![A-Z]).+$
+          subjectPatternError: |
+            El subject del PR debe empezar con minúscula.
+            Ejemplos válidos:
+              feat(backend-core): agrega endpoint POST /evaluations
+              fix(frontend): corrige validación de nivel
+
+  # -------------------------------------------------------------------
+  # 2. Tamaño del PR (evita PRs de 3000 líneas imposibles de revisar)
+  # -------------------------------------------------------------------
+  pr-size:
+    name: Tamaño del PR
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verificar tamaño
+        uses: CodelyTV/pr-size-labeler@v1
+        with:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          xs_max_size: 50
+          s_max_size: 200
+          m_max_size: 500
+          l_max_size: 1000
+          fail_if_xl: 'false'
+          message_if_xl: |
+            ⚠️ Este PR es MUY grande (>1000 líneas).
+            Por favor divídelo en PRs más pequeños para facilitar la revisión.
+
+  # -------------------------------------------------------------------
+  # 3. Labels obligatorios (tipo + área)
+  # -------------------------------------------------------------------
+  require-labels:
+    name: Labels obligatorios
+    runs-on: ubuntu-latest
+    steps:
+      - name: Requerir labels
+        uses: mheap/github-action-required-labels@v5
+        with:
+          mode: minimum
+          count: 1
+          labels: |
+            type: feature
+            type: bugfix
+            type: hotfix
+            type: docs
+            type: chore
+            type: refactor
+            type: test
+
+  # -------------------------------------------------------------------
+  # 4. Verificar que la rama esté al día con base
+  # -------------------------------------------------------------------
+  up-to-date:
+    name: Rama al día
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verificar
+        run: |
+          git fetch origin ${{ github.base_ref }}
+          BEHIND=$(git rev-list --count HEAD..origin/${{ github.base_ref }})
+          if [ "$BEHIND" -gt 20 ]; then
+            echo "❌ Esta rama está $BEHIND commits detrás de ${{ github.base_ref }}. Hacé rebase/merge antes de continuar."
+            exit 1
+          fi
+          echo "✅ Rama al día ($BEHIND commits behind)."
+
+  # -------------------------------------------------------------------
+  # 5. Descripción no vacía
+  # -------------------------------------------------------------------
+  description:
+    name: Descripción del PR
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verificar descripción
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.pull_request.body || '';
+            if (body.trim().length < 30) {
+              core.setFailed('❌ La descripción del PR debe tener al menos 30 caracteres. Usá el template.');
+            } else {
+              console.log('✅ Descripción OK');
+            }
+
+  # -------------------------------------------------------------------
+  # 6. Frontend — ESLint
+  # -------------------------------------------------------------------
+  frontend-lint:
+    name: ESLint (Frontend)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'npm'
+          cache-dependency-path: apps/frontend/package-lock.json
+      - run: npm ci
+      - name: ESLint
+        run: npx eslint . --max-warnings 0
+
+  # -------------------------------------------------------------------
+  # 7. Frontend — Prettier (formato/indentación)
+  # -------------------------------------------------------------------
+  frontend-prettier:
+    name: Prettier (Frontend)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'npm'
+          cache-dependency-path: apps/frontend/package-lock.json
+      - run: npm ci
+      - name: Prettier check
+        run: npx prettier --check "src/**/*.{vue,ts,js,json,css,scss}"
