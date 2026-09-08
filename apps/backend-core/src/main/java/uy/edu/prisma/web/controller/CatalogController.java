@@ -8,6 +8,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import uy.edu.prisma.application.CatalogService;
+import uy.edu.prisma.web.dto.Dto.CatalogControlFlatDto;
 import uy.edu.prisma.web.dto.Dto.CatalogImportDto;
 import uy.edu.prisma.web.dto.Dto.CatalogVersionDto;
 
@@ -32,6 +33,14 @@ public class CatalogController {
   public ResponseEntity<Map<String, Object>> getByVersion(
       @PathVariable String version, @RequestParam(required = false) UUID profileId) {
     return ResponseEntity.ok(service.getByVersion(version, profileId));
+  }
+
+  // Lista PLANA de controles (sin el árbol función/categoría/subcategoría), agrupable por "dominio"
+  // -- la usa el selector de controles de los perfiles comunitarios. Ver
+  // CatalogService.listControlsFlat.
+  @GetMapping("/{version}/controls")
+  public ResponseEntity<List<CatalogControlFlatDto>> listControls(@PathVariable String version) {
+    return ResponseEntity.ok(service.listControlsFlat(version));
   }
 
   // Da de alta una versión nueva completa (JSON subido, CSV parseado o armado a mano en el

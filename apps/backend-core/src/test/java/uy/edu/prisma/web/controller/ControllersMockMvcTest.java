@@ -113,6 +113,22 @@ class ControllersMockMvcTest {
   }
 
   @Test
+  void catalogControlsFlat() throws Exception {
+    when(catalogService.listControlsFlat("5.0"))
+        .thenReturn(
+            List.of(
+                new CatalogControlFlatDto(
+                    UUID.randomUUID(), "AD.1-1", "Desc", 2, "AD.1", "Req AD.1", "AD")));
+
+    catalog
+        .perform(get("/api/catalog/5.0/controls"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$[0].code").value("AD.1-1"))
+        .andExpect(jsonPath("$[0].domain").value("AD"))
+        .andExpect(jsonPath("$[0].requirementCode").value("AD.1"));
+  }
+
+  @Test
   void catalogImport() throws Exception {
     when(catalogService.importCatalog(any())).thenReturn(new CatalogVersionDto("6.0", "MCU 6.0"));
 

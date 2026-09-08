@@ -101,7 +101,9 @@ public class Dto {
         Boolean enabled,
         OffsetDateTime createdAt,
         boolean canLogin) {
-      this(id, email, firstName, lastName, tenantId, null, roles, Set.of(), enabled, createdAt, canLogin);
+      this(
+          id, email, firstName, lastName, tenantId, null, roles, Set.of(), enabled, createdAt,
+          canLogin);
     }
 
     @Override
@@ -138,8 +140,7 @@ public class Dto {
   // cada llamada posterior. Este endpoint es lo que el frontend llama a mano justo después de
   // autenticarse (o justo antes de cerrar sesión) para que quede una entrada en la bitácora; ver
   // AccountService.recordSessionEvent.
-  public record SessionEventDto(
-      @NotBlank(message = "El evento es obligatorio") String event) {}
+  public record SessionEventDto(@NotBlank(message = "El evento es obligatorio") String event) {}
 
   public record CreateUserDto(
       @NotBlank(message = "El email es obligatorio") String email,
@@ -300,6 +301,20 @@ public class Dto {
     }
   }
 
+  // Vista plana de un control del catálogo (sin el árbol función/categoría/subcategoría): la usa el
+  // selector de controles de los perfiles comunitarios, que agrupa por "dominio" (el prefijo del
+  // código del requisito, p.ej. "AD" en "AD.2") en vez de por la jerarquía NIST. Un control es una
+  // única fila canónica (ver V15__requirement_subcategory_many_to_many.sql), así que acá aparece
+  // una sola vez aunque su requisito esté asociado a varias subcategorías.
+  public record CatalogControlFlatDto(
+      UUID id,
+      String code,
+      String description,
+      Integer targetLevel,
+      String requirementCode,
+      String requirementDescription,
+      String domain) {}
+
   // ---- Community Profiles ----
   // Subconjunto curado de controles del catálogo para un sector/comunidad (p.ej. "Gobierno",
   // "PYME"). El summary no trae los controlIds (para no pesar en el selector de "Nueva
@@ -328,7 +343,8 @@ public class Dto {
       @NotBlank(message = "El nombre es obligatorio") String name,
       String description,
       @NotBlank(message = "La versión del catálogo es obligatoria") String catalogVersion,
-      Set<UUID> controlIds) {
+      @Size(max = 5000, message = "Un perfil no puede tener más de 5000 controles")
+          Set<UUID> controlIds) {
     public CreateCommunityProfileDto {
       controlIds = controlIds == null ? Set.of() : Set.copyOf(controlIds);
     }
@@ -363,7 +379,8 @@ public class Dto {
       // organización". Vacío si ningún AUDITOR tiene la organización asignada todavía.
       List<String> assignedAuditorNames) {
     public EvaluationDto {
-      assignedAuditorNames = assignedAuditorNames == null ? List.of() : List.copyOf(assignedAuditorNames);
+      assignedAuditorNames =
+          assignedAuditorNames == null ? List.of() : List.copyOf(assignedAuditorNames);
     }
 
     // Compat: firma previa sin createdByName ni assignedAuditorNames (usada en tests existentes).
