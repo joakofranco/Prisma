@@ -19,7 +19,12 @@ DC := docker compose
         test test-frontend test-core test-ai lint format \
         seed migrate backup restore health pull-llm shell-core shell-ai \
         sonar security-scan sync-k8s-assets k8s-dev k8s-staging k8s-prod \
-        certs certs-force restart-nginx
+        certs certs-force restart-nginx \
+        mvp-up mvp-down mvp-logs mvp-ps mvp-seed \
+        mcu50-build mcu50-validate bugasura-build
+
+# Archivos de compose para el stack MVP (mínimo, sin LLM ni servicios extra)
+MVP := -f docker-compose.yml -f docker-compose.mvp.yml
 
 # ---------------------------------------------------------------------
 help: ## Mostrar esta ayuda
@@ -40,6 +45,35 @@ up-app: ## Levantar sólo la aplicación (rápido: front, back, DB, redis, ollam
 
 up-core: ## Sólo aplicación + IAM + almacenamiento
 	$(DC) --profile app --profile security up -d --build
+
+# ---------- STACK MÍNIMO (MVP) ----------
+mvp-up: ## MVP: sólo front, back, keycloak, postgres (+redis, nginx) — SIN LLM ni extras
+	@echo "$(CYAN)🚀 Levantando stack MVP (sin Ollama/LLM, sin observabilidad)...$(RESET)"
+	$(DC) $(MVP) --profile mvp up -d --build --remove-orphans
+
+mvp-down: ## MVP: detener el stack mínimo (preserva volúmenes)
+	$(DC) $(MVP) --profile mvp down --remove-orphans
+
+mvp-logs: ## MVP: seguir logs del stack mínimo
+	$(DC) $(MVP) --profile mvp logs -f --tail=100
+
+mvp-ps: ## MVP: listar contenedores del stack mínimo
+	$(DC) $(MVP) --profile mvp ps
+
+mvp-seed: ## MVP: precargar catálogo MCU 5.0 + datos demo (sin ingest de IA)
+	@echo "$(CYAN)🌱 Cargando catálogo MCU 5.0 y datos demo...$(RESET)"
+	$(DC) $(MVP) exec backend-core java -jar /app/app.jar --seed
+
+# ---------- MCU 5.0 alineado a las planillas Agesic 2025 ----------
+mcu50-build: ## Regenerar V19__mcu50_align_agesic_2025.sql + expected_basico.json desde docs/mcu-5.0/Planilla MCU 5.0 *.xlsx
+	python scripts/mcu50/build.py
+	cp scripts/mcu50/expected_basico.json apps/backend-core/src/test/resources/mcu50/expected_basico.json
+
+mcu50-validate: ## Cotejar el cálculo de madurez de PRISMA contra la planilla oficial de Agesic (seed 5.0)
+	cd apps/backend-core && mvn -q test -Dtest=MaturityValidationIT
+
+bugasura-build: ## Regenerar docs/mcu-5.0/bugasura-import.csv (backlog completo) desde docs/HistoriasDeUsuario.md
+	python scripts/bugasura/build_import.py
 
 down: ## Detener toda la stack (preserva volúmenes)
 	@echo "$(YELLOW)⏹  Deteniendo stack...$(RESET)"
