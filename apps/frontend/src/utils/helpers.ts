@@ -57,6 +57,11 @@ export function getPriorityColor(priority: string): string {
   return PRIORITY_CONFIG[priority]?.color || '#6b7280';
 }
 
+/** Formatea un número con N decimales fijos ("1.38"); "—" si no es finito (p. ej. media de 0 items). */
+export function formatDecimals(value: number, decimals = 2): string {
+  return Number.isFinite(value) ? value.toFixed(decimals) : '—';
+}
+
 export function formatFileSize(bytes: number): string {
   if (bytes === 0) return '0 Bytes';
   const k = 1024;
