@@ -58,8 +58,8 @@ gh auth login
 > desde `main`, se abre PR contra `main`.
 
 ```bash
-git clone https://github.com/luisaraujo-utec/proyecto_prisma.git
-cd proyecto_prisma
+git clone https://github.com/joakofranco/Prisma.git
+cd Prisma
 git checkout main
 git pull
 ```

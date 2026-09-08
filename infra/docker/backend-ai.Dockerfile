@@ -36,7 +36,7 @@ FROM python:3.13-slim AS runtime
 
 LABEL org.opencontainers.image.title="prisma-backend-ai"
 LABEL org.opencontainers.image.description="Servicio de IA/RAG de PRISMA (FastAPI + Ollama)"
-LABEL org.opencontainers.image.source="https://github.com/luisaraujo-utec/proyecto_prisma"
+LABEL org.opencontainers.image.source="https://github.com/joakofranco/Prisma"
 
 # Usuario NO-root
 RUN groupadd -r prisma && useradd -r -g prisma -d /app prisma
