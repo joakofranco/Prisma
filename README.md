@@ -3,7 +3,7 @@
 > Monorepo oficial del proyecto de grado — Licenciatura en Tecnologías de la Información (UTEC)
 > Basado en el **Marco de Ciberseguridad de AGESIC v5.0 (MCU 5.0)**.
 
-[![CI/CD](https://github.com/luisaraujo-utec/proyecto_prisma/actions/workflows/ci.yml/badge.svg)](https://github.com/luisaraujo-utec/proyecto_prisma/actions)
+[![CI/CD](https://github.com/joakofranco/Prisma/actions/workflows/ci.yml/badge.svg)](https://github.com/joakofranco/Prisma/actions)
 [![License](https://img.shields.io/badge/license-Academic-blue.svg)](LICENSE)
 
 > El análisis de código estático corre sobre una instancia propia de **SonarQube CE** (contenedor
@@ -208,7 +208,7 @@ Cada desarrollador debe tener instalado localmente:
 
 ```bash
 # 1) Clonar el repo
-git clone https://github.com/luisaraujo-utec/proyecto_prisma.git
+git clone https://github.com/joakofranco/Prisma.git
 cd proyecto_prisma
 
 # 2) Copiar variables de entorno y ajustar contraseñas/puertos locales

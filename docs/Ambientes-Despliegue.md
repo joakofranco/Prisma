@@ -55,8 +55,8 @@ y copiá el comando del target que necesites.
 
 ```bash
 # 1) Clonar el repo
-git clone https://github.com/luisaraujo-utec/proyecto_prisma.git
-cd proyecto_prisma
+git clone https://github.com/joakofranco/Prisma.git
+cd Prisma
 
 # 2) Copiar variables de entorno
 cp .env.example .env
@@ -130,7 +130,7 @@ cambiarla en el primer login — es esperado) y confirmá que el dashboard carga
 ```bash
 ssh <usuario>@<servidor-dev>
 sudo mkdir -p /opt/prisma && sudo chown $USER /opt/prisma
-git clone https://github.com/luisaraujo-utec/proyecto_prisma.git /opt/prisma
+git clone https://github.com/joakofranco/Prisma.git /opt/prisma
 cd /opt/prisma
 cp .env.example .env
 ```

@@ -32,7 +32,7 @@ FROM eclipse-temurin:25-jre-alpine AS runtime
 # Metadatos OCI
 LABEL org.opencontainers.image.title="prisma-backend-core"
 LABEL org.opencontainers.image.description="API principal de PRISMA (Spring Boot 3)"
-LABEL org.opencontainers.image.source="https://github.com/luisaraujo-utec/proyecto_prisma"
+LABEL org.opencontainers.image.source="https://github.com/joakofranco/Prisma"
 LABEL org.opencontainers.image.licenses="Academic"
 
 # Usuario NO-root por seguridad
