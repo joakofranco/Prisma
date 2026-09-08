@@ -11,6 +11,7 @@ import uy.edu.prisma.domain.exception.ResourceNotFoundException;
 import uy.edu.prisma.domain.repository.*;
 import uy.edu.prisma.web.dto.Dto.CatalogCategoryDto;
 import uy.edu.prisma.web.dto.Dto.CatalogControlDto;
+import uy.edu.prisma.web.dto.Dto.CatalogControlFlatDto;
 import uy.edu.prisma.web.dto.Dto.CatalogFunctionDto;
 import uy.edu.prisma.web.dto.Dto.CatalogImportDto;
 import uy.edu.prisma.web.dto.Dto.CatalogRequirementDto;
@@ -21,8 +22,11 @@ import uy.edu.prisma.web.dto.Dto.CatalogVersionDto;
 @Transactional
 public class CatalogService {
 
+  private static final String CATALOG_VERSION_RESOURCE = "Versión de catálogo";
+
   private final CatalogVersionRepository versionRepo;
   private final CatalogFunctionRepository functionRepo;
+  private final CatalogControlRepository controlRepo;
   private final CommunityProfileRepository profileRepo;
   private final EvaluationRepository evalRepo;
   private final AuditLogService auditLog;
@@ -30,11 +34,13 @@ public class CatalogService {
   public CatalogService(
       CatalogVersionRepository versionRepo,
       CatalogFunctionRepository functionRepo,
+      CatalogControlRepository controlRepo,
       CommunityProfileRepository profileRepo,
       EvaluationRepository evalRepo,
       AuditLogService auditLog) {
     this.versionRepo = versionRepo;
     this.functionRepo = functionRepo;
+    this.controlRepo = controlRepo;
     this.profileRepo = profileRepo;
     this.evalRepo = evalRepo;
     this.auditLog = auditLog;
@@ -45,6 +51,74 @@ public class CatalogService {
     return versionRepo.findAll().stream()
         .map(v -> new CatalogVersionDto(v.getVersion(), v.getLabel()))
         .toList();
+  }
+
+  /**
+   * Lista PLANA de todos los controles de una versión (sin el árbol función/categoría/
+   * subcategoría), agrupables por "dominio" = el prefijo del código del requisito (p.ej. "AD" en
+   * "AD.2-1"). La usa el selector de controles de los perfiles comunitarios. Cada control aparece
+   * una sola vez (fila canónica, ver V15) aunque su requisito esté en varias subcategorías.
+   *
+   * <p>Orden: por dominio, luego por número de requisito, luego por número de control --
+   * comparación numérica, no lexicográfica ("AD.2-10" va después de "AD.2-9"), ver {@link
+   * #codeSortKey}.
+   */
+  @Transactional(readOnly = true)
+  public List<CatalogControlFlatDto> listControlsFlat(String version) {
+    versionRepo
+        .findByVersion(version)
+        .orElseThrow(() -> new ResourceNotFoundException(CATALOG_VERSION_RESOURCE, version));
+    return controlRepo.findByVersionOrdered(version).stream()
+        .map(
+            c -> {
+              String reqCode = c.getRequirement().getCode();
+              return new CatalogControlFlatDto(
+                  c.getId(),
+                  c.getCode(),
+                  c.getDescription(),
+                  c.getTargetLevel(),
+                  reqCode,
+                  c.getRequirement().getDescription(),
+                  domainOf(reqCode));
+            })
+        .sorted(
+            Comparator.comparing(CatalogControlFlatDto::domain)
+                .thenComparing(dto -> codeSortKey(dto.code())))
+        .toList();
+  }
+
+  /** Prefijo alfabético del código de requisito: "AD.2" -> "AD", "GV.RM-05" -> "GV". */
+  private static String domainOf(String requirementCode) {
+    if (requirementCode == null || requirementCode.isBlank()) {
+      return "";
+    }
+    int i = 0;
+    while (i < requirementCode.length() && Character.isLetter(requirementCode.charAt(i))) {
+      i++;
+    }
+    return i == 0 ? requirementCode : requirementCode.substring(0, i);
+  }
+
+  /**
+   * Clave de orden natural para un código tipo "AD.2-10": el prefijo de letras seguido de cada
+   * grupo de dígitos como entero con padding a 6 cifras, para que la comparación de Strings
+   * resultante respete el orden numérico ("AD|000002|000009" &lt; "AD|000002|000010").
+   */
+  private static String codeSortKey(String code) {
+    if (code == null) {
+      return "";
+    }
+    StringBuilder key = new StringBuilder();
+    java.util.regex.Matcher m = java.util.regex.Pattern.compile("\\d+|\\D+").matcher(code);
+    while (m.find()) {
+      String part = m.group();
+      if (Character.isDigit(part.charAt(0))) {
+        key.append('|').append(String.format("%06d", Long.parseLong(part)));
+      } else {
+        key.append(part);
+      }
+    }
+    return key.toString();
   }
 
   /**
@@ -111,53 +185,8 @@ public class CatalogService {
 
           int rIdx = 0;
           for (CatalogRequirementDto rDto : sDto.requirements()) {
-            CatalogRequirement requirement = requirementsByCode.get(rDto.code());
-            if (requirement == null) {
-              requirement =
-                  CatalogRequirement.builder()
-                      .version(catalogVersion)
-                      .code(rDto.code())
-                      .description(rDto.description())
-                      .sortOrder(rIdx)
-                      .build();
-              requirementsByCode.put(rDto.code(), requirement);
-
-              int ctIdx = 0;
-              for (CatalogControlDto ctDto : rDto.controls()) {
-                CatalogControl control =
-                    CatalogControl.builder()
-                        .requirement(requirement)
-                        .code(ctDto.code())
-                        .description(ctDto.description())
-                        .targetLevel(ctDto.targetLevel())
-                        .sortOrder(ctIdx++)
-                        .build();
-                requirement.getControls().add(control);
-              }
-            } else {
-              // Requisito ya creado bajo otra Subcategoria: no se duplica, solo se completan
-              // controles nuevos (por codigo) que esta fila traiga y el Requisito no tuviera --
-              // los que ya existen se ignoran para no duplicarlos.
-              Set<String> existingCodes =
-                  requirement.getControls().stream()
-                      .map(CatalogControl::getCode)
-                      .collect(Collectors.toSet());
-              int ctIdx = requirement.getControls().size();
-              for (CatalogControlDto ctDto : rDto.controls()) {
-                if (existingCodes.contains(ctDto.code())) {
-                  continue;
-                }
-                CatalogControl control =
-                    CatalogControl.builder()
-                        .requirement(requirement)
-                        .code(ctDto.code())
-                        .description(ctDto.description())
-                        .targetLevel(ctDto.targetLevel())
-                        .sortOrder(ctIdx++)
-                        .build();
-                requirement.getControls().add(control);
-              }
-            }
+            CatalogRequirement requirement =
+                upsertRequirement(rDto, subcategory, catalogVersion, requirementsByCode, rIdx);
 
             CatalogRequirementSubcategory link =
                 CatalogRequirementSubcategory.builder()
@@ -183,6 +212,52 @@ public class CatalogService {
   }
 
   /**
+   * Resuelve el {@link CatalogRequirement} de {@code rDto} (lo crea la primera vez, lo reusa las
+   * siguientes -- un Requisito puede aparecer bajo varias Subcategorías), crea los controles que
+   * falten, y enlaza cada control listado en {@code rDto} a {@code subcategory} (mapeo curado
+   * control↔subcategoría, ver V18).
+   */
+  private CatalogRequirement upsertRequirement(
+      CatalogRequirementDto rDto,
+      CatalogSubcategory subcategory,
+      CatalogVersion version,
+      Map<String, CatalogRequirement> byCode,
+      int sortOrder) {
+    CatalogRequirement requirement = byCode.get(rDto.code());
+    if (requirement == null) {
+      requirement =
+          CatalogRequirement.builder()
+              .version(version)
+              .code(rDto.code())
+              .description(rDto.description())
+              .sortOrder(sortOrder)
+              .build();
+      byCode.put(rDto.code(), requirement);
+    }
+    Map<String, CatalogControl> controlsByCode =
+        requirement.getControls().stream()
+            .collect(Collectors.toMap(CatalogControl::getCode, c -> c));
+    int ctIdx = requirement.getControls().size();
+    for (CatalogControlDto ctDto : rDto.controls()) {
+      CatalogControl control = controlsByCode.get(ctDto.code());
+      if (control == null) {
+        control =
+            CatalogControl.builder()
+                .requirement(requirement)
+                .code(ctDto.code())
+                .description(ctDto.description())
+                .targetLevel(ctDto.targetLevel())
+                .sortOrder(ctIdx++)
+                .build();
+        requirement.getControls().add(control);
+        controlsByCode.put(ctDto.code(), control);
+      }
+      control.getSubcategories().add(subcategory);
+    }
+    return requirement;
+  }
+
+  /**
    * Borra una versión de catálogo completa (cascade=ALL se encarga de funciones/categorías/
    * subcategorías/requisitos/controles). Rechazada si alguna evaluación ya la referencia -- ver el
    * comentario en EvaluationRepository.existsByCatalogVersion: no hay FK que lo impida solo, así
@@ -192,7 +267,7 @@ public class CatalogService {
     CatalogVersion cv =
         versionRepo
             .findByVersion(version)
-            .orElseThrow(() -> new ResourceNotFoundException("Versión de catálogo", version));
+            .orElseThrow(() -> new ResourceNotFoundException(CATALOG_VERSION_RESOURCE, version));
     if (evalRepo.existsByCatalogVersion(version)) {
       throw new InvalidRequestException(
           "No se puede eliminar: hay evaluaciones creadas sobre la versión \"" + version + "\"");
@@ -217,7 +292,7 @@ public class CatalogService {
     CatalogVersion cv =
         versionRepo
             .findByVersion(version)
-            .orElseThrow(() -> new ResourceNotFoundException("Versión de catálogo", version));
+            .orElseThrow(() -> new ResourceNotFoundException(CATALOG_VERSION_RESOURCE, version));
 
     Set<UUID> allowedControlIds = null;
     if (profileId != null) {

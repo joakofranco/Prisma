@@ -27,6 +27,7 @@ class CatalogServiceTest {
 
   @Mock private CatalogVersionRepository versionRepo;
   @Mock private CatalogFunctionRepository functionRepo;
+  @Mock private CatalogControlRepository controlRepo;
   @Mock private CommunityProfileRepository profileRepo;
   @Mock private EvaluationRepository evalRepo;
   @Mock private AuditLogService auditLog;
@@ -38,7 +39,8 @@ class CatalogServiceTest {
 
   @BeforeEach
   void setUp() {
-    service = new CatalogService(versionRepo, functionRepo, profileRepo, evalRepo, auditLog);
+    service =
+        new CatalogService(versionRepo, functionRepo, controlRepo, profileRepo, evalRepo, auditLog);
 
     version =
         CatalogVersion.builder().id(UUID.randomUUID()).version("5.0").label("MCU 5.0").build();
@@ -194,6 +196,55 @@ class CatalogServiceTest {
     assertThrows(RuntimeException.class, () -> service.getByVersion("5.0", profileId));
   }
 
+  // ---- listControlsFlat ----
+
+  private CatalogControl flatControl(String controlCode, String requirementCode) {
+    CatalogRequirement req =
+        CatalogRequirement.builder()
+            .id(UUID.randomUUID())
+            .code(requirementCode)
+            .description("Req " + requirementCode)
+            .version(version)
+            .build();
+    return CatalogControl.builder()
+        .id(UUID.randomUUID())
+        .code(controlCode)
+        .description("Ctrl " + controlCode)
+        .targetLevel(2)
+        .requirement(req)
+        .build();
+  }
+
+  @Test
+  void listControlsFlatOrdersByDomainThenNaturalCodeAndDerivesDomain() {
+    when(versionRepo.findByVersion("5.0")).thenReturn(Optional.of(version));
+    // Orden de llegada del repo deliberadamente desordenado.
+    when(controlRepo.findByVersionOrdered("5.0"))
+        .thenReturn(
+            List.of(
+                flatControl("CA.1-1", "CA.1"),
+                flatControl("AD.2-10", "AD.2"),
+                flatControl("AD.2-2", "AD.2"),
+                flatControl("AD.1-1", "AD.1")));
+
+    List<CatalogControlFlatDto> result = service.listControlsFlat("5.0");
+
+    assertEquals(
+        List.of("AD.1-1", "AD.2-2", "AD.2-10", "CA.1-1"),
+        result.stream().map(CatalogControlFlatDto::code).toList());
+    assertEquals("AD", result.get(0).domain());
+    assertEquals("AD.1", result.get(0).requirementCode());
+    assertEquals("CA", result.get(3).domain());
+    assertEquals(2, result.get(0).targetLevel());
+  }
+
+  @Test
+  void listControlsFlatThrowsWhenVersionMissing() {
+    when(versionRepo.findByVersion("9.9")).thenReturn(Optional.empty());
+
+    assertThrows(RuntimeException.class, () -> service.listControlsFlat("9.9"));
+  }
+
   // ---- importCatalog / deleteVersion ----
 
   private CatalogImportDto buildImportDto(String versionCode) {
@@ -254,11 +305,14 @@ class CatalogServiceTest {
     CatalogRequirementDto requirement2 =
         new CatalogRequirementDto(null, "R1", "Desc requisito", List.of(control1, control2));
     CatalogSubcategoryDto subcategory1 =
-        new CatalogSubcategoryDto(null, "SC1", "Subcategoria 1", "Desc sub 1", List.of(requirement1));
+        new CatalogSubcategoryDto(
+            null, "SC1", "Subcategoria 1", "Desc sub 1", List.of(requirement1));
     CatalogSubcategoryDto subcategory2 =
-        new CatalogSubcategoryDto(null, "SC2", "Subcategoria 2", "Desc sub 2", List.of(requirement2));
+        new CatalogSubcategoryDto(
+            null, "SC2", "Subcategoria 2", "Desc sub 2", List.of(requirement2));
     CatalogCategoryDto category =
-        new CatalogCategoryDto(null, "C1", "Categoria", "Desc cat", List.of(subcategory1, subcategory2));
+        new CatalogCategoryDto(
+            null, "C1", "Categoria", "Desc cat", List.of(subcategory1, subcategory2));
     CatalogFunctionDto function =
         new CatalogFunctionDto(null, "F1", "Funcion", "Desc func", List.of(category));
     CatalogImportDto dto = new CatalogImportDto("6.0", "Catálogo de prueba", List.of(function));
@@ -276,8 +330,11 @@ class CatalogServiceTest {
     assertEquals(2, req1.getControls().size(), "CT2 se agrega, CT1 no se duplica");
     assertEquals(
         Set.of("CT1", "CT2"),
-        req1.getControls().stream().map(CatalogControl::getCode).collect(java.util.stream.Collectors.toSet()));
-    assertEquals(2, req1.getSubcategories().size(), "el requisito queda enlazado a ambas subcategorias");
+        req1.getControls().stream()
+            .map(CatalogControl::getCode)
+            .collect(java.util.stream.Collectors.toSet()));
+    assertEquals(
+        2, req1.getSubcategories().size(), "el requisito queda enlazado a ambas subcategorias");
   }
 
   @Test
