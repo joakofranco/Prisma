@@ -18,6 +18,13 @@ export function initKeycloak(): Promise<boolean> {
         silentCheckSsoRedirectUri: `${window.location.origin}/silent-check-sso.html`,
       })
       .then((authenticated) => {
+        // Sin esto, keycloak-js no refresca el token por su cuenta: una pantalla larga (armar un
+        // perfil comunitario, responder una evaluación) no dispara requests, el access token vence
+        // y recién se descubre al guardar, con un 401. onTokenExpired + el timer de abajo
+        // (startTokenRefresh) lo renuevan en segundo plano.
+        keycloak!.onTokenExpired = () => {
+          void keycloak!.updateToken(30).catch(() => undefined);
+        };
         resolve(authenticated);
       })
       .catch((err) => {
@@ -25,6 +32,23 @@ export function initKeycloak(): Promise<boolean> {
         reject(err);
       });
   });
+}
+
+let refreshTimer: ReturnType<typeof setInterval> | null = null;
+
+/** Refresca el token en segundo plano cada 60s (si le quedan &lt;70s de vida). Idempotente. */
+export function startTokenRefresh(): void {
+  if (refreshTimer) return;
+  refreshTimer = setInterval(() => {
+    void updateToken(70);
+  }, 60_000);
+}
+
+export function stopTokenRefresh(): void {
+  if (refreshTimer) {
+    clearInterval(refreshTimer);
+    refreshTimer = null;
+  }
 }
 
 export function getKeycloak(): Keycloak {

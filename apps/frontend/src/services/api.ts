@@ -21,17 +21,23 @@ apiClient.interceptors.response.use(
   (response) => response,
   async (error: AxiosError) => {
     const authStore = useAuthStore();
-    if (error.response?.status === 401 && authStore.isAuthenticated) {
-      try {
-        await authStore.refreshToken();
-        const originalRequest = error.config;
-        if (originalRequest) {
-          originalRequest.headers.Authorization = `Bearer ${authStore.accessToken}`;
-          return apiClient(originalRequest);
-        }
-      } catch {
-        authStore.logout();
+    const originalRequest = error.config as
+      (typeof error.config & { _retried?: boolean }) | undefined;
+    if (
+      error.response?.status === 401 &&
+      authStore.isAuthenticated &&
+      originalRequest &&
+      !originalRequest._retried
+    ) {
+      // refreshToken() nunca lanza: devuelve false si el refresh token también venció.
+      const refreshed = await authStore.refreshToken();
+      if (!refreshed) {
+        await authStore.logout();
+        return Promise.reject(error);
       }
+      originalRequest._retried = true;
+      originalRequest.headers.Authorization = `Bearer ${authStore.accessToken}`;
+      return apiClient(originalRequest);
     }
     return Promise.reject(error);
   },

@@ -7,6 +7,8 @@ import {
   logoutKeycloak,
   getKeycloak,
   updateToken,
+  startTokenRefresh,
+  stopTokenRefresh,
 } from '@/services/auth';
 import { accountService } from '@/services/resources';
 import { identifyLogRocketUser } from '@/plugins/logrocket';
@@ -50,6 +52,7 @@ export const useAuthStore = defineStore('auth', () => {
       if (authenticated) {
         await loadUser();
         await recordLoginOnce();
+        startTokenRefresh();
       }
     } catch (err) {
       console.error('Auth init error:', err);
@@ -84,6 +87,7 @@ export const useAuthStore = defineStore('auth', () => {
       console.error('Error recording logout event:', err);
     }
     sessionStorage.removeItem(SESSION_LOGGED_KEY);
+    stopTokenRefresh();
     user.value = null;
     isAuthenticated.value = false;
     await logoutKeycloak();
