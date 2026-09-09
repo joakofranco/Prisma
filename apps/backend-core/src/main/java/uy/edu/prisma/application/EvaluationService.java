@@ -28,6 +28,7 @@ public class EvaluationService {
   private final OrganizationRepository orgRepo;
   private final CatalogControlRepository controlRepo;
   private final CatalogFunctionRepository functionRepo;
+  private final CatalogSubcategoryRepository subcategoryRepo;
   private final CatalogVersionRepository versionRepo;
   private final CommunityProfileRepository profileRepo;
   private final UserRepository userRepo;
@@ -41,6 +42,7 @@ public class EvaluationService {
       OrganizationRepository orgRepo,
       CatalogControlRepository controlRepo,
       CatalogFunctionRepository functionRepo,
+      CatalogSubcategoryRepository subcategoryRepo,
       CatalogVersionRepository versionRepo,
       CommunityProfileRepository profileRepo,
       UserRepository userRepo,
@@ -52,6 +54,7 @@ public class EvaluationService {
     this.orgRepo = orgRepo;
     this.controlRepo = controlRepo;
     this.functionRepo = functionRepo;
+    this.subcategoryRepo = subcategoryRepo;
     this.versionRepo = versionRepo;
     this.profileRepo = profileRepo;
     this.userRepo = userRepo;
@@ -101,7 +104,9 @@ public class EvaluationService {
     // Auditores asignados por organización, resueltos en UNA sola consulta para toda la página en
     // vez de una por fila (evita N+1): toDto() sólo hace un lookup en el mapa ya armado.
     Set<UUID> orgIds =
-        result.getContent().stream().map(e -> e.getOrganization().getId()).collect(Collectors.toSet());
+        result.getContent().stream()
+            .map(e -> e.getOrganization().getId())
+            .collect(Collectors.toSet());
     Map<UUID, List<String>> auditorsByOrg = auditorNamesByOrganization(orgIds);
 
     return new PaginatedDto<>(
@@ -223,7 +228,9 @@ public class EvaluationService {
     assertRoleCanTransitionTo(target);
     eval.setStatus(target);
     EvaluationDto result =
-        toDto(evalRepo.save(eval), auditorNamesByOrganization(Set.of(eval.getOrganization().getId())));
+        toDto(
+            evalRepo.save(eval),
+            auditorNamesByOrganization(Set.of(eval.getOrganization().getId())));
     auditLog.record("UPDATE_STATUS", "evaluation:" + id, "{\"status\":\"" + status + "\"}");
     return result;
   }
@@ -358,39 +365,35 @@ public class EvaluationService {
     // Delete old results
     matRepo.deleteAllInBatch(matRepo.findByEvaluationId(evaluationId));
 
-    // Controles de la version del catalogo, acotados al perfil comunitario si la evaluacion
-    // tiene uno asignado -- si no, se calcula sobre el catalogo completo (comportamiento previo).
+    // La madurez de una subcategoria se mide sobre TODOS los controles del marco ubicados en
+    // ella, NO solo sobre los del perfil comunitario -- igual que la planilla oficial de Agesic
+    // (formula de la columna "Nivel de Madurez" en la hoja "Madurez Subcategoria"). Un control
+    // que el perfil no exige, si no tiene respuesta "cumple", frena el nivel: por eso NO se
+    // filtra por perfil aca. El perfil sigue acotando que controles se pueden responder
+    // (ver saveResponse); un control sin respuesta cuenta como no cumplido en el gate de abajo.
     List<CatalogControl> controls = controlRepo.findByVersionOrdered(eval.getCatalogVersion());
-    if (eval.getCommunityProfile() != null) {
-      Set<UUID> profileControlIds =
-          eval.getCommunityProfile().getControls().stream()
-              .map(CatalogControl::getId)
-              .collect(Collectors.toSet());
-      controls = controls.stream().filter(c -> profileControlIds.contains(c.getId())).toList();
-    }
 
     // Get responses
     List<EvaluationResponse> responses = respRepo.findByEvaluationId(evaluationId);
     Map<UUID, EvaluationResponse> responseMap =
         responses.stream().collect(Collectors.toMap(r -> r.getControl().getId(), r -> r));
 
-    // Group by subcategory and calculate. Un Requisito puede pertenecer a varias Subcategorias
-    // (ver CatalogRequirementSubcategory), asi que un mismo Control puede terminar en mas de un
-    // balde -- se sigue "pooleando" (mismo criterio de corte acumulativo) en CADA Subcategoria a
-    // la que aporte, sin promediar por Requisito por separado.
+    // Se agrupan TODOS los controles de la version por Subcategoria segun el mapeo CURADO
+    // control<->subcategoria (CatalogControl.effectiveSubcategories(), ver V18): cada control
+    // cuenta solo para las subcategorias en las que Agesic lo ubico. Para catalogos que no traen
+    // ese mapeo (5.0 / 5.1) effectiveSubcategories() cae al mapeo Requisito->Subcategoria.
+    // Se emite una fila por cada subcategoria con >=1 control mapeado (para MCU 5.x = 103); las
+    // que el perfil no cubre quedan en currentLevel 0, igual que la hoja "Madurez Subcategoria".
     Map<UUID, CatalogSubcategory> subcategoriesById = new LinkedHashMap<>();
     Map<UUID, List<CatalogControl>> bySubcategory = new LinkedHashMap<>();
     for (CatalogControl control : controls) {
-      for (CatalogSubcategory sub : control.getRequirement().getSubcategories()) {
+      for (CatalogSubcategory sub : control.effectiveSubcategories()) {
         subcategoriesById.putIfAbsent(sub.getId(), sub);
         bySubcategory.computeIfAbsent(sub.getId(), k -> new ArrayList<>()).add(control);
       }
     }
 
     List<MaturityResult> results = new ArrayList<>();
-    // Subcategorias con al menos una respuesta cargada -- para el promedio global (mas abajo),
-    // ver el comentario ahi de por que no se promedia sobre TODAS las subcategorias del catalogo.
-    Set<UUID> touchedSubcategoryIds = new HashSet<>();
     for (Map.Entry<UUID, List<CatalogControl>> entry : bySubcategory.entrySet()) {
       var sub = subcategoriesById.get(entry.getKey());
       var cat = sub.getCategory();
@@ -401,11 +404,12 @@ public class EvaluationService {
       int targetLevel =
           entry.getValue().stream().mapToInt(CatalogControl::getTargetLevel).max().orElse(1);
 
-      // Modelo acumulativo: la subcategoria alcanza el nivel N solo si TODOS sus controles de
-      // nivel <= N (entre todos los Requisitos que agrupa) estan marcados como cumplidos -- no
-      // alcanza con que UN control este cumplido, como pasaba con el maximo autoevaluado del
-      // catalogo de prueba anterior. Iteramos solo sobre los niveles que REALMENTE tienen algun
-      // control en esta subcategoria (no 1..targetLevel a ciegas): si no hubiera controles de,
+      // Modelo acumulativo: la subcategoria alcanza el nivel N solo si TODOS sus controles del
+      // marco de nivel <= N estan marcados como cumplidos. Un control sin respuesta (los que el
+      // perfil no exige, o los que aun no se respondieron) cuenta como NO cumplido y frena el
+      // nivel -- misma semantica que la formula de la planilla. Iteramos solo sobre los niveles
+      // que REALMENTE tienen algun control en esta subcategoria (no 1..targetLevel a ciegas):
+      // si no hubiera controles de,
       // por ejemplo, nivel 1 o 2, filtrar "targetLevel <= N" da un stream vacío y allMatch()
       // sobre un stream vacío es true por vacuidad -- eso "regalaba" niveles sin haber
       // verificado nada real.
@@ -446,30 +450,25 @@ public class EvaluationService {
               .targetLevel(targetLevel)
               .gap(Math.max(0, targetLevel - currentLevel))
               .build());
-      if (entry.getValue().stream().anyMatch(c -> responseMap.containsKey(c.getId()))) {
-        touchedSubcategoryIds.add(sub.getId());
-      }
     }
 
     matRepo.saveAll(results);
 
-    // Update global maturity: promedio solo sobre las subcategorias con alguna respuesta
-    // cargada, no sobre TODAS las del catalogo/perfil. El catalogo real MCU 5.0 tiene 103
-    // subcategorias -- promediar currentLevel=0 de las que todavia no se empezaron a evaluar
-    // diluye el promedio a ~0 (globalMaturity queda en null) incluso con evaluaciones que ya
-    // completaron varias subcategorias enteras, dando una lectura de "sin progreso" enganosa.
-    List<MaturityResult> touchedResults =
-        results.stream().filter(r -> touchedSubcategoryIds.contains(r.getSubcategoryId())).toList();
-    // Nivel 0 es un resultado real (se evaluó todo lo tocado y no alcanzó ni el primer nivel),
-    // distinto de "todavía no se calculó nada" -- solo lo segundo debe guardarse como null. Antes
-    // ambos casos daban null porque un promedio que redondeaba a 0 se pisaba con null, así que un
-    // resultado 0 legítimo se mostraba igual que uno nunca calculado ("—" en el frontend).
+    // Madurez global: promedio del currentLevel sobre TODAS las subcategorias de la version del
+    // catalogo (para MCU 5.x = 103), tratando como 0 las que el perfil no cubre -- igual que la
+    // planilla oficial de Agesic (hoja "Resumen general"). Antes se promediaba solo sobre las
+    // subcategorias con respuesta, lo que inflaba el numero frente a la planilla.
+    // Sigue siendo null solo si NO se cargo ninguna respuesta todavia (evaluacion sin empezar);
+    // nivel 0 con respuestas es un resultado real, no "sin calcular".
+    long totalSubcategories = subcategoryRepo.countByCatalogVersion(eval.getCatalogVersion());
+    boolean hasAnyResponse = !responses.isEmpty();
     Integer globalMaturity =
-        touchedResults.isEmpty()
+        (!hasAnyResponse || totalSubcategories == 0)
             ? null
             : (int)
                 Math.round(
-                    touchedResults.stream().mapToInt(MaturityResult::getCurrentLevel).average().orElse(0));
+                    results.stream().mapToInt(MaturityResult::getCurrentLevel).sum()
+                        / (double) totalSubcategories);
     eval.setGlobalMaturity(globalMaturity);
     evalRepo.save(eval);
   }

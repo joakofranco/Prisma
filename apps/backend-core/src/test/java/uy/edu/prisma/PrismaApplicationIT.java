@@ -167,14 +167,14 @@ class PrismaApplicationIT {
             .targetLevel());
   }
 
-  // Catalogo real MCU 5.0 (Agesic, V9/V10): 6 funciones, 103 subcategorias con al menos un
-  // Requisito asociado, 670 controles (checklist graduado por nivel 1-4, ver
-  // EvaluationService.calculateMaturity para el calculo acumulativo). Bajó de 1012 a 670 con la
-  // migracion V15 (requisito <-> subcategoria pasa de 1:N a N:M): el catalogo real traia 47
-  // codigos de Requisito duplicados (hasta 9 copias del mismo, una por Subcategoria a la que
-  // aportaba, cada copia con sus propios Controles) -- V15 los consolida en una sola fila de
-  // Requisito/Control referenciada N:M en vez de duplicada.
-  private static final int TOTAL_CONTROLS = 670;
+  // Catalogo real MCU 5.0 (Agesic, V9/V10/V15/V18/V19): 6 funciones, 103 subcategorias con al
+  // menos un Requisito asociado, 671 controles (checklist graduado por nivel 1-4, ver
+  // EvaluationService.calculateMaturity para el calculo acumulativo). Bajó de 1012 a 670 con V15
+  // (requisito <-> subcategoria pasa de 1:N a N:M) y subió a 671 con V19 (control nuevo OR.5-10 de
+  // la planilla Agesic 2025). V19 tambien puebla catalog_control_subcategories con el mapeo curado
+  // (1013 pares), asi que effectiveSubcategories() usa ese mapeo (no el fallback
+  // requisito->subcat).
+  private static final int TOTAL_CONTROLS = 671;
   private static final int TOTAL_SUBCATEGORIES = 103;
 
   @Test
@@ -223,10 +223,15 @@ class PrismaApplicationIT {
 
     List<CatalogControl> controls = controlRepo.findByVersionOrdered("5.0");
     CatalogControl first = controls.get(0);
-    UUID subcategoryId = first.getRequirement().getSubcategories().get(0).getId();
+    // calculateMaturity agrupa por effectiveSubcategories() (mapeo curado de V19), no por
+    // requirement.getSubcategories(): elegimos la subcategoria y sus controles con ese criterio.
+    UUID subcategoryId = first.effectiveSubcategories().iterator().next().getId();
     List<CatalogControl> subcatControls =
         controls.stream()
-            .filter(c -> c.getRequirement().getSubcategories().get(0).getId().equals(subcategoryId))
+            .filter(
+                c ->
+                    c.effectiveSubcategories().stream()
+                        .anyMatch(s -> s.getId().equals(subcategoryId)))
             .toList();
 
     EvaluationResponseDto response =
@@ -253,8 +258,11 @@ class PrismaApplicationIT {
     assertEquals(0, ours.gap());
 
     EvaluationDto after = evaluationService.getById(created.id());
+    // globalMaturity se promedia sobre TODAS las subcategorias de la version (103), con 0 en las
+    // no evaluadas -- igual que la planilla de Agesic. Con una sola subcategoria completada de 103
+    // el promedio redondea a 0; lo relevante es que NO sea null (hay respuestas cargadas).
     assertNotNull(after.globalMaturity());
-    assertTrue(after.globalMaturity() >= 1 && after.globalMaturity() <= 4);
+    assertTrue(after.globalMaturity() >= 0 && after.globalMaturity() <= 4);
 
     DashboardStatsDto stats = dashboardService.getStats();
     assertTrue(stats.totalEvaluations() >= 1);
@@ -271,10 +279,15 @@ class PrismaApplicationIT {
 
     List<CatalogControl> controls = controlRepo.findByVersionOrdered("5.0");
     CatalogControl first = controls.get(0);
-    UUID subcategoryId = first.getRequirement().getSubcategories().get(0).getId();
+    // calculateMaturity agrupa por effectiveSubcategories() (mapeo curado de V19), no por
+    // requirement.getSubcategories(): elegimos la subcategoria y sus controles con ese criterio.
+    UUID subcategoryId = first.effectiveSubcategories().iterator().next().getId();
     List<CatalogControl> subcatControls =
         controls.stream()
-            .filter(c -> c.getRequirement().getSubcategories().get(0).getId().equals(subcategoryId))
+            .filter(
+                c ->
+                    c.effectiveSubcategories().stream()
+                        .anyMatch(s -> s.getId().equals(subcategoryId)))
             .toList();
     subcatControls.forEach(
         c ->

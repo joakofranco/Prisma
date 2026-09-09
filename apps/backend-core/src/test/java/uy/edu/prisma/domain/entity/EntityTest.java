@@ -358,12 +358,13 @@ class EntityTest {
   @Test
   void catalogControlBuildersAndAccessors() {
     UUID id = UUID.randomUUID();
-    CatalogControl all = new CatalogControl(id, null, "CT1", "D", 3, 1);
+    CatalogControl all = new CatalogControl(id, null, "CT1", "D", 3, 1, new java.util.HashSet<>());
     assertEquals(id, all.getId());
     assertEquals("CT1", all.getCode());
     assertEquals("D", all.getDescription());
     assertEquals(3, all.getTargetLevel());
     assertEquals(1, all.getSortOrder());
+    assertTrue(all.getSubcategories().isEmpty());
 
     CatalogControl built = CatalogControl.builder().id(id).code("CT2").targetLevel(5).build();
     built.setCode("CT3");

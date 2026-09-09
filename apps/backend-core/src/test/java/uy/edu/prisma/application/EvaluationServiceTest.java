@@ -34,6 +34,7 @@ class EvaluationServiceTest {
   @Mock private OrganizationRepository orgRepo;
   @Mock private CatalogControlRepository controlRepo;
   @Mock private CatalogFunctionRepository functionRepo;
+  @Mock private CatalogSubcategoryRepository subcategoryRepo;
   @Mock private CatalogVersionRepository versionRepo;
   @Mock private CommunityProfileRepository profileRepo;
   @Mock private UserRepository userRepo;
@@ -51,6 +52,9 @@ class EvaluationServiceTest {
     // list()/getById()/create()/updateStatus() sin importar el test -- por defecto no hay ningún
     // auditor asignado, cada test que sí lo necesite lo pisa con su propio stub.
     when(userRepo.findAuditorsForOrganizations(any())).thenReturn(List.of());
+    // Denominador del promedio de madurez global: por defecto 1 subcategoría en la versión (los
+    // subgrafos de prueba tienen una); los tests con más subcategorías lo pisan.
+    when(subcategoryRepo.countByCatalogVersion(any())).thenReturn(1L);
     service =
         new EvaluationService(
             evalRepo,
@@ -59,6 +63,7 @@ class EvaluationServiceTest {
             orgRepo,
             controlRepo,
             functionRepo,
+            subcategoryRepo,
             versionRepo,
             profileRepo,
             userRepo,
@@ -98,7 +103,8 @@ class EvaluationServiceTest {
             .requirement(requirement)
             .subcategory(subcategory)
             .build();
-    List<CatalogRequirementSubcategory> links = new java.util.ArrayList<>(requirement.getSubcategoryLinks());
+    List<CatalogRequirementSubcategory> links =
+        new java.util.ArrayList<>(requirement.getSubcategoryLinks());
     links.add(link);
     requirement.setSubcategoryLinks(links);
   }
@@ -227,8 +233,7 @@ class EvaluationServiceTest {
 
   @Test
   void getByIdIncludesCreatedByNameAndAssignedAuditors() {
-    User evaluator =
-        User.builder().id(UUID.randomUUID()).firstName("Jane").lastName("Doe").build();
+    User evaluator = User.builder().id(UUID.randomUUID()).firstName("Jane").lastName("Doe").build();
     eval.setCreatedBy(evaluator);
     User auditor1 =
         User.builder()
@@ -728,7 +733,7 @@ class EvaluationServiceTest {
   }
 
   @Test
-  void calculateMaturityScopedToCommunityProfileIgnoresControlsOutsideIt() {
+  void calculateMaturityGatesOnFrameworkControlsOutsideProfile() {
     SubGraph graph = buildSubgraph();
     CatalogControl inProfile = controlAtLevel(graph, 1);
     CatalogControl outsideProfile = controlAtLevel(graph, 4);
@@ -751,13 +756,14 @@ class EvaluationServiceTest {
 
     service.calculateMaturity(eval.getId());
 
-    // Solo hay un resultado (agrupado por subcategoría, y ambos controles comparten la misma):
-    // el target level usado tiene que ser el del control DENTRO del perfil (1), no el de fuera
-    // (4) -- si se filtrara mal, el nivel meta incluiría exigencias de un control que no
-    // corresponde a este perfil.
+    // La madurez de la subcategoría se mide sobre TODOS los controles del marco ubicados en ella,
+    // no sólo los del perfil (igual que la planilla de Agesic). targetLevel = 4 (el control fuera
+    // del perfil cuenta); currentLevel = 1 porque el control de nivel 4 no tiene respuesta "cumple"
+    // y frena el nivel.
     MaturityResult saved = captureSaved().get(0);
-    assertEquals(1, saved.getTargetLevel());
+    assertEquals(4, saved.getTargetLevel());
     assertEquals(1, saved.getCurrentLevel());
+    assertEquals(3, saved.getGap());
   }
 
   @Test
@@ -811,7 +817,9 @@ class EvaluationServiceTest {
     assertTrue(saved.stream().allMatch(r -> r.getCurrentLevel() == 0));
     assertEquals(
         Set.of(graph.subcategory().getId(), secondSubcategory.getId()),
-        saved.stream().map(MaturityResult::getSubcategoryId).collect(java.util.stream.Collectors.toSet()));
+        saved.stream()
+            .map(MaturityResult::getSubcategoryId)
+            .collect(java.util.stream.Collectors.toSet()));
   }
 
   private CatalogControl controlAtLevel(SubGraph graph, int level) {
