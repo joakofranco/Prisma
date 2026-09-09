@@ -70,44 +70,68 @@
           label="Versión del catálogo"
           :options="catalogOptions"
           required
-          @update:model-value="loadCatalogTree"
+          @update:model-value="onVersionChange"
         />
 
+        <div v-if="!editingProfile" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <BaseSelect
+            v-model="duplicateFromId"
+            label="Partir de un perfil existente (opcional)"
+            :options="duplicateOptions"
+            @update:model-value="applyDuplicateFrom"
+          />
+        </div>
+
         <div>
-          <label class="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-2">
-            Controles incluidos ({{ form.controlIds.length }} seleccionados)
-          </label>
-          <p v-if="errors.controlIds" class="mb-2 text-xs text-red-600">{{ errors.controlIds }}</p>
-          <div class="max-h-96 overflow-y-auto border border-slate-200 dark:border-slate-700 rounded-lg p-3 space-y-3">
-            <div v-if="loadingTree" class="text-center py-6 text-sm text-slate-400">
-              Cargando catálogo...
-            </div>
-            <div v-for="fn in catalogFunctions" :key="fn.id" class="space-y-1">
-              <p class="text-sm font-semibold text-slate-800 dark:text-slate-100">{{ fn.name }}</p>
-              <div v-for="cat in fn.categories" :key="cat.id" class="ml-3 space-y-1">
-                <p class="text-xs font-medium text-slate-600 dark:text-slate-300">{{ cat.name }}</p>
-                <div v-for="sub in cat.subcategories" :key="sub.id" class="ml-3 space-y-1">
-                  <div v-for="req in sub.requirements" :key="req.id" class="ml-3 space-y-1">
-                    <label
-                      v-for="control in req.controls"
-                      :key="control.id"
-                      class="flex items-start gap-2 py-0.5"
-                    >
-                      <input
-                        v-model="form.controlIds"
-                        type="checkbox"
-                        :value="control.id"
-                        class="mt-0.5 rounded border-slate-300 dark:border-slate-600 text-blue-600 focus:ring-blue-500"
-                      />
-                      <span class="text-xs text-slate-600 dark:text-slate-300">
-                        {{ control.code }} — {{ control.description }}
-                      </span>
-                    </label>
-                  </div>
-                </div>
-              </div>
+          <div class="flex items-center justify-between mb-2">
+            <label class="block text-sm font-medium text-slate-700 dark:text-slate-200">
+              Controles incluidos ({{ form.controlIds.length }} seleccionados)
+            </label>
+            <div class="flex items-center gap-2">
+              <button
+                type="button"
+                class="text-xs text-blue-600 hover:underline"
+                :disabled="form.controlIds.length === 0"
+                @click="exportSelection"
+              >
+                Exportar CSV
+              </button>
+              <label class="text-xs text-blue-600 hover:underline cursor-pointer">
+                Importar
+                <input
+                  ref="importInput"
+                  type="file"
+                  accept=".csv,.json,text/csv,application/json"
+                  class="hidden"
+                  @change="handleImportFile"
+                />
+              </label>
+              <label class="flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400">
+                <input
+                  v-model="importMerge"
+                  type="checkbox"
+                  class="rounded border-slate-300 text-blue-600"
+                />
+                sumar a la actual
+              </label>
             </div>
           </div>
+          <p v-if="errors.controlIds" class="mb-2 text-xs text-red-600">{{ errors.controlIds }}</p>
+          <BaseAlert
+            v-if="importInfo"
+            variant="warning"
+            class="mb-2"
+            dismissible
+            @dismiss="importInfo = ''"
+          >
+            {{ importInfo }}
+          </BaseAlert>
+
+          <CommunityProfileControlPicker
+            v-model="form.controlIds"
+            :controls="flatControls"
+            :loading="loadingControls"
+          />
         </div>
       </form>
       <template #footer>
@@ -121,7 +145,7 @@
 </template>
 
 <script setup lang="ts">
-  import { ref, reactive, onMounted } from 'vue';
+  import { ref, reactive, computed, onMounted } from 'vue';
   import { communityProfilesService, catalogService } from '@/services/resources';
   import { useNotification } from '@/composables/useUtils';
   import { getErrorMessage } from '@/utils/helpers';
@@ -131,22 +155,29 @@
   import BaseInput from '@/components/common/BaseInput.vue';
   import BaseSelect from '@/components/common/BaseSelect.vue';
   import BaseTextarea from '@/components/common/BaseTextarea.vue';
+  import BaseAlert from '@/components/common/BaseAlert.vue';
+  import CommunityProfileControlPicker from '@/components/profiles/CommunityProfileControlPicker.vue';
   import { PlusIcon, PencilIcon, TrashIcon } from '@heroicons/vue/24/outline';
-  import type { CommunityProfileSummary, MaturityCatalog, MaturityFunction } from '@/types';
+  import type { CommunityProfileSummary, CatalogControlFlat } from '@/types';
 
   const notification = useNotification();
 
   const profiles = ref<CommunityProfileSummary[]>([]);
   const loading = ref(true);
   const saving = ref(false);
-  const loadingTree = ref(false);
+  const loadingControls = ref(false);
   const showModal = ref(false);
   const editingProfile = ref<CommunityProfileSummary | null>(null);
   const catalogVersion = ref('5.0');
   const catalogOptions = ref<{ value: string; label: string }[]>([
     { value: '5.0', label: 'MCU 5.0' },
   ]);
-  const catalogFunctions = ref<MaturityFunction[]>([]);
+  const flatControls = ref<CatalogControlFlat[]>([]);
+
+  const duplicateFromId = ref('');
+  const importInput = ref<HTMLInputElement | null>(null);
+  const importMerge = ref(false);
+  const importInfo = ref('');
 
   const columns = [
     { key: 'name', label: 'Nombre' },
@@ -167,6 +198,16 @@
     controlIds: '',
   });
 
+  const idToCode = computed(() => new Map(flatControls.value.map((c) => [c.id, c.code] as const)));
+  const codeToId = computed(() => new Map(flatControls.value.map((c) => [c.code, c.id] as const)));
+
+  const duplicateOptions = computed(() => [
+    { value: '', label: '— Ninguno (empezar vacío) —' },
+    ...profiles.value
+      .filter((p) => p.catalogVersion === form.catalogVersion)
+      .map((p) => ({ value: p.id, label: `${p.name} (${p.controlCount} controles)` })),
+  ]);
+
   async function fetchProfiles() {
     loading.value = true;
     try {
@@ -179,16 +220,32 @@
     }
   }
 
-  async function loadCatalogTree() {
-    loadingTree.value = true;
+  async function loadControls() {
+    loadingControls.value = true;
+    flatControls.value = [];
     try {
-      const { data } = await catalogService.getByVersion(form.catalogVersion);
-      catalogFunctions.value = (data as MaturityCatalog).functions || [];
+      const { data } = await catalogService.getControls(form.catalogVersion);
+      flatControls.value = data;
     } catch (err) {
-      notification.error(getErrorMessage(err, 'Error al cargar el catálogo'));
+      notification.error(getErrorMessage(err, 'Error al cargar los controles del catálogo'));
     } finally {
-      loadingTree.value = false;
+      loadingControls.value = false;
     }
+  }
+
+  function onVersionChange() {
+    // Al cambiar de versión, los ids ya seleccionados dejan de ser válidos.
+    form.controlIds = [];
+    duplicateFromId.value = '';
+    loadControls();
+  }
+
+  function resetModalState() {
+    duplicateFromId.value = '';
+    importMerge.value = false;
+    importInfo.value = '';
+    if (importInput.value) importInput.value.value = '';
+    Object.keys(errors).forEach((k) => (errors[k as keyof typeof errors] = ''));
   }
 
   function openCreateModal() {
@@ -197,9 +254,9 @@
     form.description = '';
     form.catalogVersion = catalogVersion.value;
     form.controlIds = [];
-    Object.keys(errors).forEach((k) => (errors[k as keyof typeof errors] = ''));
+    resetModalState();
     showModal.value = true;
-    loadCatalogTree();
+    loadControls();
   }
 
   async function editProfile(summary: CommunityProfileSummary) {
@@ -207,14 +264,87 @@
     form.name = summary.name;
     form.description = summary.description || '';
     form.catalogVersion = summary.catalogVersion;
-    Object.keys(errors).forEach((k) => (errors[k as keyof typeof errors] = ''));
+    form.controlIds = [];
+    resetModalState();
     showModal.value = true;
-    await loadCatalogTree();
+    await loadControls();
     try {
       const { data } = await communityProfilesService.getById(summary.id);
       form.controlIds = [...data.controlIds];
     } catch (err) {
       notification.error(getErrorMessage(err, 'Error al cargar el perfil'));
+    }
+  }
+
+  async function applyDuplicateFrom() {
+    if (!duplicateFromId.value) return;
+    try {
+      const { data } = await communityProfilesService.getById(duplicateFromId.value);
+      form.controlIds = [...data.controlIds];
+      notification.success('Selección copiada del perfil elegido');
+    } catch (err) {
+      notification.error(getErrorMessage(err, 'No se pudo copiar la selección'));
+    }
+  }
+
+  function triggerDownload(filename: string, content: string, mime: string) {
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function exportSelection() {
+    const codes = form.controlIds
+      .map((id) => idToCode.value.get(id))
+      .filter((c): c is string => !!c)
+      .sort();
+    triggerDownload(
+      `perfil-controles-${form.catalogVersion}.csv`,
+      codes.join('\r\n') + '\r\n',
+      'text/csv',
+    );
+  }
+
+  async function handleImportFile(event: Event) {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+    importInfo.value = '';
+    try {
+      const text = await file.text();
+      let codes: string[];
+      if (file.name.toLowerCase().endsWith('.json')) {
+        const parsed = JSON.parse(text) as string[] | { codes?: string[] };
+        codes = Array.isArray(parsed) ? parsed : parsed.codes || [];
+      } else {
+        codes = text
+          .split(/\r?\n/)
+          .map((l) => l.split(',')[0].trim())
+          .filter((l) => l && l.toLowerCase() !== 'code');
+      }
+      const resolved: string[] = [];
+      const unknown: string[] = [];
+      for (const code of codes) {
+        const id = codeToId.value.get(code);
+        if (id) resolved.push(id);
+        else unknown.push(code);
+      }
+      const base = importMerge.value ? form.controlIds : [];
+      form.controlIds = [...new Set([...base, ...resolved])];
+      let msg = `${resolved.length} controles aplicados.`;
+      if (unknown.length)
+        msg += ` ${unknown.length} códigos no existen en el catálogo ${form.catalogVersion}: ${unknown.slice(0, 10).join(', ')}${unknown.length > 10 ? '…' : ''}`;
+      importInfo.value = msg;
+    } catch (err) {
+      notification.error(getErrorMessage(err, 'No se pudo leer el archivo'));
+    } finally {
+      input.value = '';
     }
   }
 

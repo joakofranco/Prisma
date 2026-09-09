@@ -155,6 +155,28 @@ export const PRIORITY_CONFIG: Record<string, { label: string; color: string }> =
   LOW: { label: 'Baja', color: '#22c55e' },
 };
 
+// Nombre "lindo" de cada dominio de control = el prefijo del código del requisito (p.ej. "AD" en
+// "AD.2-1"). Son las familias de requisitos del MCU. Si un prefijo no está acá, el selector de
+// perfiles cae al prefijo crudo -- agregar la entrada acá alcanza para que se vea el nombre.
+export const MCU_DOMAIN_LABELS: Record<string, string> = {
+  PL: 'Planificación',
+  GR: 'Gestión de Riesgos',
+  CN: 'Cumplimiento Normativo',
+  PD: 'Protección de Datos Personales',
+  CO: 'Continuidad de las Operaciones',
+  SO: 'Seguridad en las Operaciones',
+  OR: 'Organización',
+  PS: 'Política de Seguridad',
+  GI: 'Gestión de Incidentes',
+  GA: 'Gestión de Activos',
+  GH: 'Gestión Humana',
+  RP: 'Relación con Proveedores',
+  AD: 'Adquisición y Desarrollo',
+  CA: 'Control de Acceso',
+  SC: 'Seguridad en las Comunicaciones',
+  SF: 'Seguridad Física',
+};
+
 export const ITEMS_PER_PAGE = 10;
 export const DATE_FORMAT = 'dd/MM/yyyy';
 export const DATETIME_FORMAT = 'dd/MM/yyyy HH:mm';

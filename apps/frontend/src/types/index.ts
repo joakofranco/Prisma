@@ -68,6 +68,8 @@ export interface MaturityCatalog {
 
 export interface MaturityFunction {
   id: string;
+  /** Sigla del catálogo (p. ej. "GV"). El backend la manda en GET /catalog/{version}. */
+  code?: string;
   name: string;
   description: string;
   categories: MaturityCategory[];
@@ -75,6 +77,8 @@ export interface MaturityFunction {
 
 export interface MaturityCategory {
   id: string;
+  /** Sigla del catálogo (p. ej. "GV.OC"). */
+  code?: string;
   name: string;
   description: string;
   subcategories: MaturitySubcategory[];
@@ -82,6 +86,8 @@ export interface MaturityCategory {
 
 export interface MaturitySubcategory {
   id: string;
+  /** Sigla del catálogo (p. ej. "GV.OC-01"). */
+  code?: string;
   name: string;
   description: string;
   requirements: MaturityRequirement[];
@@ -99,6 +105,19 @@ export interface MaturityControl {
   code: string;
   description: string;
   targetLevel: MaturityLevel;
+}
+
+/** Vista plana de un control del catálogo (GET /catalog/{version}/controls). La usa el selector
+ * de controles de los perfiles comunitarios: agrupa por `domain` (prefijo del código del
+ * requisito, p.ej. "AD" en "AD.2-1"). Un control aparece una sola vez. */
+export interface CatalogControlFlat {
+  id: string;
+  code: string;
+  description: string;
+  targetLevel: MaturityLevel;
+  requirementCode: string;
+  requirementDescription: string;
+  domain: string;
 }
 
 export type EvaluationStatus =

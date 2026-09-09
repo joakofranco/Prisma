@@ -20,6 +20,7 @@ import type {
   UpdateEmailSettings,
   ChangePasswordPayload,
   CatalogImportPayload,
+  CatalogControlFlat,
 } from '@/types';
 
 export const usersService = {
@@ -100,6 +101,10 @@ export const catalogService = {
   /** profileId opcional: si se pasa, el árbol viene podado a solo los controles de ese perfil. */
   getByVersion(version: string, profileId?: string) {
     return apiClient.get(`/catalog/${version}`, { params: profileId ? { profileId } : undefined });
+  },
+  /** Lista PLANA de controles de una versión (sin el árbol), para el selector de perfiles. */
+  getControls(version: string) {
+    return apiClient.get<CatalogControlFlat[]>(`/catalog/${version}/controls`);
   },
   importCatalog(data: CatalogImportPayload) {
     return apiClient.post<{ version: string; label: string }>('/catalog/import', data);
