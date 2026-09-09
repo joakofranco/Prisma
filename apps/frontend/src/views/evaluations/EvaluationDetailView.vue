@@ -40,9 +40,13 @@
     <template v-else-if="evaluation">
       <EvaluationLifecycleStepper :status="evaluation.status" />
 
-      <div class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6 space-y-4">
+      <div
+        class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6 space-y-4"
+      >
         <div>
-          <h3 class="text-lg font-semibold text-slate-900 dark:text-white mb-1">Acciones de Flujo</h3>
+          <h3 class="text-lg font-semibold text-slate-900 dark:text-white mb-1">
+            Acciones de Flujo
+          </h3>
           <p class="text-xs text-slate-500 dark:text-slate-400">
             Transiciones disponibles para tu rol en el estado actual, y accesos a responder,
             evidencias y auditoría -- desactivados cuando no corresponden al estado actual.
@@ -100,12 +104,16 @@
         />
       </div>
 
-      <div class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6">
+      <div
+        class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6"
+      >
         <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
-          <h3 class="text-lg font-semibold text-slate-900 dark:text-white">Resultados de Madurez</h3>
+          <h3 class="text-lg font-semibold text-slate-900 dark:text-white">
+            Resultados de Madurez
+          </h3>
           <div class="flex flex-wrap items-center gap-3">
             <div
-              v-if="results.length > 0"
+              v-if="results.length > 0 && resultsTab === 'desglose'"
               class="flex items-center rounded-lg border border-slate-200 dark:border-slate-700 p-0.5 text-xs font-medium"
             >
               <button
@@ -134,7 +142,7 @@
               </button>
             </div>
             <label
-              v-if="results.length > 0"
+              v-if="results.length > 0 && resultsTab === 'desglose'"
               class="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400"
             >
               Mostrar por página
@@ -175,101 +183,141 @@
           </div>
         </div>
 
-        <div v-if="results.length === 0" class="text-center py-8 text-slate-500 dark:text-slate-400">
+        <div
+          v-if="results.length === 0"
+          class="text-center py-8 text-slate-500 dark:text-slate-400"
+        >
           <p>
             No hay resultados disponibles aún. Complete las respuestas para calcular la madurez.
           </p>
         </div>
 
         <div v-else class="space-y-4">
-          <MaturityRadarChart :items="radarItems" />
-
           <div
-            v-for="group in paginatedGroups"
-            :key="group.key"
-            class="border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden"
+            class="flex w-max items-center rounded-lg border border-slate-200 dark:border-slate-700 p-0.5 text-xs font-medium"
           >
             <button
               type="button"
-              class="w-full flex items-center justify-between gap-3 px-4 py-2.5 bg-slate-50 dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors text-left"
-              @click="toggleGroup(group.key)"
+              class="px-2.5 py-1 rounded-md transition-colors"
+              :class="
+                resultsTab === 'desglose'
+                  ? 'bg-blue-600 text-white'
+                  : 'text-slate-500 dark:text-slate-400 hover:text-slate-700'
+              "
+              @click="resultsTab = 'desglose'"
             >
-              <span class="text-sm font-semibold text-slate-800 dark:text-slate-100">
-                {{ group.title }}
-                <span class="text-slate-400 font-normal">({{ group.total }})</span>
-              </span>
-              <ChevronDownIcon
-                :class="[
-                  'w-4 h-4 text-slate-400 transition-transform shrink-0',
-                  expandedGroups.has(group.key) ? 'rotate-180' : '',
-                ]"
-              />
+              Desglose
             </button>
+            <button
+              type="button"
+              class="px-2.5 py-1 rounded-md transition-colors"
+              :class="
+                resultsTab === 'tablas'
+                  ? 'bg-blue-600 text-white'
+                  : 'text-slate-500 dark:text-slate-400 hover:text-slate-700'
+              "
+              @click="resultsTab = 'tablas'"
+            >
+              Tablas y promedios
+            </button>
+          </div>
 
-            <div v-if="expandedGroups.has(group.key)" class="p-4 space-y-4">
-              <div
-                v-for="result in group.pageItems"
-                :key="result.subcategoryId"
-                class="p-4 bg-slate-50 dark:bg-slate-900 rounded-lg"
-              >
-                <div class="flex items-center justify-between mb-2">
-                  <span class="text-sm font-medium text-slate-900 dark:text-white"
-                    >{{ result.functionName }} > {{ result.categoryName }} >
-                    {{ result.subcategoryName }}</span
-                  >
-                  <span
-                    class="text-sm font-semibold"
-                    :style="{ color: getMaturityColor(result.currentLevel) }"
-                  >
-                    {{ result.currentLevel }}/4 (Objetivo: {{ result.targetLevel }})
-                  </span>
-                </div>
-                <div class="w-full bg-slate-200 rounded-full h-2">
-                  <div
-                    class="h-2 rounded-full"
-                    :style="{
-                      width: `${(result.currentLevel / 4) * 100}%`,
-                      backgroundColor: getMaturityColor(result.currentLevel),
-                    }"
-                  />
-                </div>
-                <div v-if="result.gap > 0" class="mt-1 text-xs text-red-600">
-                  Brecha: {{ result.gap }} nivel(es)
-                </div>
-              </div>
+          <MaturitySummaryTables
+            v-if="resultsTab === 'tablas'"
+            :results="results"
+            :catalog-functions="catalogFunctions"
+          />
 
-              <div
-                v-if="group.totalPages > 1"
-                class="flex items-center justify-between pt-2 border-t border-slate-200 dark:border-slate-700 text-xs text-slate-500 dark:text-slate-400"
+          <template v-else>
+            <MaturityRadarChart :items="radarItems" />
+
+            <div
+              v-for="group in paginatedGroups"
+              :key="group.key"
+              class="border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden"
+            >
+              <button
+                type="button"
+                class="w-full flex items-center justify-between gap-3 px-4 py-2.5 bg-slate-50 dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors text-left"
+                @click="toggleGroup(group.key)"
               >
-                <span>
-                  Mostrando {{ (group.page - 1) * pageSize + 1 }}–{{
-                    Math.min(group.page * pageSize, group.total)
-                  }}
-                  de {{ group.total }}
+                <span class="text-sm font-semibold text-slate-800 dark:text-slate-100">
+                  {{ group.title }}
+                  <span class="text-slate-400 font-normal">({{ group.total }})</span>
                 </span>
-                <div class="flex items-center gap-2">
-                  <button
-                    type="button"
-                    :disabled="group.page === 1"
-                    class="px-2.5 py-1 rounded-md border border-slate-300 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                    @click="setGroupPage(group.key, group.page - 1)"
-                  >
-                    Anterior
-                  </button>
-                  <span>Página {{ group.page }} de {{ group.totalPages }}</span>
-                  <button
-                    type="button"
-                    :disabled="group.page === group.totalPages"
-                    class="px-2.5 py-1 rounded-md border border-slate-300 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                    @click="setGroupPage(group.key, group.page + 1)"
-                  >
-                    Siguiente
-                  </button>
+                <ChevronDownIcon
+                  :class="[
+                    'w-4 h-4 text-slate-400 transition-transform shrink-0',
+                    expandedGroups.has(group.key) ? 'rotate-180' : '',
+                  ]"
+                />
+              </button>
+
+              <div v-if="expandedGroups.has(group.key)" class="p-4 space-y-4">
+                <div
+                  v-for="result in group.pageItems"
+                  :key="result.subcategoryId"
+                  class="p-4 bg-slate-50 dark:bg-slate-900 rounded-lg"
+                >
+                  <div class="flex items-center justify-between mb-2">
+                    <span class="text-sm font-medium text-slate-900 dark:text-white"
+                      >{{ result.functionName }} > {{ result.categoryName }} >
+                      {{ result.subcategoryName }}</span
+                    >
+                    <span
+                      class="text-sm font-semibold"
+                      :style="{ color: getMaturityColor(result.currentLevel) }"
+                    >
+                      {{ result.currentLevel }}/4 (Objetivo: {{ result.targetLevel }})
+                    </span>
+                  </div>
+                  <div class="w-full bg-slate-200 rounded-full h-2">
+                    <div
+                      class="h-2 rounded-full"
+                      :style="{
+                        width: `${(result.currentLevel / 4) * 100}%`,
+                        backgroundColor: getMaturityColor(result.currentLevel),
+                      }"
+                    />
+                  </div>
+                  <div v-if="result.gap > 0" class="mt-1 text-xs text-red-600">
+                    Brecha: {{ result.gap }} nivel(es)
+                  </div>
+                </div>
+
+                <div
+                  v-if="group.totalPages > 1"
+                  class="flex items-center justify-between pt-2 border-t border-slate-200 dark:border-slate-700 text-xs text-slate-500 dark:text-slate-400"
+                >
+                  <span>
+                    Mostrando {{ (group.page - 1) * pageSize + 1 }}–{{
+                      Math.min(group.page * pageSize, group.total)
+                    }}
+                    de {{ group.total }}
+                  </span>
+                  <div class="flex items-center gap-2">
+                    <button
+                      type="button"
+                      :disabled="group.page === 1"
+                      class="px-2.5 py-1 rounded-md border border-slate-300 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                      @click="setGroupPage(group.key, group.page - 1)"
+                    >
+                      Anterior
+                    </button>
+                    <span>Página {{ group.page }} de {{ group.totalPages }}</span>
+                    <button
+                      type="button"
+                      :disabled="group.page === group.totalPages"
+                      class="px-2.5 py-1 rounded-md border border-slate-300 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                      @click="setGroupPage(group.key, group.page + 1)"
+                    >
+                      Siguiente
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
+          </template>
         </div>
       </div>
     </template>
@@ -293,6 +341,7 @@
   import StatsCard from '@/components/common/StatsCard.vue';
   import BaseButton from '@/components/common/BaseButton.vue';
   import MaturityRadarChart from '@/components/charts/MaturityRadarChart.vue';
+  import MaturitySummaryTables from '@/components/evaluations/MaturitySummaryTables.vue';
   import EvaluationLifecycleStepper from '@/components/evaluations/EvaluationLifecycleStepper.vue';
   import {
     ArrowLeftIcon,
@@ -307,7 +356,7 @@
     ArrowDownTrayIcon,
     CalculatorIcon,
   } from '@heroicons/vue/24/outline';
-  import type { MaturityCatalog, MaturityResult } from '@/types';
+  import type { MaturityCatalog, MaturityResult, MaturityFunction } from '@/types';
 
   const route = useRoute();
   const router = useRouter();
@@ -320,6 +369,10 @@
   const evaluation = computed(() => store.currentEvaluation);
   const calculating = ref(false);
   const totalControls = ref(0);
+  // Árbol del catálogo (podado al perfil si aplica) -- se fetchea una vez en onMounted; sirve para
+  // contar controles Y para el resumen de la pestaña "Tablas y promedios" (siglas + orden oficial).
+  const catalogFunctions = ref<MaturityFunction[]>([]);
+  const resultsTab = ref<'desglose' | 'tablas'>('desglose');
 
   const progressPercent = computed(() => {
     if (!evaluation.value || totalControls.value === 0) return 0;
@@ -618,6 +671,7 @@
           .getByVersion(version, evaluation.value.communityProfileId)
           .then(({ data }) => {
             const functions = (data as MaturityCatalog).functions || [];
+            catalogFunctions.value = functions;
             // Un Requisito puede pertenecer a varias Subcategorías -- sus Controles aparecen una
             // vez por cada una en el árbol, pero cuentan una sola vez para el total a responder.
             const controlIds = new Set<string>();
@@ -636,6 +690,7 @@
           })
           .catch(() => {
             totalControls.value = 0;
+            catalogFunctions.value = [];
           }),
       ]);
     }

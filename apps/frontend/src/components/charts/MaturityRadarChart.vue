@@ -9,17 +9,21 @@
   import { Radar } from 'vue-chartjs';
   import { useThemeStore } from '@/stores/theme';
 
-  const props = defineProps<{
-    items: { name: string; current: number; target: number }[];
-  }>();
+  const props = withDefaults(
+    defineProps<{
+      items: { name: string; current: number; target: number }[];
+      /** `false` oculta la serie "Nivel objetivo" (una sola serie, como la planilla MCU). */
+      showTarget?: boolean;
+    }>(),
+    { showTarget: true },
+  );
 
   // Ver el comentario en StatusDoughnutChart.vue: Chart.js dibuja en <canvas>, no sigue el CSS de
   // Tailwind.
   const themeStore = useThemeStore();
 
-  const chartData = computed(() => ({
-    labels: props.items.map((i) => i.name),
-    datasets: [
+  const chartData = computed(() => {
+    const datasets = [
       {
         label: 'Nivel actual',
         data: props.items.map((i) => i.current),
@@ -27,16 +31,19 @@
         borderColor: '#2563eb',
         pointBackgroundColor: '#2563eb',
       },
-      {
+    ];
+    if (props.showTarget) {
+      datasets.push({
         label: 'Nivel objetivo',
         data: props.items.map((i) => i.target),
         backgroundColor: 'rgba(148, 163, 184, 0.15)',
         borderColor: '#94a3b8',
         borderDash: [4, 4],
         pointBackgroundColor: '#94a3b8',
-      },
-    ],
-  }));
+      } as (typeof datasets)[number]);
+    }
+    return { labels: props.items.map((i) => i.name), datasets };
+  });
 
   const chartOptions = computed(() => {
     const isDark = themeStore.theme === 'dark';
