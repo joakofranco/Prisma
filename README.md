@@ -229,6 +229,22 @@ make pull-llm
 make health
 ```
 
+### Arranque mínimo (MVP, sin LLM)
+
+Para una demo liviana — entrar al sistema, cargar catálogos y hacer evaluaciones — sin
+levantar Ollama/LLM ni la observabilidad, SonarQube, Elastic, Portainer, etc.:
+
+```bash
+cp .env.example .env
+make certs
+make mvp-up     # postgres, redis, keycloak(+db), backend-core, backend-ai, frontend, nginx
+```
+
+Queda **afuera**: el LLM (`ollama` y el modelo de ~4.7 GB — no se descarga), la subida de
+archivos de evidencia (necesita MinIO) y las funciones de RAG (citas de evidencia y tips de
+remediación degradan sin romper). `backend-ai` se levanta ocioso sólo para que nginx arranque.
+Comandos: `make mvp-ps`, `make mvp-logs`, `make mvp-seed`, `make mvp-down`.
+
 No hace falta un paso manual de "seed": el catálogo MCU 5.0 y el usuario administrador semilla
 (`admin@prisma.local`) se cargan solos vía migraciones Flyway al arrancar `backend-core`, y el
 índice RAG de `backend-ai` se arma solo al arrancar ese servicio.
@@ -367,6 +383,7 @@ Todos los comandos comunes están en el `Makefile` (correr `make help` para verl
 ```bash
 make help              # Muestra todos los comandos disponibles
 make up                # Levanta todo el stack (perfil full)
+make mvp-up            # Stack mínimo MVP: front, back, keycloak, postgres (+redis, nginx) — sin LLM
 make up-app            # Solo la app (frontend, backend-core, backend-ai, postgres, redis, ollama)
 make down              # Detiene todo (preserva volúmenes)
 make logs              # Sigue logs de todos los servicios

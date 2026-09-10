@@ -1,0 +1,52 @@
+# =====================================================================
+# docker-compose.mvp.yml
+# ---------------------------------------------------------------------
+# Override para levantar SÓLO el mínimo del MVP con un comando:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.mvp.yml --profile mvp up -d
+#   (o simplemente: make mvp-up)
+#
+# Incluye: postgres, redis, keycloak(+db), backend-core, backend-ai, frontend, nginx.
+# NO levanta: ollama (LLM), minio, observabilidad, elastic, sonarqube, portainer, etc.
+#
+# El LLM (ollama) queda afuera a propósito: cargar catálogos y hacer evaluaciones no
+# lo necesitan, y backend-ai está diseñado para arrancar y degradar sin Ollama
+# (ver apps/backend-ai/app/rag/vector_store.py). Las funciones de RAG (citas de
+# evidencia, tips de remediación) simplemente no estarán disponibles.
+#
+# backend-ai se mantiene sólo para que nginx (que tiene un upstream estático hacia
+# backend-ai:8000) arranque sin parches. Subir archivos de evidencia NO funcionará
+# sin minio.
+# =====================================================================
+
+name: prisma
+
+services:
+  postgres:
+    profiles: ["mvp"]
+
+  redis:
+    profiles: ["mvp"]
+
+  keycloak-db:
+    profiles: ["mvp"]
+
+  keycloak:
+    profiles: ["mvp"]
+
+  backend-core:
+    profiles: ["mvp"]
+
+  backend-ai:
+    profiles: ["mvp"]
+    # En el archivo base backend-ai depende de ollama (condition: service_healthy).
+    # Como ollama NO está en el perfil "mvp", Compose abortaría con
+    # "depends on undefined service ollama". `!reset` borra ese depends_on heredado
+    # (el merge normal de Compose concatena, no reemplaza) -- backend-ai arranca solo.
+    depends_on: !reset []
+
+  frontend:
+    profiles: ["mvp"]
+
+  nginx:
+    profiles: ["mvp"]
