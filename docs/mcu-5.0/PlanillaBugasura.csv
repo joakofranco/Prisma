@@ -1,0 +1,6 @@
+Title,Details,Overview,Priority,Type,Status,Assignees,Tags,Estimation
+"Allow users to sign up and sign in using email and password.","The system must validate credentials and manage sessions securely.","Enables users to authenticate using email and password credentials.",P1,Feature,New,anbu@appachhi.com,Authentication,100
+"User authentication and account access.","Includes registration, login and password recovery flows.","Ensures secure and seamless user login and account management.",P2,Epic,"In Progress",anbu@appachhi.com,Security,200
+"Implement third-party authentication with Google and GitHub.","Integrate Google and GitHub OAuth with the existing user store.","Adds OAuth based sign in for faster onboarding.",P3,Task,Completed,anbu@appachhi.com,Integration,5000
+"Password recovery via email OTP.","Send a one time code to the registered email to reset the password.","Lets users reset a forgotten password securely.",P4,Task,New,anbu@appachhi.com,Backend,80
+"Enable multi-factor authentication for admin users.","Prompt for a second factor when an admin signs in.","Adds an extra security layer for privileged accounts.",P5,Feature,"In Progress",anbu@appachhi.com,Frontend,150
