@@ -8,8 +8,10 @@ cada ambiente `deploy.yml`) y [`docs/Certificados-TLS.md`](../../docs/Certificad
 Hay un cuarto overlay, `overlays/demo/`, que **no** es un ambiente de despliegue real: es un MVP
 recortado (sin Ollama/MinIO/Ingress) pensado para grabar un video demostrando la tecnología en
 minikube. Ver [`docs/Demo-Kubernetes-MVP.md`](../../docs/Demo-Kubernetes-MVP.md) para el guion
-completo y [`docs/Demo-Kubernetes-MVP-Slides.md`](../../docs/Demo-Kubernetes-MVP-Slides.md) para
-el script del PPT que lo acompaña.
+completo, [`docs/Demo-Kubernetes-MVP-Slides.md`](../../docs/Demo-Kubernetes-MVP-Slides.md) para
+el script del PPT que lo acompaña, y
+[`docs/Demo-Kubernetes-MVP-Prompt.md`](../../docs/Demo-Kubernetes-MVP-Prompt.md) para el prompt
+que genera ese PPT con una IA de presentaciones.
 
 ## Primer deploy en un namespace nuevo
 

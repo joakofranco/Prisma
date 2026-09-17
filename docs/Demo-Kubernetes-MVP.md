@@ -6,8 +6,10 @@ las tres cosas que un orquestador da "gratis" frente a `docker compose`: **auto-
 [`docs/mcu-5.0/Kubernetes-Analisis-Viabilidad.md`](mcu-5.0/Kubernetes-Analisis-Viabilidad.md)
 (secciones 3.1 P1-P3): esta demo es la Fase 1 de ese documento, hecha filmable.
 
-Para el PPT que acompaña la grabación (slides + notas del orador), ver
-[`docs/Demo-Kubernetes-MVP-Slides.md`](Demo-Kubernetes-MVP-Slides.md).
+Para el PPT que acompaña la grabación: el contenido slide por slide (bullets + notas del
+orador) está en [`docs/Demo-Kubernetes-MVP-Slides.md`](Demo-Kubernetes-MVP-Slides.md), y un
+prompt listo para generar el diseño con una IA de presentaciones (Gamma, Tome, Canva, etc.) está
+en [`docs/Demo-Kubernetes-MVP-Prompt.md`](Demo-Kubernetes-MVP-Prompt.md).
 
 Usa el overlay `infra/kubernetes/overlays/demo/`, una variante **sólo para esto** del overlay
 `dev` normal: saca Ollama y MinIO (los componentes más pesados y sin uso en el guion) y el

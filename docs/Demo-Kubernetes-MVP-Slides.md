@@ -8,6 +8,10 @@ Slides de ~14 diapositivas: cada sección de abajo es UNA slide, con el contenid
 la diapositiva (títulos y bullets — llevar a texto corto, no pegar el párrafo completo) y las
 notas del orador debajo (eso sí, para decir en cámara, no para poner en la slide).
 
+¿Preferís generar el diseño directo con una IA de presentaciones en vez de armar cada slide a
+mano? Ver [`docs/Demo-Kubernetes-MVP-Prompt.md`](Demo-Kubernetes-MVP-Prompt.md), el prompt
+condensado para pegar en Gamma/Tome/Canva/etc.
+
 Duración total estimada: **10-12 minutos** (6 slides de contexto ≈ 4 min + demo en vivo ≈ 8 min
 intercalada con 3 slides de transición + cierre ≈ 2 min). Ajustar según el tiempo asignado a la
 actividad.

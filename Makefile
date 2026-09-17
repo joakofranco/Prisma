@@ -5,6 +5,24 @@
 # (usando WSL, Git Bash o make instalado).
 # =====================================================================
 
+# Windows + `make` nativo (ej. GnuWin32, no MSYS2/WSL) corriendo desde PowerShell/cmd: por
+# defecto ese `make` NO usa ningún shell para una línea sin metacaracteres (sin &&, |, ; ni
+# $()) -- llama directo a CreateProcess() con el PATH heredado del proceso, y esa PowerShell NO
+# tiene el `usr/bin` de Git (cp/rm/mkdir/openssl) en el PATH -- de ahí el error "El sistema no
+# puede encontrar el archivo especificado" en targets como sync-k8s-assets. Fix: forzar el
+# shell de las recetas a bash.exe de Git Bash y, como bash -c (no login) NO sourcea /etc/profile
+# (que es justamente lo que arma el PATH con /usr/bin), BASH_ENV hace que lo sourcee igual (ver
+# la doc de bash: "when invoked non-interactively", lee BASH_ENV). $(wildcard ...) en esta
+# versión vieja de GNU Make no soporta espacios en la ruta -- de ahí el nombre corto 8.3
+# (PROGRA~1) sólo para la comprobación de existencia; SHELL sí acepta la ruta con espacios.
+# Sin efecto en Linux/Mac/WSL ($(OS) no es Windows_NT ahí) ni si Git no está en la ruta default.
+ifeq ($(OS),Windows_NT)
+ifneq ($(wildcard C:/PROGRA~1/Git/usr/bin/bash.exe),)
+SHELL := C:/Program Files/Git/usr/bin/bash.exe
+export BASH_ENV := /etc/profile
+endif
+endif
+
 # Colores
 CYAN := \033[36m
 GREEN := \033[32m
@@ -202,10 +220,10 @@ security-scan: ## Trivy scan local
 # ---------- KUBERNETES ----------
 sync-k8s-assets: ## Genera las copias que Kustomize necesita (realm de Keycloak, knowledge base RAG)
 	@echo "$(CYAN)🔄 Sincronizando assets para K8s/imagen de backend-ai...$(RESET)"
-	cp infra/keycloak/realm-prisma.json infra/kubernetes/base/keycloak-realm.json
-	rm -rf apps/backend-ai/knowledge-base
-	mkdir -p apps/backend-ai/knowledge-base
-	cp -r docs/mcu-5.0/. apps/backend-ai/knowledge-base/
+	cp infra/keycloak/realm-prisma.json infra/kubernetes/base/keycloak-realm.json;
+	rm -rf apps/backend-ai/knowledge-base;
+	mkdir -p apps/backend-ai/knowledge-base;
+	cp -r docs/mcu-5.0/. apps/backend-ai/knowledge-base/;
 
 k8s-dev: sync-k8s-assets ## Aplicar manifiestos K8s del entorno dev
 	kubectl apply -k infra/kubernetes/overlays/dev
