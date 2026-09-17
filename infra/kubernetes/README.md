@@ -5,6 +5,12 @@ en un cluster real. Ver también [`docs/CI-CD-Infra.md`](../../docs/CI-CD-Infra.
 cada ambiente `deploy.yml`) y [`docs/Certificados-TLS.md`](../../docs/Certificados-TLS.md)
 (hostname dinámico de Keycloak, mismo mecanismo que acá).
 
+Hay un cuarto overlay, `overlays/demo/`, que **no** es un ambiente de despliegue real: es un MVP
+recortado (sin Ollama/MinIO/Ingress) pensado para grabar un video demostrando la tecnología en
+minikube. Ver [`docs/Demo-Kubernetes-MVP.md`](../../docs/Demo-Kubernetes-MVP.md) para el guion
+completo y [`docs/Demo-Kubernetes-MVP-Slides.md`](../../docs/Demo-Kubernetes-MVP-Slides.md) para
+el script del PPT que lo acompaña.
+
 ## Primer deploy en un namespace nuevo
 
 `kubectl apply -k .` **no** crea el Secret con las credenciales reales ni el import de Keycloak

@@ -1,0 +1,116 @@
+# Mismo criterio que overlays/dev/patches.yaml: bajar CPU/RAM por pod, no la redundancia
+# (backend-core, backend-ai y frontend heredan sus 2 réplicas de la base) -- la demo sigue
+# mostrando self-healing y rolling update sin quedar reducida a un solo pod por servicio, pero
+# el total entra cómodo en un minikube chico (ver dimensionamiento en
+# docs/Demo-Kubernetes-MVP.md). `imagePullPolicy: Never` en las 3 imágenes propias: se
+# construyen DENTRO del daemon docker de minikube (`make k8s-demo-images`), nunca se publican a
+# GHCR para esta demo -- con la política por defecto (Always en backend-core, ver
+# base/backend-core.yaml) el kubelet intentaría bajarlas de ghcr.io e ignoraría la imagen local.
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: backend-core }
+spec:
+  template:
+    spec:
+      containers:
+        - name: backend-core
+          imagePullPolicy: Never
+          resources:
+            requests: { cpu: "200m", memory: "512Mi" }
+            limits:   { cpu: "1",    memory: "1Gi" }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: backend-ai }
+spec:
+  template:
+    spec:
+      containers:
+        - name: backend-ai
+          imagePullPolicy: Never
+          resources:
+            requests: { cpu: "250m", memory: "768Mi" }
+            limits:   { cpu: "1",    memory: "1536Mi" }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: frontend }
+spec:
+  template:
+    spec:
+      containers:
+        - name: frontend
+          imagePullPolicy: Never
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: { name: postgres }
+spec:
+  template:
+    spec:
+      containers:
+        - name: postgres
+          resources:
+            requests: { cpu: "250m", memory: "512Mi" }
+            limits:   { cpu: "1",    memory: "1Gi" }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: { name: keycloak-db }
+spec:
+  template:
+    spec:
+      containers:
+        - name: keycloak-db
+          resources:
+            requests: { cpu: "150m", memory: "256Mi" }
+            limits:   { cpu: "500m", memory: "512Mi" }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: chroma }
+spec:
+  template:
+    spec:
+      containers:
+        - name: chroma
+          resources:
+            requests: { cpu: "150m", memory: "256Mi" }
+            limits:   { cpu: "500m", memory: "1Gi" }
+---
+# base/keycloak.yaml apunta las probes al management port (9000) /health/ready y /health/live --
+# el propio comentario de ese archivo (y infra/kubernetes/README.md, sección "Keycloak — caveats
+# operativos") avisa que ese path NUNCA se confirmó levantando el contenedor contra la 26.7. Para
+# NO dejar la grabación del video a merced de ese path sin verificar, esta demo cambia a un
+# probe TCP simple sobre el puerto http (8080): confirma que Keycloak está aceptando conexiones,
+# que alcanza para el guion de la demo. Si se resuelve el punto 2 de la deuda técnica (ver
+# docs/mcu-5.0/Kubernetes-Analisis-Viabilidad.md, sección 2.5), este patch deja de hacer falta.
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: keycloak }
+spec:
+  template:
+    spec:
+      containers:
+        - name: keycloak
+          # httpGet: null es necesario -- un patch strategic-merge normal MERGEA los campos del
+          # Probe en vez de reemplazarlo entero (httpGet/tcpSocket/exec no son mutuamente
+          # excluyentes para Kustomize), así que sin esto quedan httpGet Y tcpSocket seteados a
+          # la vez y la API de Kubernetes rechaza el Pod (un Probe admite un solo handler).
+          readinessProbe:
+            httpGet: null
+            tcpSocket: { port: http }
+            periodSeconds: 10
+            failureThreshold: 30
+          livenessProbe:
+            httpGet: null
+            tcpSocket: { port: http }
+            periodSeconds: 30
+---
+# Tope más bajo que la base (2→8): en un minikube de 4 vCPU, 8 réplicas de backend-core nunca
+# entrarían a la vez. 2→4 alcanza para que un scale-up sea visible y programable en el video.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata: { name: backend-core-hpa }
+spec:
+  maxReplicas: 4

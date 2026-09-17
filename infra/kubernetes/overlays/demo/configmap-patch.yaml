@@ -1,0 +1,12 @@
+# Strategic-merge simple -- ConfigMap.data mergea clave por clave. La demo se abre con
+# `kubectl port-forward svc/frontend 8080:80 -n prisma-demo` (ver docs/Demo-Kubernetes-MVP.md):
+# una URL fija y predecible para grabar, sin depender de la IP de minikube ni de un Ingress. El
+# frontend sirve /auth, /api, /ai same-origin (ver apps/frontend/nginx.conf), así que Keycloak
+# necesita conocer ESTE origen como issuer real para que el login funcione.
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: prisma-config }
+data:
+  KEYCLOAK_ISSUER_URL: "http://localhost:8080/auth"
+  KEYCLOAK_TRUSTED_ISSUERS: "http://localhost:8080/auth/realms/prisma"
+  CORS_ALLOWED_ORIGINS: "http://localhost:8080"

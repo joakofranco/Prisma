@@ -1,0 +1,39 @@
+# $patch: delete (strategic-merge) -- saca estos recursos del MVP de demo sin tocar
+# infra/kubernetes/base/. Cada bloque sólo necesita apiVersion/kind/metadata.name para
+# identificar el recurso de la base a eliminar; no hace falta declarar "target:" en
+# kustomization.yaml para este tipo de patch.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: ollama
+$patch: delete
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama
+$patch: delete
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: minio
+$patch: delete
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+$patch: delete
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: minio-init
+$patch: delete
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: prisma-ingress
+$patch: delete

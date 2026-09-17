@@ -1,0 +1,40 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: prisma-demo
+commonLabels:
+  environment: demo
+
+resources:
+  - ../../base
+
+# Overlay MVP para una demo guiada de Kubernetes en minikube (ver
+# docs/Demo-Kubernetes-MVP.md) -- no es un ambiente más de despliegue real (dev/staging/prod),
+# es la base mínima para grabar un video mostrando self-healing, rolling update y scaling.
+#
+# - delete-resources.yaml: saca Ollama y MinIO (los dos componentes más pesados en CPU/RAM del
+#   stack y sin uso en el guion de la demo) y el Ingress (se accede directo al Service
+#   "frontend" con `kubectl port-forward`, más simple para grabar que sumar ingress-nginx +
+#   cert-manager sólo para esto). Mismo criterio que docker-compose.mvp.yml (perfil "mvp"):
+#   backend-ai queda arriba pero sin Ollama -- el RAG degrada sin romper (ver
+#   apps/backend-ai/app/rag/vector_store.py).
+# - patches.yaml: baja CPU/RAM por pod para entrar en un minikube chico, fija
+#   imagePullPolicy: Never (las 3 imágenes se construyen DENTRO del daemon docker de minikube,
+#   nunca se publican a GHCR para esta demo) y endurece las probes de Keycloak (ver el
+#   comentario en ese archivo).
+# - configmap-patch.yaml: URLs de Keycloak/CORS fijas a http://localhost:8080, el puerto del
+#   `kubectl port-forward` que usa la demo.
+patches:
+  - path: delete-resources.yaml
+  - path: patches.yaml
+  - path: configmap-patch.yaml
+
+images:
+  - name: ghcr.io/prisma/prisma-frontend
+    newName: prisma-frontend
+    newTag: demo
+  - name: ghcr.io/prisma/prisma-backend-core
+    newName: prisma-backend-core
+    newTag: demo
+  - name: ghcr.io/prisma/prisma-backend-ai
+    newName: prisma-backend-ai
+    newTag: demo

@@ -19,6 +19,8 @@ DC := docker compose
         test test-frontend test-core test-ai lint format \
         seed migrate backup restore health pull-llm shell-core shell-ai \
         sonar security-scan sync-k8s-assets k8s-dev k8s-staging k8s-prod \
+        k8s-demo-images k8s-demo-secrets k8s-demo-up k8s-demo-status k8s-demo-dashboard \
+        k8s-demo-open k8s-demo-down k8s-demo-destroy \
         certs certs-force restart-nginx \
         mvp-up mvp-down mvp-logs mvp-ps mvp-seed \
         mcu50-build mcu50-validate bugasura-build
@@ -213,6 +215,63 @@ k8s-staging: sync-k8s-assets ## Aplicar manifiestos K8s del entorno staging
 
 k8s-prod: sync-k8s-assets ## Aplicar manifiestos K8s del entorno prod
 	kubectl apply -k infra/kubernetes/overlays/prod
+
+# ---------- KUBERNETES: DEMO MVP (minikube, para el video guiado) ----------
+# Guion completo paso a paso: docs/Demo-Kubernetes-MVP.md
+k8s-demo-images: sync-k8s-assets ## Demo: construir las 3 imagenes DENTRO del daemon docker de minikube
+	@echo "$(CYAN)🐳 Construyendo imagenes dentro de minikube (driver docker)...$(RESET)"
+	eval $$(minikube docker-env --shell bash) && \
+	docker build -f infra/docker/backend-core.Dockerfile --target runtime \
+	  -t prisma-backend-core:demo apps/backend-core && \
+	docker build -f infra/docker/backend-ai.Dockerfile --target runtime \
+	  -t prisma-backend-ai:demo apps/backend-ai && \
+	docker build -f infra/docker/frontend.Dockerfile --target runtime \
+	  --build-arg VITE_API_BASE_URL=/api \
+	  --build-arg VITE_AI_API_BASE_URL=/ai/api/v1 \
+	  --build-arg VITE_KEYCLOAK_URL=/auth \
+	  --build-arg VITE_KEYCLOAK_REALM=prisma \
+	  --build-arg VITE_KEYCLOAK_CLIENT_ID=prisma-frontend \
+	  -t prisma-frontend:demo apps/frontend
+
+k8s-demo-secrets: ## Demo: namespace + Secret real (passwords random; admin client secret fijo del realm importado)
+	kubectl create namespace prisma-demo --dry-run=client -o yaml | kubectl apply -f -
+	kubectl create secret generic prisma-secrets -n prisma-demo \
+	  --from-literal=SPRING_DATASOURCE_USERNAME=prisma \
+	  --from-literal=SPRING_DATASOURCE_PASSWORD="$$(openssl rand -base64 24)" \
+	  --from-literal=SPRING_DATA_REDIS_PASSWORD="$$(openssl rand -base64 24)" \
+	  --from-literal=JWT_SECRET="$$(openssl rand -base64 48)" \
+	  --from-literal=MINIO_ACCESS_KEY=unused \
+	  --from-literal=MINIO_SECRET_KEY=unused \
+	  --from-literal=KEYCLOAK_DB_PASSWORD="$$(openssl rand -base64 24)" \
+	  --from-literal=KEYCLOAK_ADMIN_PASSWORD="$$(openssl rand -base64 16)" \
+	  --from-literal=KEYCLOAK_ADMIN_CLIENT_SECRET=CHANGE_ME_IN_PRODUCTION \
+	  --from-literal=AI_INTERNAL_API_KEY="$$(openssl rand -base64 32)" \
+	  --dry-run=client -o yaml | kubectl apply -f -
+
+k8s-demo-up: sync-k8s-assets k8s-demo-secrets ## Demo: aplicar el overlay MVP y esperar a que todo quede Ready
+	kubectl apply -k infra/kubernetes/overlays/demo
+	kubectl rollout status statefulset/postgres    -n prisma-demo --timeout=180s
+	kubectl rollout status statefulset/keycloak-db -n prisma-demo --timeout=180s
+	kubectl rollout status deployment/keycloak     -n prisma-demo --timeout=180s
+	kubectl rollout status deployment/chroma       -n prisma-demo --timeout=180s
+	kubectl rollout status deployment/backend-core -n prisma-demo --timeout=180s
+	kubectl rollout status deployment/backend-ai   -n prisma-demo --timeout=180s
+	kubectl rollout status deployment/frontend     -n prisma-demo --timeout=180s
+
+k8s-demo-status: ## Demo: ver pods/servicios/hpa del namespace de la demo
+	kubectl get pods,svc,hpa -n prisma-demo -o wide
+
+k8s-demo-dashboard: ## Demo: abrir el Kubernetes Dashboard en el navegador (complemento visual, ver docs/Demo-Kubernetes-MVP.md)
+	minikube dashboard
+
+k8s-demo-open: ## Demo: port-forward al frontend -- dejar corriendo y abrir http://localhost:8080
+	kubectl port-forward svc/frontend 8080:80 -n prisma-demo
+
+k8s-demo-down: ## Demo: borrar el namespace de la demo (pods + PVCs); conserva el cluster minikube
+	kubectl delete namespace prisma-demo --ignore-not-found
+
+k8s-demo-destroy: ## Demo: apagar y borrar el cluster minikube entero
+	minikube delete
 
 # ---------- TLS / CERTIFICADOS ----------
 certs: ## Generar el certificado autofirmado de nginx (pide confirmación si ya existe uno)
