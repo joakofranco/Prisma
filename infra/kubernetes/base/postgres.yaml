@@ -22,11 +22,24 @@ spec:
             - { name: POSTGRES_PASSWORD, valueFrom: { secretKeyRef: { name: prisma-secrets, key: SPRING_DATASOURCE_PASSWORD } } }
           volumeMounts:
             - { name: pgdata, mountPath: /var/lib/postgresql/data }
+            # Mismo mecanismo que ./scripts/db/init.sql:/docker-entrypoint-initdb.d/00-init.sql
+            # en docker-compose.yml -- crea los schemas prisma/audit + extensiones ANTES de que
+            # Flyway corra. Sin esto, Postgres arranca con un cluster de datos vacío (sólo el
+            # schema "public") y V1__init_schema.sql de backend-core falla con
+            # "schema \"prisma\" does not exist" -- backend-core queda en CrashLoopBackOff.
+            # subPath es necesario para montar UN solo archivo del ConfigMap sin pisar el resto
+            # del directorio /docker-entrypoint-initdb.d/ (que acá sólo tiene este archivo, pero
+            # un mount sin subPath monta el ConfigMap entero como directorio, ocultando cualquier
+            # otro archivo que ya hubiera ahí).
+            - { name: init-scripts, mountPath: /docker-entrypoint-initdb.d/00-init.sql, subPath: 00-init.sql }
           readinessProbe:
             exec: { command: [pg_isready, -U, prisma] }
           resources:
             requests: { cpu: "500m", memory: "1Gi" }
             limits:   { cpu: "2", memory: "4Gi" }
+      volumes:
+        - name: init-scripts
+          configMap: { name: postgres-init-config }
   volumeClaimTemplates:
     - metadata: { name: pgdata }
       spec:

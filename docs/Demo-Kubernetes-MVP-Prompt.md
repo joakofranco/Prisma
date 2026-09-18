@@ -29,8 +29,8 @@ Estilo visual: profesional/técnico, minimalista, paleta oscura o azul/gris tipo
 iconografía genérica de contenedores/cluster/nodos). Poco texto por slide (bullets cortos, máx.
 4-5 por slide), dejando el desarrollo para las notas del orador. Incluir un diagrama simple de
 arquitectura en la slide 6 (frontend/backend-core/backend-ai como cajas "stateless" con 2
-réplicas cada una, apuntando a Postgres/Keycloak/Redis/Chroma como cajas "con estado, 1
-réplica") y un diagrama de línea de tiempo/fases en la slide 13.
+réplicas cada una, apuntando a Postgres/Keycloak/Redis como cajas "con estado, 1 réplica") y un
+diagrama de línea de tiempo/fases en la slide 13.
 
 Generá cada slide con: (1) título, (2) contenido/bullets, (3) notas del orador (texto para decir
 en cámara, no para mostrar en pantalla). Estructura exacta de las 14 slides:
@@ -58,8 +58,9 @@ en cámara, no para mostrar en pantalla). Estructura exacta de las 14 slides:
 
 6. EL MVP DE ESTA DEMO — cluster minikube (1 nodo, 4 vCPU/6GB); overlay nuevo
    infra/kubernetes/overlays/demo/; adentro: frontend/backend-core/backend-ai (2 réplicas c/u),
-   Postgres, Keycloak, Redis, Chroma; afuera a propósito: Ollama/LLM, MinIO, Ingress+TLS;
-   herramienta visual: Kubernetes Dashboard (incluido en minikube). [Acá va el diagrama de
+   Postgres, Keycloak, Redis; afuera a propósito (mismo alcance que docker-compose.mvp.yml):
+   Ollama/LLM, MinIO, Chroma, Ingress+TLS; herramienta visual: Kubernetes Dashboard (incluido en
+   minikube) o Lens/OpenLens como alternativa de escritorio. [Acá va el diagrama de
    arquitectura descrito arriba.]
 
 7. TRANSICIÓN A DEMO EN VIVO: ARRANQUE — comandos: minikube start, build de las 3 imágenes
@@ -78,10 +79,11 @@ en cámara, no para mostrar en pantalla). Estructura exacta de las 14 slides:
     backend-core; en la demo se dispara el mismo gesto a mano (kubectl scale); en un cluster
     real escalaría solo de 2 a 8 réplicas según CPU/memoria.
 
-11. QUÉ QUEDA FUERA DE ESTE MVP, Y POR QUÉ — tabla de 4 filas: Ollama/LLM (modelo pesado, no
-    aporta a mostrar orquestación), MinIO (sin uso en el guion), Ingress+TLS (port-forward
-    alcanza), alta disponibilidad real de las bases de datos (fuera de alcance, 1 réplica por
-    diseño).
+11. QUÉ QUEDA FUERA DE ESTE MVP, Y POR QUÉ — tabla de 5 filas: Ollama/LLM (modelo pesado, no
+    aporta a mostrar orquestación), MinIO (sin uso en el guion), Chroma/índice RAG en K8s
+    (mismo alcance que docker-compose.mvp.yml, backend-ai igual levanta sano), Ingress+TLS
+    (port-forward alcanza), alta disponibilidad real de las bases de datos (fuera de alcance, 1
+    réplica por diseño).
 
 12. CONCLUSIÓN DE LA EVALUACIÓN — técnicamente viable con holgura (validado ahora contra un
     cluster real); operativamente no listos para producción 24/7 hoy (sin rol DevOps, sin

@@ -6,8 +6,8 @@ cada ambiente `deploy.yml`) y [`docs/Certificados-TLS.md`](../../docs/Certificad
 (hostname dinámico de Keycloak, mismo mecanismo que acá).
 
 Hay un cuarto overlay, `overlays/demo/`, que **no** es un ambiente de despliegue real: es un MVP
-recortado (sin Ollama/MinIO/Ingress) pensado para grabar un video demostrando la tecnología en
-minikube. Ver [`docs/Demo-Kubernetes-MVP.md`](../../docs/Demo-Kubernetes-MVP.md) para el guion
+recortado (sin Ollama/MinIO/Chroma/Ingress — mismo alcance que `docker-compose.mvp.yml`)
+pensado para grabar un video demostrando la tecnología en minikube. Ver [`docs/Demo-Kubernetes-MVP.md`](../../docs/Demo-Kubernetes-MVP.md) para el guion
 completo, [`docs/Demo-Kubernetes-MVP-Slides.md`](../../docs/Demo-Kubernetes-MVP-Slides.md) para
 el script del PPT que lo acompaña, y
 [`docs/Demo-Kubernetes-MVP-Prompt.md`](../../docs/Demo-Kubernetes-MVP-Prompt.md) para el prompt
@@ -64,15 +64,16 @@ las keys esperadas, nunca se aplica directo con valores reales.
 
 ## Assets generados (`make sync-k8s-assets`)
 
-Dos archivos que Kustomize/Docker necesitan pero que **no viven** dentro de `infra/kubernetes/` ni
-`apps/backend-ai/` (fuente de verdad en otro lado del repo):
+Tres archivos que Kustomize/Docker necesitan pero que **no viven** dentro de `infra/kubernetes/`
+ni `apps/backend-ai/` (fuente de verdad en otro lado del repo):
 
 | Copia generada (gitignorada) | Fuente | Por qué no es el original directamente |
 |---|---|---|
 | `base/keycloak-realm.json` | `infra/keycloak/realm-prisma.json` | Kustomize no permite leer archivos fuera del árbol de la kustomization (restricción de diseño) |
+| `base/postgres-init.sql` | `scripts/db/init.sql` | Mismo motivo -- crea los schemas `prisma`/`audit` + extensiones que Flyway necesita antes de migrar; en docker-compose se monta directo por bind mount, acá hace falta que esté dentro del árbol para que el `configMapGenerator` lo pueda leer (ver `postgres.yaml`) |
 | `apps/backend-ai/knowledge-base/` | `docs/mcu-5.0/` | Docker no permite `COPY` desde fuera del build context (`apps/backend-ai/`) |
 
-`make sync-k8s-assets` genera ambas. Corre automáticamente en CI (`deploy.yml` antes de aplicar
+`make sync-k8s-assets` genera las tres. Corre automáticamente en CI (`deploy.yml` antes de aplicar
 manifiestos, `build-and-push.yml` antes de construir la imagen de `backend-ai`) — sólo hace falta
 correrlo a mano para probar localmente contra un cluster (minikube, ver
 [`docs/Kubernetes-Minikube-Portainer.md`](../../docs/Kubernetes-Minikube-Portainer.md)).

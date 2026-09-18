@@ -21,11 +21,16 @@ resources:
   - frontend.yaml
   - ingress.yaml
 
-# realm-prisma.json vive fuera de infra/kubernetes/ (Kustomize no permite leer fuera del árbol
-# de la kustomization) -- keycloak-realm.json es una copia generada por `make sync-k8s-assets`,
-# gitignorada (ver .gitignore). La key fija "realm-prisma.json" es el nombre que Keycloak espera
-# en /opt/keycloak/data/import/ (ver keycloak.yaml).
+# realm-prisma.json y postgres-init.sql viven fuera de infra/kubernetes/ (Kustomize no permite
+# leer fuera del árbol de la kustomization) -- ambos son copias generadas por
+# `make sync-k8s-assets`, gitignoradas (ver .gitignore). La key fija "realm-prisma.json" es el
+# nombre que Keycloak espera en /opt/keycloak/data/import/ (ver keycloak.yaml); "00-init.sql" es
+# el nombre bajo el que postgres.yaml lo monta en /docker-entrypoint-initdb.d/ (mismo prefijo
+# "00-" que usa docker-compose.yml para que corra antes que cualquier otro init script).
 configMapGenerator:
   - name: keycloak-realm-config
     files:
       - realm-prisma.json=keycloak-realm.json
+  - name: postgres-init-config
+    files:
+      - 00-init.sql=postgres-init.sql

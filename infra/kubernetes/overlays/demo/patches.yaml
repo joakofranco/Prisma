@@ -66,18 +66,6 @@ spec:
             requests: { cpu: "150m", memory: "256Mi" }
             limits:   { cpu: "500m", memory: "512Mi" }
 ---
-apiVersion: apps/v1
-kind: Deployment
-metadata: { name: chroma }
-spec:
-  template:
-    spec:
-      containers:
-        - name: chroma
-          resources:
-            requests: { cpu: "150m", memory: "256Mi" }
-            limits:   { cpu: "500m", memory: "1Gi" }
----
 # base/keycloak.yaml apunta las probes al management port (9000) /health/ready y /health/live --
 # el propio comentario de ese archivo (y infra/kubernetes/README.md, sección "Keycloak — caveats
 # operativos") avisa que ese path NUNCA se confirmó levantando el contenedor contra la 26.7. Para

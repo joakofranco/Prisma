@@ -104,12 +104,11 @@ actividad.
 **Contenido de la slide:**
 - Cluster: **minikube** (1 nodo, driver docker) — 4 vCPU / 6 GB
 - Overlay nuevo: `infra/kubernetes/overlays/demo/`
-- **Adentro:** frontend, backend-core, backend-ai (2 réplicas c/u), Postgres, Keycloak, Redis,
-  Chroma
-- **Afuera (a propósito):** Ollama/LLM, MinIO, Ingress+TLS — no hacen falta para mostrar cómo
-  orquesta Kubernetes
-- Herramienta visual: **Kubernetes Dashboard** (viene con minikube) para ver el despliegue
-  gráficamente además de la terminal
+- **Adentro:** frontend, backend-core, backend-ai (2 réplicas c/u), Postgres, Keycloak, Redis
+- **Afuera (a propósito):** Ollama/LLM, MinIO, Chroma, Ingress+TLS — mismo alcance que
+  `docker-compose.mvp.yml`, no hacen falta para mostrar cómo orquesta Kubernetes
+- Herramienta visual: **Kubernetes Dashboard** (viene con minikube) — o **Lens/OpenLens** como
+  alternativa de escritorio — para ver el despliegue gráficamente además de la terminal
 
 **Notas del orador:**
 > "Armamos un cuarto overlay, sólo para esta demo, que recorta el stack completo a lo mínimo
@@ -131,9 +130,8 @@ actividad.
 **Notas del orador:**
 > "Vamos a la terminal. Primero levanto el cluster, construyo las tres imágenes propias dentro
 > del daemon docker de minikube, y aplico los manifiestos con un solo comando declarativo.
-> Además de la terminal, vamos a tener abierto el Kubernetes Dashboard — la interfaz gráfica
-> oficial del proyecto — para ver gráficamente cada cosa que pase con los pods durante el resto
-> de la demo."
+> Además de la terminal, vamos a tener abierto el Kubernetes Dashboard [o: Lens] — para ver
+> gráficamente cada cosa que pase con los pods durante el resto de la demo."
 
 *(En este punto se corta a la grabación de terminal — ver
 [`docs/Demo-Kubernetes-MVP.md`](Demo-Kubernetes-MVP.md), secciones 1 a 4 — y se vuelve a las
@@ -201,8 +199,9 @@ slides para la sección 8.)*
 |---|---|
 | Ollama / LLM | ~5 GB de modelo, no aporta a mostrar orquestación; RAG degrada sin romper |
 | MinIO | Sin uso en el guion de la demo; sólo afecta la subida de evidencia |
+| Chroma (índice RAG en K8s) | Mismo alcance que `docker-compose.mvp.yml`; backend-ai igual levanta sano |
 | Ingress + cert-manager + TLS | `kubectl port-forward` al Service alcanza para la demo |
-| Alta disponibilidad real de Postgres/Keycloak/Chroma | Fuera de alcance de este MVP — 1 réplica por diseño (ver análisis, C3) |
+| Alta disponibilidad real de Postgres/Keycloak | Fuera de alcance de este MVP — 1 réplica por diseño (ver análisis, C3) |
 
 **Notas del orador:**
 > "Somos explícitos con lo que NO estamos mostrando. Nada de esto es una limitación de

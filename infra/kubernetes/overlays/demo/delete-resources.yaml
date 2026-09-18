@@ -37,3 +37,29 @@ kind: Ingress
 metadata:
   name: prisma-ingress
 $patch: delete
+---
+# Chroma también sale del MVP: docker-compose.mvp.yml (el MVP ya definido en el proyecto) no lo
+# tiene como servicio aparte -- ahí backend-ai usa un PersistentClient embebido (sin
+# CHROMA_SERVER_HOST). En Kubernetes es un Deployment de 1 réplica separado (ver el comentario en
+# infra/kubernetes/base/chroma.yaml), y en la práctica su rollout puede tardar/colgarse en un
+# minikube chico. backend-ai sigue arriba igual: build_chroma_client() sólo abre un HttpClient
+# perezoso contra "chroma" (ver apps/backend-ai/app/rag/chroma_client.py) y /health no depende de
+# Chroma (ver apps/backend-ai/app/main.py) -- el RAG queda degradado, exactamente como ya
+# degrada sin Ollama, pero backend-core/backend-ai/frontend/login siguen funcionando.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chroma
+$patch: delete
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chroma
+$patch: delete
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: chroma-pvc
+$patch: delete
