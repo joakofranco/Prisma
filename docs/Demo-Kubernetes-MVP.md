@@ -59,9 +59,9 @@ grabación si podés — te ahorra los 2-3 minutos de arranque en frío del nodo
 ## 1. Arrancar el cluster *(en cámara: ~1 min)*
 
 ```bash
-minikube start --driver=docker --container-runtime=docker --cpus=4 --memory=6144
-minikube status
-kubectl get nodes
+minikube start --driver=docker --container-runtime=docker --cpus=4 --memory=6144  # crea/arranca el nodo de K8s como contenedor Docker, con 4 CPU y 6 GiB asignados
+minikube status                                                                    # chequea que el cluster (host, kubelet, apiserver) esté Running
+kubectl get nodes                                                                  # confirma que el nodo minikube quedó Ready y qué versión de K8s corre
 ```
 
 > *Guion sugerido:* "Esto es un cluster de Kubernetes de un solo nodo corriendo en un
@@ -76,7 +76,7 @@ kubectl get nodes
 (Opcional, para que `kubectl top` y el HPA muestren métricas en vivo más adelante):
 
 ```bash
-minikube addons enable metrics-server
+minikube addons enable metrics-server  # instala el Metrics Server (para que `kubectl top` y el HPA lean uso real de CPU/memoria)
 ```
 
 ---
@@ -106,10 +106,10 @@ arranque tarda.
 ## 3. Recorrido de lo desplegado *(en cámara: ~2 min)*
 
 ```bash
-kubectl get pods -n prisma-demo -o wide
-kubectl get deployments,statefulsets -n prisma-demo
-kubectl get svc -n prisma-demo
-kubectl get hpa -n prisma-demo
+kubectl get pods -n prisma-demo -o wide             # lista los pods del namespace con su IP y en qué nodo quedaron
+kubectl get deployments,statefulsets -n prisma-demo # réplicas deseadas vs. listas de cada Deployment/StatefulSet
+kubectl get svc -n prisma-demo                      # Services (IP estable + balanceo) que exponen cada componente dentro del cluster
+kubectl get hpa -n prisma-demo                      # HorizontalPodAutoscaler configurado, con sus límites min/max de réplicas
 ```
 
 Puntos para señalar en cámara (mapea 1 a 1 con la tabla de arquitectura del análisis de
@@ -146,7 +146,7 @@ terminal mientras dure la demo):
 
 ```bash
 make k8s-demo-dashboard
-# minikube dashboard
+# minikube dashboard   -- abre el Kubernetes Dashboard en el navegador (levanta un proxy local a la UI del cluster)
 ```
 
 Abre una pestaña del navegador sola. Una vez ahí:
@@ -206,7 +206,7 @@ En una terminal aparte (queda corriendo durante todo el resto de la demo):
 
 ```bash
 make k8s-demo-open
-# kubectl port-forward svc/frontend 8888:80 -n prisma-demo
+# kubectl port-forward svc/frontend 8888:80 -n prisma-demo   -- abre un túnel local: localhost:8888 -> puerto 80 del Service frontend dentro del cluster
 ```
 
 Abrir **http://localhost:8888** en el navegador (8888 y no 8080 a propósito — ver
@@ -235,16 +235,18 @@ Abrí dos terminales nuevas.
 **Terminal A** — mirar los pods en vivo:
 
 ```bash
-kubectl get pods -n prisma-demo -l app.kubernetes.io/name=backend-core -w
+kubectl get pods -n prisma-demo -l app.kubernetes.io/name=backend-core -w  # -w = "watch": queda mirando y refresca sola cada vez que cambia un pod de backend-core
 ```
 
 **Terminal B** — un pod de prueba que le pega al Service (no a un pod puntual) cada segundo,
 para probar que el Service en sí nunca deja de responder:
 
 ```bash
+# levanta un pod descartable (--restart=Never) que hace curl al Service backend-core (no a un pod puntual)
+# una vez por segundo e imprime sólo el código HTTP devuelto
 kubectl run curl-loop -n prisma-demo --image=curlimages/curl:8.10.1 --restart=Never -- \
   sh -c 'while true; do curl -s -o /dev/null -w "%{http_code}\n" http://backend-core:8080/actuator/health/readiness; sleep 1; done'
-kubectl logs -f curl-loop -n prisma-demo
+kubectl logs -f curl-loop -n prisma-demo  # -f = "follow": muestra en vivo lo que va imprimiendo ese loop
 ```
 
 Debería imprimir `200` una vez por segundo, sin cortes.
@@ -252,9 +254,9 @@ Debería imprimir `200` una vez por segundo, sin cortes.
 **Terminal C** — acá es donde se "rompe" algo en cámara:
 
 ```bash
-kubectl get pods -n prisma-demo -l app.kubernetes.io/name=backend-core
+kubectl get pods -n prisma-demo -l app.kubernetes.io/name=backend-core  # lista los pods de backend-core para copiar el nombre de uno
 # copiar el nombre de UNO de los dos pods
-kubectl delete pod <nombre-del-pod> -n prisma-demo
+kubectl delete pod <nombre-del-pod> -n prisma-demo  # lo borra a mano, simulando una caída; el Deployment repone la réplica faltante solo
 ```
 
 > *Guion sugerido:* "Voy a borrar uno de los dos pods de backend-core a mano, como si se hubiera
@@ -281,8 +283,8 @@ Con la Terminal B de la sección anterior todavía corriendo (o relanzá `curl-l
 cerraste):
 
 ```bash
-kubectl rollout restart deployment/backend-core -n prisma-demo
-kubectl rollout status  deployment/backend-core -n prisma-demo
+kubectl rollout restart deployment/backend-core -n prisma-demo  # dispara un rolling update (recrea los pods de a uno, respetando maxSurge/maxUnavailable)
+kubectl rollout status  deployment/backend-core -n prisma-demo  # se queda esperando y muestra el progreso hasta que el rollout termina
 ```
 
 > *Guion sugerido:* "Esto simula desplegar una versión nueva del backend en horario laboral,
@@ -293,7 +295,7 @@ kubectl rollout status  deployment/backend-core -n prisma-demo
 Para ver el detalle del reemplazo pod por pod en tiempo real:
 
 ```bash
-kubectl get pods -n prisma-demo -l app.kubernetes.io/name=backend-core -w
+kubectl get pods -n prisma-demo -l app.kubernetes.io/name=backend-core -w  # -w: muestra en vivo cómo aparece el pod nuevo (Ready) antes de que se borre el viejo
 ```
 
 **En el Dashboard:** el Deployment `backend-core` en **Workloads → Deployments** muestra el
@@ -309,9 +311,9 @@ solo bajo carga real de CPU/memoria — generar esa carga de forma confiable en 
 complicado, así que la demo hace el mismo gesto a mano (es exactamente lo que el HPA automatiza):
 
 ```bash
-kubectl get hpa -n prisma-demo
-kubectl scale deployment/backend-core -n prisma-demo --replicas=4
-kubectl get pods -n prisma-demo -l app.kubernetes.io/name=backend-core -w
+kubectl get hpa -n prisma-demo                                            # muestra el HPA y sus límites (2→4 réplicas en esta demo) antes de forzar el escalado a mano
+kubectl scale deployment/backend-core -n prisma-demo --replicas=4         # pide al Deployment que pase de 2 a 4 réplicas (lo mismo que haría el HPA solo)
+kubectl get pods -n prisma-demo -l app.kubernetes.io/name=backend-core -w # -w: mirar en vivo cómo aparecen los 2 pods nuevos
 ```
 
 > *Guion sugerido:* "Esto mismo lo hace Kubernetes solo cuando el HPA que se ve arriba detecta
@@ -322,7 +324,7 @@ kubectl get pods -n prisma-demo -l app.kubernetes.io/name=backend-core -w
 Volver a 2 réplicas para cerrar prolijo:
 
 ```bash
-kubectl scale deployment/backend-core -n prisma-demo --replicas=2
+kubectl scale deployment/backend-core -n prisma-demo --replicas=2  # vuelve a bajar a 2 réplicas, el estado "normal" del deployment
 ```
 
 **En el Dashboard:** la card de `backend-core` en **Workloads → Deployments** cambia el
@@ -336,7 +338,7 @@ Cerrar el `curl-loop`, el `port-forward` y la pestaña del Dashboard (o desconec
 en Lens si se usó esa alternativa) — Ctrl+C en las terminales que quedaron abiertas, y:
 
 ```bash
-kubectl delete pod curl-loop -n prisma-demo --ignore-not-found
+kubectl delete pod curl-loop -n prisma-demo --ignore-not-found  # borra el pod de prueba del curl-loop; --ignore-not-found evita error si ya no existe
 ```
 
 Para dejar la máquina como estaba:
