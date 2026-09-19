@@ -1,9 +1,9 @@
 # Mismo criterio que overlays/dev/patches.yaml: bajar CPU/RAM por pod, no la redundancia
-# (backend-core, backend-ai y frontend heredan sus 2 réplicas de la base) -- la demo sigue
+# (backend-core y frontend heredan sus 2 réplicas de la base) -- la demo sigue
 # mostrando self-healing y rolling update sin quedar reducida a un solo pod por servicio, pero
 # el total entra cómodo en un minikube chico (ver dimensionamiento en
-# docs/Demo-Kubernetes-MVP.md). `imagePullPolicy: Never` en las 3 imágenes propias: se
-# construyen DENTRO del daemon docker de minikube (`make k8s-demo-images`), nunca se publican a
+# docs/Demo-Kubernetes-MVP.md). `imagePullPolicy: Never` en las 2 imágenes propias que corren acá (frontend y backend-core): se
+# construyen en el host y se cargan a minikube (`make k8s-demo-images`), nunca se publican a
 # GHCR para esta demo -- con la política por defecto (Always en backend-core, ver
 # base/backend-core.yaml) el kubelet intentaría bajarlas de ghcr.io e ignoraría la imagen local.
 apiVersion: apps/v1
@@ -15,22 +15,16 @@ spec:
       containers:
         - name: backend-core
           imagePullPolicy: Never
+          # Memoria: la JVM de backend-core llega a ~1 Gi durante el arranque (Flyway + Hibernate)
+          # y se estabiliza en ~750 Mi. Con limit 1Gi el pod moría por OOMKilled en bucle. Se
+          # dejan 1Gi de request / 2Gi de limit (igual que la base): baja CPU, no memoria.
           resources:
-            requests: { cpu: "200m", memory: "512Mi" }
-            limits:   { cpu: "1",    memory: "1Gi" }
----
-apiVersion: apps/v1
-kind: Deployment
-metadata: { name: backend-ai }
-spec:
-  template:
-    spec:
-      containers:
-        - name: backend-ai
-          imagePullPolicy: Never
-          resources:
-            requests: { cpu: "250m", memory: "768Mi" }
-            limits:   { cpu: "1",    memory: "1536Mi" }
+            requests: { cpu: "200m", memory: "1Gi" }
+            limits:   { cpu: "1",    memory: "2Gi" }
+          # Arranque lento en minikube (CPU compartida con el resto del stack): 60 x 5s = 5 min
+          # antes de que el kubelet lo mate, en vez de los 2,5 min de la base.
+          startupProbe:
+            failureThreshold: 60
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -65,18 +59,6 @@ spec:
           resources:
             requests: { cpu: "150m", memory: "256Mi" }
             limits:   { cpu: "500m", memory: "512Mi" }
----
-apiVersion: apps/v1
-kind: Deployment
-metadata: { name: chroma }
-spec:
-  template:
-    spec:
-      containers:
-        - name: chroma
-          resources:
-            requests: { cpu: "150m", memory: "256Mi" }
-            limits:   { cpu: "500m", memory: "1Gi" }
 ---
 # base/keycloak.yaml apunta las probes al management port (9000) /health/ready y /health/live --
 # el propio comentario de ese archivo (y infra/kubernetes/README.md, sección "Keycloak — caveats
@@ -114,3 +96,13 @@ kind: HorizontalPodAutoscaler
 metadata: { name: backend-core-hpa }
 spec:
   maxReplicas: 4
+  # Sólo CPU (la base escala también por memoria al 80%): la memoria de una JVM es un mal
+  # disparador -- sube en el arranque y se queda alta -- y hacía que el HPA subiera a 4 réplicas
+  # apenas arrancaba la demo, causando más arranques simultáneos y reinicios. `metrics` es una
+  # lista atómica: este valor REEMPLAZA a la de la base. El escalado de la demo 3 se hace a mano.
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 70 } }
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 120

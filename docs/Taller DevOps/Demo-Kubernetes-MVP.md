@@ -12,7 +12,7 @@ prompt listo para generar el diseño con una IA de presentaciones (Gamma, Tome, 
 en [`docs/Demo-Kubernetes-MVP-Prompt.md`](Demo-Kubernetes-MVP-Prompt.md).
 
 Usa el overlay `infra/kubernetes/overlays/demo/`, una variante **sólo para esto** del overlay
-`dev` normal: saca Ollama y MinIO (los componentes más pesados y sin uso en el guion) y el
+`dev` normal: saca Ollama, MinIO, backend-ai y Chroma (los componentes más pesados y sin uso en el guion) y el
 Ingress (se accede directo al Service `frontend` por `kubectl port-forward` — más simple para
 grabar que sumar ingress-nginx + cert-manager). Ver el comentario al principio de
 [`kustomization.yaml`](../infra/kubernetes/overlays/demo/kustomization.yaml) para el detalle
@@ -40,7 +40,7 @@ Dos puntos concretos que este overlay ya mitiga pero vale la pena confirmar en t
   `demo` ya lo reemplaza por un probe TCP simple sobre el puerto HTTP (ver `patches.yaml`) para
   no dejar la grabación a merced de eso — pero confirmá en el ensayo que el pod `keycloak`
   efectivamente llega a `Running 1/1` sin reintentos eternos.
-- **Tiempos de arranque.** Postgres/Keycloak/Chroma tardan más en frío la primera vez (imágenes
+- **Tiempos de arranque.** Postgres/Keycloak tardan más en frío la primera vez (imágenes
   bajándose). El ensayo también sirve para tener las imágenes de terceros ya cacheadas en el
   nodo de minikube antes de grabar, así el `make k8s-demo-up` en cámara es rápido.
 
@@ -52,7 +52,7 @@ grabación si podés — te ahorra los 2-3 minutos de arranque en frío del nodo
 ## 1. Arrancar el cluster *(en cámara: ~1 min)*
 
 ```bash
-minikube start --driver=docker --cpus=4 --memory=6144
+minikube start --driver=docker --cpus=8 --memory=14336
 minikube status
 kubectl get nodes
 ```
@@ -71,13 +71,13 @@ minikube addons enable metrics-server
 
 ## 2. Construir las imágenes y desplegar *(en cámara: ~2-3 min, más el tiempo de arranque de los pods)*
 
-Las 3 imágenes propias (`frontend`, `backend-core`, `backend-ai`) se construyen con el Docker del
+Las 2 imágenes propias (`frontend`, `backend-core`) se construyen con el Docker del
 host y se **cargan en minikube** con `minikube image load` (funciona con runtime docker o
 containerd) — no se publican a GHCR para esta demo, por eso el overlay usa
 `imagePullPolicy: Never` (ver `infra/kubernetes/overlays/demo/patches.yaml`).
 
 ```bash
-make k8s-demo-images   # build de las 3 imágenes + minikube image load
+make k8s-demo-images   # build de las 2 imágenes + minikube image load
 make k8s-demo-up       # namespace + Secret real (passwords random) + kubectl apply -k + espera a Ready
 ```
 
@@ -104,22 +104,22 @@ kubectl get hpa -n prisma-demo
 Puntos para señalar en cámara (mapea 1 a 1 con la tabla de arquitectura del análisis de
 viabilidad, sección 2.1):
 
-- `frontend`, `backend-core`, `backend-ai`: **2 réplicas cada uno** — son stateless, toda la
-  persistencia vive en Postgres/Redis/Chroma, no en el proceso.
+- `frontend`, `backend-core`: **2 réplicas cada uno** — son stateless, toda la
+  persistencia vive en Postgres/Redis, no en el proceso.
 - `postgres`, `keycloak-db`: **StatefulSet, 1 réplica** — bases de datos con estado real, cada
   una con su propio volumen persistente (`kubectl get pvc -n prisma-demo`).
-- `chroma`: Deployment de 1 réplica — el índice vectorial del RAG, separado de `backend-ai`
-  justamente para que este último pueda tener 2+ réplicas (ver comentario en
-  `infra/kubernetes/base/chroma.yaml`).
+- `keycloak`, `redis`: Deployments de 1 réplica — login/SSO y caché.
 - `backend-core-hpa`: ya existe un HorizontalPodAutoscaler apuntando a `backend-core`
   (2→4 réplicas acá, 2→8 en un cluster real) — se ve en la sección 8.
 
 **Qué NO está en esta demo, y por qué** (bueno decirlo explícito en el video, conecta con el
-análisis de viabilidad): sin Ollama/LLM (el modelo de ~4.7 GB no se descarga; el RAG degrada sin
-romper), sin MinIO (la subida de evidencia no funciona), sin Ingress/TLS (se entra directo al
-Service `frontend`). Ninguno de los tres hace falta para mostrar cómo Kubernetes orquesta la
-app — son la misma frontera que ya traza `docker-compose.mvp.yml` (perfil `mvp`) para una demo
-liviana en Compose.
+análisis de viabilidad): sin Ollama/LLM (el modelo de ~4.7 GB no se descarga), sin backend-ai ni
+Chroma (el RAG/IA no forma parte del guion; `/ai/*` responde 502), sin MinIO (la subida de
+evidencia no funciona), sin Ingress/TLS (se entra directo al Service `frontend`). Ninguno hace
+falta para mostrar cómo Kubernetes orquesta la app — son la misma frontera que ya traza
+`docker-compose.mvp.yml` (perfil `mvp`) para una demo liviana en Compose. (El Service
+`backend-ai` se conserva, sin pods, sólo para que el nginx del frontend pueda resolver el nombre
+al arrancar.)
 
 ---
 
@@ -142,7 +142,7 @@ Abre una pestaña del navegador sola. Una vez ahí:
 
 1. Arriba a la izquierda, cambiar el namespace de `default` a **`prisma-demo`**.
 2. Ir a **Workloads → Deployments** (o **Pods**) para ver las cards de `frontend`,
-   `backend-core`, `backend-ai`, `keycloak`, `chroma` con su cantidad de réplicas listas.
+   `backend-core`, `keycloak`, `redis` con su cantidad de réplicas listas.
 
 > *Guion sugerido:* "Además de la terminal, vamos a tener abierto el Kubernetes Dashboard —
 > la interfaz gráfica oficial del proyecto — para ver gráficamente cada cambio que hagamos:
@@ -322,7 +322,7 @@ Conceptos que se repiten en todos los comandos:
 
 | Comando | Qué hace | Para qué se usó |
 |---|---|---|
-| `minikube start --driver=docker --cpus=4 --memory=6144` | Crea un cluster de Kubernetes de **un solo nodo** dentro de un contenedor Docker. `--cpus=4` y `--memory=6144` (6 GB) le reservan recursos. | Tener un cluster local sin pagar nube. Los 6 GB hacen falta porque Postgres, Keycloak, Chroma y los backends juntos consumen bastante. |
+| `minikube start --driver=docker --cpus=8 --memory=14336` | Crea un cluster de Kubernetes de **un solo nodo** dentro de un contenedor Docker. `--cpus=8` y `--memory=14336` (14 GB) le reservan recursos. | Tener un cluster local sin pagar nube. Los 14 GB dan holgura porque Postgres, Keycloak, Chroma y los backends juntos consumen bastante. |
 | `minikube status` | Muestra el estado de los componentes de minikube (host, kubelet, apiserver). | Confirmar en cámara que el cluster arrancó bien. |
 | `kubectl get nodes` | Lista los nodos del cluster con su estado (`Ready`). | Mostrar que hay un nodo listo para recibir pods. |
 | `minikube addons enable metrics-server` | Instala el componente que recolecta métricas de CPU y memoria. | Opcional. El Dashboard lo usa para sus gráficos y el HPA lo necesita para decidir cuándo escalar. |
@@ -331,14 +331,14 @@ Conceptos que se repiten en todos los comandos:
 
 | Comando | Qué hace | Para qué se usó |
 |---|---|---|
-| `make k8s-demo-images` | Construye las 3 imágenes propias (`frontend`, `backend-core`, `backend-ai`) con el Docker del host y las carga en minikube con `minikube image load`. | Las imágenes no se publican a GHCR: se cargan directo al nodo, por eso el overlay usa `imagePullPolicy: Never` (Kubernetes no las busca en ningún registry). |
+| `make k8s-demo-images` | Construye las 2 imágenes propias (`frontend`, `backend-core`) con el Docker del host y las carga en minikube con `minikube image load`. | Las imágenes no se publican a GHCR: se cargan directo al nodo, por eso el overlay usa `imagePullPolicy: Never` (Kubernetes no las busca en ningún registry). |
 | `make k8s-demo-up` | En un solo paso: crea el namespace `prisma-demo`, crea el Secret con passwords aleatorias, ejecuta `kubectl apply -k overlays/demo` y espera con `kubectl rollout status` a que todo esté `Ready`. | Desplegar toda la app. Kubernetes programa cada pod, espera sus health checks y lo mantiene vivo. |
 
 ### 3. Recorrido de lo desplegado
 
 | Comando | Qué hace | Qué se señala en cámara |
 |---|---|---|
-| `kubectl get pods -n prisma-demo -o wide` | Lista los pods. `-o wide` agrega la IP y el nodo de cada uno. | 2 réplicas de `frontend`, `backend-core` y `backend-ai`. |
+| `kubectl get pods -n prisma-demo -o wide` | Lista los pods. `-o wide` agrega la IP y el nodo de cada uno. | 2 réplicas de `frontend` y `backend-core`. |
 | `kubectl get deployments,statefulsets -n prisma-demo` | Lista los controladores que gestionan los pods. | Deployments para lo *stateless*. StatefulSets (1 réplica) para `postgres` y `keycloak-db`, que guardan estado y tienen volumen propio. |
 | `kubectl get svc -n prisma-demo` | Lista los Services, las direcciones estables internas. | Cada Service reparte tráfico entre los pods de su app. |
 | `kubectl get hpa -n prisma-demo` | Lista los HorizontalPodAutoscalers. | `backend-core-hpa` ya existe y escalaría de 2 a 4 réplicas bajo carga. |
@@ -423,7 +423,7 @@ levanta el pod nuevo, espera a que esté Ready y recién después baja uno viejo
 
 | Comando | Qué hace |
 |---|---|
-| `make k8s-demo-images` | Construye `frontend`/`backend-core`/`backend-ai` con docker y las carga en minikube (`minikube image load`) |
+| `make k8s-demo-images` | Construye `frontend`/`backend-core` con docker y las carga en minikube (`minikube image load`) |
 | `make k8s-demo-secrets` | Crea el namespace `prisma-demo` + el Secret real (se corre solo, es prerequisito de `k8s-demo-up`) |
 | `make k8s-demo-up` | `kubectl apply -k overlays/demo` + espera a que todo esté `Ready` |
 | `make k8s-demo-status` | `kubectl get pods,svc,hpa -n prisma-demo` |
@@ -434,12 +434,17 @@ levanta el pod nuevo, espera a que esté Ready y recién después baja uno viejo
 
 ## Troubleshooting
 
-- **`ImagePullBackOff` en `backend-core`/`backend-ai`/`frontend`.** Las imágenes no llegaron al
+- **`ImagePullBackOff` en `backend-core`/`frontend`.** Las imágenes no llegaron al
   nodo. Repetí `make k8s-demo-images` (termina con `minikube image load`) y verificá con
   `minikube image ls | grep prisma`.
 - **`SSH_AGENT_START: starting an SSH agent on Windows is not yet supported`.** Era el
   `minikube docker-env` que usaba antes el target: sólo funciona con runtime `docker` y falla con
   `containerd`. El target actual ya no lo usa (build en el host + `minikube image load`).
+- **Pods de `backend-core` que caen y se reinician en bucle (`OOMKilled`, exit 137).** La JVM
+  supera 1 Gi durante el arranque. El overlay `demo` fija 1 Gi de request / 2 Gi de limit y un
+  `startupProbe` de hasta 5 min; además el HPA de la demo escala sólo por CPU (la memoria de una
+  JVM lo hacía subir a 4 réplicas apenas arrancaba). Diagnóstico:
+  `kubectl describe pod <pod> -n prisma-demo | grep -A3 "Last State"`.
 - **`keycloak` nunca llega a `Running 1/1`.** Ver la nota de la sección 0 sobre el probe TCP.
   Si igual falla, `kubectl describe pod -n prisma-demo -l app.kubernetes.io/name=keycloak` y
   `kubectl logs -n prisma-demo -l app.kubernetes.io/name=keycloak` para ver si el problema es

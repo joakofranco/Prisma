@@ -102,11 +102,10 @@ actividad.
 ## Slide 6 — El MVP de esta demo
 
 **Contenido de la slide:**
-- Cluster: **minikube** (1 nodo, driver docker) — 4 vCPU / 6 GB
+- Cluster: **minikube** (1 nodo, driver docker) — 8 vCPU / 14 GB
 - Overlay nuevo: `infra/kubernetes/overlays/demo/`
-- **Adentro:** frontend, backend-core, backend-ai (2 réplicas c/u), Postgres, Keycloak, Redis,
-  Chroma
-- **Afuera (a propósito):** Ollama/LLM, MinIO, Ingress+TLS — no hacen falta para mostrar cómo
+- **Adentro:** frontend, backend-core (2 réplicas c/u), Postgres, Keycloak, Redis
+- **Afuera (a propósito):** Ollama/LLM, backend-ai + Chroma, MinIO, Ingress+TLS — no hacen falta para mostrar cómo
   orquesta Kubernetes
 - Herramienta visual: **Kubernetes Dashboard** (viene con minikube) para ver el despliegue
   gráficamente además de la terminal
@@ -199,10 +198,11 @@ slides para la sección 8.)*
 **Contenido de la slide:**
 | Fuera | Por qué |
 |---|---|
-| Ollama / LLM | ~5 GB de modelo, no aporta a mostrar orquestación; RAG degrada sin romper |
+| Ollama / LLM | ~5 GB de modelo, no aporta a mostrar orquestación |
+| backend-ai + Chroma | El RAG/IA no forma parte del guion de la demo |
 | MinIO | Sin uso en el guion de la demo; sólo afecta la subida de evidencia |
 | Ingress + cert-manager + TLS | `kubectl port-forward` al Service alcanza para la demo |
-| Alta disponibilidad real de Postgres/Keycloak/Chroma | Fuera de alcance de este MVP — 1 réplica por diseño (ver análisis, C3) |
+| Alta disponibilidad real de Postgres/Keycloak | Fuera de alcance de este MVP — 1 réplica por diseño (ver análisis, C3) |
 
 **Notas del orador:**
 > "Somos explícitos con lo que NO estamos mostrando. Nada de esto es una limitación de

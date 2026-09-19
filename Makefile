@@ -239,12 +239,10 @@ k8s-prod: sync-k8s-assets ## Aplicar manifiestos K8s del entorno prod
 # Guion completo paso a paso: docs/Demo-Kubernetes-MVP.md
 # MSYS_NO_PATHCONV=1 en el build del frontend: sin eso, Git Bash en Windows convierte
 # "--build-arg VITE_KEYCLOAK_URL=/auth" en "C:/Program Files/Git/auth" antes de llegar a docker.
-k8s-demo-images: sync-k8s-assets ## Demo: construir las 3 imagenes con el docker del host y cargarlas en minikube
+k8s-demo-images: sync-k8s-assets ## Demo: construir las 2 imagenes (backend-core, frontend) con el docker del host y cargarlas en minikube
 	@echo "$(CYAN)🐳 Construyendo imagenes y cargandolas en minikube (funciona con runtime docker o containerd)...$(RESET)"
 	docker build -f infra/docker/backend-core.Dockerfile --target runtime \
 	  -t prisma-backend-core:demo apps/backend-core && \
-	docker build -f infra/docker/backend-ai.Dockerfile --target runtime \
-	  -t prisma-backend-ai:demo apps/backend-ai && \
 	MSYS_NO_PATHCONV=1 docker build -f infra/docker/frontend.Dockerfile --target runtime \
 	  --build-arg VITE_API_BASE_URL=/api \
 	  --build-arg VITE_AI_API_BASE_URL=/ai/api/v1 \
@@ -252,7 +250,7 @@ k8s-demo-images: sync-k8s-assets ## Demo: construir las 3 imagenes con el docker
 	  --build-arg VITE_KEYCLOAK_REALM=prisma \
 	  --build-arg VITE_KEYCLOAK_CLIENT_ID=prisma-frontend \
 	  -t prisma-frontend:demo apps/frontend && \
-	minikube image load prisma-backend-core:demo prisma-backend-ai:demo prisma-frontend:demo
+	minikube image load prisma-backend-core:demo prisma-frontend:demo
 
 k8s-demo-secrets: ## Demo: namespace + Secret real (passwords random; admin client secret fijo del realm importado)
 	kubectl create namespace prisma-demo --dry-run=client -o yaml | kubectl apply -f -
@@ -274,9 +272,7 @@ k8s-demo-up: sync-k8s-assets k8s-demo-secrets ## Demo: aplicar el overlay MVP y 
 	kubectl rollout status statefulset/postgres    -n prisma-demo --timeout=180s
 	kubectl rollout status statefulset/keycloak-db -n prisma-demo --timeout=180s
 	kubectl rollout status deployment/keycloak     -n prisma-demo --timeout=180s
-	kubectl rollout status deployment/chroma       -n prisma-demo --timeout=180s
 	kubectl rollout status deployment/backend-core -n prisma-demo --timeout=180s
-	kubectl rollout status deployment/backend-ai   -n prisma-demo --timeout=180s
 	kubectl rollout status deployment/frontend     -n prisma-demo --timeout=180s
 
 k8s-demo-status: ## Demo: ver pods/servicios/hpa del namespace de la demo

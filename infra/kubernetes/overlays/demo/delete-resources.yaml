@@ -37,3 +37,32 @@ kind: Ingress
 metadata:
   name: prisma-ingress
 $patch: delete
+---
+# backend-ai + Chroma: el RAG/IA no forma parte del guion (self-healing, rolling update, scaling
+# se muestran con backend-core). Se elimina el Deployment de backend-ai, pero NO su Service
+# "backend-ai": el nginx del frontend hace proxy_pass a http://backend-ai:8000 con hostname fijo y
+# lo resuelve al arrancar -- sin el Service el frontend no levanta ("host not found in upstream").
+# Con el Service y sin pods, el nombre resuelve y /ai/* responde 502.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-ai
+$patch: delete
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chroma
+$patch: delete
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chroma
+$patch: delete
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: chroma-pvc
+$patch: delete

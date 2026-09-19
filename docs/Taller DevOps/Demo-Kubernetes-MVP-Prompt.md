@@ -56,7 +56,7 @@ en cámara, no para mostrar en pantalla). Estructura exacta de las 14 slides:
    piloto? Sí, bajo riesgo. Esta demo es la Fase 1 del plan: validar en local antes de un
    piloto en cloud.
 
-6. EL MVP DE ESTA DEMO — cluster minikube (1 nodo, 4 vCPU/6GB); overlay nuevo
+6. EL MVP DE ESTA DEMO — cluster minikube (1 nodo, 8 vCPU/14GB); overlay nuevo
    infra/kubernetes/overlays/demo/; adentro: frontend/backend-core/backend-ai (2 réplicas c/u),
    Postgres, Keycloak, Redis, Chroma; afuera a propósito: Ollama/LLM, MinIO, Ingress+TLS;
    herramienta visual: Kubernetes Dashboard (incluido en minikube). [Acá va el diagrama de
