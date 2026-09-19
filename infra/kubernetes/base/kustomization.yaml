@@ -29,3 +29,8 @@ configMapGenerator:
   - name: keycloak-realm-config
     files:
       - realm-prisma.json=keycloak-realm.json
+  # Mismo criterio: postgres-init.sql es una copia de scripts/db/init.sql generada por
+  # `make sync-k8s-assets` (schemas prisma/audit, extensiones, roles).
+  - name: postgres-init-config
+    files:
+      - 00-init.sql=postgres-init.sql

@@ -157,6 +157,7 @@ infra/nginx/certs/*.key
 # porque Kustomize no permite leer archivos fuera del árbol de infra/kubernetes/base -- ver
 # infra/kubernetes/README.md.
 infra/kubernetes/base/keycloak-realm.json
+infra/kubernetes/base/postgres-init.sql
 # docs/mcu-5.0 (fuente de verdad) copiado acá para que el Dockerfile de backend-ai lo empaquete
 # en la imagen -- ver infra/docker/backend-ai.Dockerfile.
 apps/backend-ai/knowledge-base/*

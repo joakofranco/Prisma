@@ -221,6 +221,7 @@ security-scan: ## Trivy scan local
 sync-k8s-assets: ## Genera las copias que Kustomize necesita (realm de Keycloak, knowledge base RAG)
 	@echo "$(CYAN)🔄 Sincronizando assets para K8s/imagen de backend-ai...$(RESET)"
 	cp infra/keycloak/realm-prisma.json infra/kubernetes/base/keycloak-realm.json;
+	cp scripts/db/init.sql infra/kubernetes/base/postgres-init.sql;
 	rm -rf apps/backend-ai/knowledge-base;
 	mkdir -p apps/backend-ai/knowledge-base;
 	cp -r docs/mcu-5.0/. apps/backend-ai/knowledge-base/;
@@ -236,20 +237,22 @@ k8s-prod: sync-k8s-assets ## Aplicar manifiestos K8s del entorno prod
 
 # ---------- KUBERNETES: DEMO MVP (minikube, para el video guiado) ----------
 # Guion completo paso a paso: docs/Demo-Kubernetes-MVP.md
-k8s-demo-images: sync-k8s-assets ## Demo: construir las 3 imagenes DENTRO del daemon docker de minikube
-	@echo "$(CYAN)🐳 Construyendo imagenes dentro de minikube (driver docker)...$(RESET)"
-	eval $$(minikube docker-env --shell bash) && \
+# MSYS_NO_PATHCONV=1 en el build del frontend: sin eso, Git Bash en Windows convierte
+# "--build-arg VITE_KEYCLOAK_URL=/auth" en "C:/Program Files/Git/auth" antes de llegar a docker.
+k8s-demo-images: sync-k8s-assets ## Demo: construir las 3 imagenes con el docker del host y cargarlas en minikube
+	@echo "$(CYAN)🐳 Construyendo imagenes y cargandolas en minikube (funciona con runtime docker o containerd)...$(RESET)"
 	docker build -f infra/docker/backend-core.Dockerfile --target runtime \
 	  -t prisma-backend-core:demo apps/backend-core && \
 	docker build -f infra/docker/backend-ai.Dockerfile --target runtime \
 	  -t prisma-backend-ai:demo apps/backend-ai && \
-	docker build -f infra/docker/frontend.Dockerfile --target runtime \
+	MSYS_NO_PATHCONV=1 docker build -f infra/docker/frontend.Dockerfile --target runtime \
 	  --build-arg VITE_API_BASE_URL=/api \
 	  --build-arg VITE_AI_API_BASE_URL=/ai/api/v1 \
 	  --build-arg VITE_KEYCLOAK_URL=/auth \
 	  --build-arg VITE_KEYCLOAK_REALM=prisma \
 	  --build-arg VITE_KEYCLOAK_CLIENT_ID=prisma-frontend \
-	  -t prisma-frontend:demo apps/frontend
+	  -t prisma-frontend:demo apps/frontend && \
+	minikube image load prisma-backend-core:demo prisma-backend-ai:demo prisma-frontend:demo
 
 k8s-demo-secrets: ## Demo: namespace + Secret real (passwords random; admin client secret fijo del realm importado)
 	kubectl create namespace prisma-demo --dry-run=client -o yaml | kubectl apply -f -

@@ -71,12 +71,13 @@ minikube addons enable metrics-server
 
 ## 2. Construir las imágenes y desplegar *(en cámara: ~2-3 min, más el tiempo de arranque de los pods)*
 
-Las 3 imágenes propias (`frontend`, `backend-core`, `backend-ai`) se construyen **dentro del
-daemon docker de minikube** — no se publican a GHCR para esta demo, por eso el overlay usa
+Las 3 imágenes propias (`frontend`, `backend-core`, `backend-ai`) se construyen con el Docker del
+host y se **cargan en minikube** con `minikube image load` (funciona con runtime docker o
+containerd) — no se publican a GHCR para esta demo, por eso el overlay usa
 `imagePullPolicy: Never` (ver `infra/kubernetes/overlays/demo/patches.yaml`).
 
 ```bash
-make k8s-demo-images   # build de las 3 imágenes dentro de minikube
+make k8s-demo-images   # build de las 3 imágenes + minikube image load
 make k8s-demo-up       # namespace + Secret real (passwords random) + kubectl apply -k + espera a Ready
 ```
 
@@ -305,11 +306,124 @@ make k8s-demo-destroy    # opcional: apaga y borra el cluster minikube entero
 
 ---
 
+## Anexo — Qué hace cada comando y para qué se usó
+
+Referencia detallada, sección por sección, de todos los comandos de la demo. Sirve como
+material de estudio y para responder preguntas después de la grabación.
+
+Conceptos que se repiten en todos los comandos:
+
+- **`-n prisma-demo`**: indica el *namespace*, el espacio aislado del cluster donde vive la demo.
+- **`-l app.kubernetes.io/name=...`**: filtra recursos por *label* (etiqueta), por ejemplo sólo los pods de `backend-core`.
+- **`-w` (*watch*)**: deja el comando escuchando y muestra los cambios en vivo, sin volver a ejecutarlo.
+- **`kubectl apply -k`**: aplica manifiestos declarativos con kustomize. Se le dice al cluster el **estado deseado** y Kubernetes se encarga de lograrlo y mantenerlo.
+
+### 1. Arrancar el cluster
+
+| Comando | Qué hace | Para qué se usó |
+|---|---|---|
+| `minikube start --driver=docker --cpus=4 --memory=6144` | Crea un cluster de Kubernetes de **un solo nodo** dentro de un contenedor Docker. `--cpus=4` y `--memory=6144` (6 GB) le reservan recursos. | Tener un cluster local sin pagar nube. Los 6 GB hacen falta porque Postgres, Keycloak, Chroma y los backends juntos consumen bastante. |
+| `minikube status` | Muestra el estado de los componentes de minikube (host, kubelet, apiserver). | Confirmar en cámara que el cluster arrancó bien. |
+| `kubectl get nodes` | Lista los nodos del cluster con su estado (`Ready`). | Mostrar que hay un nodo listo para recibir pods. |
+| `minikube addons enable metrics-server` | Instala el componente que recolecta métricas de CPU y memoria. | Opcional. El Dashboard lo usa para sus gráficos y el HPA lo necesita para decidir cuándo escalar. |
+
+### 2. Construir las imágenes y desplegar
+
+| Comando | Qué hace | Para qué se usó |
+|---|---|---|
+| `make k8s-demo-images` | Construye las 3 imágenes propias (`frontend`, `backend-core`, `backend-ai`) con el Docker del host y las carga en minikube con `minikube image load`. | Las imágenes no se publican a GHCR: se cargan directo al nodo, por eso el overlay usa `imagePullPolicy: Never` (Kubernetes no las busca en ningún registry). |
+| `make k8s-demo-up` | En un solo paso: crea el namespace `prisma-demo`, crea el Secret con passwords aleatorias, ejecuta `kubectl apply -k overlays/demo` y espera con `kubectl rollout status` a que todo esté `Ready`. | Desplegar toda la app. Kubernetes programa cada pod, espera sus health checks y lo mantiene vivo. |
+
+### 3. Recorrido de lo desplegado
+
+| Comando | Qué hace | Qué se señala en cámara |
+|---|---|---|
+| `kubectl get pods -n prisma-demo -o wide` | Lista los pods. `-o wide` agrega la IP y el nodo de cada uno. | 2 réplicas de `frontend`, `backend-core` y `backend-ai`. |
+| `kubectl get deployments,statefulsets -n prisma-demo` | Lista los controladores que gestionan los pods. | Deployments para lo *stateless*. StatefulSets (1 réplica) para `postgres` y `keycloak-db`, que guardan estado y tienen volumen propio. |
+| `kubectl get svc -n prisma-demo` | Lista los Services, las direcciones estables internas. | Cada Service reparte tráfico entre los pods de su app. |
+| `kubectl get hpa -n prisma-demo` | Lista los HorizontalPodAutoscalers. | `backend-core-hpa` ya existe y escalaría de 2 a 4 réplicas bajo carga. |
+
+### 4. Kubernetes Dashboard
+
+| Comando | Qué hace | Para qué se usó |
+|---|---|---|
+| `make k8s-demo-dashboard` (equivale a `minikube dashboard`) | Levanta la UI web oficial de Kubernetes y abre el navegador. Ocupa la terminal mientras dure. | Ver **gráficamente** los pods reiniciándose, el rollout avanzando y las réplicas subiendo; es más claro en video que la terminal sola. |
+
+Una vez abierto hay que cambiar el namespace a `prisma-demo` e ir a Workloads → Deployments/Pods.
+
+### 5. Abrir la app
+
+| Comando | Qué hace | Para qué se usó |
+|---|---|---|
+| `make k8s-demo-open` (equivale a `kubectl port-forward svc/frontend 8080:80 -n prisma-demo`) | Crea un túnel entre `localhost:8080` y el puerto 80 del Service `frontend`. | El overlay demo **no tiene Ingress**, así que es la forma más simple de entrar a la app desde el navegador. Queda corriendo toda la demo. |
+
+### 6. Demo 1 — Auto-recuperación (self-healing)
+
+**Objetivo:** probar que borrar un pod no tira el servicio.
+
+| Comando | Qué hace | Para qué se usó |
+|---|---|---|
+| `kubectl get pods -n prisma-demo -l app.kubernetes.io/name=backend-core -w` (Terminal A) | Lista sólo los pods de `backend-core` y queda escuchando cambios. | Ver en tiempo real cómo el pod borrado muere y nace el nuevo. |
+| `kubectl run curl-loop ... -- sh -c 'while true; do curl ...; sleep 1; done'` (Terminal B) | Crea un pod temporal con la imagen `curl` que hace un request por segundo al Service `backend-core` (`/actuator/health/readiness`) e imprime el código HTTP. | Es un **testigo de disponibilidad**. Le pega al *Service*, no a un pod puntual, así que demuestra que el servicio nunca se corta. `--restart=Never` evita que el pod de prueba se reinicie solo. |
+| `kubectl logs -f curl-loop -n prisma-demo` | Sigue en vivo los logs del pod de prueba. | Ver el `200` por segundo sin interrupciones. |
+| `kubectl get pods ... -l app.kubernetes.io/name=backend-core` (Terminal C) | Lista los pods de `backend-core`. | Copiar el nombre de uno para "matarlo". |
+| `kubectl delete pod <nombre> -n prisma-demo` | Borra un pod a mano. | Simular una caída (error, OOM). El Deployment detecta que falta una réplica y crea otra, mientras el pod restante sigue atendiendo. |
+
+> minikube es de un solo nodo: esto prueba que la caída de *un pod* no tumba el servicio, no la
+> tolerancia a la caída de un *nodo* entero.
+
+### 7. Demo 2 — Rolling update sin downtime
+
+`backend-core` está configurado con `maxSurge: 1, maxUnavailable: 0`: Kubernetes **primero
+levanta el pod nuevo, espera a que esté Ready y recién después baja uno viejo**.
+
+| Comando | Qué hace | Para qué se usó |
+|---|---|---|
+| `kubectl rollout restart deployment/backend-core -n prisma-demo` | Fuerza un redeploy: reemplaza todos los pods por otros nuevos. | Simular el despliegue de una versión nueva en horario laboral. |
+| `kubectl rollout status deployment/backend-core -n prisma-demo` | Muestra el progreso del rollout y termina cuando finalizó. | Confirmar que el reemplazo se completó. |
+| `kubectl get pods ... -w` | Igual que en la sección 6. | Ver el reemplazo pod por pod. |
+
+**Qué se demuestra:** el `curl-loop` sigue devolviendo `200` durante todo el rollout. Con
+`docker compose up -d` el contenedor se recrea y hay una ventana de caída.
+
+### 8. Demo 3 — Escalado horizontal
+
+| Comando | Qué hace | Para qué se usó |
+|---|---|---|
+| `kubectl get hpa -n prisma-demo` | Muestra el autoscaler, sus límites y su uso actual. | Mostrar que la automatización ya existe. |
+| `kubectl scale deployment/backend-core -n prisma-demo --replicas=4` | Cambia manualmente el número de réplicas a 4. | Generar carga real de CPU en cámara es poco confiable, así que se hace **a mano lo mismo que el HPA haría solo** ante un pico. |
+| `kubectl get pods ... -w` | Observa cómo aparecen los pods nuevos. | Ver el escalado en vivo. |
+| `kubectl scale ... --replicas=2` | Vuelve a 2 réplicas. | Cerrar la demo dejando todo como estaba. |
+
+### 9. Cierre y limpieza
+
+| Comando | Qué hace |
+|---|---|
+| `kubectl delete pod curl-loop -n prisma-demo --ignore-not-found` | Borra el pod de prueba. `--ignore-not-found` evita el error si ya no existe. |
+| `make k8s-demo-down` | Borra el namespace `prisma-demo` (pods y PVCs). El cluster minikube queda. |
+| `make k8s-demo-destroy` | Ejecuta `minikube delete` y elimina el cluster entero. |
+
+### Comandos de apoyo
+
+- `make k8s-demo-secrets`: crea el namespace y el Secret. Se corre solo como prerequisito de `k8s-demo-up`.
+- `make k8s-demo-status`: atajo de `kubectl get pods,svc,hpa -n prisma-demo`.
+- `make sync-k8s-assets`: genera `keycloak-realm.json` a partir de `infra/keycloak/realm-prisma.json`; kustomize lo necesita para el `configMapGenerator` del realm.
+- `kubectl describe pod ...` y `kubectl logs ...`: se usan en el troubleshooting para ver por qué un pod (por ejemplo `keycloak`) no arranca.
+
+### Resumen conceptual
+
+- **`kubectl apply -k`** aplica el estado deseado de forma declarativa y Kubernetes se encarga de mantenerlo.
+- **Deployments** gestionan lo stateless: se pueden matar, reemplazar y escalar libremente.
+- **Services** dan una dirección estable que reparte tráfico entre pods, por eso el servicio sobrevive a caídas individuales.
+- **`-w` y el Dashboard** hacen visible lo que Kubernetes hace de forma automática.
+
+---
+
 ## Cheatsheet — todos los comandos `make` de esta demo
 
 | Comando | Qué hace |
 |---|---|
-| `make k8s-demo-images` | Construye `frontend`/`backend-core`/`backend-ai` dentro del daemon docker de minikube |
+| `make k8s-demo-images` | Construye `frontend`/`backend-core`/`backend-ai` con docker y las carga en minikube (`minikube image load`) |
 | `make k8s-demo-secrets` | Crea el namespace `prisma-demo` + el Secret real (se corre solo, es prerequisito de `k8s-demo-up`) |
 | `make k8s-demo-up` | `kubectl apply -k overlays/demo` + espera a que todo esté `Ready` |
 | `make k8s-demo-status` | `kubectl get pods,svc,hpa -n prisma-demo` |
@@ -320,11 +434,12 @@ make k8s-demo-destroy    # opcional: apaga y borra el cluster minikube entero
 
 ## Troubleshooting
 
-- **`ImagePullBackOff` en `backend-core`/`backend-ai`/`frontend`.** `make k8s-demo-images` corrió
-  contra el daemon docker equivocado (el del host, no el de minikube) — repetilo asegurando que
-  el `eval $(minikube docker-env ...)` se ejecutó en el mismo shell que el `docker build`
-  (`make k8s-demo-images` ya lo hace en un solo comando; si lo corriste a mano en pasos
-  separados, cada línea de terminal es un shell nuevo y el `eval` no persiste).
+- **`ImagePullBackOff` en `backend-core`/`backend-ai`/`frontend`.** Las imágenes no llegaron al
+  nodo. Repetí `make k8s-demo-images` (termina con `minikube image load`) y verificá con
+  `minikube image ls | grep prisma`.
+- **`SSH_AGENT_START: starting an SSH agent on Windows is not yet supported`.** Era el
+  `minikube docker-env` que usaba antes el target: sólo funciona con runtime `docker` y falla con
+  `containerd`. El target actual ya no lo usa (build en el host + `minikube image load`).
 - **`keycloak` nunca llega a `Running 1/1`.** Ver la nota de la sección 0 sobre el probe TCP.
   Si igual falla, `kubectl describe pod -n prisma-demo -l app.kubernetes.io/name=keycloak` y
   `kubectl logs -n prisma-demo -l app.kubernetes.io/name=keycloak` para ver si el problema es

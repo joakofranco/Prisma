@@ -22,11 +22,17 @@ spec:
             - { name: POSTGRES_PASSWORD, valueFrom: { secretKeyRef: { name: prisma-secrets, key: SPRING_DATASOURCE_PASSWORD } } }
           volumeMounts:
             - { name: pgdata, mountPath: /var/lib/postgresql/data }
+            # Igual que docker-compose.yml: crea los schemas prisma/audit (Flyway los necesita)
+            # sólo en el primer arranque sobre un volumen vacío.
+            - { name: init-sql, mountPath: /docker-entrypoint-initdb.d, readOnly: true }
           readinessProbe:
             exec: { command: [pg_isready, -U, prisma] }
           resources:
             requests: { cpu: "500m", memory: "1Gi" }
             limits:   { cpu: "2", memory: "4Gi" }
+      volumes:
+        - name: init-sql
+          configMap: { name: postgres-init-config }
   volumeClaimTemplates:
     - metadata: { name: pgdata }
       spec:
