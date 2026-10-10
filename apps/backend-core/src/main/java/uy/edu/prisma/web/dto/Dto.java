@@ -1,11 +1,13 @@
 package uy.edu.prisma.web.dto;
 
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import java.time.OffsetDateTime;
 import java.util.Collections;
@@ -15,6 +17,25 @@ import java.util.Set;
 import java.util.UUID;
 
 public class Dto {
+
+  // Nombre/apellido de una persona: letras (con tildes, ñ, etc.), dígitos, espacios, punto,
+  // apóstrofe y guion -- "Carlos 4", "O'Brien", "Pérez-Gómez" -- pero con al menos UNA letra, para
+  // que no se acepten valores que son solo números o símbolos. Cada campo se valida por separado.
+  static final String PERSON_NAME_REGEX = "^(?=.*\\p{L})[\\p{L}\\p{Nd} .'’-]+$";
+  static final String PERSON_NAME_MESSAGE_FIRST =
+      "El nombre solo puede contener letras, números, espacios, puntos, guiones y apóstrofes, y debe incluir al menos una letra";
+  static final String PERSON_NAME_MESSAGE_LAST =
+      "El apellido solo puede contener letras, números, espacios, puntos, guiones y apóstrofes, y debe incluir al menos una letra";
+
+  // El @Email de Jakarta acepta "a@b" (sin punto en el dominio); Keycloak, en cambio, lo rechaza.
+  // Este patrón exige al menos un punto en el dominio para que ambos criterios coincidan.
+  static final String EMAIL_MESSAGE = "El email no es válido (ej.: usuario@dominio.com)";
+  static final String EMAIL_DOMAIN_REGEX = "^[^@\\s]+@[^@\\s]+\\.[^@\\s.]+$";
+
+  // Los espacios sobrantes no deben llegar a la base ni a Keycloak ("  Ana " -> "Ana").
+  private static String trimOrNull(String value) {
+    return value == null ? null : value.trim();
+  }
 
   // ---- Organization ----
   public record OrganizationDto(
@@ -122,8 +143,19 @@ public class Dto {
   // No incluye email: cambiarlo tocaría el username en Keycloak (la identidad de login), que
   // amerita su propio flujo -- acá el alcance es solo corregir un nombre/apellido mal cargado.
   public record UpdateProfileDto(
-      @NotBlank(message = "El nombre es obligatorio") String firstName,
-      @NotBlank(message = "El apellido es obligatorio") String lastName) {}
+      @NotBlank(message = "El nombre es obligatorio")
+          @Size(min = 2, max = 100, message = "El nombre debe tener entre 2 y 100 caracteres")
+          @Pattern(regexp = PERSON_NAME_REGEX, message = PERSON_NAME_MESSAGE_FIRST)
+          String firstName,
+      @NotBlank(message = "El apellido es obligatorio")
+          @Size(min = 2, max = 100, message = "El apellido debe tener entre 2 y 100 caracteres")
+          @Pattern(regexp = PERSON_NAME_REGEX, message = PERSON_NAME_MESSAGE_LAST)
+          String lastName) {
+    public UpdateProfileDto {
+      firstName = trimOrNull(firstName);
+      lastName = trimOrNull(lastName);
+    }
+  }
 
   // Autoservicio: cualquier usuario autenticado cambia SU PROPIA contraseña (distinto del reseteo
   // que hace un PRISMA_ADMIN sobre otro usuario vía UpdateUserDto/UserService.update, que no
@@ -143,10 +175,19 @@ public class Dto {
   public record SessionEventDto(@NotBlank(message = "El evento es obligatorio") String event) {}
 
   public record CreateUserDto(
-      @NotBlank(message = "El email es obligatorio") String email,
-      @NotBlank(message = "El nombre es obligatorio") String firstName,
-      @NotBlank(message = "El apellido es obligatorio") String lastName,
-      UUID tenantId,
+      @NotBlank(message = "El email es obligatorio")
+          @Size(max = 254, message = "El email no puede superar los 254 caracteres")
+          @Email(message = EMAIL_MESSAGE)
+          @Pattern(regexp = EMAIL_DOMAIN_REGEX, message = EMAIL_MESSAGE)
+          String email,
+      @NotBlank(message = "El nombre es obligatorio")
+          @Size(min = 2, max = 100, message = "El nombre debe tener entre 2 y 100 caracteres")
+          @Pattern(regexp = PERSON_NAME_REGEX, message = PERSON_NAME_MESSAGE_FIRST)
+          String firstName,
+      @NotBlank(message = "El apellido es obligatorio")
+          @Size(min = 2, max = 100, message = "El apellido debe tener entre 2 y 100 caracteres")
+          @Pattern(regexp = PERSON_NAME_REGEX, message = PERSON_NAME_MESSAGE_LAST)
+          String lastName,
       Set<String> roles,
       Set<UUID> auditedOrganizationIds,
       String password,
@@ -156,6 +197,9 @@ public class Dto {
       // compat abajo) no puede pisar el estado actual sin querer.
       Boolean enabled) {
     public CreateUserDto {
+      email = trimOrNull(email);
+      firstName = trimOrNull(firstName);
+      lastName = trimOrNull(lastName);
       roles = roles == null ? Set.of() : Set.copyOf(roles);
       auditedOrganizationIds =
           auditedOrganizationIds == null ? Set.of() : Set.copyOf(auditedOrganizationIds);

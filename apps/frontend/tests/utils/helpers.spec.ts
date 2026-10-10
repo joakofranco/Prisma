@@ -119,6 +119,23 @@ describe('getErrorMessage', () => {
     expect(getErrorMessage(err)).toBe('El NIT es obligatorio');
   });
 
+  it('prioriza el detalle por campo (details) sobre el message genérico de validación', () => {
+    const err = {
+      response: {
+        data: {
+          message: 'Error de validación',
+          details: { email: ['El email no es válido (ej.: usuario@dominio.com)'] },
+        },
+      },
+    };
+    expect(getErrorMessage(err)).toBe('El email no es válido (ej.: usuario@dominio.com)');
+  });
+
+  it('ignora details vacío y usa message', () => {
+    const err = { response: { data: { message: 'Conflicto', details: {} } } };
+    expect(getErrorMessage(err)).toBe('Conflicto');
+  });
+
   it('usa el mensaje de un Error nativo cuando no hay response', () => {
     expect(getErrorMessage(new Error('boom'))).toBe('boom');
   });

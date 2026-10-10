@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
   loginSchema,
   changePasswordSchema,
+  personNameSchema,
+  emailSchema,
   organizationSchema,
   userSchema,
   evaluationSchema,
@@ -31,6 +33,88 @@ describe('loginSchema', () => {
         'La contraseña debe tener al menos 8 caracteres',
       );
     }
+  });
+});
+
+describe('personNameSchema', () => {
+  const nombre = personNameSchema('nombre');
+
+  it.each([
+    'Ana',
+    'María José',
+    "O'Brien",
+    'O’Brien',
+    'Pérez-Gómez',
+    'De la Cruz',
+    'Carlos 4',
+    'Carlos IV',
+    'Jr.',
+  ])('acepta "%s"', (value) => {
+    expect(nombre.safeParse(value).success).toBe(true);
+  });
+
+  it.each(['12345', '4', '---', '@#$%', '1 2 3', 'Ana_Maria', 'Ana<script>'])(
+    'rechaza "%s" (sin letras o con caracteres no permitidos)',
+    (value) => {
+      expect(nombre.safeParse(value).success).toBe(false);
+    },
+  );
+
+  it('rechaza vacío, solo espacios, 1 caracter y más de 100', () => {
+    expect(nombre.safeParse('').success).toBe(false);
+    expect(nombre.safeParse('   ').success).toBe(false);
+    expect(nombre.safeParse('A').success).toBe(false);
+    expect(nombre.safeParse('A'.repeat(101)).success).toBe(false);
+    expect(nombre.safeParse('A'.repeat(100)).success).toBe(true);
+  });
+
+  it('recorta espacios sobrantes', () => {
+    expect(nombre.parse('  Ana ')).toBe('Ana');
+  });
+
+  it('usa el rótulo correcto en el mensaje', () => {
+    const result = personNameSchema('apellido').safeParse('123');
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues[0]?.message).toContain('El apellido solo puede contener letras');
+    }
+  });
+
+  it('userSchema valida nombre y apellido por separado', () => {
+    const base = { email: 'a@b.com', firstName: 'Ana', lastName: 'Pérez', roles: ['VIEWER'] };
+    expect(userSchema.safeParse(base).success).toBe(true);
+    const result = userSchema.safeParse({ ...base, firstName: '123', lastName: '456' });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const paths = result.error.issues.map((i) => i.path[0]);
+      expect(paths).toContain('firstName');
+      expect(paths).toContain('lastName');
+    }
+  });
+});
+
+describe('emailSchema', () => {
+  it.each(['ana@prisma.local', 'ana.perez+tag@sub.dominio.com.uy'])('acepta "%s"', (value) => {
+    expect(emailSchema.safeParse(value).success).toBe(true);
+  });
+
+  it.each(['sin-arroba', 'ana@', '@dominio.com', 'ana@dominio', 'ana@@dominio.com', 'a b@c.com'])(
+    'rechaza "%s" con un mensaje específico',
+    (value) => {
+      const result = emailSchema.safeParse(value);
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues[0]?.message).toBe(
+          'El email no es válido (ej.: usuario@dominio.com)',
+        );
+      }
+    },
+  );
+
+  it('rechaza vacío y demasiado largo, y recorta espacios', () => {
+    expect(emailSchema.safeParse('').success).toBe(false);
+    expect(emailSchema.safeParse('a'.repeat(250) + '@b.com').success).toBe(false);
+    expect(emailSchema.parse('  ana@prisma.local ')).toBe('ana@prisma.local');
   });
 });
 

@@ -85,7 +85,14 @@ export function generateId(): string {
 
 export function getErrorMessage(err: unknown, fallback = 'Ocurrió un error inesperado'): string {
   if (err && typeof err === 'object' && 'response' in err) {
-    const resp = (err as { response?: { data?: { message?: string } } }).response;
+    const resp = (
+      err as { response?: { data?: { message?: string; details?: Record<string, string[]> } } }
+    ).response;
+    // En un 400 de validación el backend manda un `message` genérico ("Error de validación") y el
+    // motivo concreto por campo en `details`: se muestra ese (el primero) para que el usuario sepa
+    // qué corregir.
+    const detail = Object.values(resp?.data?.details ?? {}).find((msgs) => msgs?.length)?.[0];
+    if (detail) return detail;
     if (resp?.data?.message) return resp.data.message;
   }
   if (err instanceof Error && err.message) return err.message;
