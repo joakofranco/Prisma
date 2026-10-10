@@ -1,9 +1,37 @@
 import { z } from 'zod';
 
+// Email de usuario. Misma idea que el backend (CreateUserDto.email): formato válido, con punto en
+// el dominio ("a@b" lo rechaza Keycloak), y como máximo 254 caracteres.
+export const emailSchema = z
+  .string()
+  .trim()
+  .min(1, 'El email es requerido')
+  .max(254, 'El email no puede superar los 254 caracteres')
+  .email('El email no es válido (ej.: usuario@dominio.com)')
+  .regex(/^[^@\s]+@[^@\s]+\.[^@\s.]+$/, 'El email no es válido (ej.: usuario@dominio.com)');
+
 export const loginSchema = z.object({
   email: z.string().email('Email inválido'),
   password: z.string().min(8, 'La contraseña debe tener al menos 8 caracteres'),
 });
+
+// Nombre / apellido de una persona. Misma regla que el backend (Dto.PERSON_NAME_REGEX): letras
+// (con tildes, ñ...), dígitos, espacios, punto, apóstrofe y guion, pero con al menos UNA letra --
+// "Carlos 4" y "O'Brien" pasan, "12345" y "---" no. Cada campo se valida por separado.
+export const PERSON_NAME_REGEX = /^(?=.*\p{L})[\p{L}\p{Nd} .'’-]+$/u;
+
+export function personNameSchema(label: 'nombre' | 'apellido') {
+  return z
+    .string()
+    .trim()
+    .min(1, `El ${label} es requerido`)
+    .min(2, `El ${label} debe tener entre 2 y 100 caracteres`)
+    .max(100, `El ${label} debe tener entre 2 y 100 caracteres`)
+    .regex(
+      PERSON_NAME_REGEX,
+      `El ${label} solo puede contener letras, números, espacios, puntos, guiones y apóstrofes, y debe incluir al menos una letra`,
+    );
+}
 
 // Cambio de contraseña desde "Mi Cuenta" (AccountView). Los `path` de cada refine son los campos
 // del formulario a los que se les muestra el error.
@@ -32,9 +60,9 @@ export const organizationSchema = z.object({
 });
 
 export const userSchema = z.object({
-  email: z.string().email('Email inválido'),
-  firstName: z.string().min(2, 'El nombre debe tener al menos 2 caracteres'),
-  lastName: z.string().min(2, 'El apellido debe tener al menos 2 caracteres'),
+  email: emailSchema,
+  firstName: personNameSchema('nombre'),
+  lastName: personNameSchema('apellido'),
   roles: z.array(z.string()).min(1, 'Seleccione al menos un rol'),
   organizationId: z.string().optional(),
 });

@@ -264,6 +264,7 @@
   import { useNotification } from '@/composables/useUtils';
   import { ROLE_LABELS } from '@/utils/constants';
   import { getErrorMessage } from '@/utils/helpers';
+  import { emailSchema, personNameSchema } from '@/utils/validators';
   import DataTable from '@/components/common/DataTable.vue';
   import BaseButton from '@/components/common/BaseButton.vue';
   import BaseModal from '@/components/common/BaseModal.vue';
@@ -502,18 +503,14 @@
 
   async function handleSubmit() {
     Object.keys(errors).forEach((k) => (errors[k as keyof typeof errors] = ''));
-    if (!form.firstName) {
-      errors.firstName = 'El nombre es requerido';
-      return;
-    }
-    if (!form.lastName) {
-      errors.lastName = 'El apellido es requerido';
-      return;
-    }
-    if (!form.email) {
-      errors.email = 'El email es requerido';
-      return;
-    }
+    // Nombre y apellido se validan por separado y se muestran los dos errores a la vez.
+    const first = personNameSchema('nombre').safeParse(form.firstName);
+    const last = personNameSchema('apellido').safeParse(form.lastName);
+    if (!first.success) errors.firstName = first.error.issues[0]!.message;
+    if (!last.success) errors.lastName = last.error.issues[0]!.message;
+    const email = emailSchema.safeParse(form.email);
+    if (!email.success) errors.email = email.error.issues[0]!.message;
+    if (!first.success || !last.success || !email.success) return;
     if (!editingUser.value && !form.password) {
       errors.password = 'La contraseña es requerida';
       return;
@@ -543,9 +540,9 @@
     saving.value = true;
     try {
       const payload: Partial<User> & { password?: string } = {
-        email: form.email,
-        firstName: form.firstName,
-        lastName: form.lastName,
+        email: form.email.trim(),
+        firstName: form.firstName.trim(),
+        lastName: form.lastName.trim(),
         enabled: form.enabled,
         roles: form.roles as UserRole[],
         tenantId: form.organizationId || undefined,

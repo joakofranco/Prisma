@@ -15,8 +15,10 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 import uy.edu.prisma.config.KeycloakAdminConfig.KeycloakAdminProperties;
+import uy.edu.prisma.domain.exception.InvalidRequestException;
 
 /**
  * Provisiona cuentas de Keycloak para los usuarios dados de alta en PRISMA.
@@ -54,15 +56,20 @@ public class KeycloakAdminClient {
     UserRepresentation body =
         new UserRepresentation(email, email, firstName, lastName, true, true, List.of(credential));
 
-    ResponseEntity<Void> response =
-        restClient
-            .post()
-            .uri("/admin/realms/{realm}/users", properties.realm())
-            .header("Authorization", "Bearer " + adminToken())
-            .contentType(MediaType.APPLICATION_JSON)
-            .body(body)
-            .retrieve()
-            .toBodilessEntity();
+    ResponseEntity<Void> response;
+    try {
+      response =
+          restClient
+              .post()
+              .uri("/admin/realms/{realm}/users", properties.realm())
+              .header("Authorization", "Bearer " + adminToken())
+              .contentType(MediaType.APPLICATION_JSON)
+              .body(body)
+              .retrieve()
+              .toBodilessEntity();
+    } catch (HttpClientErrorException.BadRequest e) {
+      throw invalidData(e);
+    }
 
     String location = response.getHeaders().getFirst("Location");
     if (location == null) {
@@ -86,14 +93,18 @@ public class KeycloakAdminClient {
       UUID keycloakId, String email, String firstName, String lastName, boolean enabled) {
     UserRepresentation body =
         new UserRepresentation(email, email, firstName, lastName, enabled, null, null);
-    restClient
-        .put()
-        .uri("/admin/realms/{realm}/users/{id}", properties.realm(), keycloakId)
-        .header("Authorization", "Bearer " + adminToken())
-        .contentType(MediaType.APPLICATION_JSON)
-        .body(body)
-        .retrieve()
-        .toBodilessEntity();
+    try {
+      restClient
+          .put()
+          .uri("/admin/realms/{realm}/users/{id}", properties.realm(), keycloakId)
+          .header("Authorization", "Bearer " + adminToken())
+          .contentType(MediaType.APPLICATION_JSON)
+          .body(body)
+          .retrieve()
+          .toBodilessEntity();
+    } catch (HttpClientErrorException.BadRequest e) {
+      throw invalidData(e);
+    }
   }
 
   /** Reemplaza el set de roles de realm de un usuario por exactamente {@code realmRoles}. */
@@ -170,14 +181,40 @@ public class KeycloakAdminClient {
   private void setPassword(UUID keycloakId, String newPassword, boolean temporary) {
     CredentialRepresentation credential =
         new CredentialRepresentation("password", newPassword, temporary);
-    restClient
-        .put()
-        .uri("/admin/realms/{realm}/users/{id}/reset-password", properties.realm(), keycloakId)
-        .header("Authorization", "Bearer " + adminToken())
-        .contentType(MediaType.APPLICATION_JSON)
-        .body(credential)
-        .retrieve()
-        .toBodilessEntity();
+    try {
+      restClient
+          .put()
+          .uri("/admin/realms/{realm}/users/{id}/reset-password", properties.realm(), keycloakId)
+          .header("Authorization", "Bearer " + adminToken())
+          .contentType(MediaType.APPLICATION_JSON)
+          .body(credential)
+          .retrieve()
+          .toBodilessEntity();
+    } catch (HttpClientErrorException.BadRequest e) {
+      throw invalidData(e);
+    }
+  }
+
+  /**
+   * Keycloak responde 400 cuando rechaza los DATOS (email mal formado, contraseña que no cumple la
+   * política del realm...). Eso es un error del usuario, no del servidor: se traduce a {@link
+   * InvalidRequestException} (HTTP 400 con un mensaje legible) en vez de dejarlo escapar como un
+   * 500 "Error inesperado". La validación de entrada del DTO debería frenar los casos comunes
+   * antes de llegar acá; esto es la red de seguridad para lo que Keycloak valida distinto.
+   */
+  private static InvalidRequestException invalidData(HttpClientErrorException.BadRequest e) {
+    String body = e.getResponseBodyAsString();
+    String lower = body == null ? "" : body.toLowerCase(java.util.Locale.ROOT);
+    log.warn("Keycloak rechazó los datos con 400: {}", body);
+    if (lower.contains("invalid-email") || lower.contains("\"field\":\"email\"")) {
+      return new InvalidRequestException("El email no es válido");
+    }
+    if (lower.contains("password")) {
+      return new InvalidRequestException(
+          "La contraseña no cumple la política de seguridad del sistema");
+    }
+    return new InvalidRequestException(
+        "Los datos del usuario no son válidos para el servicio de autenticación");
   }
 
   /**

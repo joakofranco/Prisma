@@ -479,7 +479,7 @@ class ControllersMockMvcTest {
             post("/api/users")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(
-                    "{\"email\":\"n@test.com\",\"firstName\":\"N\",\"lastName\":\"L\",\"roles\":[\"AUDITOR\"]}"))
+                    "{\"email\":\"n@test.com\",\"firstName\":\"Nora\",\"lastName\":\"Lopez\",\"roles\":[\"AUDITOR\"]}"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.email").value("n@test.com"));
   }
@@ -496,7 +496,7 @@ class ControllersMockMvcTest {
         .perform(
             put("/api/users/{id}", id)
                 .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"email\":\"up@test.com\",\"firstName\":\"Nuevo\",\"lastName\":\"L\"}"))
+                .content("{\"email\":\"up@test.com\",\"firstName\":\"Nuevo\",\"lastName\":\"Lopez\"}"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.firstName").value("Nuevo"));
   }

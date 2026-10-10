@@ -143,14 +143,12 @@
   async function handleProfileSubmit() {
     profileErrors.firstName = '';
     profileErrors.lastName = '';
-    if (!profileForm.firstName.trim()) {
-      profileErrors.firstName = 'El nombre es requerido';
-      return;
-    }
-    if (!profileForm.lastName.trim()) {
-      profileErrors.lastName = 'El apellido es requerido';
-      return;
-    }
+    // Cada campo se valida por separado y se muestran los dos errores a la vez.
+    const first = personNameSchema('nombre').safeParse(profileForm.firstName);
+    const last = personNameSchema('apellido').safeParse(profileForm.lastName);
+    if (!first.success) profileErrors.firstName = first.error.issues[0]!.message;
+    if (!last.success) profileErrors.lastName = last.error.issues[0]!.message;
+    if (!first.success || !last.success) return;
 
     savingProfile.value = true;
     try {

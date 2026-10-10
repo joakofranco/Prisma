@@ -17,6 +17,7 @@ import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 import uy.edu.prisma.config.KeycloakAdminConfig.KeycloakAdminProperties;
+import uy.edu.prisma.domain.exception.InvalidRequestException;
 
 /**
  * Cada método público de {@link KeycloakAdminClient} propaga las excepciones (a diferencia de
@@ -272,6 +273,84 @@ class KeycloakAdminClientTest {
         .andRespond(withServerError());
 
     assertThrows(RestClientException.class, () -> client.verifyPassword("a@test.com", "x"));
+  }
+
+  @Test
+  void createUserTranslatesInvalidEmailFromKeycloakInto400Message() {
+    expectAdminToken();
+    server
+        .expect(requestTo(BASE_URL + "/admin/realms/prisma/users"))
+        .andExpect(method(HttpMethod.POST))
+        .andRespond(
+            withStatus(HttpStatus.BAD_REQUEST)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body("{\"field\":\"email\",\"errorMessage\":\"error-invalid-email\"}"));
+
+    InvalidRequestException ex =
+        assertThrows(
+            InvalidRequestException.class,
+            () -> client.createUser("mal@x", "Ana", "Test", "Passw0rd!", Set.of()));
+    assertEquals("El email no es válido", ex.getMessage());
+  }
+
+  @Test
+  void updateProfileTranslatesInvalidEmailFromKeycloak() {
+    UUID keycloakId = UUID.randomUUID();
+    expectAdminToken();
+    server
+        .expect(requestTo(BASE_URL + "/admin/realms/prisma/users/" + keycloakId))
+        .andRespond(
+            withStatus(HttpStatus.BAD_REQUEST)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body("{\"field\":\"email\",\"errorMessage\":\"error-invalid-email\"}"));
+
+    InvalidRequestException ex =
+        assertThrows(
+            InvalidRequestException.class,
+            () -> client.updateProfile(keycloakId, "mal@x", "Ana", "Test", true));
+    assertEquals("El email no es válido", ex.getMessage());
+  }
+
+  @Test
+  void setPasswordTranslatesPolicyViolationFromKeycloak() {
+    UUID keycloakId = UUID.randomUUID();
+    expectAdminToken();
+    server
+        .expect(
+            requestTo(BASE_URL + "/admin/realms/prisma/users/" + keycloakId + "/reset-password"))
+        .andRespond(
+            withStatus(HttpStatus.BAD_REQUEST)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body("{\"error\":\"invalid_password\",\"error_description\":\"Invalid password\"}"));
+
+    InvalidRequestException ex =
+        assertThrows(
+            InvalidRequestException.class, () -> client.setPermanentPassword(keycloakId, "x"));
+    assertTrue(ex.getMessage().contains("política de seguridad"));
+  }
+
+  @Test
+  void createUserTranslatesUnknownKeycloak400IntoGenericMessage() {
+    expectAdminToken();
+    server
+        .expect(requestTo(BASE_URL + "/admin/realms/prisma/users"))
+        .andRespond(withStatus(HttpStatus.BAD_REQUEST));
+
+    assertThrows(
+        InvalidRequestException.class,
+        () -> client.createUser("a@test.com", "Ana", "Test", "Passw0rd!", Set.of()));
+  }
+
+  @Test
+  void createUserStillPropagatesServerErrors() {
+    expectAdminToken();
+    server
+        .expect(requestTo(BASE_URL + "/admin/realms/prisma/users"))
+        .andRespond(withServerError());
+
+    assertThrows(
+        RestClientException.class,
+        () -> client.createUser("a@test.com", "Ana", "Test", "Passw0rd!", Set.of()));
   }
 
   @Test
