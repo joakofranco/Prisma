@@ -113,6 +113,7 @@
   import { accountService } from '@/services/resources';
   import { useNotificationStore } from '@/stores/notification';
   import { getErrorMessage } from '@/utils/helpers';
+  import { changePasswordSchema, personNameSchema } from '@/utils/validators';
   import { ROLE_LABELS } from '@/utils/constants';
   import BaseInput from '@/components/common/BaseInput.vue';
   import BaseButton from '@/components/common/BaseButton.vue';
@@ -183,20 +184,14 @@
 
   function validate(): boolean {
     (Object.keys(errors) as (keyof typeof errors)[]).forEach((k) => (errors[k] = ''));
-    let ok = true;
-    if (!form.currentPassword) {
-      errors.currentPassword = 'Ingresá tu contraseña actual';
-      ok = false;
+    const result = changePasswordSchema.safeParse(form);
+    if (result.success) return true;
+    // Un solo mensaje por campo: el primero que reportó el esquema.
+    for (const issue of result.error.issues) {
+      const field = issue.path[0] as keyof typeof errors;
+      if (!errors[field]) errors[field] = issue.message;
     }
-    if (!form.newPassword || form.newPassword.length < 8) {
-      errors.newPassword = 'La contraseña nueva debe tener al menos 8 caracteres';
-      ok = false;
-    }
-    if (form.newPassword !== form.confirmPassword) {
-      errors.confirmPassword = 'Las contraseñas no coinciden';
-      ok = false;
-    }
-    return ok;
+    return false;
   }
 
   async function handleSubmit() {

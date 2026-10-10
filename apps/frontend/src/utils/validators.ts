@@ -5,6 +5,23 @@ export const loginSchema = z.object({
   password: z.string().min(8, 'La contraseña debe tener al menos 8 caracteres'),
 });
 
+// Cambio de contraseña desde "Mi Cuenta" (AccountView). Los `path` de cada refine son los campos
+// del formulario a los que se les muestra el error.
+export const changePasswordSchema = z
+  .object({
+    currentPassword: z.string().min(1, 'Ingresá tu contraseña actual'),
+    newPassword: z.string().min(8, 'La contraseña nueva debe tener al menos 8 caracteres'),
+    confirmPassword: z.string(),
+  })
+  .refine((d) => d.newPassword === d.confirmPassword, {
+    message: 'Las contraseñas no coinciden',
+    path: ['confirmPassword'],
+  })
+  .refine((d) => !d.currentPassword || d.newPassword !== d.currentPassword, {
+    message: 'La contraseña nueva debe ser distinta a la actual',
+    path: ['newPassword'],
+  });
+
 export const organizationSchema = z.object({
   name: z.string().min(2, 'El nombre debe tener al menos 2 caracteres'),
   // Opcional: no toda organización tiene el RUT cargado al momento del alta (ver

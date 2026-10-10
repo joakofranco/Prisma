@@ -174,3 +174,6 @@ infra/kubernetes/**/secret.*.yaml
 tmp/
 temp/
 .cache/
+
+# ---------- Claude Code (personal) ----------
+CLAUDE.md
