@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   loginSchema,
+  changePasswordSchema,
   organizationSchema,
   userSchema,
   evaluationSchema,
@@ -26,8 +27,59 @@ describe('loginSchema', () => {
     const result = loginSchema.safeParse({ email: 'admin@prisma.local', password: '1234567' });
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.error.issues[0]?.message).toBe('La contraseña debe tener al menos 8 caracteres');
+      expect(result.error.issues[0]?.message).toBe(
+        'La contraseña debe tener al menos 8 caracteres',
+      );
     }
+  });
+});
+
+describe('changePasswordSchema', () => {
+  const valid = {
+    currentPassword: 'ClaveVieja1!',
+    newPassword: 'ClaveNueva1!',
+    confirmPassword: 'ClaveNueva1!',
+  };
+
+  it('acepta una contraseña nueva distinta, confirmada y de 8+ caracteres', () => {
+    expect(changePasswordSchema.safeParse(valid).success).toBe(true);
+  });
+
+  it('rechaza cuando la confirmación no coincide', () => {
+    const result = changePasswordSchema.safeParse({ ...valid, confirmPassword: 'OtraClave1!' });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues[0]?.path).toEqual(['confirmPassword']);
+      expect(result.error.issues[0]?.message).toBe('Las contraseñas no coinciden');
+    }
+  });
+
+  it('rechaza cuando la nueva es igual a la actual', () => {
+    const result = changePasswordSchema.safeParse({
+      currentPassword: 'MismaClave1!',
+      newPassword: 'MismaClave1!',
+      confirmPassword: 'MismaClave1!',
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues[0]?.path).toEqual(['newPassword']);
+      expect(result.error.issues[0]?.message).toBe(
+        'La contraseña nueva debe ser distinta a la actual',
+      );
+    }
+  });
+
+  it('rechaza una contraseña nueva de menos de 8 caracteres', () => {
+    const result = changePasswordSchema.safeParse({
+      ...valid,
+      newPassword: '1234567',
+      confirmPassword: '1234567',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rechaza cuando falta la contraseña actual', () => {
+    expect(changePasswordSchema.safeParse({ ...valid, currentPassword: '' }).success).toBe(false);
   });
 });
 

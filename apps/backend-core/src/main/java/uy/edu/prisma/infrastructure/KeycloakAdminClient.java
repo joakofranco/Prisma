@@ -213,6 +213,13 @@ public class KeycloakAdminClient {
       return true;
     } catch (org.springframework.web.client.HttpClientErrorException.BadRequest e) {
       return false;
+    } catch (org.springframework.web.client.HttpClientErrorException.Unauthorized e) {
+      // Keycloak 26 responde 400 invalid_grant ante credenciales incorrectas, pero según versión o
+      // configuración puede responder 401. También es 401 si el client secret de prisma-backend
+      // está mal: se loguea para que esa mala configuración no pase por "contraseña incorrecta"
+      // sin dejar rastro.
+      log.warn("Keycloak respondió 401 al verificar la contraseña: {}", e.getResponseBodyAsString());
+      return false;
     }
   }
 

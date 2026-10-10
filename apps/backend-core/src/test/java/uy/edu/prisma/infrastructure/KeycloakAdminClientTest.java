@@ -229,6 +229,52 @@ class KeycloakAdminClientTest {
   }
 
   @Test
+  void verifyPasswordReturnsTrueWhenKeycloakIssuesToken() {
+    server
+        .expect(requestTo(BASE_URL + "/realms/prisma/protocol/openid-connect/token"))
+        .andExpect(method(HttpMethod.POST))
+        .andRespond(
+            withSuccess(
+                "{\"access_token\":\"tok\",\"expires_in\":300}", MediaType.APPLICATION_JSON));
+
+    assertTrue(client.verifyPassword("a@test.com", "Passw0rd!"));
+    server.verify();
+  }
+
+  @Test
+  void verifyPasswordReturnsFalseOnBadRequest() {
+    server
+        .expect(requestTo(BASE_URL + "/realms/prisma/protocol/openid-connect/token"))
+        .andRespond(
+            withStatus(HttpStatus.BAD_REQUEST)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body("{\"error\":\"invalid_grant\"}"));
+
+    assertFalse(client.verifyPassword("a@test.com", "mala"));
+  }
+
+  @Test
+  void verifyPasswordReturnsFalseOnUnauthorized() {
+    server
+        .expect(requestTo(BASE_URL + "/realms/prisma/protocol/openid-connect/token"))
+        .andRespond(
+            withStatus(HttpStatus.UNAUTHORIZED)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body("{\"error\":\"invalid_grant\"}"));
+
+    assertFalse(client.verifyPassword("a@test.com", "mala"));
+  }
+
+  @Test
+  void verifyPasswordPropagatesServerErrors() {
+    server
+        .expect(requestTo(BASE_URL + "/realms/prisma/protocol/openid-connect/token"))
+        .andRespond(withServerError());
+
+    assertThrows(RestClientException.class, () -> client.verifyPassword("a@test.com", "x"));
+  }
+
+  @Test
   void deleteUserSucceeds() {
     UUID keycloakId = UUID.randomUUID();
     expectAdminToken();
