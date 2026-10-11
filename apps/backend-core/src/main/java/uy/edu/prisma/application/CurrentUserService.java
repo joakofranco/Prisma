@@ -41,6 +41,28 @@ public class CurrentUserService {
     return Optional.empty();
   }
 
+  /**
+   * Id de la cuenta de Keycloak del JWT autenticado (claim {@code sub}), si es un UUID válido. Sirve
+   * para vincular una fila de {@code prisma.users} con su cuenta de Keycloak cuando todavía no lo
+   * está (ver AccountService.linkKeycloakAccountIfMissing).
+   */
+  public Optional<UUID> currentKeycloakSubject() {
+    Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+    if (authentication != null
+        && authentication.getPrincipal()
+            instanceof org.springframework.security.oauth2.jwt.Jwt jwt) {
+      String subject = jwt.getSubject();
+      if (subject != null) {
+        try {
+          return Optional.of(UUID.fromString(subject));
+        } catch (IllegalArgumentException e) {
+          return Optional.empty();
+        }
+      }
+    }
+    return Optional.empty();
+  }
+
   /** Id del usuario actual o {@code null} si no es trazable. */
   public UUID currentUserId() {
     return currentUser().map(User::getId).orElse(null);

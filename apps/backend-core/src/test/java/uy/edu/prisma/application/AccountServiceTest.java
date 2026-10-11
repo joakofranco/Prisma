@@ -130,6 +130,64 @@ class AccountServiceTest {
     verify(auditLog, times(1)).record(eq("LOGOUT"), eq("user:" + user.getId()), isNull());
   }
 
+  // ---- Vinculación con la cuenta de Keycloak (C4) ----
+
+  @Test
+  void loginLinksKeycloakAccountWhenMissing() {
+    UUID subject = UUID.randomUUID();
+    user.setKeycloakId(null);
+    when(currentUser.currentKeycloakSubject()).thenReturn(Optional.of(subject));
+
+    service.recordSessionEvent(new SessionEventDto("LOGIN"));
+
+    assertEquals(subject, user.getKeycloakId());
+    verify(auditLog, times(1)).record(eq("LINK_KEYCLOAK_ACCOUNT"), eq("user:" + user.getId()), any());
+    verify(auditLog, times(1)).record(eq("LOGIN"), eq("user:" + user.getId()), isNull());
+  }
+
+  @Test
+  void loginNeverOverwritesAnExistingKeycloakId() {
+    when(currentUser.currentKeycloakSubject()).thenReturn(Optional.of(UUID.randomUUID()));
+
+    service.recordSessionEvent(new SessionEventDto("LOGIN"));
+
+    assertEquals(keycloakId, user.getKeycloakId());
+    verify(auditLog, never()).record(eq("LINK_KEYCLOAK_ACCOUNT"), any(), any());
+  }
+
+  @Test
+  void logoutDoesNotLinkKeycloakAccount() {
+    user.setKeycloakId(null);
+    when(currentUser.currentKeycloakSubject()).thenReturn(Optional.of(UUID.randomUUID()));
+
+    service.recordSessionEvent(new SessionEventDto("LOGOUT"));
+
+    assertNull(user.getKeycloakId());
+  }
+
+  @Test
+  void loginWithoutResolvableSubjectLeavesKeycloakIdEmpty() {
+    user.setKeycloakId(null);
+    when(currentUser.currentKeycloakSubject()).thenReturn(Optional.empty());
+
+    service.recordSessionEvent(new SessionEventDto("LOGIN"));
+
+    assertNull(user.getKeycloakId());
+  }
+
+  @Test
+  void changePasswordLinksKeycloakAccountWhenMissingInsteadOfFailing() {
+    UUID subject = UUID.randomUUID();
+    user.setKeycloakId(null);
+    when(currentUser.currentKeycloakSubject()).thenReturn(Optional.of(subject));
+    when(keycloakAdmin.verifyPassword("jane@test.com", "old-pass")).thenReturn(true);
+
+    service.changePassword(new ChangePasswordDto("old-pass", "new-password-123"));
+
+    assertEquals(subject, user.getKeycloakId());
+    verify(keycloakAdmin, times(1)).setPermanentPassword(subject, "new-password-123");
+  }
+
   @Test
   void recordSessionEventRejectsUnknownEvent() {
     assertThrows(
