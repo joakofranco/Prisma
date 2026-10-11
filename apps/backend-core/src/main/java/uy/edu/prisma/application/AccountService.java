@@ -61,15 +61,17 @@ public class AccountService {
     auditLog.record("UPDATE_PROFILE", "user:" + user.getId(), null);
   }
 
+  // @Transactional: linkKeycloakAccountIfMissing() puede mutar `user` (ver ahí).
+  @Transactional
   public void changePassword(ChangePasswordDto dto) {
     User user =
         currentUser
             .currentUser()
             .orElseThrow(() -> new AccessDeniedException("No se pudo identificar al usuario"));
+    linkKeycloakAccountIfMissing(user);
     if (user.getKeycloakId() == null) {
-      // No debería pasar en la práctica: si está acá es porque ya tiene un JWT válido de
-      // Keycloak, lo que implica que sí tiene cuenta ahí. Defensivo por si el dato local quedó
-      // desincronizado.
+      // Sin JWT de Keycloak del que sacar el id (no debería pasar: si llegó acá es porque está
+      // autenticado). Defensivo por si el dato local quedó desincronizado.
       throw new InvalidRequestException(
           "Tu cuenta todavía no tiene acceso habilitado; contactá a un administrador");
     }
@@ -86,6 +88,7 @@ public class AccountService {
   // sola vez por sesión de pestaña, no en cada refresh) y justo antes de mandarlo al logout de
   // Keycloak (stores/auth.ts#logout) -- ver el comentario en SessionEventDto sobre por qué hace
   // falta este viaje explícito en vez de que quede registrado solo.
+  @Transactional
   public void recordSessionEvent(SessionEventDto dto) {
     if (!ALLOWED_SESSION_EVENTS.contains(dto.event())) {
       throw new InvalidRequestException("Evento de sesión inválido");
@@ -94,6 +97,30 @@ public class AccountService {
         currentUser
             .currentUser()
             .orElseThrow(() -> new AccessDeniedException("No se pudo identificar al usuario"));
+    if ("LOGIN".equals(dto.event())) {
+      linkKeycloakAccountIfMissing(user);
+    }
     auditLog.record(dto.event(), "user:" + user.getId(), null);
+  }
+
+  /**
+   * Quien llega autenticado con un JWT de Keycloak tiene, por definición, una cuenta ahí. Si la
+   * fila local todavía no tiene {@code keycloakId} (caso típico: el administrador sembrado en V4,
+   * cuya cuenta sale del realm-prisma.json y nunca pasó por UserService.create), se completa con
+   * el {@code sub} del token. Sin esto la lista de usuarios lo mostraba "Sin acceso todavía"
+   * aunque ya hubiera ingresado, y el cambio de contraseña fallaba con "tu cuenta todavía no tiene
+   * acceso habilitado". Nunca pisa un {@code keycloakId} ya existente.
+   */
+  private void linkKeycloakAccountIfMissing(User user) {
+    if (user.getKeycloakId() != null) {
+      return;
+    }
+    currentUser
+        .currentKeycloakSubject()
+        .ifPresent(
+            subject -> {
+              user.setKeycloakId(subject);
+              auditLog.record("LINK_KEYCLOAK_ACCOUNT", "user:" + user.getId(), null);
+            });
   }
 }
