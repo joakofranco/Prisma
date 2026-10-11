@@ -1,25 +1,41 @@
 <template>
+  <!-- Por debajo de lg el menú lateral es un cajón oculto: el encabezado ocupa TODO el ancho
+       (left-0). Antes llevaba siempre el margen del menú (16rem/4rem) y dejaba un hueco a la
+       izquierda con la hamburguesa "flotando" a 272 px. Desde lg se corre según el menú. -->
   <header
-    class="fixed top-0 right-0 z-30 h-16 bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between px-4 lg:px-6"
-    :style="{ left: collapsed ? '4rem' : '16rem' }"
+    :class="[
+      'fixed top-0 right-0 left-0 z-30 h-16 bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between gap-3 px-4 lg:px-6 transition-[left] duration-300',
+      collapsed ? 'lg:left-16' : 'lg:left-64',
+    ]"
   >
-    <div class="flex items-center gap-4">
+    <div class="flex items-center gap-3 min-w-0">
       <button
-        class="lg:hidden p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700"
+        class="lg:hidden shrink-0 p-2 -ml-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700"
         title="Abrir menú"
-        @click="$emit('toggle-mobile')"
+        aria-label="Abrir menú"
+        @click="onToggleMobile"
       >
         <Bars3Icon class="w-6 h-6 text-slate-600 dark:text-slate-300" />
       </button>
-      <h1 class="text-lg font-semibold text-slate-800 dark:text-white hidden sm:block">
+      <!-- Logo junto a la hamburguesa (en escritorio ya está en el menú lateral). -->
+      <div class="flex items-center gap-2 shrink-0 lg:hidden">
+        <ShieldCheckIcon class="w-7 h-7 text-blue-600 dark:text-blue-400" />
+        <span class="hidden sm:inline text-lg font-bold tracking-wide text-slate-900 dark:text-white">
+          PRISMA
+        </span>
+      </div>
+      <h1 class="text-lg font-semibold text-slate-800 dark:text-white truncate">
         {{ currentTitle }}
       </h1>
     </div>
 
     <div class="flex items-center gap-3">
-      <div class="relative">
+      <div ref="userMenuRoot" class="relative">
         <button
+          ref="userMenuButton"
           class="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+          aria-haspopup="true"
+          :aria-expanded="showUserMenu"
           @click="showUserMenu = !showUserMenu"
         >
           <div class="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-950 flex items-center justify-center">
@@ -90,7 +106,8 @@
 </template>
 
 <script setup lang="ts">
-  import { ref, computed } from 'vue';
+  import { ref, computed, nextTick, watch } from 'vue';
+  import { onClickOutside, onKeyStroke } from '@vueuse/core';
   import { useRoute } from 'vue-router';
   import { useAuthStore } from '@/stores/auth';
   import { useThemeStore } from '@/stores/theme';
@@ -103,13 +120,14 @@
     SunIcon,
     MoonIcon,
   } from '@heroicons/vue/24/outline';
+  import { ShieldCheckIcon } from '@heroicons/vue/24/solid';
   import type { UserRole } from '@/types';
 
   defineProps<{
     collapsed: boolean;
   }>();
 
-  defineEmits<{
+  const emit = defineEmits<{
     'toggle-mobile': [];
   }>();
 
@@ -117,6 +135,33 @@
   const authStore = useAuthStore();
   const themeStore = useThemeStore();
   const showUserMenu = ref(false);
+  const userMenuRoot = ref<HTMLElement | null>(null);
+  const userMenuButton = ref<HTMLButtonElement | null>(null);
+
+  // El menú de usuario se cierra: al clickear FUERA de él (incluido el menú lateral), con ESC
+  // (devolviendo el foco al botón que lo abrió: WCAG 2.4.3) y al cambiar de ruta -- antes quedaba
+  // abierto al navegar por el menú lateral, tapando contenido de la nueva página.
+  onClickOutside(userMenuRoot, () => {
+    showUserMenu.value = false;
+  });
+
+  onKeyStroke('Escape', () => {
+    if (!showUserMenu.value) return;
+    showUserMenu.value = false;
+    nextTick(() => userMenuButton.value?.focus());
+  });
+
+  watch(
+    () => route.fullPath,
+    () => {
+      showUserMenu.value = false;
+    },
+  );
+
+  function onToggleMobile() {
+    showUserMenu.value = false;
+    emit('toggle-mobile');
+  }
 
   const currentTitle = computed(() => (route.meta.title as string) || 'PRISMA');
 

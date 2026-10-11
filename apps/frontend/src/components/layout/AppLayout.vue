@@ -36,10 +36,18 @@
 </template>
 
 <script setup lang="ts">
-  import { ref } from 'vue';
+  import { onMounted, onUnmounted, ref } from 'vue';
   import AppSidebar from './AppSidebar.vue';
   import AppHeader from './AppHeader.vue';
 
   const sidebarCollapsed = ref(false);
   const mobileMenuOpen = ref(false);
+
+  // ESC cierra el cajón del menú en móvil / tableta (WCAG 2.1.1: se debe poder cerrar con teclado).
+  function onKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape' && mobileMenuOpen.value) mobileMenuOpen.value = false;
+  }
+
+  onMounted(() => window.addEventListener('keydown', onKeydown));
+  onUnmounted(() => window.removeEventListener('keydown', onKeydown));
 </script>
