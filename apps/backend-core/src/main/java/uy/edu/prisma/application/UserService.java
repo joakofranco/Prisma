@@ -55,24 +55,17 @@ public class UserService {
     if (currentUser.isPrismaAdmin()) {
       result = userRepo.search(search, pageable);
     } else {
-      Set<UUID> allowedTenantIds =
-          currentUser.isAuditor()
-              ? currentUser.auditedOrganizationIds()
-              : optionalSet(currentUser.currentTenantId());
+      Set<UUID> allowedOrgIds = currentUser.organizationIds();
       result =
-          allowedTenantIds.isEmpty()
+          allowedOrgIds.isEmpty()
               ? Page.empty(pageable)
-              : userRepo.searchByTenantIdIn(allowedTenantIds, search, pageable);
+              : userRepo.searchByOrganizationIdIn(allowedOrgIds, search, pageable);
     }
     return new PaginatedDto<>(
         result.getContent().stream().map(this::toDto).toList(),
         result.getTotalElements(),
         page,
         pageSize);
-  }
-
-  private static Set<UUID> optionalSet(UUID id) {
-    return id == null ? Set.of() : Set.of(id);
   }
 
   @Transactional(readOnly = true)
@@ -94,18 +87,22 @@ public class UserService {
     if (myId != null && myId.equals(target.getId())) {
       return;
     }
-    UUID targetTenantId = target.getTenant() != null ? target.getTenant().getId() : null;
-    if (currentUser.isAuditor()) {
-      if (targetTenantId != null && currentUser.auditedOrganizationIds().contains(targetTenantId)) {
-        return;
-      }
+    // Alcanza con que compartan alguna organización.
+    Set<UUID> mine = currentUser.organizationIds();
+    if (target.organizationIds().stream().noneMatch(mine::contains)) {
       throw new org.springframework.security.access.AccessDeniedException(
           "No tiene acceso a los datos de este usuario");
     }
-    UUID myTenantId = currentUser.currentTenantId();
-    if (targetTenantId == null || !targetTenantId.equals(myTenantId)) {
+  }
+
+  // Para MODIFICAR o borrar a otro usuario (no solo verlo) un ORG_RESPONSIBLE necesita que TODAS las
+  // organizaciones del objetivo sean suyas: si no, podría pisar o eliminar a alguien que también
+  // trabaja en otra organización (p.ej. un evaluador de varias). Esos los gestiona PRISMA_ADMIN.
+  private void assertCanManage(User target) {
+    Set<UUID> theirs = target.organizationIds();
+    if (theirs.isEmpty() || !currentUser.organizationIds().containsAll(theirs)) {
       throw new org.springframework.security.access.AccessDeniedException(
-          "No tiene acceso a los datos de este usuario");
+          "No tiene acceso a los datos de esta organizacion");
     }
   }
 
@@ -120,15 +117,20 @@ public class UserService {
           "La contraseña es obligatoria: sin ella el usuario no puede iniciar sesión");
     }
     // Un ORG_RESPONSIBLE (administrador de su propia organización) también puede dar de alta
-    // usuarios desde acá, pero solo dentro de SU organización: se ignora cualquier tenantId
-    // distinto que venga en el DTO y se fuerza el propio en su lugar -- nunca se confía en el
-    // cliente para un campo con implicancias de privilegio. PRISMA_ADMIN sigue pudiendo elegir
-    // cualquier organización (o ninguna, para dar de alta a otro PRISMA_ADMIN).
-    UUID tenantId = currentUser.isPrismaAdmin() ? dto.tenantId() : currentUser.currentTenantId();
-    if (!currentUser.isPrismaAdmin()) {
-      currentUser.assertOrganizationAccess(tenantId);
+    // usuarios desde acá, pero solo dentro de SU organización: se fuerza la propia y se rechaza
+    // cualquier otra que venga en el DTO -- nunca se confía en el cliente para un campo con
+    // implicancias de privilegio. Por lo mismo no puede crear un evaluador "general" (sin
+    // organizaciones): ese alcance global lo asigna solo PRISMA_ADMIN, que puede elegir cualquier
+    // conjunto de organizaciones (o ninguna, p.ej. para otro PRISMA_ADMIN).
+    Set<UUID> organizationIds;
+    if (currentUser.isPrismaAdmin()) {
+      organizationIds = dto.organizationIds() == null ? Set.of() : dto.organizationIds();
+    } else {
+      UUID myOrganizationId = currentUser.currentTenantId();
+      currentUser.assertOrganizationAccess(myOrganizationId);
       assertRolesAssignableByOrgAdmin(dto.roles());
-      assertAuditedOrganizationsWithinOwnTenant(dto.auditedOrganizationIds());
+      assertOrganizationsWithinOwn(dto.organizationIds(), myOrganizationId);
+      organizationIds = Set.of(myOrganizationId);
     }
     User user =
         User.builder()
@@ -137,13 +139,11 @@ public class UserService {
             .lastName(dto.lastName())
             .enabled(dto.enabled() != null ? dto.enabled() : true)
             .roles(parseRoles(dto.roles()))
-            .auditedOrganizations(resolveOrganizations(dto.auditedOrganizationIds()))
+            .organizations(resolveOrganizations(organizationIds))
             .build();
     user.setPasswordHash(passwordHasher.hash(dto.password()));
-    if (tenantId != null) {
-      user.setTenant(orgRepo.findById(tenantId).orElse(null));
-    }
-    validateAuditorHasOrganizations(user);
+    assertOrganizationsActive(user.getOrganizations());
+    validateOrganizationsForRoles(user);
 
     User saved = userRepo.save(user);
     // Se provisiona en Keycloak DESPUÉS del insert local: si esto lanza, la anotación
@@ -188,18 +188,13 @@ public class UserService {
             "No se puede deshabilitar al administrador global del sistema");
       }
     }
-    // Mismo criterio que create(): un ORG_RESPONSIBLE solo puede editar usuarios de SU propia
-    // organización, no puede reubicarlos en otra, y no puede otorgar (ni quitar de sí mismo,
-    // aunque no debería tenerlo) el rol global PRISMA_ADMIN.
+    // Mismo criterio que create(): un ORG_RESPONSIBLE solo puede editar usuarios cuyas
+    // organizaciones sean todas suyas, no puede reubicarlos en otra, y no puede otorgar (ni quitar
+    // de sí mismo, aunque no debería tenerlo) el rol global PRISMA_ADMIN.
     if (!currentUser.isPrismaAdmin()) {
-      UUID existingTenantId = user.getTenant() != null ? user.getTenant().getId() : null;
-      currentUser.assertOrganizationAccess(existingTenantId);
-      if (dto.tenantId() != null && !dto.tenantId().equals(currentUser.currentTenantId())) {
-        throw new org.springframework.security.access.AccessDeniedException(
-            "No podés mover usuarios a otra organización");
-      }
+      assertCanManage(user);
       assertRolesAssignableByOrgAdmin(dto.roles());
-      assertAuditedOrganizationsWithinOwnTenant(dto.auditedOrganizationIds());
+      assertOrganizationsWithinOwn(dto.organizationIds(), currentUser.currentTenantId());
     }
     // El email también es el username en Keycloak (ver KeycloakAdminClient.createUser): antes
     // acá nunca se aplicaba dto.email() al usuario, así que el campo Email del panel de edición
@@ -220,13 +215,19 @@ public class UserService {
     if (dto.roles() != null) {
       user.setRoles(parseRoles(dto.roles()));
     }
-    if (dto.tenantId() != null) {
-      user.setTenant(orgRepo.findById(dto.tenantId()).orElse(null));
+    // Solo PRISMA_ADMIN cambia las organizaciones de un usuario (un ORG_RESPONSIBLE no puede
+    // moverlo ni quitarle las que tiene en otras organizaciones). null = sin cambios; un set vacío
+    // = quitarle todas ("sin organización").
+    if (currentUser.isPrismaAdmin() && dto.organizationIds() != null) {
+      Set<Organization> requested = resolveOrganizations(dto.organizationIds());
+      // Las que el usuario YA tenía no se vuelven a chequear (puede seguir en una organización que
+      // después quedó inactiva); solo se rechaza SUMARLE una inactiva.
+      Set<UUID> alreadyThere = user.organizationIds();
+      assertOrganizationsActive(
+          requested.stream().filter(o -> !alreadyThere.contains(o.getId())).toList());
+      user.setOrganizations(requested);
     }
-    if (dto.auditedOrganizationIds() != null) {
-      user.setAuditedOrganizations(resolveOrganizations(dto.auditedOrganizationIds()));
-    }
-    validateAuditorHasOrganizations(user);
+    validateOrganizationsForRoles(user);
     boolean passwordProvided = dto.password() != null && !dto.password().isBlank();
     if (passwordProvided) {
       user.setPasswordHash(passwordHasher.hash(dto.password()));
@@ -297,8 +298,19 @@ public class UserService {
     // alcanzaría con conocer/adivinar el id de un usuario de OTRA organización para borrarlo,
     // aunque nunca hubiera podido verlo ni gestionarlo por ningún otro camino de la app.
     if (!currentUser.isPrismaAdmin()) {
-      UUID targetTenantId = user.getTenant() != null ? user.getTenant().getId() : null;
-      currentUser.assertOrganizationAccess(targetTenantId);
+      assertCanManage(user);
+    }
+    // Se chequea ANTES de tocar Keycloak: si la fila tiene datos que dependen de ella (FK sin ON
+    // DELETE) la base rechaza el borrado, pero para entonces la cuenta de Keycloak ya estaría
+    // eliminada (y el rollback de la transacción no la restaura) -- el usuario quedaría visible en
+    // la lista pero sin poder iniciar sesión nunca más. Además, borrarlo perdería el historial de
+    // quién hizo qué: lo correcto en ese caso es deshabilitarlo.
+    List<String> dependents = dependentData(id);
+    if (!dependents.isEmpty()) {
+      throw new ConflictException(
+          "No se puede eliminar el usuario porque tiene datos asociados ("
+              + String.join(", ", dependents)
+              + "). Deshabilítelo en su lugar para conservar el historial.");
     }
     if (user.getKeycloakId() != null) {
       keycloakAdmin.deleteUser(user.getKeycloakId()); // best-effort, ver KeycloakAdminClient
@@ -313,10 +325,9 @@ public class UserService {
         u.getEmail(),
         u.getFirstName(),
         u.getLastName(),
-        u.getTenant() != null ? u.getTenant().getId() : null,
-        u.getTenant() != null ? u.getTenant().getName() : null,
+        u.organizationIds(),
+        u.getOrganizations().stream().map(Organization::getName).sorted().toList(),
         u.getRoles().stream().map(UserRole::name).collect(Collectors.toSet()),
-        u.getAuditedOrganizations().stream().map(Organization::getId).collect(Collectors.toSet()),
         u.getEnabled(),
         u.getCreatedAt(),
         u.getKeycloakId() != null);
@@ -351,27 +362,50 @@ public class UserService {
     }
   }
 
-  // Un administrador de organización solo puede designar auditores para SU PROPIA organización
-  // -- de lo contrario podría hacer que uno de sus usuarios audite evaluaciones de una
-  // organización ajena, la misma fuga que CurrentUserService.assertOrganizationAccess evita en
-  // el resto de la app.
-  private void assertAuditedOrganizationsWithinOwnTenant(Set<UUID> auditedOrganizationIds) {
-    if (auditedOrganizationIds == null || auditedOrganizationIds.isEmpty()) {
+  // Un administrador de organización solo puede asignar SU PROPIA organización -- de lo contrario
+  // podría dar acceso a una organización ajena, la misma fuga que
+  // CurrentUserService.assertOrganizationAccess evita en el resto de la app. null / vacío = no pide
+  // ninguna distinta (se usa la propia).
+  private void assertOrganizationsWithinOwn(Set<UUID> requested, UUID ownOrganizationId) {
+    if (requested == null || requested.isEmpty()) {
       return;
     }
-    UUID myTenantId = currentUser.currentTenantId();
-    boolean allOwnTenant = auditedOrganizationIds.stream().allMatch(id -> id.equals(myTenantId));
-    if (!allOwnTenant) {
+    if (!requested.stream().allMatch(id -> id.equals(ownOrganizationId))) {
       throw new org.springframework.security.access.AccessDeniedException(
-          "Solo podés asignar auditoría sobre tu propia organización");
+          "Solo podés asignar tu propia organización");
     }
   }
 
-  // AUDITOR sin ninguna organización asignada quedaría auditando "nada" en toda la plataforma
-  // (ver CurrentUserService.assertOrganizationAccess/auditedOrganizationIds) -- una cuenta así es
-  // un error de carga, no un caso válido, así que se rechaza acá en vez de dejarla crearse rota.
-  private void validateAuditorHasOrganizations(User user) {
-    if (user.getRoles().contains(UserRole.AUDITOR) && user.getAuditedOrganizations().isEmpty()) {
+  // No se puede asignar a un usuario una organización inactiva: ahí no hay actividad nueva (ver
+  // OrganizationService.delete, que además deshabilita a sus usuarios).
+  private void assertOrganizationsActive(java.util.Collection<Organization> organizations) {
+    for (Organization o : organizations) {
+      if (!Boolean.TRUE.equals(o.getEnabled())) {
+        throw new InvalidRequestException(
+            "No se puede asignar la organización «" + o.getName() + "» porque está inactiva");
+      }
+    }
+  }
+
+  // Cuántas organizaciones corresponden según los roles (la membresía es la misma M:N para todos,
+  // lo que cambia es cuántas se exigen):
+  //   * ORG_RESPONSIBLE / VIEWER: exactamente una.
+  //   * AUDITOR: al menos una -- sin ninguna auditaría "nada" (ver CurrentUserService).
+  //   * INTERNAL_EVALUATOR: cualquier cantidad; SIN ninguna es un evaluador "general" que accede a
+  //     todas las organizaciones (CurrentUserService.isGeneralEvaluator).
+  // PRISMA_ADMIN es global: sus otros roles son irrelevantes y no se le exige nada.
+  private void validateOrganizationsForRoles(User user) {
+    Set<UserRole> roles = user.getRoles();
+    if (roles.contains(UserRole.PRISMA_ADMIN)) {
+      return;
+    }
+    int count = user.getOrganizations().size();
+    if ((roles.contains(UserRole.ORG_RESPONSIBLE) || roles.contains(UserRole.VIEWER))
+        && count != 1) {
+      throw new InvalidRequestException(
+          "El responsable de organización y el visualizador deben pertenecer a exactamente una organización");
+    }
+    if (roles.contains(UserRole.AUDITOR) && count == 0) {
       throw new InvalidRequestException(
           "El auditor debe tener asignada al menos una organización para auditar");
     }

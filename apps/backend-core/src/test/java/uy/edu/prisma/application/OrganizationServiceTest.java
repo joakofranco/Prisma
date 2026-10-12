@@ -43,6 +43,7 @@ class OrganizationServiceTest {
     // Por defecto los tests existentes asumen la vista sin restricciones de PRISMA_ADMIN; los
     // tests de aislamiento multi-tenant de mas abajo pisan este stub con isPrismaAdmin=false.
     when(currentUser.isPrismaAdmin()).thenReturn(true);
+    when(currentUser.hasAllOrganizationsAccess()).thenReturn(true);
 
     responsible = User.builder().id(UUID.randomUUID()).email("r@test.com").build();
     org =
@@ -91,8 +92,9 @@ class OrganizationServiceTest {
   @Test
   void listScopesToOwnTenantForNonAdminNonAuditorRoles() {
     when(currentUser.isPrismaAdmin()).thenReturn(false);
+    when(currentUser.hasAllOrganizationsAccess()).thenReturn(false);
     when(currentUser.isAuditor()).thenReturn(false);
-    when(currentUser.currentTenantId()).thenReturn(org.getId());
+    when(currentUser.organizationIds()).thenReturn(Set.of(org.getId()));
     PageRequest pr = PageRequest.of(0, 10, Sort.by("createdAt").descending());
     when(repo.searchByIdIn(eq(Set.of(org.getId())), any(), any()))
         .thenReturn(new PageImpl<>(List.of(org), pr, 1));
@@ -106,8 +108,9 @@ class OrganizationServiceTest {
   @Test
   void listReturnsEmptyForNonAdminWithoutTenant() {
     when(currentUser.isPrismaAdmin()).thenReturn(false);
+    when(currentUser.hasAllOrganizationsAccess()).thenReturn(false);
     when(currentUser.isAuditor()).thenReturn(false);
-    when(currentUser.currentTenantId()).thenReturn(null);
+    when(currentUser.organizationIds()).thenReturn(Set.of());
 
     PaginatedDto<OrganizationDto> result = service.list(null, 0, 10);
 
@@ -119,8 +122,9 @@ class OrganizationServiceTest {
   void listScopesToAuditedOrganizationsForAuditor() {
     UUID auditedId = UUID.randomUUID();
     when(currentUser.isPrismaAdmin()).thenReturn(false);
+    when(currentUser.hasAllOrganizationsAccess()).thenReturn(false);
     when(currentUser.isAuditor()).thenReturn(true);
-    when(currentUser.auditedOrganizationIds()).thenReturn(Set.of(auditedId));
+    when(currentUser.organizationIds()).thenReturn(Set.of(auditedId));
     PageRequest pr = PageRequest.of(0, 10, Sort.by("createdAt").descending());
     when(repo.searchByIdIn(eq(Set.of(auditedId)), any(), any()))
         .thenReturn(new PageImpl<>(List.of(org), pr, 1));

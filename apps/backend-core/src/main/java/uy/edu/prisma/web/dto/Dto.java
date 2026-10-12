@@ -32,6 +32,20 @@ public class Dto {
   static final String EMAIL_MESSAGE = "El email no es válido (ej.: usuario@dominio.com)";
   static final String EMAIL_DOMAIN_REGEX = "^[^@\\s]+@[^@\\s]+\\.[^@\\s.]+$";
 
+  // Une la organización "principal" con las auditadas de las firmas de compatibilidad (tests).
+  private static Set<UUID> mergeOrganizations(UUID tenantId, Set<UUID> others) {
+    Set<UUID> out = new java.util.HashSet<>();
+    if (tenantId != null) out.add(tenantId);
+    if (others != null) out.addAll(others);
+    return out;
+  }
+
+  // Igual pero null si no hay ninguna (en un UPDATE significa "sin cambios").
+  private static Set<UUID> mergeOrganizationsOrNull(UUID tenantId, Set<UUID> others) {
+    Set<UUID> out = mergeOrganizations(tenantId, others);
+    return out.isEmpty() ? null : out;
+  }
+
   // Los espacios sobrantes no deben llegar a la base ni a Keycloak ("  Ana " -> "Ana").
   private static String trimOrNull(String value) {
     return value == null ? null : value.trim();
@@ -63,14 +77,14 @@ public class Dto {
       String email,
       String firstName,
       String lastName,
-      UUID tenantId,
-      // Nombre de la organización (null si no tiene tenant, p.ej. PRISMA_ADMIN) -- se resuelve acá
-      // para que la tabla de usuarios del admin pueda mostrarlo sin un lookup aparte por fila.
-      String organizationName,
+      // Organizaciones a las que accede el usuario (ver User.organizations): una para
+      // ORG_RESPONSIBLE / VIEWER, varias para AUDITOR / INTERNAL_EVALUATOR, ninguna para
+      // PRISMA_ADMIN o un evaluador general.
+      Set<UUID> organizationIds,
+      // Nombres de esas organizaciones, ordenados -- se resuelven acá para que la tabla de usuarios
+      // pueda mostrarlos sin un lookup aparte por fila.
+      List<String> organizationNames,
       Set<String> roles,
-      // Organizaciones que puede auditar (solo tiene sentido si roles contiene AUDITOR; ver
-      // CurrentUserService.assertOrganizationAccess). Vacío para el resto de los roles.
-      Set<UUID> auditedOrganizationIds,
       Boolean enabled,
       OffsetDateTime createdAt,
       // false = no tiene cuenta en Keycloak todavía y por lo tanto NO puede iniciar sesión
@@ -78,13 +92,13 @@ public class Dto {
       // el usuario y fijándole una contraseña.
       boolean canLogin) {
     public UserDto {
+      organizationIds = organizationIds == null ? Set.of() : Set.copyOf(organizationIds);
+      organizationNames = organizationNames == null ? List.of() : List.copyOf(organizationNames);
       roles = roles == null ? Set.of() : Set.copyOf(roles);
-      auditedOrganizationIds =
-          auditedOrganizationIds == null ? Set.of() : Set.copyOf(auditedOrganizationIds);
     }
 
-    // Compat: firma previa sin organizationName (usada en tests existentes) -- delega al
-    // canónico con null (mismo criterio que "sin tenant" en general).
+    // Compat (tests): firma previa con una organización (`tenantId`) y las organizaciones a auditar
+    // por separado; ahora ambas son simplemente "organizaciones". Los nombres quedan vacíos.
     public UserDto(
         UUID id,
         String email,
@@ -101,17 +115,15 @@ public class Dto {
           email,
           firstName,
           lastName,
-          tenantId,
-          null,
+          mergeOrganizations(tenantId, auditedOrganizationIds),
+          List.of(),
           roles,
-          auditedOrganizationIds,
           enabled,
           createdAt,
           canLogin);
     }
 
-    // Compat: firma previa sin organizationName NI auditedOrganizationIds (usada en tests
-    // existentes) -- delega al canónico con ambos por defecto.
+    // Compat (tests): firma previa sin organizaciones a auditar.
     public UserDto(
         UUID id,
         String email,
@@ -123,7 +135,15 @@ public class Dto {
         OffsetDateTime createdAt,
         boolean canLogin) {
       this(
-          id, email, firstName, lastName, tenantId, null, roles, Set.of(), enabled, createdAt,
+          id,
+          email,
+          firstName,
+          lastName,
+          mergeOrganizations(tenantId, null),
+          List.of(),
+          roles,
+          enabled,
+          createdAt,
           canLogin);
     }
 
@@ -133,8 +153,8 @@ public class Dto {
     }
 
     @Override
-    public Set<UUID> auditedOrganizationIds() {
-      return Collections.unmodifiableSet(auditedOrganizationIds);
+    public Set<UUID> organizationIds() {
+      return Collections.unmodifiableSet(organizationIds);
     }
   }
 
@@ -188,8 +208,11 @@ public class Dto {
           @Size(min = 2, max = 100, message = "El apellido debe tener entre 2 y 100 caracteres")
           @Pattern(regexp = PERSON_NAME_REGEX, message = PERSON_NAME_MESSAGE_LAST)
           String lastName,
+      // Organizaciones del usuario (ver User.organizations y UserService.validateOrganizationsForRoles
+      // para cuántas corresponden según el rol). CREATE: null = ninguna. UPDATE: null = "sin
+      // cambios"; un set vacío = "quitarle todas" (p.ej. para volver a "sin organización").
+      Set<UUID> organizationIds,
       Set<String> roles,
-      Set<UUID> auditedOrganizationIds,
       String password,
       // CREATE (UserService.create): null equivale a "true" (una cuenta nueva nace habilitada).
       // UPDATE (UserService.update): null equivale a "sin cambios" -- deshabilitar/rehabilitar es
@@ -201,12 +224,32 @@ public class Dto {
       firstName = trimOrNull(firstName);
       lastName = trimOrNull(lastName);
       roles = roles == null ? Set.of() : Set.copyOf(roles);
-      auditedOrganizationIds =
-          auditedOrganizationIds == null ? Set.of() : Set.copyOf(auditedOrganizationIds);
+      // A diferencia de `roles`, null se conserva: en un UPDATE significa "sin cambios".
+      organizationIds = organizationIds == null ? null : Set.copyOf(organizationIds);
     }
 
-    // Compat: firma previa sin "enabled" (usada en tests existentes) -- delega al canónico con
-    // null (ver el comentario en el campo "enabled" de arriba sobre qué significa ahí).
+    // Compat (tests): firma previa con una organización (`tenantId`) y las organizaciones a auditar
+    // por separado, más "enabled". Si no hay ninguna de las dos se deja null ("sin cambios").
+    public CreateUserDto(
+        String email,
+        String firstName,
+        String lastName,
+        UUID tenantId,
+        Set<String> roles,
+        Set<UUID> auditedOrganizationIds,
+        String password,
+        Boolean enabled) {
+      this(
+          email,
+          firstName,
+          lastName,
+          mergeOrganizationsOrNull(tenantId, auditedOrganizationIds),
+          roles,
+          password,
+          enabled);
+    }
+
+    // Compat (tests): firma previa sin "enabled".
     public CreateUserDto(
         String email,
         String firstName,
@@ -218,8 +261,7 @@ public class Dto {
       this(email, firstName, lastName, tenantId, roles, auditedOrganizationIds, password, null);
     }
 
-    // Compat: firma previa sin auditedOrganizationIds NI "enabled" (usada en tests existentes) --
-    // delega al canónico con el set vacío y null respectivamente.
+    // Compat (tests): firma previa sin organizaciones a auditar NI "enabled".
     public CreateUserDto(
         String email,
         String firstName,
@@ -236,8 +278,8 @@ public class Dto {
     }
 
     @Override
-    public Set<UUID> auditedOrganizationIds() {
-      return Collections.unmodifiableSet(auditedOrganizationIds);
+    public Set<UUID> organizationIds() {
+      return organizationIds == null ? null : Collections.unmodifiableSet(organizationIds);
     }
   }
 

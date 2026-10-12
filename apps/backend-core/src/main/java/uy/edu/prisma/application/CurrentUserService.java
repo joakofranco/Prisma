@@ -92,44 +92,47 @@ public class CurrentUserService {
     return currentUser().map(u -> u.getRoles().contains(role)).orElse(false);
   }
 
-  /** Id de la organizacion (tenant) del usuario actual, o {@code null} si no tiene una asignada. */
+  /**
+   * Id de la organizacion del usuario actual SI tiene exactamente una (ORG_RESPONSIBLE, VIEWER,
+   * evaluador de una sola organizacion); {@code null} si no tiene ninguna o tiene varias (PRISMA_ADMIN,
+   * evaluador general, auditor de varias).
+   */
   public UUID currentTenantId() {
-    return currentUser().map(User::getTenant).map(Organization::getId).orElse(null);
+    return currentUser().map(User::singleOrganizationId).orElse(null);
+  }
+
+  /** Ids de las organizaciones a las que el usuario actual accede (vacio si no tiene ninguna). */
+  public Set<UUID> organizationIds() {
+    return currentUser().map(User::organizationIds).orElse(Set.of());
   }
 
   /**
-   * Ids de las organizaciones que el auditor actual puede auditar (asignadas al crearlo/editarlo,
-   * ver UserService). Vacio si el usuario actual no es AUDITOR o no tiene ninguna asignada.
+   * Evaluador "general": INTERNAL_EVALUATOR sin ninguna organizacion asignada. Accede a TODAS las
+   * organizaciones (no a la administracion de usuarios, que sigue siendo de PRISMA_ADMIN /
+   * ORG_RESPONSIBLE).
    */
-  public Set<UUID> auditedOrganizationIds() {
+  public boolean isGeneralEvaluator() {
     return currentUser()
-        .map(
-            u ->
-                u.getAuditedOrganizations().stream()
-                    .map(Organization::getId)
-                    .collect(Collectors.toSet()))
-        .orElse(Set.of());
+        .map(u -> u.getRoles().contains(UserRole.INTERNAL_EVALUATOR) && u.getOrganizations().isEmpty())
+        .orElse(false);
+  }
+
+  /** PRISMA_ADMIN y el evaluador general acceden a todas las organizaciones, sin restriccion. */
+  public boolean hasAllOrganizationsAccess() {
+    return isPrismaAdmin() || isGeneralEvaluator();
   }
 
   /**
    * Verifica que el usuario actual pueda operar sobre datos de la organizacion dada. PRISMA_ADMIN
-   * siempre pasa; AUDITOR solo si esa organizacion esta entre las que tiene asignadas; el resto
-   * solo si coincide con su propio tenant. Lanza 403 en caso contrario, para no filtrar
+   * y el evaluador general siempre pasan; el resto solo si esa organizacion esta entre las suyas. Lanza 403 en caso contrario, para no filtrar
    * evaluaciones, evidencias, observaciones de auditoria, planes de mejora ni reportes entre
    * organizaciones distintas (aislamiento multi-tenant, ver docs/Proyecto.md).
    */
   public void assertOrganizationAccess(UUID organizationId) {
-    if (isPrismaAdmin()) {
+    if (hasAllOrganizationsAccess()) {
       return;
     }
-    if (isAuditor()) {
-      if (organizationId != null && auditedOrganizationIds().contains(organizationId)) {
-        return;
-      }
-      throw new AccessDeniedException("No tiene acceso a los datos de esta organizacion");
-    }
-    UUID tenantId = currentTenantId();
-    if (organizationId == null || !organizationId.equals(tenantId)) {
+    if (organizationId == null || !organizationIds().contains(organizationId)) {
       throw new AccessDeniedException("No tiene acceso a los datos de esta organizacion");
     }
   }

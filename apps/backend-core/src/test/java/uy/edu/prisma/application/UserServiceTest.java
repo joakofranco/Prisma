@@ -69,7 +69,7 @@ class UserServiceTest {
             .email("u@test.com")
             .firstName("Jane")
             .lastName("Doe")
-            .tenant(tenant)
+            .organizations(new java.util.HashSet<>(Set.of(tenant)))
             .enabled(true)
             .roles(Set.of(UserRole.VIEWER))
             .createdAt(OffsetDateTime.now())
@@ -92,8 +92,8 @@ class UserServiceTest {
     assertEquals("u@test.com", dto.email());
     assertEquals("Jane", dto.firstName());
     assertEquals("Doe", dto.lastName());
-    assertEquals(tenant.getId(), dto.tenantId());
-    assertEquals("Acme", dto.organizationName());
+    assertEquals(Set.of(tenant.getId()), dto.organizationIds());
+    assertEquals(List.of("Acme"), dto.organizationNames());
     assertEquals(Set.of("VIEWER"), dto.roles());
     assertTrue(dto.enabled());
     assertEquals(user.getCreatedAt(), dto.createdAt());
@@ -109,8 +109,8 @@ class UserServiceTest {
     PaginatedDto<UserDto> result = service.list(null, 0, 10);
 
     UserDto dto = result.data().get(0);
-    assertNull(dto.tenantId());
-    assertNull(dto.organizationName());
+    assertTrue(dto.organizationIds().isEmpty());
+    assertTrue(dto.organizationNames().isEmpty());
     assertTrue(dto.roles().isEmpty());
   }
 
@@ -134,10 +134,9 @@ class UserServiceTest {
   @Test
   void listScopesToOwnTenantForNonAdminNonAuditorRoles() {
     when(currentUser.isPrismaAdmin()).thenReturn(false);
-    when(currentUser.isAuditor()).thenReturn(false);
-    when(currentUser.currentTenantId()).thenReturn(tenant.getId());
+    when(currentUser.organizationIds()).thenReturn(Set.of(tenant.getId()));
     PageRequest pr = PageRequest.of(0, 10, Sort.by("createdAt").descending());
-    when(userRepo.searchByTenantIdIn(eq(Set.of(tenant.getId())), any(), any()))
+    when(userRepo.searchByOrganizationIdIn(eq(Set.of(tenant.getId())), any(), any()))
         .thenReturn(new PageImpl<>(List.of(user), pr, 1));
 
     PaginatedDto<UserDto> result = service.list(null, 0, 10);
@@ -149,22 +148,21 @@ class UserServiceTest {
   @Test
   void listReturnsEmptyForNonAdminWithoutTenant() {
     when(currentUser.isPrismaAdmin()).thenReturn(false);
-    when(currentUser.isAuditor()).thenReturn(false);
-    when(currentUser.currentTenantId()).thenReturn(null);
+    when(currentUser.organizationIds()).thenReturn(Set.of());
 
     PaginatedDto<UserDto> result = service.list(null, 0, 10);
 
     assertEquals(0, result.total());
-    verify(userRepo, never()).searchByTenantIdIn(any(), any(), any());
+    verify(userRepo, never()).searchByOrganizationIdIn(any(), any(), any());
   }
 
   @Test
   void listScopesToAuditedOrganizationsForAuditor() {
     when(currentUser.isPrismaAdmin()).thenReturn(false);
     when(currentUser.isAuditor()).thenReturn(true);
-    when(currentUser.auditedOrganizationIds()).thenReturn(Set.of(tenant.getId()));
+    when(currentUser.organizationIds()).thenReturn(Set.of(tenant.getId()));
     PageRequest pr = PageRequest.of(0, 10, Sort.by("createdAt").descending());
-    when(userRepo.searchByTenantIdIn(eq(Set.of(tenant.getId())), any(), any()))
+    when(userRepo.searchByOrganizationIdIn(eq(Set.of(tenant.getId())), any(), any()))
         .thenReturn(new PageImpl<>(List.of(user), pr, 1));
 
     PaginatedDto<UserDto> result = service.list(null, 0, 10);
@@ -188,7 +186,7 @@ class UserServiceTest {
     when(currentUser.isPrismaAdmin()).thenReturn(false);
     when(currentUser.isAuditor()).thenReturn(false);
     when(currentUser.currentUserId()).thenReturn(UUID.randomUUID());
-    when(currentUser.currentTenantId()).thenReturn(UUID.randomUUID());
+    when(currentUser.organizationIds()).thenReturn(Set.of(UUID.randomUUID()));
     when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
 
     assertThrows(
@@ -220,11 +218,10 @@ class UserServiceTest {
 
     assertEquals("new@test.com", result.email());
     assertEquals(Set.of("AUDITOR"), result.roles());
-    assertEquals(tenant.getId(), result.tenantId());
-    assertEquals(Set.of(tenant.getId()), result.auditedOrganizationIds());
+    assertEquals(Set.of(tenant.getId()), result.organizationIds());
     assertTrue(result.enabled());
     assertTrue(result.canLogin());
-    verify(userRepo, times(1)).save(argThat(u -> u.getTenant() == tenant));
+    verify(userRepo, times(1)).save(argThat(u -> u.getOrganizations().contains(tenant)));
     verify(keycloakAdmin, times(1))
         .createUser("new@test.com", "N", "L", "Secreto123!", Set.of("AUDITOR"));
   }
@@ -244,6 +241,7 @@ class UserServiceTest {
 
   @Test
   void updateThrowsWhenAddingAuditorRoleWithoutOrganizations() {
+    user.setOrganizations(new java.util.HashSet<>());
     when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
 
     CreateUserDto dto =
@@ -262,7 +260,7 @@ class UserServiceTest {
     CreateUserDto dto = new CreateUserDto("solo@test.com", "N", "L", null, null, "Secreto123!");
     UserDto result = service.create(dto);
 
-    assertNull(result.tenantId());
+    assertTrue(result.organizationIds().isEmpty());
     assertTrue(result.roles().isEmpty());
     verify(userRepo, times(1)).save(any(User.class));
   }
@@ -309,7 +307,7 @@ class UserServiceTest {
     UUID keycloakId = UUID.randomUUID();
     user.setKeycloakId(keycloakId);
     when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
-    when(orgRepo.findById(tenant.getId())).thenReturn(Optional.of(tenant));
+    when(orgRepo.findAllById(Set.of(tenant.getId()))).thenReturn(List.of(tenant));
 
     CreateUserDto dto =
         new CreateUserDto(
@@ -319,7 +317,7 @@ class UserServiceTest {
     assertEquals("upd@test.com", result.email());
     assertEquals("Nuevo", result.firstName());
     assertEquals("Apellido", result.lastName());
-    assertEquals(tenant.getId(), result.tenantId());
+    assertEquals(Set.of(tenant.getId()), result.organizationIds());
     assertTrue(result.canLogin());
     // El email nuevo (no el viejo) es lo que se le manda a Keycloak: ahí es también el username,
     // así que un cambio de email tiene que sincronizar los dos a la vez en la misma llamada.
@@ -560,13 +558,16 @@ class UserServiceTest {
   @Test
   void createWithEnabledFalseSyncsDisabledToKeycloak() {
     when(userRepo.existsByEmail("new@test.com")).thenReturn(false);
+    when(orgRepo.findAllById(Set.of(tenant.getId()))).thenReturn(List.of(tenant));
     when(userRepo.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
     UUID keycloakId = UUID.randomUUID();
     when(keycloakAdmin.createUser(eq("new@test.com"), any(), any(), any(), any()))
         .thenReturn(keycloakId);
 
+    // VIEWER exige exactamente una organización (ver UserService.validateOrganizationsForRoles).
     CreateUserDto dto =
-        new CreateUserDto("new@test.com", "New", "User", null, Set.of("VIEWER"), Set.of(), "Pass1234!", false);
+        new CreateUserDto(
+            "new@test.com", "New", "User", tenant.getId(), Set.of("VIEWER"), Set.of(), "Pass1234!", false);
     UserDto result = service.create(dto);
 
     assertFalse(result.enabled());
@@ -579,30 +580,65 @@ class UserServiceTest {
   // --- ORG_RESPONSIBLE como "administrador" de su propia organización -----------------------
 
   @Test
-  void createAsOrgAdminForcesOwnTenantIgnoringDtoTenantId() {
-    UUID otherOrgId = UUID.randomUUID();
+  void createAsOrgAdminForcesOwnOrganizationWhenDtoOmitsIt() {
     when(currentUser.isPrismaAdmin()).thenReturn(false);
     when(currentUser.currentTenantId()).thenReturn(tenant.getId());
+    when(currentUser.organizationIds()).thenReturn(Set.of(tenant.getId()));
     when(userRepo.existsByEmail("new@test.com")).thenReturn(false);
-    when(orgRepo.findById(tenant.getId())).thenReturn(Optional.of(tenant));
+    when(orgRepo.findAllById(Set.of(tenant.getId()))).thenReturn(List.of(tenant));
     when(userRepo.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
     when(keycloakAdmin.createUser(any(), any(), any(), any(), any())).thenReturn(UUID.randomUUID());
 
-    // El DTO pide OTRA organización (otherOrgId): un ORG_RESPONSIBLE no puede crear usuarios
-    // fuera de la suya, así que se ignora y se usa currentTenantId() en su lugar.
+    CreateUserDto dto =
+        new CreateUserDto("new@test.com", "N", "L", null, Set.of("VIEWER"), null, "Secreto123!");
+    UserDto result = service.create(dto);
+
+    assertEquals(Set.of(tenant.getId()), result.organizationIds());
+  }
+
+  @Test
+  void createAsOrgAdminRejectsAssigningAnotherOrganization() {
+    UUID otherOrgId = UUID.randomUUID();
+    when(currentUser.isPrismaAdmin()).thenReturn(false);
+    when(currentUser.currentTenantId()).thenReturn(tenant.getId());
+    when(currentUser.organizationIds()).thenReturn(Set.of(tenant.getId()));
+    when(userRepo.existsByEmail("new@test.com")).thenReturn(false);
+
     CreateUserDto dto =
         new CreateUserDto(
             "new@test.com", "N", "L", otherOrgId, Set.of("VIEWER"), null, "Secreto123!");
-    UserDto result = service.create(dto);
 
-    assertEquals(tenant.getId(), result.tenantId());
-    verify(orgRepo, never()).findById(otherOrgId);
+    assertThrows(
+        org.springframework.security.access.AccessDeniedException.class,
+        () -> service.create(dto));
+    verify(userRepo, never()).save(any());
+  }
+
+  @Test
+  void createAsOrgAdminCannotCreateAGeneralEvaluator() {
+    // Sin organizaciones, un INTERNAL_EVALUATOR es "general" (accede a todas). Un ORG_RESPONSIBLE
+    // siempre crea dentro de SU organización: no puede otorgar ese alcance global.
+    when(currentUser.isPrismaAdmin()).thenReturn(false);
+    when(currentUser.currentTenantId()).thenReturn(tenant.getId());
+    when(currentUser.organizationIds()).thenReturn(Set.of(tenant.getId()));
+    when(userRepo.existsByEmail("ev@test.com")).thenReturn(false);
+    when(orgRepo.findAllById(Set.of(tenant.getId()))).thenReturn(List.of(tenant));
+    when(userRepo.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
+    when(keycloakAdmin.createUser(any(), any(), any(), any(), any())).thenReturn(UUID.randomUUID());
+
+    UserDto result =
+        service.create(
+            new CreateUserDto(
+                "ev@test.com", "Eva", "Luador", null, Set.of("INTERNAL_EVALUATOR"), null, "Secreto123!"));
+
+    assertEquals(Set.of(tenant.getId()), result.organizationIds());
   }
 
   @Test
   void createAsOrgAdminRejectsGrantingPlatformAdminRole() {
     when(currentUser.isPrismaAdmin()).thenReturn(false);
     when(currentUser.currentTenantId()).thenReturn(tenant.getId());
+    when(currentUser.organizationIds()).thenReturn(Set.of(tenant.getId()));
     when(userRepo.existsByEmail("new@test.com")).thenReturn(false);
 
     CreateUserDto dto =
@@ -621,6 +657,7 @@ class UserServiceTest {
     UUID otherOrgId = UUID.randomUUID();
     when(currentUser.isPrismaAdmin()).thenReturn(false);
     when(currentUser.currentTenantId()).thenReturn(tenant.getId());
+    when(currentUser.organizationIds()).thenReturn(Set.of(tenant.getId()));
     when(userRepo.existsByEmail("new@test.com")).thenReturn(false);
 
     CreateUserDto dto =
@@ -662,10 +699,11 @@ class UserServiceTest {
   @Test
   void updateAsOrgAdminRejectsUserFromAnotherTenant() {
     Organization otherOrg = Organization.builder().id(UUID.randomUUID()).name("Otra").build();
-    user.setTenant(otherOrg);
+    user.setOrganizations(new java.util.HashSet<>(Set.of(otherOrg)));
     when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
     when(currentUser.isPrismaAdmin()).thenReturn(false);
     when(currentUser.currentTenantId()).thenReturn(tenant.getId());
+    when(currentUser.organizationIds()).thenReturn(Set.of(tenant.getId()));
     doThrow(new org.springframework.security.access.AccessDeniedException("no"))
         .when(currentUser)
         .assertOrganizationAccess(otherOrg.getId());
@@ -680,11 +718,12 @@ class UserServiceTest {
 
   @Test
   void updateAsOrgAdminRejectsMovingUserToAnotherTenant() {
-    user.setTenant(tenant);
+    user.setOrganizations(new java.util.HashSet<>(Set.of(tenant)));
     UUID otherOrgId = UUID.randomUUID();
     when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
     when(currentUser.isPrismaAdmin()).thenReturn(false);
     when(currentUser.currentTenantId()).thenReturn(tenant.getId());
+    when(currentUser.organizationIds()).thenReturn(Set.of(tenant.getId()));
 
     CreateUserDto dto = new CreateUserDto("u@test.com", "Jane", "Doe", otherOrgId, null, null);
 
@@ -695,10 +734,11 @@ class UserServiceTest {
 
   @Test
   void updateAsOrgAdminRejectsGrantingPlatformAdminRole() {
-    user.setTenant(tenant);
+    user.setOrganizations(new java.util.HashSet<>(Set.of(tenant)));
     when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
     when(currentUser.isPrismaAdmin()).thenReturn(false);
     when(currentUser.currentTenantId()).thenReturn(tenant.getId());
+    when(currentUser.organizationIds()).thenReturn(Set.of(tenant.getId()));
 
     CreateUserDto dto =
         new CreateUserDto("u@test.com", "Jane", "Doe", null, Set.of("PRISMA_ADMIN"), null);
@@ -710,12 +750,13 @@ class UserServiceTest {
 
   @Test
   void updateAsOrgAdminAllowsEditingOwnTenantUser() {
-    user.setTenant(tenant);
+    user.setOrganizations(new java.util.HashSet<>(Set.of(tenant)));
     UUID keycloakId = UUID.randomUUID();
     user.setKeycloakId(keycloakId);
     when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
     when(currentUser.isPrismaAdmin()).thenReturn(false);
     when(currentUser.currentTenantId()).thenReturn(tenant.getId());
+    when(currentUser.organizationIds()).thenReturn(Set.of(tenant.getId()));
 
     CreateUserDto dto =
         new CreateUserDto(
@@ -729,10 +770,11 @@ class UserServiceTest {
   @Test
   void deleteAsOrgAdminRejectsUserFromAnotherTenant() {
     Organization otherOrg = Organization.builder().id(UUID.randomUUID()).name("Otra").build();
-    user.setTenant(otherOrg);
+    user.setOrganizations(new java.util.HashSet<>(Set.of(otherOrg)));
     when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
     when(currentUser.isPrismaAdmin()).thenReturn(false);
     when(currentUser.currentTenantId()).thenReturn(tenant.getId());
+    when(currentUser.organizationIds()).thenReturn(Set.of(tenant.getId()));
     doThrow(new org.springframework.security.access.AccessDeniedException("no"))
         .when(currentUser)
         .assertOrganizationAccess(otherOrg.getId());
@@ -745,13 +787,171 @@ class UserServiceTest {
 
   @Test
   void deleteAsOrgAdminAllowsDeletingOwnTenantUser() {
-    user.setTenant(tenant);
+    user.setOrganizations(new java.util.HashSet<>(Set.of(tenant)));
     when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
     when(currentUser.isPrismaAdmin()).thenReturn(false);
     when(currentUser.currentTenantId()).thenReturn(tenant.getId());
+    when(currentUser.organizationIds()).thenReturn(Set.of(tenant.getId()));
 
     service.delete(user.getId());
 
     verify(userRepo, times(1)).delete(user);
+  }
+
+  // --- Organizaciones por rol (I7 / C7, camino B: membresia M:N) -----------------------------
+
+  private Organization org(String name) {
+    return Organization.builder().id(UUID.randomUUID()).name(name).enabled(true).build();
+  }
+
+  private UserDto createWith(Set<String> roles, Set<UUID> orgIds, List<Organization> resolved) {
+    when(userRepo.existsByEmail(any())).thenReturn(false);
+    when(orgRepo.findAllById(any())).thenReturn(resolved);
+    when(userRepo.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
+    when(keycloakAdmin.createUser(any(), any(), any(), any(), any())).thenReturn(UUID.randomUUID());
+    return service.create(
+        new CreateUserDto("x@test.com", "Ana", "Perez", orgIds, roles, "Secreto123!", null));
+  }
+
+  @Test
+  void adminCanBeCreatedWithoutAnyOrganization() {
+    UserDto result = createWith(Set.of("PRISMA_ADMIN"), null, List.of());
+
+    assertTrue(result.organizationIds().isEmpty());
+  }
+
+  @Test
+  void generalEvaluatorCanBeCreatedWithoutOrganizationsByAdmin() {
+    UserDto result = createWith(Set.of("INTERNAL_EVALUATOR"), Set.of(), List.of());
+
+    assertTrue(result.organizationIds().isEmpty());
+    assertEquals(Set.of("INTERNAL_EVALUATOR"), result.roles());
+  }
+
+  @Test
+  void evaluatorCanBeCreatedWithSeveralOrganizations() {
+    Organization a = org("A");
+    Organization b = org("B");
+
+    UserDto result =
+        createWith(Set.of("INTERNAL_EVALUATOR"), Set.of(a.getId(), b.getId()), List.of(a, b));
+
+    assertEquals(Set.of(a.getId(), b.getId()), result.organizationIds());
+    assertEquals(List.of("A", "B"), result.organizationNames());
+  }
+
+  @Test
+  void auditorCanBeCreatedWithSeveralOrganizations() {
+    Organization a = org("A");
+    Organization b = org("B");
+
+    UserDto result = createWith(Set.of("AUDITOR"), Set.of(a.getId(), b.getId()), List.of(a, b));
+
+    assertEquals(Set.of(a.getId(), b.getId()), result.organizationIds());
+  }
+
+  @Test
+  void responsibleAndViewerRequireExactlyOneOrganization() {
+    Organization a = org("A");
+    Organization b = org("B");
+    for (String role : List.of("ORG_RESPONSIBLE", "VIEWER")) {
+      assertThrows(
+          uy.edu.prisma.domain.exception.InvalidRequestException.class,
+          () -> createWith(Set.of(role), Set.of(), List.of()),
+          role + " sin organizacion");
+      assertThrows(
+          uy.edu.prisma.domain.exception.InvalidRequestException.class,
+          () -> createWith(Set.of(role), Set.of(a.getId(), b.getId()), List.of(a, b)),
+          role + " con dos organizaciones");
+      assertEquals(
+          Set.of(a.getId()), createWith(Set.of(role), Set.of(a.getId()), List.of(a)).organizationIds());
+    }
+  }
+
+  @Test
+  void adminRoleWinsOverTheOtherRolesOrganizationRules() {
+    // pruebadai@: PRISMA_ADMIN + varios roles + varias organizaciones. Al ser global no se le
+    // aplican las reglas de cantidad de los demás roles.
+    Organization a = org("A");
+    Organization b = org("B");
+
+    UserDto result =
+        createWith(
+            Set.of("PRISMA_ADMIN", "VIEWER", "AUDITOR"),
+            Set.of(a.getId(), b.getId()),
+            List.of(a, b));
+
+    assertEquals(2, result.organizationIds().size());
+  }
+
+  @Test
+  void adminCanClearAllOrganizationsOfAnEvaluatorOnUpdate() {
+    // "Volver atrás" / "sin organización": un set vacío en el PUT quita todas (evaluador general).
+    user.setRoles(Set.of(UserRole.INTERNAL_EVALUATOR));
+    when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
+    when(orgRepo.findAllById(any())).thenReturn(List.of());
+
+    UserDto result =
+        service.update(
+            user.getId(),
+            new CreateUserDto(
+                "u@test.com", "Jane", "Doe", Set.of(), Set.of("INTERNAL_EVALUATOR"), null, null));
+
+    assertTrue(result.organizationIds().isEmpty());
+  }
+
+  @Test
+  void updateWithoutOrganizationsFieldLeavesThemUntouched() {
+    when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
+
+    UserDto result =
+        service.update(
+            user.getId(),
+            new CreateUserDto(
+                "u@test.com", "Jane", "Doe", (Set<UUID>) null, Set.of("VIEWER"), null, null));
+
+    assertEquals(Set.of(tenant.getId()), result.organizationIds());
+  }
+
+  @Test
+  void orgAdminCannotEditOrDeleteAUserWhoAlsoBelongsToAnotherOrganization() {
+    Organization other = org("Otra");
+    user.setOrganizations(new java.util.HashSet<>(Set.of(tenant, other)));
+    user.setRoles(Set.of(UserRole.INTERNAL_EVALUATOR));
+    when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
+    when(currentUser.isPrismaAdmin()).thenReturn(false);
+    when(currentUser.currentTenantId()).thenReturn(tenant.getId());
+    when(currentUser.organizationIds()).thenReturn(Set.of(tenant.getId()));
+
+    assertThrows(
+        org.springframework.security.access.AccessDeniedException.class,
+        () ->
+            service.update(
+                user.getId(),
+                new CreateUserDto(
+                    "u@test.com", "Jane", "Doe", (Set<UUID>) null, Set.of("VIEWER"), null, null)));
+    assertThrows(
+        org.springframework.security.access.AccessDeniedException.class,
+        () -> service.delete(user.getId()));
+    verify(userRepo, never()).delete(any());
+    // Pero SÍ puede verlo: comparten una organización.
+    assertDoesNotThrow(() -> service.getById(user.getId()));
+  }
+
+  @Test
+  void orgAdminEditingASingleOrganizationUserNeverChangesTheirOrganizations() {
+    user.setOrganizations(new java.util.HashSet<>(Set.of(tenant)));
+    when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
+    when(currentUser.isPrismaAdmin()).thenReturn(false);
+    when(currentUser.currentTenantId()).thenReturn(tenant.getId());
+    when(currentUser.organizationIds()).thenReturn(Set.of(tenant.getId()));
+
+    service.update(
+        user.getId(),
+        new CreateUserDto(
+            "u@test.com", "Jane", "Doe", Set.of(tenant.getId()), Set.of("VIEWER"), null, null));
+
+    assertEquals(Set.of(tenant.getId()), user.organizationIds());
+    verify(orgRepo, never()).findAllById(any());
   }
 }

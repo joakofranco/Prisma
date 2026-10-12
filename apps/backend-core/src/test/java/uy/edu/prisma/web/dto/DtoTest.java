@@ -40,7 +40,7 @@ class DtoTest {
     assertEquals("a@b.c", dto.email());
     assertEquals("F", dto.firstName());
     assertEquals("L", dto.lastName());
-    assertNull(dto.tenantId());
+    assertTrue(dto.organizationIds().isEmpty());
     assertEquals(Set.of("VIEWER"), dto.roles());
     assertTrue(dto.enabled());
     assertEquals(now, dto.createdAt());
@@ -48,7 +48,7 @@ class DtoTest {
 
     CreateUserDto create = new CreateUserDto("a@b.c", "F", "L", id, Set.of("AUDITOR"), "pass");
     assertEquals("F", create.firstName());
-    assertEquals(id, create.tenantId());
+    assertEquals(Set.of(id), create.organizationIds());
     assertEquals("pass", create.password());
   }
 

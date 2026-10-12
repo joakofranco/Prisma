@@ -48,6 +48,7 @@ class EvaluationServiceTest {
   @BeforeEach
   void setUp() {
     when(currentUser.isPrismaAdmin()).thenReturn(true);
+    when(currentUser.hasAllOrganizationsAccess()).thenReturn(true);
     // Ver el comentario en EvaluationService.auditorNamesByOrganization: se llama en cada
     // list()/getById()/create()/updateStatus() sin importar el test -- por defecto no hay ningún
     // auditor asignado, cada test que sí lo necesite lo pisa con su propio stub.
@@ -166,10 +167,11 @@ class EvaluationServiceTest {
   @Test
   void listForAuditorWithoutOrgFilterUsesUnionOfAssignedOrganizations() {
     when(currentUser.isPrismaAdmin()).thenReturn(false);
+    when(currentUser.hasAllOrganizationsAccess()).thenReturn(false);
     when(currentUser.isAuditor()).thenReturn(true);
     UUID otherOrgId = UUID.randomUUID();
     Set<UUID> assigned = Set.of(org.getId(), otherOrgId);
-    when(currentUser.auditedOrganizationIds()).thenReturn(assigned);
+    when(currentUser.organizationIds()).thenReturn(assigned);
     PageRequest pr = PageRequest.of(0, 10, Sort.by("createdAt").descending());
     when(evalRepo.findByOrganizationIdInOrderByCreatedAtDesc(assigned, pr))
         .thenReturn(new PageImpl<>(List.of(eval), pr, 1));
@@ -183,9 +185,10 @@ class EvaluationServiceTest {
   @Test
   void listForAuditorWithStatusUsesUnionOfAssignedOrganizations() {
     when(currentUser.isPrismaAdmin()).thenReturn(false);
+    when(currentUser.hasAllOrganizationsAccess()).thenReturn(false);
     when(currentUser.isAuditor()).thenReturn(true);
     Set<UUID> assigned = Set.of(org.getId());
-    when(currentUser.auditedOrganizationIds()).thenReturn(assigned);
+    when(currentUser.organizationIds()).thenReturn(assigned);
     PageRequest pr = PageRequest.of(0, 10, Sort.by("createdAt").descending());
     when(evalRepo.findByOrganizationIdInAndStatusOrderByCreatedAtDesc(
             assigned, Evaluation.Status.READY_FOR_AUDIT, pr))
@@ -199,6 +202,7 @@ class EvaluationServiceTest {
   @Test
   void listForAuditorWithUnassignedOrgFilterIsDenied() {
     when(currentUser.isPrismaAdmin()).thenReturn(false);
+    when(currentUser.hasAllOrganizationsAccess()).thenReturn(false);
     when(currentUser.isAuditor()).thenReturn(true);
     doThrow(new org.springframework.security.access.AccessDeniedException("no"))
         .when(currentUser)
@@ -212,8 +216,9 @@ class EvaluationServiceTest {
   @Test
   void listForAuditorWithNoOrganizationsAssignedReturnsEmpty() {
     when(currentUser.isPrismaAdmin()).thenReturn(false);
+    when(currentUser.hasAllOrganizationsAccess()).thenReturn(false);
     when(currentUser.isAuditor()).thenReturn(true);
-    when(currentUser.auditedOrganizationIds()).thenReturn(Set.of());
+    when(currentUser.organizationIds()).thenReturn(Set.of());
 
     PaginatedDto<EvaluationDto> result = service.list(null, null, 0, 10);
 
@@ -241,7 +246,7 @@ class EvaluationServiceTest {
             .firstName("Aud")
             .lastName("Uno")
             .roles(Set.of(UserRole.AUDITOR))
-            .auditedOrganizations(Set.of(org))
+            .organizations(Set.of(org))
             .build();
     User auditor2 =
         User.builder()
@@ -249,7 +254,7 @@ class EvaluationServiceTest {
             .firstName("Aud")
             .lastName("Dos")
             .roles(Set.of(UserRole.AUDITOR))
-            .auditedOrganizations(Set.of(org))
+            .organizations(Set.of(org))
             .build();
     when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
     when(userRepo.findAuditorsForOrganizations(Set.of(org.getId())))
@@ -390,6 +395,7 @@ class EvaluationServiceTest {
   @Test
   void updateStatusDeniesRoleNotAllowedForThatTransition() {
     when(currentUser.isPrismaAdmin()).thenReturn(false);
+    when(currentUser.hasAllOrganizationsAccess()).thenReturn(false);
     when(currentUser.hasRole(UserRole.ORG_RESPONSIBLE)).thenReturn(false);
     when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
 
@@ -403,6 +409,7 @@ class EvaluationServiceTest {
   @Test
   void updateStatusAllowsOrgResponsibleToAdvanceSelfAssessment() {
     when(currentUser.isPrismaAdmin()).thenReturn(false);
+    when(currentUser.hasAllOrganizationsAccess()).thenReturn(false);
     when(currentUser.hasRole(UserRole.ORG_RESPONSIBLE)).thenReturn(true);
     when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
     when(evalRepo.save(any(Evaluation.class))).thenAnswer(inv -> inv.getArgument(0));
@@ -417,6 +424,7 @@ class EvaluationServiceTest {
     // Ver el comentario en EvaluationService.assertRoleCanTransitionTo: ORG_RESPONSIBLE e
     // INTERNAL_EVALUATOR comparten el lado de autoevaluación.
     when(currentUser.isPrismaAdmin()).thenReturn(false);
+    when(currentUser.hasAllOrganizationsAccess()).thenReturn(false);
     when(currentUser.hasRole(UserRole.ORG_RESPONSIBLE)).thenReturn(false);
     when(currentUser.hasRole(UserRole.INTERNAL_EVALUATOR)).thenReturn(true);
     when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
@@ -431,6 +439,7 @@ class EvaluationServiceTest {
   void updateStatusAllowsAuditorToStartAudit() {
     eval.setStatus(Evaluation.Status.READY_FOR_AUDIT);
     when(currentUser.isPrismaAdmin()).thenReturn(false);
+    when(currentUser.hasAllOrganizationsAccess()).thenReturn(false);
     when(currentUser.isAuditor()).thenReturn(true);
     when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
     when(evalRepo.save(any(Evaluation.class))).thenAnswer(inv -> inv.getArgument(0));

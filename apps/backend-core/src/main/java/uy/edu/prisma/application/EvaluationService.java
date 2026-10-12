@@ -62,43 +62,32 @@ public class EvaluationService {
     this.auditLog = auditLog;
   }
 
-  // Los roles acotados a un tenant (ORG_RESPONSIBLE, INTERNAL_EVALUATOR, VIEWER) solo pueden
-  // listar evaluaciones de su propia organizacion, sin importar que orgId se les pida: si piden
-  // otra organizacion se rechaza, y si no piden ninguna se fuerza a la propia (nunca "todas").
-  // PRISMA_ADMIN conserva el comportamiento anterior (sin restriccion). AUDITOR ya NO es un rol
-  // global (ver CurrentUserService): esta acotado a las organizaciones que se le asignaron: si
-  // pide una organizacion puntual debe ser una de las suyas, y si no pide ninguna ve la union de
-  // TODAS las que puede auditar (nunca "todas las del sistema").
+  // PRISMA_ADMIN y el evaluador general (INTERNAL_EVALUATOR sin organizaciones) listan sin
+  // restriccion. Todos los demas estan acotados a SUS organizaciones (una o varias, ver
+  // User.organizations): si piden una organizacion puntual debe ser una de las suyas (si no, 403),
+  // y si no piden ninguna ven la union de todas las suyas (nunca "todas las del sistema").
   @Transactional(readOnly = true)
   public PaginatedDto<EvaluationDto> list(String status, UUID orgId, int page, int pageSize) {
     PageRequest pr = PageRequest.of(page, pageSize, Sort.by("createdAt").descending());
     Evaluation.Status statusFilter = status != null ? Evaluation.Status.valueOf(status) : null;
 
     Page<Evaluation> result;
-    if (currentUser.isPrismaAdmin()) {
+    if (currentUser.hasAllOrganizationsAccess()) {
       result = queryByOrgAndStatus(orgId, statusFilter, pr);
-    } else if (currentUser.isAuditor()) {
-      if (orgId != null) {
-        currentUser.assertOrganizationAccess(orgId);
-        result = queryByOrgAndStatus(orgId, statusFilter, pr);
-      } else {
-        Set<UUID> auditedOrgIds = currentUser.auditedOrganizationIds();
-        if (auditedOrgIds.isEmpty()) {
-          return new PaginatedDto<>(List.of(), 0, page, pageSize);
-        }
-        result =
-            statusFilter != null
-                ? evalRepo.findByOrganizationIdInAndStatusOrderByCreatedAtDesc(
-                    auditedOrgIds, statusFilter, pr)
-                : evalRepo.findByOrganizationIdInOrderByCreatedAtDesc(auditedOrgIds, pr);
-      }
+    } else if (orgId != null) {
+      currentUser.assertOrganizationAccess(orgId);
+      result = queryByOrgAndStatus(orgId, statusFilter, pr);
     } else {
-      UUID tenantId = currentUser.currentTenantId();
-      if (tenantId == null) {
+      Set<UUID> ownOrgIds = currentUser.organizationIds();
+      if (ownOrgIds.isEmpty()) {
         return new PaginatedDto<>(List.of(), 0, page, pageSize);
       }
-      currentUser.assertOrganizationAccess(orgId != null ? orgId : tenantId);
-      result = queryByOrgAndStatus(tenantId, statusFilter, pr);
+      result =
+          statusFilter != null
+              ? evalRepo.findByOrganizationIdInAndStatusOrderByCreatedAtDesc(
+                  ownOrgIds, statusFilter, pr)
+              : evalRepo.findByOrganizationIdInAndStatusNotOrderByCreatedAtDesc(
+                  ownOrgIds, Evaluation.Status.ARCHIVED, pr);
     }
 
     // Auditores asignados por organización, resueltos en UNA sola consulta para toda la página en
@@ -126,7 +115,7 @@ public class EvaluationService {
     Map<UUID, List<String>> byOrg = new HashMap<>();
     for (User auditor : userRepo.findAuditorsForOrganizations(orgIds)) {
       String name = (auditor.getFirstName() + " " + auditor.getLastName()).trim();
-      for (Organization org : auditor.getAuditedOrganizations()) {
+      for (Organization org : auditor.getOrganizations()) {
         if (orgIds.contains(org.getId())) {
           byOrg.computeIfAbsent(org.getId(), k -> new ArrayList<>()).add(name);
         }
