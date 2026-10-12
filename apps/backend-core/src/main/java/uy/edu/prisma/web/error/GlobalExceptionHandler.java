@@ -15,6 +15,7 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import uy.edu.prisma.application.OrganizationMessages;
 import uy.edu.prisma.domain.exception.ConflictException;
 import uy.edu.prisma.domain.exception.InvalidRequestException;
 import uy.edu.prisma.domain.exception.ResourceNotFoundException;
@@ -33,7 +34,9 @@ public class GlobalExceptionHandler {
 
   @ExceptionHandler(ConflictException.class)
   public ResponseEntity<ApiErrorDto> handleConflict(ConflictException ex) {
-    return build(HttpStatus.CONFLICT, "CONFLICT", ex.getMessage(), null);
+    Map<String, List<String>> details =
+        ex.getField() == null ? null : Map.of(ex.getField(), List.of(ex.getMessage()));
+    return build(HttpStatus.CONFLICT, "CONFLICT", ex.getMessage(), details);
   }
 
   @ExceptionHandler(InvalidRequestException.class)
@@ -59,6 +62,17 @@ public class GlobalExceptionHandler {
 
   @ExceptionHandler(DataIntegrityViolationException.class)
   public ResponseEntity<ApiErrorDto> handleIntegrity(DataIntegrityViolationException ex) {
+    // Red de seguridad: OrganizationService ya chequea el RUT duplicado antes de guardar, pero si
+    // dos altas simultáneas se le adelantan, la restricción única de la base es la que salta. En
+    // vez del genérico "conflicto de integridad", se devuelve el mismo mensaje claro.
+    String cause = ex.getMostSpecificCause().getMessage();
+    if (cause != null && cause.contains("organizations_rut_key")) {
+      return build(
+          HttpStatus.CONFLICT,
+          "CONFLICT",
+          OrganizationMessages.DUPLICATE_RUT,
+          Map.of("rut", List.of(OrganizationMessages.DUPLICATE_RUT)));
+    }
     return build(HttpStatus.CONFLICT, "DATA_CONFLICT", "Conflicto de integridad de datos", null);
   }
 

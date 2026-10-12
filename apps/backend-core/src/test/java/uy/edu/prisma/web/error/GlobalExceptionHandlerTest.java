@@ -81,6 +81,26 @@ class GlobalExceptionHandlerTest {
   }
 
   @Test
+  void conflictWithAFieldReturnsItInDetails() throws Exception {
+    mockMvc
+        .perform(get("/conflict-field"))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("CONFLICT"))
+        .andExpect(jsonPath("$.details.rut[0]").value("rut repetido"));
+  }
+
+  @Test
+  void duplicateRutConstraintViolationGetsAClearMessage() throws Exception {
+    // Red de seguridad: dos altas simultáneas con el mismo RUT que se adelantan al chequeo previo.
+    mockMvc
+        .perform(get("/rut-constraint"))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("CONFLICT"))
+        .andExpect(jsonPath("$.message").value("Ya existe una organización con ese RUT"))
+        .andExpect(jsonPath("$.details.rut[0]").value("Ya existe una organización con ese RUT"));
+  }
+
+  @Test
   void accessDeniedMapsTo403() throws Exception {
     mockMvc
         .perform(get("/denied"))
@@ -124,6 +144,19 @@ class GlobalExceptionHandlerTest {
     @GetMapping("/conflict")
     public String conflict() {
       throw new ConflictException("dup");
+    }
+
+    @GetMapping("/conflict-field")
+    public String conflictField() {
+      throw new ConflictException("rut repetido", "rut");
+    }
+
+    @GetMapping("/rut-constraint")
+    public String rutConstraint() {
+      throw new DataIntegrityViolationException(
+          "could not execute statement",
+          new RuntimeException(
+              "ERROR: duplicate key value violates unique constraint \"organizations_rut_key\""));
     }
 
     @GetMapping("/invalid")

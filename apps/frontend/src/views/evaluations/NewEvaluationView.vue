@@ -74,6 +74,7 @@
   import { useRouter, useRoute } from 'vue-router';
   import { useEvaluationsStore } from '@/stores/evaluations';
   import { useOrganizationsStore } from '@/stores/organizations';
+  import { activeOrganizationOptions } from '@/utils/organizationOptions';
   import { catalogService, communityProfilesService } from '@/services/resources';
   import { useNotification } from '@/composables/useUtils';
   import { getErrorMessage } from '@/utils/helpers';
@@ -166,7 +167,11 @@
     // quedaba siempre vacío, incluso el fallback.
     try {
       await orgStore.fetchOrganizations(1, 100);
-      orgOptions.value = orgStore.organizations.map((o) => ({ value: o.id, label: o.name }));
+      orgOptions.value = activeOrganizationOptions(orgStore.organizations);
+      // Un ?org= que apunte a una organización inactiva (o inexistente) no se preselecciona.
+      if (form.organizationId && !orgOptions.value.some((o) => o.value === form.organizationId)) {
+        form.organizationId = '';
+      }
     } catch (err) {
       notification.error(getErrorMessage(err, 'Error al cargar las organizaciones'));
     }

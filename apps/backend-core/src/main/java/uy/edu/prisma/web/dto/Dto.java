@@ -71,6 +71,12 @@ public class Dto {
       String size,
       UUID responsibleId) {}
 
+  // Respuesta de reactivar una organización. `disabledUsers` = usuarios de la organización que
+  // siguen deshabilitados (la reactivación NO los rehabilita en cascada, ver
+  // OrganizationService.disableUsersOf): el front avisa al administrador para que los habilite uno
+  // por uno.
+  public record OrganizationReactivationDto(OrganizationDto organization, int disabledUsers) {}
+
   // ---- User ----
   public record UserDto(
       UUID id,

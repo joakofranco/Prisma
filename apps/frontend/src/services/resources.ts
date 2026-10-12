@@ -21,6 +21,7 @@ import type {
   ChangePasswordPayload,
   CatalogImportPayload,
   CatalogControlFlat,
+  OrganizationReactivation,
 } from '@/types';
 
 export const usersService = {
@@ -53,6 +54,9 @@ export const organizationsService = {
   },
   update(id: string, data: Partial<Organization>) {
     return apiClient.put<Organization>(`/organizations/${id}`, data);
+  },
+  reactivate(id: string) {
+    return apiClient.put<OrganizationReactivation>(`/organizations/${id}/enable`);
   },
   delete(id: string) {
     return apiClient.delete(`/organizations/${id}`);

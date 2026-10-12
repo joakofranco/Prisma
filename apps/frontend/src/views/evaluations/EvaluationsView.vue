@@ -106,6 +106,7 @@
   import { useRouter, useRoute } from 'vue-router';
   import { useEvaluationsStore } from '@/stores/evaluations';
   import { useOrganizationsStore } from '@/stores/organizations';
+  import { filterOrganizationOptions } from '@/utils/organizationOptions';
   import { useAuthStore } from '@/stores/auth';
   import {
     getStatusLabel,
@@ -170,7 +171,7 @@
 
   const orgFilterOptions = computed(() => [
     { value: '', label: 'Todas las organizaciones' },
-    ...orgStore.organizations.map((o) => ({ value: o.id, label: o.name })),
+    ...filterOrganizationOptions(orgStore.organizations),
   ]);
 
   function handlePageChange(page: number) {

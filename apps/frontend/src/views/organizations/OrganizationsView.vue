@@ -71,11 +71,20 @@
           <PencilIcon class="w-4 h-4" />
         </button>
         <button
-          class="p-1.5 rounded-lg hover:bg-red-50 text-slate-500 dark:text-slate-400 hover:text-red-600"
-          title="Eliminar organización"
+          v-if="(row as Organization).enabled"
+          class="p-1.5 rounded-lg hover:bg-red-50 text-slate-500 dark:text-slate-400 hover:text-red-600 dark:hover:bg-red-950 dark:hover:text-red-300"
+          title="Deshabilitar organización"
           @click="confirmDelete(row)"
         >
           <TrashIcon class="w-4 h-4" />
+        </button>
+        <button
+          v-else
+          class="p-1.5 rounded-lg hover:bg-emerald-50 text-slate-500 dark:text-slate-400 hover:text-emerald-700 dark:hover:bg-emerald-950 dark:hover:text-emerald-300"
+          title="Reactivar organización"
+          @click="confirmReactivate(row as Organization)"
+        >
+          <ArrowPathIcon class="w-4 h-4" />
         </button>
       </template>
     </DataTable>
@@ -126,11 +135,19 @@
 
     <ConfirmDialog
       v-model="showDeleteConfirm"
-      title="Eliminar Organización"
-      :message="`¿Está seguro que desea eliminar ${deletingOrg?.name}? Quedará marcada como Inactiva; su historial de evaluaciones, evidencia y auditoría se conserva y sigue siendo consultable.`"
-      confirm-text="Eliminar"
+      title="Deshabilitar Organización"
+      :message="`¿Está seguro que desea deshabilitar ${deletingOrg?.name}? Quedará marcada como Inactiva y se deshabilitarán sus usuarios (los auditores no se ven afectados). Su historial de evaluaciones, evidencia y auditoría se conserva y sigue siendo consultable.`"
+      confirm-text="Deshabilitar"
       variant="danger"
       @confirm="handleDelete"
+    />
+
+    <ConfirmDialog
+      v-model="showReactivateConfirm"
+      title="Reactivar Organización"
+      :message="`¿Reactivar ${reactivatingOrg?.name}? Volverá a figurar como Activa. Sus usuarios NO se habilitan automáticamente: deberá habilitarlos uno por uno desde Usuarios.`"
+      confirm-text="Reactivar"
+      @confirm="handleReactivate"
     />
 
     <BaseModal v-model="showResponsiblePrompt" title="Asignar responsable" size="sm">
@@ -158,7 +175,7 @@
   import { useRouter } from 'vue-router';
   import { useOrganizationsStore } from '@/stores/organizations';
   import { useNotification } from '@/composables/useUtils';
-  import { formatDate, getErrorMessage } from '@/utils/helpers';
+  import { formatDate, getErrorMessage, getFieldError } from '@/utils/helpers';
   import DataTable from '@/components/common/DataTable.vue';
   import BaseButton from '@/components/common/BaseButton.vue';
   import BaseModal from '@/components/common/BaseModal.vue';
@@ -171,6 +188,7 @@
     EyeIcon,
     PencilIcon,
     TrashIcon,
+    ArrowPathIcon,
   } from '@heroicons/vue/24/outline';
   import type { Organization } from '@/types';
 
@@ -187,9 +205,11 @@
   const searchTerm = ref('');
   const showCreateModal = ref(false);
   const showDeleteConfirm = ref(false);
+  const showReactivateConfirm = ref(false);
   const showResponsiblePrompt = ref(false);
   const editingOrg = ref<Organization | null>(null);
   const deletingOrg = ref<Organization | null>(null);
+  const reactivatingOrg = ref<Organization | null>(null);
   const createdOrg = ref<Organization | null>(null);
   const saving = ref(false);
 
@@ -302,7 +322,14 @@
         showResponsiblePrompt.value = true;
       }
     } catch (err) {
-      notification.error(getErrorMessage(err, 'Error al guardar la organización'));
+      // Un RUT duplicado se marca en el propio campo (el modal sigue abierto para corregirlo) en
+      // lugar de solo un aviso suelto.
+      const rutError = getFieldError(err, 'rut');
+      if (rutError) {
+        errors.rut = rutError;
+      } else {
+        notification.error(getErrorMessage(err, 'Error al guardar la organización'));
+      }
     } finally {
       saving.value = false;
     }
@@ -323,13 +350,34 @@
     createdOrg.value = null;
   }
 
+  function confirmReactivate(org: Organization) {
+    reactivatingOrg.value = org;
+    showReactivateConfirm.value = true;
+  }
+
+  async function handleReactivate() {
+    if (!reactivatingOrg.value) return;
+    try {
+      const { disabledUsers } = await store.reactivateOrganization(reactivatingOrg.value.id);
+      if (disabledUsers > 0) {
+        notification.warning(
+          `Organización reactivada. ${disabledUsers} usuario${disabledUsers === 1 ? '' : 's'} sigue${disabledUsers === 1 ? '' : 'n'} deshabilitado${disabledUsers === 1 ? '' : 's'}: habilítelo${disabledUsers === 1 ? '' : 's'} desde Usuarios.`,
+        );
+      } else {
+        notification.success('Organización reactivada correctamente');
+      }
+    } catch (err) {
+      notification.error(getErrorMessage(err, 'Error al reactivar la organización'));
+    }
+  }
+
   async function handleDelete() {
     if (!deletingOrg.value) return;
     try {
       await store.deleteOrganization(deletingOrg.value.id);
-      notification.success('Organización eliminada correctamente');
+      notification.success('Organización deshabilitada correctamente');
     } catch (err) {
-      notification.error(getErrorMessage(err, 'Error al eliminar la organización'));
+      notification.error(getErrorMessage(err, 'Error al deshabilitar la organización'));
     }
   }
 

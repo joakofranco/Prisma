@@ -83,6 +83,19 @@ export function generateId(): string {
   return Math.random().toString(36).substring(2, 15);
 }
 
+/**
+ * Mensaje de error de un campo puntual que mandó el backend en `details` (p.ej. un 409 por RUT
+ * duplicado trae `details.rut`), o undefined. Sirve para marcar ese campo del formulario.
+ */
+export function getFieldError(err: unknown, field: string): string | undefined {
+  if (err && typeof err === 'object' && 'response' in err) {
+    const resp = (err as { response?: { data?: { details?: Record<string, string[]> } } })
+      .response;
+    return resp?.data?.details?.[field]?.[0];
+  }
+  return undefined;
+}
+
 export function getErrorMessage(err: unknown, fallback = 'Ocurrió un error inesperado'): string {
   if (err && typeof err === 'object' && 'response' in err) {
     const resp = (

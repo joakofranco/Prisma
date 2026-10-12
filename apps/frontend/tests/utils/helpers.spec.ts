@@ -16,6 +16,7 @@ import {
   classNames,
   generateId,
   getErrorMessage,
+  getFieldError,
 } from '../../src/utils/helpers';
 
 describe('formatDate / formatDateTime', () => {
@@ -110,6 +111,24 @@ describe('generateId', () => {
     const b = generateId();
     expect(a).not.toBe('');
     expect(a).not.toBe(b);
+  });
+});
+
+describe('getFieldError', () => {
+  it('devuelve el primer mensaje del campo pedido', () => {
+    const err = {
+      response: { data: { details: { rut: ['Ya existe una organización con ese RUT'] } } },
+    };
+    expect(getFieldError(err, 'rut')).toBe('Ya existe una organización con ese RUT');
+  });
+
+  it('devuelve undefined si el campo no viene, no hay details o el error no es de red', () => {
+    expect(
+      getFieldError({ response: { data: { details: { name: ['x'] } } } }, 'rut'),
+    ).toBeUndefined();
+    expect(getFieldError({ response: { data: {} } }, 'rut')).toBeUndefined();
+    expect(getFieldError(new Error('boom'), 'rut')).toBeUndefined();
+    expect(getFieldError(null, 'rut')).toBeUndefined();
   });
 });
 

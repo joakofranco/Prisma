@@ -426,6 +426,52 @@ class UserServiceTest {
   }
 
   @Test
+  void deleteIsBlockedWhenUserHasDependentDataAndNeverTouchesKeycloak() {
+    // El chequeo va ANTES de borrar en Keycloak: si no, la cuenta de Keycloak se perdería aunque la
+    // base rechace el borrado por la FK (y el rollback no la restaura).
+    user.setKeycloakId(UUID.randomUUID());
+    when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
+    when(userRepo.countEvaluationsCreatedBy(user.getId())).thenReturn(2L);
+    when(userRepo.countEvidenceUploadedBy(user.getId())).thenReturn(1L);
+
+    uy.edu.prisma.domain.exception.ConflictException ex =
+        assertThrows(
+            uy.edu.prisma.domain.exception.ConflictException.class,
+            () -> service.delete(user.getId()));
+
+    assertTrue(ex.getMessage().contains("2 evaluaciones creadas"));
+    assertTrue(ex.getMessage().contains("1 evidencias subidas"));
+    assertTrue(ex.getMessage().contains("Deshabilítelo"));
+    verify(keycloakAdmin, never()).deleteUser(any());
+    verify(userRepo, never()).delete(any());
+    verify(auditLog, never()).record(eq("DELETE"), any(), any());
+  }
+
+  @Test
+  void deleteIsBlockedWhenUserIsResponsibleOfAnOrganization() {
+    when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
+    when(userRepo.countOrganizationsResponsibleFor(user.getId())).thenReturn(1L);
+
+    assertThrows(
+        uy.edu.prisma.domain.exception.ConflictException.class, () -> service.delete(user.getId()));
+    verify(userRepo, never()).delete(any());
+  }
+
+  @Test
+  void deleteIsBlockedByResponsesAndAuditObservations() {
+    when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
+    when(userRepo.countResponsesBy(user.getId())).thenReturn(5L);
+    when(userRepo.countAuditObservationsBy(user.getId())).thenReturn(3L);
+
+    uy.edu.prisma.domain.exception.ConflictException ex =
+        assertThrows(
+            uy.edu.prisma.domain.exception.ConflictException.class,
+            () -> service.delete(user.getId()));
+    assertTrue(ex.getMessage().contains("5 respuestas de evaluación"));
+    assertTrue(ex.getMessage().contains("3 observaciones de auditoría"));
+  }
+
+  @Test
   void deleteSkipsKeycloakWhenNeverProvisioned() {
     when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
 
@@ -811,6 +857,60 @@ class UserServiceTest {
     when(keycloakAdmin.createUser(any(), any(), any(), any(), any())).thenReturn(UUID.randomUUID());
     return service.create(
         new CreateUserDto("x@test.com", "Ana", "Perez", orgIds, roles, "Secreto123!", null));
+  }
+
+  @Test
+  void createRejectsAssigningAnInactiveOrganization() {
+    Organization inactive = org("Vieja");
+    inactive.setEnabled(false);
+
+    uy.edu.prisma.domain.exception.InvalidRequestException ex =
+        assertThrows(
+            uy.edu.prisma.domain.exception.InvalidRequestException.class,
+            () -> createWith(Set.of("VIEWER"), Set.of(inactive.getId()), List.of(inactive)));
+
+    assertTrue(ex.getMessage().contains("inactiva"));
+    verify(userRepo, never()).save(any());
+    verify(keycloakAdmin, never()).createUser(any(), any(), any(), any(), any());
+  }
+
+  @Test
+  void updateRejectsAddingAnInactiveOrganizationButKeepsExistingOnes() {
+    Organization inactive = org("Vieja");
+    inactive.setEnabled(false);
+    user.setRoles(Set.of(UserRole.INTERNAL_EVALUATOR));
+    when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
+    when(orgRepo.findAllById(any())).thenReturn(List.of(tenant, inactive));
+
+    // Sumar una inactiva: rechazado.
+    assertThrows(
+        uy.edu.prisma.domain.exception.InvalidRequestException.class,
+        () ->
+            service.update(
+                user.getId(),
+                new CreateUserDto(
+                    "u@test.com",
+                    "Jane",
+                    "Doe",
+                    Set.of(tenant.getId(), inactive.getId()),
+                    Set.of("INTERNAL_EVALUATOR"),
+                    null,
+                    null)));
+
+    // Pero si ya la tenía (quedó inactiva después), seguir en ella no es un error.
+    user.setOrganizations(new java.util.HashSet<>(Set.of(tenant, inactive)));
+    UserDto result =
+        service.update(
+            user.getId(),
+            new CreateUserDto(
+                "u@test.com",
+                "Jane",
+                "Doe",
+                Set.of(tenant.getId(), inactive.getId()),
+                Set.of("INTERNAL_EVALUATOR"),
+                null,
+                null));
+    assertEquals(Set.of(tenant.getId(), inactive.getId()), result.organizationIds());
   }
 
   @Test

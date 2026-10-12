@@ -460,6 +460,57 @@ class EvaluationServiceTest {
   }
 
   @Test
+  void createIsRejectedForAnInactiveOrganization() {
+    org.setEnabled(false);
+    when(orgRepo.findById(org.getId())).thenReturn(Optional.of(org));
+
+    uy.edu.prisma.domain.exception.InvalidRequestException ex =
+        assertThrows(
+            uy.edu.prisma.domain.exception.InvalidRequestException.class,
+            () ->
+                service.create(
+                    new CreateEvaluationDto("Nueva", org.getId(), "5.0", null)));
+
+    assertTrue(ex.getMessage().contains("inactiva"));
+    verify(evalRepo, never()).save(any());
+  }
+
+  @Test
+  void deleteIsBlockedWhenEvaluationHasData() {
+    UUID id = UUID.randomUUID();
+    when(evalRepo.findById(id)).thenReturn(Optional.of(eval));
+    when(evalRepo.countResponses(id)).thenReturn(12L);
+    when(evalRepo.countEvidence(id)).thenReturn(2L);
+    when(evalRepo.countImprovementPlans(id)).thenReturn(1L);
+
+    uy.edu.prisma.domain.exception.ConflictException ex =
+        assertThrows(
+            uy.edu.prisma.domain.exception.ConflictException.class, () -> service.delete(id));
+
+    assertTrue(ex.getMessage().contains("12 respuestas"));
+    assertTrue(ex.getMessage().contains("2 evidencias"));
+    assertTrue(ex.getMessage().contains("1 planes de mejora"));
+    assertTrue(ex.getMessage().contains("Archívela"));
+    verify(evalRepo, never()).deleteById(any());
+    verify(auditLog, never()).record(eq("DELETE"), any(), any());
+  }
+
+  @Test
+  void deleteIsBlockedByObservationsOrMaturityResultsAlone() {
+    UUID id = UUID.randomUUID();
+    when(evalRepo.findById(id)).thenReturn(Optional.of(eval));
+    when(evalRepo.countAuditObservations(id)).thenReturn(1L);
+    assertThrows(
+        uy.edu.prisma.domain.exception.ConflictException.class, () -> service.delete(id));
+
+    when(evalRepo.countAuditObservations(id)).thenReturn(0L);
+    when(evalRepo.countMaturityResults(id)).thenReturn(4L);
+    assertThrows(
+        uy.edu.prisma.domain.exception.ConflictException.class, () -> service.delete(id));
+    verify(evalRepo, never()).deleteById(any());
+  }
+
+  @Test
   void getResponsesMapsDtos() {
     CatalogControl control = CatalogControl.builder().id(UUID.randomUUID()).build();
     EvaluationResponse response =
