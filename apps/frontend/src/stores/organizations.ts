@@ -44,10 +44,20 @@ export const useOrganizationsStore = defineStore('organizations', () => {
     return data;
   }
 
+  // El backend NO borra la fila: la deja Inactiva y sigue devolviéndola en el listado. Por eso acá
+  // se la marca inactiva en lugar de sacarla (si no, desaparecía hasta recargar y no había forma de
+  // reactivarla desde la lista).
   async function deleteOrganization(id: string) {
     await organizationsService.delete(id);
-    organizations.value = organizations.value.filter((o) => o.id !== id);
-    total.value--;
+    const index = organizations.value.findIndex((o) => o.id === id);
+    if (index !== -1) organizations.value[index] = { ...organizations.value[index], enabled: false };
+  }
+
+  async function reactivateOrganization(id: string) {
+    const { data } = await organizationsService.reactivate(id);
+    const index = organizations.value.findIndex((o) => o.id === id);
+    if (index !== -1) organizations.value[index] = data.organization;
+    return data;
   }
 
   return {
@@ -60,5 +70,6 @@ export const useOrganizationsStore = defineStore('organizations', () => {
     createOrganization,
     updateOrganization,
     deleteOrganization,
+    reactivateOrganization,
   };
 });

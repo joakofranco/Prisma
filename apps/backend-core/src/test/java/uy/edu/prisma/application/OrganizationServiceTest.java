@@ -21,8 +21,11 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import uy.edu.prisma.domain.entity.Organization;
 import uy.edu.prisma.domain.entity.User;
+import uy.edu.prisma.domain.entity.UserRole;
 import uy.edu.prisma.domain.exception.ResourceNotFoundException;
 import uy.edu.prisma.domain.repository.OrganizationRepository;
+import uy.edu.prisma.domain.repository.UserRepository;
+import uy.edu.prisma.infrastructure.KeycloakAdminClient;
 import uy.edu.prisma.web.dto.Dto.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -32,6 +35,8 @@ class OrganizationServiceTest {
   @Mock private OrganizationRepository repo;
   @Mock private AuditLogService auditLog;
   @Mock private CurrentUserService currentUser;
+  @Mock private UserRepository userRepo;
+  @Mock private KeycloakAdminClient keycloakAdmin;
 
   private OrganizationService service;
   private Organization org;
@@ -39,7 +44,7 @@ class OrganizationServiceTest {
 
   @BeforeEach
   void setUp() {
-    service = new OrganizationService(repo, auditLog, currentUser);
+    service = new OrganizationService(repo, auditLog, currentUser, userRepo, keycloakAdmin);
     // Por defecto los tests existentes asumen la vista sin restricciones de PRISMA_ADMIN; los
     // tests de aislamiento multi-tenant de mas abajo pisan este stub con isPrismaAdmin=false.
     when(currentUser.isPrismaAdmin()).thenReturn(true);
@@ -239,6 +244,270 @@ class OrganizationServiceTest {
     verify(repo, never()).deleteById(any());
     verify(repo, times(1)).save(org);
     assertFalse(org.getEnabled());
+  }
+
+  // ---- RUT duplicado (C11) ----
+
+  private Organization other(String name, String rut) {
+    return Organization.builder().id(UUID.randomUUID()).name(name).rut(rut).enabled(true).build();
+  }
+
+  @Test
+  void createRejectsADuplicateRutWithAClearMessageAndTheFieldName() {
+    Organization existing = other("Acme", "21.234.567-0");
+    when(repo.findByNormalizedRut("212345670")).thenReturn(List.of(existing));
+
+    uy.edu.prisma.domain.exception.ConflictException ex =
+        assertThrows(
+            uy.edu.prisma.domain.exception.ConflictException.class,
+            () -> service.create(new CreateOrganizationDto("Nueva", "21.234.567-0", "TECH", "SMALL", null)));
+
+    assertEquals("rut", ex.getField());
+    assertTrue(ex.getMessage().contains("Ya existe una organización con el RUT 21.234.567-0"));
+    assertTrue(ex.getMessage().contains("«Acme»"));
+    verify(repo, never()).save(any());
+  }
+
+  @Test
+  void createDetectsTheSameRutWrittenInAnotherFormat() {
+    Organization existing = other("Acme", "212345670");
+    when(repo.findByNormalizedRut("212345670")).thenReturn(List.of(existing));
+
+    assertThrows(
+        uy.edu.prisma.domain.exception.ConflictException.class,
+        () ->
+            service.create(
+                new CreateOrganizationDto("Nueva", " 21.234.567-0 ", "TECH", "SMALL", null)));
+  }
+
+  @Test
+  void createWithAnUnusedRutOrNoRutIsNotChecked() {
+    when(repo.findByNormalizedRut(any())).thenReturn(List.of());
+    when(repo.save(any(Organization.class))).thenAnswer(inv -> inv.getArgument(0));
+
+    service.create(new CreateOrganizationDto("Uno", "55555555", "TECH", "SMALL", null));
+    service.create(new CreateOrganizationDto("Dos", null, "TECH", "SMALL", null));
+    service.create(new CreateOrganizationDto("Tres", "   ", "TECH", "SMALL", null));
+
+    // Solo el primero consulta: un RUT vacío es opcional y no puede estar "duplicado".
+    verify(repo, times(1)).findByNormalizedRut(any());
+  }
+
+  @Test
+  void updateAllowsKeepingTheOrganizationsOwnRut() {
+    when(repo.findById(org.getId())).thenReturn(Optional.of(org));
+    when(repo.save(org)).thenReturn(org);
+    when(repo.findByNormalizedRut("NIT1")).thenReturn(List.of(org));
+
+    assertDoesNotThrow(
+        () ->
+            service.update(
+                org.getId(), new CreateOrganizationDto("Acme", "NIT-1", "TECH", "SMALL", null)));
+  }
+
+  @Test
+  void updateRejectsTakingAnotherOrganizationsRut() {
+    Organization existing = other("Otra", "99999999");
+    when(repo.findById(org.getId())).thenReturn(Optional.of(org));
+    when(repo.findByNormalizedRut("99999999")).thenReturn(List.of(existing));
+
+    uy.edu.prisma.domain.exception.ConflictException ex =
+        assertThrows(
+            uy.edu.prisma.domain.exception.ConflictException.class,
+            () ->
+                service.update(
+                    org.getId(),
+                    new CreateOrganizationDto("Acme", "99999999", "TECH", "SMALL", null)));
+
+    assertEquals("rut", ex.getField());
+    verify(repo, never()).save(any());
+  }
+
+  @Test
+  void normalizeRutIgnoresSeparatorsSpacesAndCase() {
+    assertEquals("212345670", OrganizationService.normalizeRut(" 21.234.567-0 "));
+    assertEquals("12345678K", OrganizationService.normalizeRut("12.345.678-k"));
+    assertEquals("", OrganizationService.normalizeRut(null));
+    assertEquals("", OrganizationService.normalizeRut("  - . "));
+  }
+
+  private User orgUser(String email, Set<UserRole> roles, boolean enabled, UUID keycloakId) {
+    return User.builder()
+        .id(UUID.randomUUID())
+        .email(email)
+        .firstName("N")
+        .lastName("L")
+        .roles(roles)
+        .enabled(enabled)
+        .keycloakId(keycloakId)
+        .organizations(new java.util.HashSet<>(Set.of(org)))
+        .build();
+  }
+
+  @Test
+  void deleteDisablesOrganizationUsersLocallyAndInKeycloak() {
+    UUID kcA = UUID.randomUUID();
+    UUID kcB = UUID.randomUUID();
+    User a = orgUser("a@t.com", Set.of(UserRole.VIEWER), true, kcA);
+    User b = orgUser("b@t.com", Set.of(UserRole.ORG_RESPONSIBLE), true, kcB);
+    when(repo.findById(org.getId())).thenReturn(Optional.of(org));
+    when(userRepo.findByOrganizationId(org.getId())).thenReturn(List.of(a, b));
+
+    service.delete(org.getId());
+
+    assertFalse(org.getEnabled());
+    assertFalse(a.getEnabled());
+    assertFalse(b.getEnabled());
+    verify(keycloakAdmin, times(1)).updateProfile(kcA, "a@t.com", "N", "L", false);
+    verify(keycloakAdmin, times(1)).updateProfile(kcB, "b@t.com", "N", "L", false);
+    verify(auditLog, times(1))
+        .record("DELETE", "organization:" + org.getId(), "{\"usersDisabled\":2}");
+  }
+
+  @Test
+  void deleteLeavesAuditorsAndGlobalAdminsUntouched() {
+    User auditor = orgUser("aud@t.com", Set.of(UserRole.AUDITOR), true, UUID.randomUUID());
+    User auditorAndViewer =
+        orgUser("av@t.com", Set.of(UserRole.AUDITOR, UserRole.VIEWER), true, UUID.randomUUID());
+    User admin = orgUser("adm@t.com", Set.of(UserRole.PRISMA_ADMIN), true, UUID.randomUUID());
+    User regular = orgUser("r@t.com", Set.of(UserRole.INTERNAL_EVALUATOR), true, UUID.randomUUID());
+    when(repo.findById(org.getId())).thenReturn(Optional.of(org));
+    when(userRepo.findByOrganizationId(org.getId()))
+        .thenReturn(List.of(auditor, auditorAndViewer, admin, regular));
+
+    service.delete(org.getId());
+
+    assertTrue(auditor.getEnabled());
+    assertTrue(auditorAndViewer.getEnabled());
+    assertTrue(admin.getEnabled());
+    assertFalse(regular.getEnabled());
+    verify(keycloakAdmin, times(1)).updateProfile(any(), any(), any(), any(), eq(false));
+  }
+
+  @Test
+  void deleteKeepsUsersWhoStillHaveAnotherActiveOrganization() {
+    Organization otherActive =
+        Organization.builder().id(UUID.randomUUID()).name("Otra").enabled(true).build();
+    User multi = orgUser("m@t.com", Set.of(UserRole.INTERNAL_EVALUATOR), true, UUID.randomUUID());
+    multi.setOrganizations(new java.util.HashSet<>(Set.of(org, otherActive)));
+    when(repo.findById(org.getId())).thenReturn(Optional.of(org));
+    when(userRepo.findByOrganizationId(org.getId())).thenReturn(List.of(multi));
+
+    service.delete(org.getId());
+
+    assertTrue(multi.getEnabled());
+    verify(keycloakAdmin, never()).updateProfile(any(), any(), any(), any(), anyBoolean());
+    verify(auditLog, times(1))
+        .record("DELETE", "organization:" + org.getId(), "{\"usersDisabled\":0}");
+  }
+
+  @Test
+  void deleteDisablesMultiOrganizationUsersOnceAllTheirOrganizationsAreInactive() {
+    Organization otherInactive =
+        Organization.builder().id(UUID.randomUUID()).name("Otra").enabled(false).build();
+    User multi = orgUser("m@t.com", Set.of(UserRole.INTERNAL_EVALUATOR), true, UUID.randomUUID());
+    multi.setOrganizations(new java.util.HashSet<>(Set.of(org, otherInactive)));
+    when(repo.findById(org.getId())).thenReturn(Optional.of(org));
+    when(userRepo.findByOrganizationId(org.getId())).thenReturn(List.of(multi));
+
+    service.delete(org.getId());
+
+    assertFalse(multi.getEnabled());
+    verify(keycloakAdmin, times(1)).updateProfile(any(), eq("m@t.com"), any(), any(), eq(false));
+  }
+
+  @Test
+  void deleteSkipsAlreadyDisabledUsersAndUsersWithoutKeycloakAccount() {
+    User alreadyOff = orgUser("off@t.com", Set.of(UserRole.VIEWER), false, UUID.randomUUID());
+    User noKeycloak = orgUser("nk@t.com", Set.of(UserRole.VIEWER), true, null);
+    when(repo.findById(org.getId())).thenReturn(Optional.of(org));
+    when(userRepo.findByOrganizationId(org.getId())).thenReturn(List.of(alreadyOff, noKeycloak));
+
+    service.delete(org.getId());
+
+    assertFalse(noKeycloak.getEnabled());
+    verify(keycloakAdmin, never()).updateProfile(any(), any(), any(), any(), anyBoolean());
+    verify(auditLog, times(1))
+        .record("DELETE", "organization:" + org.getId(), "{\"usersDisabled\":1}");
+  }
+
+  @Test
+  void deleteRollsBackKeycloakChangesWhenOneUserFails() {
+    UUID kcA = UUID.randomUUID();
+    UUID kcB = UUID.randomUUID();
+    User a = orgUser("a@t.com", Set.of(UserRole.VIEWER), true, kcA);
+    User b = orgUser("b@t.com", Set.of(UserRole.VIEWER), true, kcB);
+    when(repo.findById(org.getId())).thenReturn(Optional.of(org));
+    when(userRepo.findByOrganizationId(org.getId())).thenReturn(List.of(a, b));
+    doThrow(new IllegalStateException("keycloak caído"))
+        .when(keycloakAdmin)
+        .updateProfile(kcB, "b@t.com", "N", "L", false);
+
+    assertThrows(IllegalStateException.class, () -> service.delete(org.getId()));
+
+    // El usuario que ya se había deshabilitado en Keycloak vuelve a habilitarse (compensación);
+    // la base se revierte con la transacción. Nada de la bitácora de "DELETE".
+    verify(keycloakAdmin, times(1)).updateProfile(kcA, "a@t.com", "N", "L", true);
+    verify(auditLog, never()).record(eq("DELETE"), any(), any());
+  }
+
+  // ---- Reactivar (C8) ----
+
+  @Test
+  void enableReactivatesAnInactiveOrganization() {
+    org.setEnabled(false);
+    when(repo.findById(org.getId())).thenReturn(Optional.of(org));
+    when(repo.save(org)).thenReturn(org);
+    when(userRepo.findByOrganizationId(org.getId())).thenReturn(List.of());
+
+    OrganizationReactivationDto result = service.enable(org.getId());
+
+    assertTrue(org.getEnabled());
+    assertTrue(result.organization().enabled());
+    assertEquals(0, result.disabledUsers());
+    verify(auditLog, times(1))
+        .record("REACTIVATE", "organization:" + org.getId(), "{\"usersStillDisabled\":0}");
+  }
+
+  @Test
+  void enableDoesNotReEnableUsersAndReportsHowManyStayDisabled() {
+    org.setEnabled(false);
+    User off1 = orgUser("o1@t.com", Set.of(UserRole.VIEWER), false, UUID.randomUUID());
+    User off2 = orgUser("o2@t.com", Set.of(UserRole.ORG_RESPONSIBLE), false, UUID.randomUUID());
+    User on = orgUser("on@t.com", Set.of(UserRole.VIEWER), true, UUID.randomUUID());
+    User offAuditor = orgUser("oa@t.com", Set.of(UserRole.AUDITOR), false, UUID.randomUUID());
+    when(repo.findById(org.getId())).thenReturn(Optional.of(org));
+    when(repo.save(org)).thenReturn(org);
+    when(userRepo.findByOrganizationId(org.getId())).thenReturn(List.of(off1, off2, on, offAuditor));
+
+    OrganizationReactivationDto result = service.enable(org.getId());
+
+    assertEquals(2, result.disabledUsers());
+    assertFalse(off1.getEnabled());
+    assertFalse(off2.getEnabled());
+    verify(keycloakAdmin, never()).updateProfile(any(), any(), any(), any(), anyBoolean());
+    verify(auditLog, times(1))
+        .record("REACTIVATE", "organization:" + org.getId(), "{\"usersStillDisabled\":2}");
+  }
+
+  @Test
+  void enableOnAnAlreadyActiveOrganizationIsANoOpWithoutAuditEntry() {
+    when(repo.findById(org.getId())).thenReturn(Optional.of(org));
+    when(repo.save(org)).thenReturn(org);
+    when(userRepo.findByOrganizationId(org.getId())).thenReturn(List.of());
+
+    service.enable(org.getId());
+
+    assertTrue(org.getEnabled());
+    verify(auditLog, never()).record(eq("REACTIVATE"), any(), any());
+  }
+
+  @Test
+  void enableThrowsWhenOrganizationMissing() {
+    UUID id = UUID.randomUUID();
+    when(repo.findById(id)).thenReturn(Optional.empty());
+
+    assertThrows(ResourceNotFoundException.class, () -> service.enable(id));
   }
 
   @Test

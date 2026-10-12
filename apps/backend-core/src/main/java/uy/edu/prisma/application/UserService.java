@@ -319,6 +319,21 @@ public class UserService {
     auditLog.record("DELETE", "user:" + id, null);
   }
 
+  /** Descripción legible de cada tipo de dato que referencia al usuario; vacía si no hay ninguno. */
+  private List<String> dependentData(UUID userId) {
+    List<String> out = new ArrayList<>();
+    addIfAny(out, userRepo.countEvaluationsCreatedBy(userId), "evaluaciones creadas");
+    addIfAny(out, userRepo.countResponsesBy(userId), "respuestas de evaluación");
+    addIfAny(out, userRepo.countEvidenceUploadedBy(userId), "evidencias subidas");
+    addIfAny(out, userRepo.countAuditObservationsBy(userId), "observaciones de auditoría");
+    addIfAny(out, userRepo.countOrganizationsResponsibleFor(userId), "organización a su cargo");
+    return out;
+  }
+
+  private static void addIfAny(List<String> out, long count, String label) {
+    if (count > 0) out.add(count + " " + label);
+  }
+
   private UserDto toDto(User u) {
     return new UserDto(
         u.getId(),

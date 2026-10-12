@@ -424,6 +424,21 @@ class ControllersMockMvcTest {
   }
 
   @Test
+  void organizationEnable() throws Exception {
+    UUID id = UUID.randomUUID();
+    when(organizationService.enable(id))
+        .thenReturn(
+            new OrganizationReactivationDto(
+                new OrganizationDto(id, "Acme", "NIT-1", "TECH", "SMALL", null, true, null), 3));
+
+    organizations
+        .perform(put("/api/organizations/{id}/enable", id))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.organization.enabled").value(true))
+        .andExpect(jsonPath("$.disabledUsers").value(3));
+  }
+
+  @Test
   void organizationDelete() throws Exception {
     UUID id = UUID.randomUUID();
 

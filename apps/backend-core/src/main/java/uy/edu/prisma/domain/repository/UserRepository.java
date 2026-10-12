@@ -42,6 +42,27 @@ public interface UserRepository extends JpaRepository<User, UUID> {
           + "WHERE o.id IN :orgIds AND r = uy.edu.prisma.domain.entity.UserRole.AUDITOR")
   List<User> findAuditorsForOrganizations(@Param("orgIds") Collection<UUID> orgIds);
 
+  // Datos que referencian a un usuario por FK (sin ON DELETE): si hay alguno, la fila NO se puede
+  // borrar sin perder el historial (ver UserService.delete) -- se deshabilita en su lugar.
+  @Query("SELECT COUNT(e) FROM Evaluation e WHERE e.createdBy.id = :userId")
+  long countEvaluationsCreatedBy(@Param("userId") UUID userId);
+
+  @Query("SELECT COUNT(r) FROM EvaluationResponse r WHERE r.respondedBy.id = :userId")
+  long countResponsesBy(@Param("userId") UUID userId);
+
+  @Query("SELECT COUNT(e) FROM Evidence e WHERE e.uploadedBy.id = :userId")
+  long countEvidenceUploadedBy(@Param("userId") UUID userId);
+
+  @Query("SELECT COUNT(o) FROM AuditObservation o WHERE o.createdBy.id = :userId")
+  long countAuditObservationsBy(@Param("userId") UUID userId);
+
+  @Query("SELECT COUNT(o) FROM Organization o WHERE o.responsible.id = :userId")
+  long countOrganizationsResponsibleFor(@Param("userId") UUID userId);
+
+  // Usuarios que pertenecen a la organización dada (cualquier rol; la membresía es M:N).
+  @Query("SELECT DISTINCT u FROM User u JOIN u.organizations o WHERE o.id = :organizationId")
+  List<User> findByOrganizationId(@Param("organizationId") UUID organizationId);
+
   Optional<User> findByEmail(String email);
 
   boolean existsByEmail(String email);

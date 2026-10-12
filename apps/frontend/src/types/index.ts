@@ -32,6 +32,13 @@ export interface Organization {
   createdAt: string;
 }
 
+/** Respuesta de reactivar una organización: `disabledUsers` = usuarios suyos que siguen
+ * deshabilitados (la reactivación no los rehabilita, el admin lo hace desde Usuarios). */
+export interface OrganizationReactivation {
+  organization: Organization;
+  disabledUsers: number;
+}
+
 /** Bitácora de acciones del sistema (append-only). Distinta de AuditObservation (hallazgos de
  * una evaluación MCU) -- ver el comentario en AuditLogDto del backend. */
 export interface AuditLog {

@@ -8,6 +8,7 @@ import org.springframework.web.bind.annotation.*;
 import uy.edu.prisma.application.OrganizationService;
 import uy.edu.prisma.web.dto.Dto.CreateOrganizationDto;
 import uy.edu.prisma.web.dto.Dto.OrganizationDto;
+import uy.edu.prisma.web.dto.Dto.OrganizationReactivationDto;
 import uy.edu.prisma.web.dto.Dto.PaginatedDto;
 
 @RestController
@@ -48,6 +49,15 @@ public class OrganizationController {
   public ResponseEntity<OrganizationDto> update(
       @PathVariable UUID id, @Valid @RequestBody CreateOrganizationDto dto) {
     return ResponseEntity.ok(service.update(id, dto));
+  }
+
+  // Reactivar una organización inactiva (ver OrganizationService.enable). Se separa del PUT de
+  // edición a propósito: cambiar el estado es una acción con consecuencias propias (queda en la
+  // bitácora y avisa de los usuarios que siguen deshabilitados), no un campo más del formulario.
+  @PutMapping("/{id}/enable")
+  @PreAuthorize("hasRole('PRISMA_ADMIN')")
+  public ResponseEntity<OrganizationReactivationDto> enable(@PathVariable UUID id) {
+    return ResponseEntity.ok(service.enable(id));
   }
 
   @DeleteMapping("/{id}")

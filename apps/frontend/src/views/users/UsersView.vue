@@ -246,6 +246,7 @@
   import { getErrorMessage } from '@/utils/helpers';
   import { emailSchema, personNameSchema } from '@/utils/validators';
   import { getOrgMode, validateOrganizationCount } from '@/utils/organizationRules';
+  import { assignableOrganizationOptions } from '@/utils/organizationOptions';
   import DataTable from '@/components/common/DataTable.vue';
   import BaseButton from '@/components/common/BaseButton.vue';
   import BaseModal from '@/components/common/BaseModal.vue';
@@ -334,7 +335,37 @@
     isPlatformAdmin.value ? roleOptions : roleOptions.filter((r) => r.value !== 'PRISMA_ADMIN'),
   );
 
-  const orgOptions = ref<{ value: string; label: string }[]>([]);
+  // Activas + las inactivas que el usuario editado YA tiene (marcadas "(inactiva)"): no se puede
+  // sumar una organización inactiva nueva (el backend también lo rechaza), pero tampoco deben
+  // desaparecer de la selección de quien ya estaba en ella.
+  const orgOptions = computed(() =>
+    assignableOrganizationOptions(orgStore.organizations, editingUser.value?.organizationIds ?? []),
+  );
+
+  // Cuántas organizaciones corresponden según los roles elegidos (ver utils/organizationRules).
+  const orgMode = computed(() => getOrgMode(form.roles));
+
+  const organizationsHint = computed(() => {
+    switch (orgMode.value) {
+      case 'none':
+        return 'El administrador tiene acceso global a la plataforma: no necesita organización.';
+      case 'single':
+        return 'Seleccione exactamente una organización.';
+      case 'atLeastOne':
+        return 'El auditor solo va a poder ver y auditar las organizaciones que seleccione (al menos una).';
+      default:
+        return form.roles.includes('INTERNAL_EVALUATOR')
+          ? 'Puede elegir una o varias. Sin ninguna, el evaluador es general y accede a todas las organizaciones.'
+          : 'Elija la organización (o varias, según el rol) y luego los roles.';
+    }
+  });
+
+  // Qué mostrar en la grilla cuando el usuario no tiene organizaciones asignadas.
+  function noOrganizationLabel(user: User): string {
+    if (user.roles.includes('PRISMA_ADMIN')) return 'Global (todas)';
+    if (user.roles.includes('INTERNAL_EVALUATOR')) return 'General (todas)';
+    return 'Sin organización';
+  }
 
   // Regla de UI: una organización debe tener su ORG_RESPONSIBLE antes de poder sumarle
   // Evaluadores, Auditores o Visualizadores. No es una restricción del modelo de datos --
@@ -569,7 +600,6 @@
 
   onMounted(async () => {
     await Promise.all([store.fetchUsers(1, pageSize), orgStore.fetchOrganizations(1, 100)]);
-    orgOptions.value = orgStore.organizations.map((o) => ({ value: o.id, label: o.name }));
 
     // Llegada guiada desde "Nueva Organización": pre-cargamos el formulario para crear
     // directamente el ORG_RESPONSIBLE de la organización recién creada.

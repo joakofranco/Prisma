@@ -1,6 +1,7 @@
 package uy.edu.prisma.domain.repository;
 
 import java.util.Collection;
+import java.util.List;
 import java.util.UUID;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -31,6 +32,14 @@ public interface OrganizationRepository extends JpaRepository<Organization, UUID
       @Param("allowedIds") Collection<UUID> allowedIds,
       @Param("search") String search,
       Pageable pageable);
+
+  // Organizaciones cuyo RUT coincide con `normalizedRut` ignorando puntos, guiones, espacios y
+  // mayúsculas: "21.234.567-0", "212345670" y " 21 234 567 0 " son el MISMO RUT. La restricción
+  // única de la base compara el texto tal cual, así que no atraparía estas variantes.
+  @Query(
+      "SELECT o FROM Organization o WHERE o.rut IS NOT NULL AND "
+          + "REPLACE(REPLACE(REPLACE(UPPER(o.rut), '.', ''), '-', ''), ' ', '') = :normalizedRut")
+  List<Organization> findByNormalizedRut(@Param("normalizedRut") String normalizedRut);
 
   long countByEnabledTrue();
 

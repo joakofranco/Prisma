@@ -8,6 +8,7 @@ import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import uy.edu.prisma.domain.entity.*;
+import uy.edu.prisma.domain.exception.ConflictException;
 import uy.edu.prisma.domain.exception.InvalidRequestException;
 import uy.edu.prisma.domain.exception.ResourceNotFoundException;
 import uy.edu.prisma.domain.repository.*;
@@ -151,6 +152,14 @@ public class EvaluationService {
         orgRepo
             .findById(dto.organizationId())
             .orElseThrow(() -> new ResourceNotFoundException("Organización", dto.organizationId()));
+    // Una organización inactiva conserva su historial (consultable) pero no admite evaluaciones
+    // nuevas.
+    if (!Boolean.TRUE.equals(org.getEnabled())) {
+      throw new InvalidRequestException(
+          "No se puede crear una evaluación para la organización «"
+              + org.getName()
+              + "» porque está inactiva");
+    }
     String catalogVersion = dto.catalogVersion() != null ? dto.catalogVersion() : "5.0";
     CommunityProfile profile = null;
     if (dto.communityProfileId() != null) {
@@ -258,8 +267,28 @@ public class EvaluationService {
     Evaluation eval =
         evalRepo.findById(id).orElseThrow(() -> new ResourceNotFoundException("Evaluación", id));
     currentUser.assertOrganizationAccess(eval.getOrganization().getId());
+    // Respuestas, resultados de madurez, evidencias, observaciones de auditoría y planes de mejora
+    // cuelgan de la evaluación con ON DELETE CASCADE: borrarla los destruiría en silencio (y
+    // dejaría archivos huérfanos en MinIO). Solo se permite borrar una evaluación vacía; si ya
+    // tiene contenido, se archiva (estado ARCHIVED) para conservar el historial.
+    List<String> dependents = new ArrayList<>();
+    addIfAny(dependents, evalRepo.countResponses(id), "respuestas");
+    addIfAny(dependents, evalRepo.countEvidence(id), "evidencias");
+    addIfAny(dependents, evalRepo.countAuditObservations(id), "observaciones de auditoría");
+    addIfAny(dependents, evalRepo.countImprovementPlans(id), "planes de mejora");
+    addIfAny(dependents, evalRepo.countMaturityResults(id), "resultados de madurez");
+    if (!dependents.isEmpty()) {
+      throw new ConflictException(
+          "No se puede eliminar la evaluación porque tiene datos asociados ("
+              + String.join(", ", dependents)
+              + "). Archívela en su lugar para conservar el historial.");
+    }
     evalRepo.deleteById(id);
     auditLog.record("DELETE", "evaluation:" + id, null);
+  }
+
+  private static void addIfAny(List<String> out, long count, String label) {
+    if (count > 0) out.add(count + " " + label);
   }
 
   // ---- Responses ----

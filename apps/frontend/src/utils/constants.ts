@@ -129,6 +129,7 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   UPDATE_PROFILE: 'Actualización de Perfil',
   CHANGE_PASSWORD: 'Cambio de Contraseña',
   LINK_KEYCLOAK_ACCOUNT: 'Vinculación de Cuenta',
+  REACTIVATE: 'Reactivación',
   SAVE_RESPONSE: 'Respuesta Guardada',
   LOGIN: 'Inicio de Sesión',
   LOGOUT: 'Cierre de Sesión',
