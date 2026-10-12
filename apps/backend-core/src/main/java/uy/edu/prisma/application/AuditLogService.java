@@ -241,7 +241,7 @@ public class AuditLogService {
    */
   public void recordLoginFailure(String attemptedUsername, String ip, OffsetDateTime occurredAt) {
     User user = attemptedUsername == null ? null : userRepo.findByEmail(attemptedUsername).orElse(null);
-    UUID tenantId = user != null && user.getTenant() != null ? user.getTenant().getId() : null;
+    UUID tenantId = user != null ? user.singleOrganizationId() : null;
     AuditLog log =
         AuditLog.builder()
             .userId(user != null ? user.getId() : null)
@@ -256,7 +256,7 @@ public class AuditLogService {
 
   public void record(String action, String resource, String payloadJson) {
     User user = currentUser.currentUser().orElse(null);
-    UUID tenantId = user != null && user.getTenant() != null ? user.getTenant().getId() : null;
+    UUID tenantId = user != null ? user.singleOrganizationId() : null;
     AuditLog log =
         AuditLog.builder()
             .userId(user != null ? user.getId() : null)

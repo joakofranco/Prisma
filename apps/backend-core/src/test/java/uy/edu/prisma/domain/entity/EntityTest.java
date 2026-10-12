@@ -24,7 +24,6 @@ class EntityTest {
             "L",
             null,
             null,
-            null,
             false,
             roles,
             Set.of(),
@@ -34,7 +33,7 @@ class EntityTest {
     assertEquals("a@b.c", all.getEmail());
     assertEquals("F", all.getFirstName());
     assertEquals("L", all.getLastName());
-    assertNull(all.getTenant());
+    assertTrue(all.getOrganizations().isEmpty());
     assertFalse(all.getEnabled());
     assertEquals(roles, all.getRoles());
     assertNotNull(all.getCreatedAt());
@@ -52,13 +51,15 @@ class EntityTest {
     built.setEmail("zz@b.c");
     built.setFirstName("ZZ");
     built.setLastName("QQ");
-    built.setTenant(Organization.builder().id(UUID.randomUUID()).build());
+    built.setOrganizations(Set.of(Organization.builder().id(UUID.randomUUID()).build()));
     built.setEnabled(false);
     built.setRoles(Set.of(UserRole.VIEWER));
     assertEquals("zz@b.c", built.getEmail());
     assertEquals("ZZ", built.getFirstName());
     assertEquals("QQ", built.getLastName());
-    assertNotNull(built.getTenant());
+    assertEquals(1, built.getOrganizations().size());
+    assertNotNull(built.singleOrganizationId());
+    assertEquals(1, built.organizationIds().size());
     assertFalse(built.getEnabled());
 
     User empty = new User();

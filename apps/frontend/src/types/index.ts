@@ -7,11 +7,12 @@ export interface User {
   firstName: string;
   lastName: string;
   roles: UserRole[];
-  tenantId: string;
-  /** Nombre de la organización (undefined/null si no tiene tenant, p.ej. PRISMA_ADMIN). */
-  organizationName?: string | null;
-  /** Organizaciones que puede auditar -- solo aplica si roles incluye AUDITOR. */
-  auditedOrganizationIds?: string[];
+  /** Organizaciones a las que accede el usuario (membresía M:N). ORG_RESPONSIBLE y VIEWER tienen
+   * exactamente una, AUDITOR al menos una, INTERNAL_EVALUATOR una o varias; sin ninguna, un
+   * evaluador es "general" (accede a todas) y un PRISMA_ADMIN es global. */
+  organizationIds: string[];
+  /** Nombres de esas organizaciones, ordenados. */
+  organizationNames: string[];
   enabled: boolean;
   createdAt: string;
   /** false = todavía no tiene cuenta en Keycloak y por lo tanto no puede iniciar sesión. */

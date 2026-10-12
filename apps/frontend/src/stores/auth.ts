@@ -102,7 +102,9 @@ export const useAuthStore = defineStore('auth', () => {
         firstName: kc.tokenParsed.given_name || '',
         lastName: kc.tokenParsed.family_name || '',
         roles: roles.value,
-        tenantId: kc.tokenParsed.tenant_id || '',
+        // Las organizaciones no viajan en el token: se consultan al backend cuando hacen falta.
+        organizationIds: [],
+        organizationNames: [],
         enabled: true,
         createdAt: new Date().toISOString(),
         // Si tiene un JWT válido acá, por definición ya pudo loguearse.

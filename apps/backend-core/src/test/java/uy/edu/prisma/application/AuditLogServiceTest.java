@@ -61,7 +61,7 @@ class AuditLogServiceTest {
             .email("actor@test.com")
             .firstName("Jane")
             .lastName("Doe")
-            .tenant(tenant)
+            .organizations(java.util.Set.of(tenant))
             .build();
     logEntry =
         AuditLog.builder()

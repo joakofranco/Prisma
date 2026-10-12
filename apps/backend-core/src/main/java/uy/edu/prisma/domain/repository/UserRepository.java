@@ -22,23 +22,24 @@ public interface UserRepository extends JpaRepository<User, UUID> {
           + "OR LOWER(u.lastName) LIKE LOWER(CONCAT('%',CAST(:search AS string),'%')))")
   Page<User> search(@Param("search") String search, Pageable pageable);
 
-  // Variante acotada a un conjunto de organizaciones (aislamiento multi-tenant): usada por
-  // UserService.list para todo rol que no sea PRISMA_ADMIN, ver el comentario ahí.
+  // Variante acotada a un conjunto de organizaciones (aislamiento multi-tenant): usuarios que
+  // pertenecen a ALGUNA de ellas. Usada por UserService.list para todo rol que no sea PRISMA_ADMIN.
   @Query(
-      "SELECT u FROM User u WHERE u.tenant.id IN :tenantIds AND "
+      "SELECT DISTINCT u FROM User u JOIN u.organizations o WHERE o.id IN :orgIds AND "
           + "(:search IS NULL OR LOWER(u.email) LIKE LOWER(CONCAT('%',CAST(:search AS string),'%')) "
           + "OR LOWER(u.firstName) LIKE LOWER(CONCAT('%',CAST(:search AS string),'%')) "
           + "OR LOWER(u.lastName) LIKE LOWER(CONCAT('%',CAST(:search AS string),'%')))")
-  Page<User> searchByTenantIdIn(
-      @Param("tenantIds") Collection<UUID> tenantIds,
+  Page<User> searchByOrganizationIdIn(
+      @Param("orgIds") Collection<UUID> orgIds,
       @Param("search") String search,
       Pageable pageable);
 
   // Usada por EvaluationService para mostrar "qué auditor está asignado" en la grilla de
-  // evaluaciones: cualquier User con alguna de estas organizaciones entre sus
-  // auditedOrganizations (ver el comentario en esa relación -- por invariante de negocio,
-  // solo un AUDITOR llega a tener algo ahí, así que no hace falta filtrar también por rol).
-  @Query("SELECT DISTINCT u FROM User u JOIN u.auditedOrganizations o WHERE o.id IN :orgIds")
+  // evaluaciones: usuarios con rol AUDITOR que tienen alguna de estas organizaciones. Ahora que
+  // cualquier rol puede tener organizaciones, hay que filtrar explícitamente por el rol.
+  @Query(
+      "SELECT DISTINCT u FROM User u JOIN u.organizations o JOIN u.roles r "
+          + "WHERE o.id IN :orgIds AND r = uy.edu.prisma.domain.entity.UserRole.AUDITOR")
   List<User> findAuditorsForOrganizations(@Param("orgIds") Collection<UUID> orgIds);
 
   Optional<User> findByEmail(String email);

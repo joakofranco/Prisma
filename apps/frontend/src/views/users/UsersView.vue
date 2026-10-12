@@ -36,9 +36,15 @@
       :total-items="total"
       @page-change="handlePageChange"
     >
-      <template #cell-organizationName="{ value }">
-        <span v-if="value" class="text-slate-700 dark:text-slate-200">{{ value }}</span>
-        <span v-else class="text-slate-400">Global (sin organización)</span>
+      <template #cell-organizationNames="{ value, row }">
+        <span
+          v-if="(value as string[]).length > 0"
+          class="text-slate-700 dark:text-slate-200"
+          :title="(value as string[]).join(', ')"
+        >
+          {{ (value as string[]).join(', ') }}
+        </span>
+        <span v-else class="text-slate-500 dark:text-slate-400">{{ noOrganizationLabel(row as User) }}</span>
       </template>
       <template #cell-roles="{ value }">
         <div class="flex flex-wrap gap-1">
@@ -216,32 +222,6 @@
             {{ errors.roles }}
           </p>
         </div>
-        <div v-if="form.roles.includes('AUDITOR')">
-          <label class="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-2">
-            Organizaciones a auditar
-          </label>
-          <p class="text-xs text-slate-400 mb-2">
-            El auditor solo va a poder ver y auditar evaluaciones de las organizaciones que
-            selecciones acá.
-          </p>
-          <div class="space-y-2 max-h-40 overflow-y-auto border border-slate-200 dark:border-slate-700 rounded-lg p-3">
-            <p v-if="orgOptions.length === 0" class="text-xs text-slate-400">
-              No hay organizaciones cargadas todavía.
-            </p>
-            <label v-for="org in orgOptions" :key="org.value" class="flex items-center gap-2">
-              <input
-                v-model="form.auditedOrganizationIds"
-                type="checkbox"
-                :value="org.value"
-                class="rounded border-slate-300 dark:border-slate-600 text-blue-600 focus:ring-blue-500"
-              />
-              <span class="text-sm text-slate-700 dark:text-slate-200">{{ org.label }}</span>
-            </label>
-          </div>
-          <p v-if="errors.auditedOrganizationIds" class="mt-1 text-xs text-red-600">
-            {{ errors.auditedOrganizationIds }}
-          </p>
-        </div>
       </form>
       <template #footer>
         <BaseButton variant="secondary" @click="showCreateModal = false"> Cancelar </BaseButton>
@@ -265,11 +245,11 @@
   import { ROLE_LABELS } from '@/utils/constants';
   import { getErrorMessage } from '@/utils/helpers';
   import { emailSchema, personNameSchema } from '@/utils/validators';
+  import { getOrgMode, validateOrganizationCount } from '@/utils/organizationRules';
   import DataTable from '@/components/common/DataTable.vue';
   import BaseButton from '@/components/common/BaseButton.vue';
   import BaseModal from '@/components/common/BaseModal.vue';
   import BaseInput from '@/components/common/BaseInput.vue';
-  import BaseSelect from '@/components/common/BaseSelect.vue';
   import {
     PlusIcon,
     MagnifyingGlassIcon,
@@ -307,7 +287,7 @@
     { key: 'firstName', label: 'Nombre' },
     { key: 'lastName', label: 'Apellido' },
     { key: 'email', label: 'Email' },
-    { key: 'organizationName', label: 'Organización' },
+    { key: 'organizationNames', label: 'Organizaciones' },
     { key: 'roles', label: 'Roles' },
     { key: 'enabled', label: 'Estado' },
     { key: 'canLogin', label: 'Acceso' },
@@ -318,9 +298,8 @@
     lastName: '',
     email: '',
     password: '',
-    organizationId: '',
+    organizationIds: [] as string[],
     roles: [] as string[],
-    auditedOrganizationIds: [] as string[],
     enabled: true,
   });
 
@@ -337,7 +316,7 @@
     email: '',
     password: '',
     roles: '',
-    auditedOrganizationIds: '',
+    organizationIds: '',
   });
 
   const roleOptions = [
@@ -386,7 +365,7 @@
       const { data } = await usersService.getAll({ page: 1, pageSize: 200 });
       const hasResponsible = data.data.some(
         (u) =>
-          u.tenantId === orgId &&
+          u.organizationIds?.includes(orgId) &&
           u.roles.includes('ORG_RESPONSIBLE') &&
           (!editingUser.value || u.id !== editingUser.value.id),
       );
@@ -399,17 +378,22 @@
     }
   }
 
-  watch(
-    () => form.organizationId,
-    (orgId) => {
-      if (orgId) refreshOrgHasResponsible(orgId);
-      else orgHasResponsible.value = false;
-    },
+  // Solo tiene sentido con exactamente UNA organización elegida (una con varias no tiene "su"
+  // responsable): se consulta cuándo cambia esa selección única.
+  const singleSelectedOrgId = computed(() =>
+    form.organizationIds.length === 1 ? form.organizationIds[0] : '',
   );
+
+  watch(singleSelectedOrgId, (orgId) => {
+    if (orgId) refreshOrgHasResponsible(orgId);
+    else orgHasResponsible.value = false;
+  });
 
   const needsResponsibleFirst = computed(
     () =>
-      !!form.organizationId && !orgHasResponsible.value && !form.roles.includes('ORG_RESPONSIBLE'),
+      !!singleSelectedOrgId.value &&
+      !orgHasResponsible.value &&
+      !form.roles.includes('ORG_RESPONSIBLE'),
   );
 
   const RESPONSIBLE_GATED_ROLES = ['INTERNAL_EVALUATOR', 'AUDITOR', 'VIEWER'];
@@ -426,7 +410,7 @@
     if (!isPlatformAdmin.value && orgOptions.value.length > 0) {
       // Un ORG_RESPONSIBLE solo ve (y solo puede elegir) su propia organización -- se la
       // preseleccionamos ya que el campo queda deshabilitado para ese rol.
-      form.organizationId = orgOptions.value[0].value;
+      form.organizationIds = [orgOptions.value[0].value];
     }
     showCreateModal.value = true;
   }
@@ -452,9 +436,8 @@
     form.lastName = user.lastName;
     form.email = user.email;
     form.password = '';
-    form.organizationId = user.tenantId || '';
+    form.organizationIds = [...(user.organizationIds || [])];
     form.roles = [...user.roles];
-    form.auditedOrganizationIds = [...(user.auditedOrganizationIds || [])];
     form.enabled = user.enabled;
     originalRoles.value = [...user.roles];
     showCreateModal.value = true;
@@ -474,8 +457,7 @@
         lastName: user.lastName,
         enabled: !user.enabled,
         roles: user.roles,
-        tenantId: user.tenantId || undefined,
-        auditedOrganizationIds: user.auditedOrganizationIds || [],
+        organizationIds: user.organizationIds || [],
       });
       notification.success(`Usuario ${user.enabled ? 'deshabilitado' : 'habilitado'} correctamente`);
     } catch (err) {
@@ -519,8 +501,9 @@
       errors.roles = 'Seleccione al menos un rol';
       return;
     }
-    if (form.roles.includes('AUDITOR') && form.auditedOrganizationIds.length === 0) {
-      errors.auditedOrganizationIds = 'Seleccione al menos una organización para el auditor';
+    const orgError = validateOrganizationCount(orgMode.value, form.organizationIds.length);
+    if (orgError) {
+      errors.organizationIds = orgError;
       return;
     }
     // Sólo bloquea roles NUEVOS (que el usuario no tenía ya): un usuario existente que ya tenía
@@ -545,8 +528,8 @@
         lastName: form.lastName.trim(),
         enabled: form.enabled,
         roles: form.roles as UserRole[],
-        tenantId: form.organizationId || undefined,
-        auditedOrganizationIds: form.auditedOrganizationIds,
+        // PRISMA_ADMIN es global: se manda vacío aunque haya quedado marcada alguna.
+        organizationIds: orgMode.value === 'none' ? [] : form.organizationIds,
       };
       if (form.password) payload.password = form.password;
 
@@ -576,9 +559,8 @@
     form.lastName = '';
     form.email = '';
     form.password = '';
-    form.organizationId = '';
+    form.organizationIds = [];
     form.roles = [];
-    form.auditedOrganizationIds = [];
     form.enabled = true;
     guidedNewOrgName.value = '';
     orgHasResponsible.value = false;
@@ -593,7 +575,7 @@
     // directamente el ORG_RESPONSIBLE de la organización recién creada.
     const newOrgId = route.query.newOrgId as string | undefined;
     if (newOrgId) {
-      form.organizationId = newOrgId;
+      form.organizationIds = [newOrgId];
       form.roles = ['ORG_RESPONSIBLE'];
       guidedNewOrgName.value =
         (route.query.newOrgName as string) ||

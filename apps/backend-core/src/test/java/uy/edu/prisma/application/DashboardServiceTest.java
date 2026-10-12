@@ -42,6 +42,7 @@ class DashboardServiceTest {
     // PRISMA_ADMIN: estos tests cubren las metricas sin acotar por organizacion. El aislamiento
     // por tenant y por auditor se prueba aparte, mas abajo.
     when(currentUser.isPrismaAdmin()).thenReturn(true);
+    when(currentUser.hasAllOrganizationsAccess()).thenReturn(true);
     service = new DashboardService(evalRepo, orgRepo, matRepo, planRepo, currentUser);
   }
 
@@ -131,9 +132,10 @@ class DashboardServiceTest {
   @Test
   void getStatsScopesToOwnTenantForNonGlobalRole() {
     when(currentUser.isPrismaAdmin()).thenReturn(false);
+    when(currentUser.hasAllOrganizationsAccess()).thenReturn(false);
     when(currentUser.isAuditor()).thenReturn(false);
     UUID tenantId = UUID.randomUUID();
-    when(currentUser.currentTenantId()).thenReturn(tenantId);
+    when(currentUser.organizationIds()).thenReturn(Set.of(tenantId));
     Set<UUID> ids = Set.of(tenantId);
     PageRequest pr = PageRequest.of(0, 100, Sort.by("createdAt").descending());
 
@@ -158,11 +160,12 @@ class DashboardServiceTest {
   @Test
   void getStatsScopesToUnionOfAuditorOrganizations() {
     when(currentUser.isPrismaAdmin()).thenReturn(false);
+    when(currentUser.hasAllOrganizationsAccess()).thenReturn(false);
     when(currentUser.isAuditor()).thenReturn(true);
     UUID org1 = UUID.randomUUID();
     UUID org2 = UUID.randomUUID();
     Set<UUID> ids = Set.of(org1, org2);
-    when(currentUser.auditedOrganizationIds()).thenReturn(ids);
+    when(currentUser.organizationIds()).thenReturn(ids);
     PageRequest pr = PageRequest.of(0, 100, Sort.by("createdAt").descending());
 
     when(evalRepo.countByOrganizationIdIn(ids)).thenReturn(7L);
@@ -182,8 +185,9 @@ class DashboardServiceTest {
   @Test
   void getStatsEmptyWhenAuditorHasNoOrganizationsAssigned() {
     when(currentUser.isPrismaAdmin()).thenReturn(false);
+    when(currentUser.hasAllOrganizationsAccess()).thenReturn(false);
     when(currentUser.isAuditor()).thenReturn(true);
-    when(currentUser.auditedOrganizationIds()).thenReturn(Set.of());
+    when(currentUser.organizationIds()).thenReturn(Set.of());
 
     DashboardStatsDto stats = service.getStats();
 

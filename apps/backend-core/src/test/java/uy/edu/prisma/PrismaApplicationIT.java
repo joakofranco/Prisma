@@ -117,7 +117,7 @@ class PrismaApplicationIT {
                 "x"));
     assertNotNull(user.id());
     assertEquals(Set.of("AUDITOR"), user.roles());
-    assertEquals(Set.of(org.id()), user.auditedOrganizationIds());
+    assertEquals(Set.of(org.id()), user.organizationIds());
 
     PaginatedDto<UserDto> users = userService.list("it.services", 0, 10);
     assertTrue(users.data().stream().anyMatch(dto -> dto.id().equals(user.id())));

@@ -5,6 +5,7 @@ import java.time.OffsetDateTime;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import lombok.*;
 
 @Entity
@@ -38,10 +39,6 @@ public class User {
   @Column(name = "keycloak_id")
   private UUID keycloakId;
 
-  @ManyToOne(fetch = FetchType.LAZY)
-  @JoinColumn(name = "tenant_id")
-  private Organization tenant;
-
   @Column(nullable = false)
   @Builder.Default
   private Boolean enabled = true;
@@ -57,19 +54,20 @@ public class User {
   private Set<UserRole> roles = new HashSet<>();
 
   /**
-   * Organizaciones que este usuario puede auditar -- solo tiene efecto si {@code roles} contiene
-   * AUDITOR (ver CurrentUserService.assertOrganizationAccess); UserService exige al menos una acá
-   * cuando se asigna ese rol. Distinto de {@code tenant}: un auditor no "pertenece" a una única
-   * organización como ORG_RESPONSIBLE/INTERNAL_EVALUATOR/VIEWER, puede auditar varias a la vez.
+   * Organizaciones a las que este usuario accede (M:N): única fuente de verdad, reemplaza al viejo
+   * tenant único y a la lista de organizaciones a auditar. Cuántas corresponden según el rol lo
+   * valida UserService.validateOrganizationsForRoles: ORG_RESPONSIBLE / VIEWER exactamente una,
+   * AUDITOR al menos una, INTERNAL_EVALUATOR cualquier cantidad (SIN ninguna es un evaluador
+   * "general" que accede a todas), PRISMA_ADMIN ninguna (es global).
    */
   @ManyToMany(fetch = FetchType.EAGER)
   @JoinTable(
-      name = "user_audited_organizations",
+      name = "user_organizations",
       schema = "prisma",
       joinColumns = @JoinColumn(name = "user_id"),
       inverseJoinColumns = @JoinColumn(name = "organization_id"))
   @Builder.Default
-  private Set<Organization> auditedOrganizations = new HashSet<>();
+  private Set<Organization> organizations = new HashSet<>();
 
   @Column(name = "created_at", nullable = false, updatable = false)
   @Builder.Default
@@ -78,6 +76,19 @@ public class User {
   @Column(name = "updated_at", nullable = false)
   @Builder.Default
   private OffsetDateTime updatedAt = OffsetDateTime.now();
+
+  /** Ids de las organizaciones del usuario. */
+  public Set<UUID> organizationIds() {
+    return organizations.stream().map(Organization::getId).collect(Collectors.toSet());
+  }
+
+  /**
+   * La organización del usuario si tiene EXACTAMENTE una (el caso de ORG_RESPONSIBLE / VIEWER y de
+   * un evaluador de una sola organización); {@code null} si no tiene ninguna o tiene varias.
+   */
+  public UUID singleOrganizationId() {
+    return organizations.size() == 1 ? organizations.iterator().next().getId() : null;
+  }
 
   @PreUpdate
   protected void onUpdate() {

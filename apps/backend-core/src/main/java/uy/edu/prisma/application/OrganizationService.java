@@ -30,21 +30,18 @@ public class OrganizationService {
   }
 
   // Aislamiento multi-tenant (ver CurrentUserService.assertOrganizationAccess, que sigue el mismo
-  // criterio para operaciones puntuales): PRISMA_ADMIN ve todas; AUDITOR ve solo las que audita;
-  // el resto (ORG_RESPONSIBLE/INTERNAL_EVALUATOR/VIEWER) solo la propia. Antes esto devolvía TODAS
+  // criterio para operaciones puntuales): PRISMA_ADMIN y el evaluador general ven todas; el resto
+  // solo las suyas (una o varias). Antes esto devolvía TODAS
   // las organizaciones sin importar el rol -- cualquier usuario autenticado podía enumerar la
   // plataforma entera (nombre, RUT, sector) de organizaciones ajenas.
   @Transactional(readOnly = true)
   public PaginatedDto<OrganizationDto> list(String search, int page, int pageSize) {
     PageRequest pageable = PageRequest.of(page, pageSize, Sort.by("createdAt").descending());
     Page<Organization> result;
-    if (currentUser.isPrismaAdmin()) {
+    if (currentUser.hasAllOrganizationsAccess()) {
       result = repo.search(search, pageable);
     } else {
-      Set<UUID> allowedIds =
-          currentUser.isAuditor()
-              ? currentUser.auditedOrganizationIds()
-              : optionalSet(currentUser.currentTenantId());
+      Set<UUID> allowedIds = currentUser.organizationIds();
       result =
           allowedIds.isEmpty()
               ? Page.empty(pageable)
@@ -55,10 +52,6 @@ public class OrganizationService {
         result.getTotalElements(),
         page,
         pageSize);
-  }
-
-  private static Set<UUID> optionalSet(UUID id) {
-    return id == null ? Set.of() : Set.of(id);
   }
 
   @Transactional(readOnly = true)

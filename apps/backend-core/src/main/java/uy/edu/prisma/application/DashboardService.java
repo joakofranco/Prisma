@@ -44,15 +44,7 @@ public class DashboardService {
   // un elemento). Un Set vacio (auditor sin organizaciones asignadas, o usuario sin tenant) no
   // consulta nada: no hay "sin restriccion" implicito para ellos.
   public DashboardStatsDto getStats() {
-    Set<UUID> orgIds;
-    if (currentUser.isPrismaAdmin()) {
-      orgIds = null;
-    } else if (currentUser.isAuditor()) {
-      orgIds = currentUser.auditedOrganizationIds();
-    } else {
-      UUID tenantId = currentUser.currentTenantId();
-      orgIds = tenantId == null ? Set.of() : Set.of(tenantId);
-    }
+    Set<UUID> orgIds = currentUser.hasAllOrganizationsAccess() ? null : currentUser.organizationIds();
     if (orgIds != null && orgIds.isEmpty()) {
       return new DashboardStatsDto(0, 0, 0.0, 0, new LinkedHashMap<>(), new ArrayList<>());
     }

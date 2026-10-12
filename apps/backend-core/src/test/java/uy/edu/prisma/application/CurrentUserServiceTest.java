@@ -38,7 +38,9 @@ class CurrentUserServiceTest {
         User.builder()
             .id(UUID.randomUUID())
             .email("admin@prisma.local")
-            .tenant(Organization.builder().id(UUID.randomUUID()).build())
+            .organizations(
+                new java.util.HashSet<>(
+                    java.util.Set.of(Organization.builder().id(UUID.randomUUID()).build())))
             .build();
   }
 
@@ -64,7 +66,36 @@ class CurrentUserServiceTest {
 
     assertEquals(user.getId(), service.currentUser().map(User::getId).orElse(null));
     assertEquals(user.getId(), service.currentUserId());
-    assertEquals(user.getTenant().getId(), service.currentUser().get().getTenant().getId());
+    assertEquals(user.singleOrganizationId(), service.currentTenantId());
+  }
+
+  private void authenticateWithSubject(String subject) {
+    Jwt jwt =
+        Jwt.withTokenValue("t").header("alg", "none").subject(subject).claim("email", "a@b.com").build();
+    SecurityContextHolder.getContext()
+        .setAuthentication(new UsernamePasswordAuthenticationToken(jwt, null, java.util.List.of()));
+  }
+
+  @Test
+  void currentKeycloakSubjectParsesTheJwtSubAsUuid() {
+    UUID sub = UUID.randomUUID();
+    authenticateWithSubject(sub.toString());
+    assertEquals(Optional.of(sub), service.currentKeycloakSubject());
+  }
+
+  @Test
+  void currentKeycloakSubjectIsEmptyWhenSubIsNotAUuid() {
+    authenticateWithSubject("sub-1");
+    assertTrue(service.currentKeycloakSubject().isEmpty());
+  }
+
+  @Test
+  void currentKeycloakSubjectIsEmptyWithoutJwtAuthentication() {
+    assertTrue(service.currentKeycloakSubject().isEmpty());
+    SecurityContextHolder.getContext()
+        .setAuthentication(
+            new UsernamePasswordAuthenticationToken("user", null, java.util.List.of()));
+    assertTrue(service.currentKeycloakSubject().isEmpty());
   }
 
   @Test
@@ -157,7 +188,7 @@ class CurrentUserServiceTest {
   void assertOrganizationAccessAllowsMatchingTenant() {
     user.setRoles(java.util.Set.of(UserRole.ORG_RESPONSIBLE));
     authenticateAs(user);
-    assertDoesNotThrow(() -> service.assertOrganizationAccess(user.getTenant().getId()));
+    assertDoesNotThrow(() -> service.assertOrganizationAccess(user.singleOrganizationId()));
   }
 
   @Test
@@ -190,19 +221,19 @@ class CurrentUserServiceTest {
     Organization org1 = Organization.builder().id(UUID.randomUUID()).build();
     Organization org2 = Organization.builder().id(UUID.randomUUID()).build();
     user.setRoles(java.util.Set.of(UserRole.AUDITOR));
-    user.setAuditedOrganizations(java.util.Set.of(org1, org2));
+    user.setOrganizations(java.util.Set.of(org1, org2));
     authenticateAs(user);
 
     assertDoesNotThrow(() -> service.assertOrganizationAccess(org1.getId()));
     assertDoesNotThrow(() -> service.assertOrganizationAccess(org2.getId()));
-    assertEquals(java.util.Set.of(org1.getId(), org2.getId()), service.auditedOrganizationIds());
+    assertEquals(java.util.Set.of(org1.getId(), org2.getId()), service.organizationIds());
   }
 
   @Test
   void assertOrganizationAccessDeniesAuditorForUnassignedOrganization() {
     Organization assigned = Organization.builder().id(UUID.randomUUID()).build();
     user.setRoles(java.util.Set.of(UserRole.AUDITOR));
-    user.setAuditedOrganizations(java.util.Set.of(assigned));
+    user.setOrganizations(java.util.Set.of(assigned));
     authenticateAs(user);
 
     UUID otherOrgId = UUID.randomUUID();
@@ -212,17 +243,88 @@ class CurrentUserServiceTest {
   @Test
   void assertOrganizationAccessDeniesAuditorWithNoOrganizationsAssigned() {
     user.setRoles(java.util.Set.of(UserRole.AUDITOR));
+    user.setOrganizations(new java.util.HashSet<>());
     authenticateAs(user);
 
-    assertTrue(service.auditedOrganizationIds().isEmpty());
+    assertTrue(service.organizationIds().isEmpty());
     assertThrows(
         AccessDeniedException.class, () -> service.assertOrganizationAccess(UUID.randomUUID()));
   }
 
+  // ---- Evaluador general / multi-organizacion (I7, camino B: membresia M:N) ----
+
   @Test
-  void auditedOrganizationIdsEmptyForNonAuditor() {
+  void multiOrganizationEvaluatorAccessesExactlyTheirOrganizations() {
+    Organization a = Organization.builder().id(UUID.randomUUID()).build();
+    Organization b = Organization.builder().id(UUID.randomUUID()).build();
+    user.setRoles(java.util.Set.of(UserRole.INTERNAL_EVALUATOR));
+    user.setOrganizations(new java.util.HashSet<>(java.util.Set.of(a, b)));
+    authenticateAs(user);
+
+    assertDoesNotThrow(() -> service.assertOrganizationAccess(a.getId()));
+    assertDoesNotThrow(() -> service.assertOrganizationAccess(b.getId()));
+    assertThrows(
+        AccessDeniedException.class, () -> service.assertOrganizationAccess(UUID.randomUUID()));
+    assertFalse(service.isGeneralEvaluator());
+    assertFalse(service.hasAllOrganizationsAccess());
+    assertEquals(java.util.Set.of(a.getId(), b.getId()), service.organizationIds());
+  }
+
+  @Test
+  void generalEvaluatorWithoutOrganizationsAccessesEveryOrganization() {
+    user.setRoles(java.util.Set.of(UserRole.INTERNAL_EVALUATOR));
+    user.setOrganizations(new java.util.HashSet<>());
+    authenticateAs(user);
+
+    assertTrue(service.isGeneralEvaluator());
+    assertTrue(service.hasAllOrganizationsAccess());
+    assertDoesNotThrow(() -> service.assertOrganizationAccess(UUID.randomUUID()));
+    // No es PRISMA_ADMIN: el alcance "general" es solo sobre organizaciones, no un rol global.
+    assertFalse(service.isPrismaAdmin());
+    assertFalse(service.isGlobalRole());
+  }
+
+  @Test
+  void onlyEvaluatorsWithoutOrganizationsAreGeneral() {
+    user.setOrganizations(new java.util.HashSet<>());
+    for (UserRole role :
+        new UserRole[] {UserRole.VIEWER, UserRole.ORG_RESPONSIBLE, UserRole.AUDITOR}) {
+      user.setRoles(java.util.Set.of(role));
+      authenticateAs(user);
+      assertFalse(service.isGeneralEvaluator(), role.name());
+      assertThrows(
+          AccessDeniedException.class, () -> service.assertOrganizationAccess(UUID.randomUUID()));
+    }
+  }
+
+  @Test
+  void prismaAdminHasAllOrganizationsAccess() {
+    user.setRoles(java.util.Set.of(UserRole.PRISMA_ADMIN));
+    authenticateAs(user);
+    assertTrue(service.hasAllOrganizationsAccess());
+  }
+
+  @Test
+  void currentTenantIdIsOnlyDefinedForExactlyOneOrganization() {
     user.setRoles(java.util.Set.of(UserRole.ORG_RESPONSIBLE));
     authenticateAs(user);
-    assertTrue(service.auditedOrganizationIds().isEmpty());
+    assertNotNull(service.currentTenantId());
+
+    user.setOrganizations(new java.util.HashSet<>());
+    assertNull(service.currentTenantId());
+
+    user.setOrganizations(
+        new java.util.HashSet<>(
+            java.util.Set.of(
+                Organization.builder().id(UUID.randomUUID()).build(),
+                Organization.builder().id(UUID.randomUUID()).build())));
+    assertNull(service.currentTenantId());
+  }
+
+  @Test
+  void organizationIdsEmptyWhenNotAuthenticated() {
+    assertTrue(service.organizationIds().isEmpty());
+    assertFalse(service.isGeneralEvaluator());
+    assertFalse(service.hasAllOrganizationsAccess());
   }
 }
