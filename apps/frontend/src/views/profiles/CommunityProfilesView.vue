@@ -351,7 +351,7 @@
   function confirmDelete(profile: CommunityProfileSummary) {
     if (
       confirm(
-        `¿Eliminar el perfil "${profile.name}"? Las evaluaciones que lo usan pasan a ver el catálogo completo.`,
+        `¿Eliminar el perfil "${profile.name}"? Solo se puede eliminar si ninguna evaluación lo usa.`,
       )
     ) {
       handleDelete(profile.id);
