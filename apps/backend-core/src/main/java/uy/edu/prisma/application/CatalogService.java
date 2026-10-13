@@ -259,18 +259,41 @@ public class CatalogService {
 
   /**
    * Borra una versión de catálogo completa (cascade=ALL se encarga de funciones/categorías/
-   * subcategorías/requisitos/controles). Rechazada si alguna evaluación ya la referencia -- ver el
-   * comentario en EvaluationRepository.existsByCatalogVersion: no hay FK que lo impida solo, así
-   * que se valida a mano para no dejar evaluaciones sin catálogo detrás.
+   * subcategorías/requisitos/controles). Se rechaza si:
+   *
+   * <ul>
+   *   <li>es la ÚNICA versión del sistema (aunque no tenga evaluaciones: sin ningún catálogo no se
+   *       puede crear ninguna evaluación);
+   *   <li>alguna evaluación ya la referencia -- ver el comentario en
+   *       EvaluationRepository.existsByCatalogVersion: no hay FK que lo impida solo, así que se
+   *       valida a mano para no dejar evaluaciones sin catálogo detrás;
+   *   <li>tiene perfiles comunitarios cargados (se borraría su base sin avisar).
+   * </ul>
    */
   public void deleteVersion(String version) {
     CatalogVersion cv =
         versionRepo
             .findByVersion(version)
             .orElseThrow(() -> new ResourceNotFoundException(CATALOG_VERSION_RESOURCE, version));
+    if (versionRepo.count() <= 1) {
+      throw new InvalidRequestException(
+          "No se puede eliminar la versión \""
+              + version
+              + "\": es el único catálogo del sistema. Importe otra versión antes de eliminarla.");
+    }
     if (evalRepo.existsByCatalogVersion(version)) {
       throw new InvalidRequestException(
           "No se puede eliminar: hay evaluaciones creadas sobre la versión \"" + version + "\"");
+    }
+    long profiles = profileRepo.countByCatalogVersion(version);
+    if (profiles > 0) {
+      throw new InvalidRequestException(
+          "No se puede eliminar la versión \""
+              + version
+              + "\": tiene "
+              + profiles
+              + (profiles == 1 ? " perfil comunitario cargado" : " perfiles comunitarios cargados")
+              + ". Elimínelos primero.");
     }
     versionRepo.delete(cv);
     auditLog.record("DELETE", "catalog_version:" + cv.getId(), "{\"version\":\"" + version + "\"}");

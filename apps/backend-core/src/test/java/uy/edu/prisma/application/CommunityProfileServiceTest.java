@@ -179,4 +179,32 @@ class CommunityProfileServiceTest {
     assertThrows(RuntimeException.class, () -> service.delete(id));
     verify(repo, never()).deleteById(any());
   }
+
+  @Test
+  void deleteIsBlockedWhileEvaluationsUseTheProfile() {
+    UUID id = UUID.randomUUID();
+    when(repo.existsById(id)).thenReturn(true);
+    when(repo.countEvaluationsUsing(id)).thenReturn(3L);
+
+    uy.edu.prisma.domain.exception.InvalidRequestException ex =
+        assertThrows(
+            uy.edu.prisma.domain.exception.InvalidRequestException.class, () -> service.delete(id));
+
+    assertTrue(ex.getMessage().contains("3 evaluaciones lo usan"));
+    assertTrue(ex.getMessage().contains("Cambie el perfil"));
+    verify(repo, never()).deleteById(any());
+  }
+
+  @Test
+  void deleteMessageUsesTheSingularForOneEvaluation() {
+    UUID id = UUID.randomUUID();
+    when(repo.existsById(id)).thenReturn(true);
+    when(repo.countEvaluationsUsing(id)).thenReturn(1L);
+
+    uy.edu.prisma.domain.exception.InvalidRequestException ex =
+        assertThrows(
+            uy.edu.prisma.domain.exception.InvalidRequestException.class, () -> service.delete(id));
+
+    assertTrue(ex.getMessage().contains("1 evaluación lo usa"));
+  }
 }

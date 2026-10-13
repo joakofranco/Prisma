@@ -17,6 +17,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import uy.edu.prisma.domain.exception.InvalidRequestException;
 import uy.edu.prisma.domain.entity.*;
 import uy.edu.prisma.domain.repository.*;
 import uy.edu.prisma.web.dto.Dto.*;
@@ -348,7 +349,9 @@ class CatalogServiceTest {
   @Test
   void deleteVersionRemovesVersionWhenUnused() {
     when(versionRepo.findByVersion("5.0")).thenReturn(Optional.of(version));
+    when(versionRepo.count()).thenReturn(2L);
     when(evalRepo.existsByCatalogVersion("5.0")).thenReturn(false);
+    when(profileRepo.countByCatalogVersion("5.0")).thenReturn(0L);
 
     service.deleteVersion("5.0");
 
@@ -357,8 +360,51 @@ class CatalogServiceTest {
   }
 
   @Test
+  void deleteVersionIsBlockedWhenItIsTheOnlyCatalogEvenWithoutEvaluations() {
+    when(versionRepo.findByVersion("5.0")).thenReturn(Optional.of(version));
+    when(versionRepo.count()).thenReturn(1L);
+    when(evalRepo.existsByCatalogVersion("5.0")).thenReturn(false);
+    when(profileRepo.countByCatalogVersion("5.0")).thenReturn(0L);
+
+    InvalidRequestException ex =
+        assertThrows(InvalidRequestException.class, () -> service.deleteVersion("5.0"));
+
+    assertTrue(ex.getMessage().contains("único catálogo"));
+    verify(versionRepo, never()).delete(any());
+    verify(auditLog, never()).record(eq("DELETE"), any(), any());
+  }
+
+  @Test
+  void deleteVersionIsBlockedWhenItHasCommunityProfiles() {
+    when(versionRepo.findByVersion("5.0")).thenReturn(Optional.of(version));
+    when(versionRepo.count()).thenReturn(3L);
+    when(evalRepo.existsByCatalogVersion("5.0")).thenReturn(false);
+    when(profileRepo.countByCatalogVersion("5.0")).thenReturn(2L);
+
+    InvalidRequestException ex =
+        assertThrows(InvalidRequestException.class, () -> service.deleteVersion("5.0"));
+
+    assertTrue(ex.getMessage().contains("2 perfiles comunitarios cargados"));
+    assertTrue(ex.getMessage().contains("Elimínelos primero"));
+    verify(versionRepo, never()).delete(any());
+  }
+
+  @Test
+  void deleteVersionMessageUsesTheSingularForOneProfile() {
+    when(versionRepo.findByVersion("5.0")).thenReturn(Optional.of(version));
+    when(versionRepo.count()).thenReturn(2L);
+    when(profileRepo.countByCatalogVersion("5.0")).thenReturn(1L);
+
+    InvalidRequestException ex =
+        assertThrows(InvalidRequestException.class, () -> service.deleteVersion("5.0"));
+
+    assertTrue(ex.getMessage().contains("1 perfil comunitario cargado"));
+  }
+
+  @Test
   void deleteVersionThrowsWhenInUseByEvaluations() {
     when(versionRepo.findByVersion("5.0")).thenReturn(Optional.of(version));
+    when(versionRepo.count()).thenReturn(2L);
     when(evalRepo.existsByCatalogVersion("5.0")).thenReturn(true);
 
     assertThrows(RuntimeException.class, () -> service.deleteVersion("5.0"));

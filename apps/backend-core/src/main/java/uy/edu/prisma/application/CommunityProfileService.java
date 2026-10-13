@@ -76,8 +76,19 @@ public class CommunityProfileService {
     if (!repo.existsById(id)) {
       throw new ResourceNotFoundException("Perfil comunitario", id);
     }
-    // Evaluaciones que ya usan este perfil quedan con community_profile_id NULL (ON DELETE SET
-    // NULL en la FK) -- pasan a verse como "catálogo completo", no se rompen.
+    // Antes las evaluaciones que usaban el perfil quedaban con community_profile_id NULL (ON DELETE
+    // SET NULL en la FK) y pasaban a verse, en silencio, como "catálogo completo": cambiaba cuántos
+    // controles tenía que responder una evaluación ya armada y sus resultados dejaban de coincidir
+    // con lo que se había evaluado. Ahora se bloquea mientras alguna evaluación lo use (la FK sigue
+    // como red de seguridad).
+    long evaluations = repo.countEvaluationsUsing(id);
+    if (evaluations > 0) {
+      throw new InvalidRequestException(
+          "No se puede eliminar el perfil: "
+              + evaluations
+              + (evaluations == 1 ? " evaluación lo usa" : " evaluaciones lo usan")
+              + ". Cambie el perfil de esas evaluaciones o elimínelas primero.");
+    }
     repo.deleteById(id);
   }
 

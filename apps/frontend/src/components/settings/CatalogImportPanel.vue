@@ -26,8 +26,14 @@
           </div>
           <button
             type="button"
-            class="p-1.5 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-600"
-            title="Eliminar versión"
+            class="p-1.5 rounded-lg hover:bg-red-50 text-slate-500 hover:text-red-600 dark:hover:bg-red-950 dark:hover:text-red-300 dark:text-slate-400 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+            :disabled="versions.length <= 1"
+            :title="
+              versions.length <= 1
+                ? 'No se puede eliminar el único catálogo del sistema'
+                : 'Eliminar versión'
+            "
+            :aria-label="`Eliminar versión ${v.version}`"
             @click="handleDeleteVersion(v.version)"
           >
             <TrashIcon class="w-4 h-4" />
