@@ -1,6 +1,7 @@
 package uy.edu.prisma.domain.repository;
 
 import java.util.Collection;
+import java.util.List;
 import java.util.UUID;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -19,6 +20,28 @@ public interface EvaluationRepository extends JpaRepository<Evaluation, UUID> {
   Page<Evaluation> findByStatusOrderByCreatedAtDesc(Evaluation.Status status, Pageable pageable);
 
   Page<Evaluation> findAllByOrderByCreatedAtDesc(Pageable pageable);
+
+  // Variantes "sin ese estado": el listado por defecto oculta las archivadas (ver
+  // EvaluationService.list) -- se las consulta explícitamente filtrando por estado ARCHIVED.
+  Page<Evaluation> findByStatusNotOrderByCreatedAtDesc(Evaluation.Status status, Pageable pageable);
+
+  Page<Evaluation> findByOrganizationIdAndStatusNotOrderByCreatedAtDesc(
+      UUID organizationId, Evaluation.Status status, Pageable pageable);
+
+  Page<Evaluation> findByOrganizationIdInAndStatusNotOrderByCreatedAtDesc(
+      Collection<UUID> organizationIds, Evaluation.Status status, Pageable pageable);
+
+  // De estos ids, los que YA tienen algún dato colgando (respuestas, evidencias, observaciones,
+  // planes o resultados de madurez): esas evaluaciones no se pueden borrar. Una sola consulta para
+  // toda la página de la lista, en vez de cinco conteos por fila.
+  @Query(
+      "SELECT e.id FROM Evaluation e WHERE e.id IN :ids AND ("
+          + "EXISTS (SELECT 1 FROM EvaluationResponse r WHERE r.evaluation.id = e.id) OR "
+          + "EXISTS (SELECT 1 FROM Evidence v WHERE v.evaluation.id = e.id) OR "
+          + "EXISTS (SELECT 1 FROM AuditObservation o WHERE o.evaluation.id = e.id) OR "
+          + "EXISTS (SELECT 1 FROM ImprovementPlan p WHERE p.evaluation.id = e.id) OR "
+          + "EXISTS (SELECT 1 FROM MaturityResult m WHERE m.evaluation.id = e.id))")
+  List<UUID> findIdsWithData(@Param("ids") Collection<UUID> ids);
 
   long countByStatus(Evaluation.Status status);
 

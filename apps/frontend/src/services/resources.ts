@@ -81,6 +81,13 @@ export const evaluationsService = {
   updateStatus(id: string, status: string) {
     return apiClient.patch<Evaluation>(`/evaluations/${id}/status`, { status });
   },
+  // Ids (de los pedidos) de las evaluaciones que se pueden eliminar ahora (accesibles y sin datos).
+  getDeletable(ids: string[]) {
+    return apiClient.get<string[]>('/evaluations/deletable', { params: { ids: ids.join(',') } });
+  },
+  changeProfile(id: string, communityProfileId: string | null) {
+    return apiClient.patch<Evaluation>(`/evaluations/${id}/profile`, { communityProfileId });
+  },
   delete(id: string) {
     return apiClient.delete(`/evaluations/${id}`);
   },

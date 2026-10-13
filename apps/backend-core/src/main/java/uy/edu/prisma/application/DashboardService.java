@@ -49,7 +49,14 @@ public class DashboardService {
       return new DashboardStatsDto(0, 0, 0.0, 0, new LinkedHashMap<>(), new ArrayList<>());
     }
 
-    long totalEvals = orgIds == null ? evalRepo.count() : evalRepo.countByOrganizationIdIn(orgIds);
+    // Las archivadas (descartadas / cerradas) no cuentan en el total ni en los promedios, igual que
+    // se ocultan por defecto en la lista de evaluaciones.
+    long archived =
+        orgIds == null
+            ? evalRepo.countByStatus(Evaluation.Status.ARCHIVED)
+            : evalRepo.countByOrganizationIdInAndStatus(orgIds, Evaluation.Status.ARCHIVED);
+    long totalEvals =
+        (orgIds == null ? evalRepo.count() : evalRepo.countByOrganizationIdIn(orgIds)) - archived;
     long activeOrgs =
         orgIds == null ? orgRepo.countByEnabledTrue() : orgRepo.countByIdInAndEnabledTrue(orgIds);
     long pendingImprovements =
@@ -75,7 +82,9 @@ public class DashboardService {
         (orgIds == null
                 ? evalRepo.findAll(recentPage)
                 : evalRepo.findByOrganizationIdInOrderByCreatedAtDesc(orgIds, recentPage))
-            .getContent();
+            .getContent().stream()
+            .filter(e -> e.getStatus() != Evaluation.Status.ARCHIVED)
+            .toList();
 
     double avgMaturity =
         recentEvals.stream()

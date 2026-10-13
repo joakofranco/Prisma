@@ -132,9 +132,12 @@ public class EvaluationService {
     } else if (status != null) {
       return evalRepo.findByStatusOrderByCreatedAtDesc(status, pr);
     } else if (orgId != null) {
-      return evalRepo.findByOrganizationIdOrderByCreatedAtDesc(orgId, pr);
+      // Sin filtro de estado se OCULTAN las archivadas (descartadas / cerradas): se las consulta
+      // filtrando explícitamente por ARCHIVED.
+      return evalRepo.findByOrganizationIdAndStatusNotOrderByCreatedAtDesc(
+          orgId, Evaluation.Status.ARCHIVED, pr);
     } else {
-      return evalRepo.findAllByOrderByCreatedAtDesc(pr);
+      return evalRepo.findByStatusNotOrderByCreatedAtDesc(Evaluation.Status.ARCHIVED, pr);
     }
   }
 
@@ -198,6 +201,45 @@ public class EvaluationService {
     return result;
   }
 
+  /**
+   * Cambia el perfil comunitario de una evaluación que TODAVÍA NO COMENZÓ: estado Borrador y sin
+   * ninguna respuesta cargada. Con respuestas, cambiar el perfil dejaría controles ya respondidos
+   * fuera del alcance (o controles nuevos sin responder) y los resultados dejarían de corresponder
+   * a lo evaluado; en ese caso hay que crear otra evaluación. {@code null} = catálogo completo. El
+   * perfil elegido debe ser de la misma versión de catálogo que la evaluación.
+   */
+  public EvaluationDto changeProfile(UUID id, UUID profileId) {
+    Evaluation eval =
+        evalRepo.findById(id).orElseThrow(() -> new ResourceNotFoundException("Evaluación", id));
+    currentUser.assertOrganizationAccess(eval.getOrganization().getId());
+    if (eval.getStatus() != Evaluation.Status.DRAFT || evalRepo.countResponses(id) > 0) {
+      throw new InvalidRequestException(
+          "Solo se puede cambiar el perfil de una evaluación sin comenzar (en Borrador y sin"
+              + " respuestas cargadas)");
+    }
+    CommunityProfile profile = null;
+    if (profileId != null) {
+      profile =
+          profileRepo
+              .findById(profileId)
+              .orElseThrow(() -> new ResourceNotFoundException("Perfil comunitario", profileId));
+      if (!profile.getCatalogVersion().equals(eval.getCatalogVersion())) {
+        throw new InvalidRequestException(
+            "El perfil comunitario elegido no pertenece a la versión de catálogo "
+                + eval.getCatalogVersion());
+      }
+    }
+    eval.setCommunityProfile(profile);
+    EvaluationDto result =
+        toDto(
+            evalRepo.save(eval), auditorNamesByOrganization(Set.of(eval.getOrganization().getId())));
+    auditLog.record(
+        "UPDATE",
+        "evaluation:" + id,
+        "{\"communityProfileId\":" + (profileId == null ? "null" : "\"" + profileId + "\"") + "}");
+    return result;
+  }
+
   // Ciclo de vida documentado: Borrador -> En Curso -> Lista para Auditoría -> En Auditoría ->
   // Aprobada / Devuelta -> Archivada (Devuelta vuelve a En Curso para corregir). Antes esto
   // aceptaba CUALQUIER valor del enum sin mirar el estado actual -- una evaluación ya ARCHIVED
@@ -205,9 +247,15 @@ public class EvaluationService {
   // claves ausentes del mapa (ARCHIVED) son estados terminales: no admiten ninguna transición.
   private static final Map<Evaluation.Status, Set<Evaluation.Status>> ALLOWED_TRANSITIONS =
       Map.of(
-          Evaluation.Status.DRAFT, Set.of(Evaluation.Status.IN_PROGRESS),
-          Evaluation.Status.IN_PROGRESS, Set.of(Evaluation.Status.READY_FOR_AUDIT),
-          Evaluation.Status.RETURNED, Set.of(Evaluation.Status.IN_PROGRESS),
+          // ARCHIVED (descartar / cerrar) se permite desde cualquier estado que NO esté en manos del
+          // auditor: Borrador, En Curso, Devuelta y Aprobada. READY_FOR_AUDIT e IN_AUDIT quedan
+          // afuera a propósito (hay una auditoría en marcha: primero se aprueba o se devuelve).
+          Evaluation.Status.DRAFT,
+              Set.of(Evaluation.Status.IN_PROGRESS, Evaluation.Status.ARCHIVED),
+          Evaluation.Status.IN_PROGRESS,
+              Set.of(Evaluation.Status.READY_FOR_AUDIT, Evaluation.Status.ARCHIVED),
+          Evaluation.Status.RETURNED,
+              Set.of(Evaluation.Status.IN_PROGRESS, Evaluation.Status.ARCHIVED),
           Evaluation.Status.READY_FOR_AUDIT, Set.of(Evaluation.Status.IN_AUDIT),
           Evaluation.Status.IN_AUDIT,
               Set.of(Evaluation.Status.APPROVED, Evaluation.Status.RETURNED),
@@ -255,12 +303,43 @@ public class EvaluationService {
               currentUser.hasRole(UserRole.ORG_RESPONSIBLE)
                   || currentUser.hasRole(UserRole.INTERNAL_EVALUATOR);
           case IN_AUDIT, APPROVED, RETURNED -> currentUser.isAuditor();
-          default -> false; // ARCHIVED y cualquier otro: solo PRISMA_ADMIN
+          // Archivar: el responsable de la organización (además de PRISMA_ADMIN, que siempre puede).
+          case ARCHIVED -> currentUser.hasRole(UserRole.ORG_RESPONSIBLE);
+          default -> false;
         };
     if (!allowed) {
       throw new org.springframework.security.access.AccessDeniedException(
           "Su rol no puede realizar esta transición de estado");
     }
+  }
+
+  /**
+   * De los ids pedidos, los de evaluaciones que se pueden ELIMINAR ahora: accesibles para el
+   * usuario y sin ningún dato colgando (ver {@link #delete}). Lo usa la interfaz para mostrar el
+   * botón de eliminar solo donde corresponde. Solo PRISMA_ADMIN y ORG_RESPONSIBLE (quienes pueden
+   * borrar); para el resto devuelve vacío.
+   */
+  @Transactional(readOnly = true)
+  public List<UUID> deletableIds(Collection<UUID> ids) {
+    if (ids == null
+        || ids.isEmpty()
+        || !(currentUser.isPrismaAdmin() || currentUser.hasRole(UserRole.ORG_RESPONSIBLE))) {
+      return List.of();
+    }
+    List<UUID> accessible = new ArrayList<>();
+    for (Evaluation e : evalRepo.findAllById(ids)) {
+      try {
+        currentUser.assertOrganizationAccess(e.getOrganization().getId());
+        accessible.add(e.getId());
+      } catch (org.springframework.security.access.AccessDeniedException ignored) {
+        // Una evaluación de otra organización no se informa (ni siquiera que existe).
+      }
+    }
+    if (accessible.isEmpty()) {
+      return List.of();
+    }
+    Set<UUID> withData = new HashSet<>(evalRepo.findIdsWithData(accessible));
+    return accessible.stream().filter(id -> !withData.contains(id)).toList();
   }
 
   public void delete(UUID id) {
