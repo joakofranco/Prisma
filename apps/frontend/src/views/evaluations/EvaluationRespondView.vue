@@ -252,6 +252,7 @@
   import { catalogService } from '@/services/resources';
   import { useNotification } from '@/composables/useUtils';
   import { getErrorMessage } from '@/utils/helpers';
+  import { pickEntryIndex } from '@/utils/evaluationNav';
   import BaseButton from '@/components/common/BaseButton.vue';
   import BaseTextarea from '@/components/common/BaseTextarea.vue';
   import {
@@ -487,12 +488,11 @@
     const controlIds = new Set(
       subcategory.requirements.flatMap((req) => req.controls.map((c) => c.id)),
     );
-    // Preferir un control que todavía se pregunte (no auto-fallado) -- si TODOS los de esta
-    // Subcategoría ya quedaron capados por el modelo acumulativo, cae al primero igual.
+    // Va al primer control sin responder (punto blanco); si ya están todos respondidos (punto
+    // verde), al primero de la Subcategoría -- ver pickEntryIndex.
     const candidates = flatQuestions.value.filter((q) => controlIds.has(q.control.id));
-    const idx = flatQuestions.value.indexOf(
-      candidates.find((q) => !isAutoFailed(q)) ?? candidates[0],
-    );
+    const pick = pickEntryIndex(candidates, isEffectivelyAnswered, isAutoFailed);
+    const idx = pick >= 0 ? flatQuestions.value.indexOf(candidates[pick]) : -1;
     if (idx >= 0) {
       currentIndex.value = idx;
       showObservations.value = false;

@@ -65,6 +65,14 @@ export const useEvaluationsStore = defineStore('evaluations', () => {
     return data;
   }
 
+  async function changeProfile(id: string, communityProfileId: string | null) {
+    const { data } = await evaluationsService.changeProfile(id, communityProfileId);
+    const index = evaluations.value.findIndex((e) => e.id === id);
+    if (index !== -1) evaluations.value[index] = data;
+    if (currentEvaluation.value?.id === id) currentEvaluation.value = data;
+    return data;
+  }
+
   async function fetchResponses(evaluationId: string) {
     const { data } = await evaluationsService.getResponses(evaluationId);
     responses.value = data;
@@ -111,6 +119,7 @@ export const useEvaluationsStore = defineStore('evaluations', () => {
     fetchEvaluation,
     createEvaluation,
     updateStatus,
+    changeProfile,
     fetchResponses,
     saveResponse,
     fetchResults,

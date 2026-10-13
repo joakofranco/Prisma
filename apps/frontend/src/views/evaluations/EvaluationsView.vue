@@ -95,8 +95,27 @@
         >
           <MagnifyingGlassCircleIcon class="w-4 h-4" />
         </router-link>
+        <button
+          v-if="deletableIds.has(row.id)"
+          type="button"
+          class="p-1.5 rounded-lg hover:bg-red-50 text-slate-500 dark:text-slate-400 hover:text-red-600 dark:hover:bg-red-950 dark:hover:text-red-300"
+          title="Eliminar evaluación"
+          :aria-label="`Eliminar evaluación ${row.name}`"
+          @click="confirmDelete(row as Evaluation)"
+        >
+          <TrashIcon class="w-4 h-4" />
+        </button>
       </template>
     </DataTable>
+
+    <ConfirmDialog
+      v-model="showDeleteConfirm"
+      title="Eliminar evaluación"
+      :message="`¿Eliminar la evaluación &quot;${deletingEval?.name}&quot;? No tiene datos cargados, así que se elimina definitivamente.`"
+      confirm-text="Eliminar"
+      variant="danger"
+      @confirm="handleDelete"
+    />
   </div>
 </template>
 
@@ -114,15 +133,20 @@
     getStatusBgColor,
     getMaturityColor,
     formatDate,
+    getErrorMessage,
   } from '@/utils/helpers';
   import DataTable from '@/components/common/DataTable.vue';
   import BaseButton from '@/components/common/BaseButton.vue';
   import BaseSelect from '@/components/common/BaseSelect.vue';
+  import ConfirmDialog from '@/components/common/ConfirmDialog.vue';
+  import { useNotification } from '@/composables/useUtils';
+  import { evaluationsService } from '@/services/resources';
   import {
     PlusIcon,
     EyeIcon,
     PencilSquareIcon,
     MagnifyingGlassCircleIcon,
+    TrashIcon,
   } from '@heroicons/vue/24/outline';
   import type { Evaluation } from '@/types';
 
@@ -159,7 +183,8 @@
   ]);
 
   const statusFilterOptions = [
-    { value: '', label: 'Todos los estados' },
+    // Las archivadas no se listan por defecto: se consultan eligiendo el estado "Archivada".
+    { value: '', label: 'Todos (excepto archivadas)' },
     { value: 'DRAFT', label: 'Borrador' },
     { value: 'IN_PROGRESS', label: 'En Curso' },
     { value: 'READY_FOR_AUDIT', label: 'Lista para Auditoría' },
@@ -179,11 +204,49 @@
     fetchData();
   }
 
-  function fetchData() {
+  async function fetchData() {
     const filters: { status?: string; organizationId?: string } = {};
     if (statusFilter.value) filters.status = statusFilter.value;
     if (orgFilter.value) filters.organizationId = orgFilter.value;
-    store.fetchEvaluations(currentPage.value, pageSize, filters);
+    await store.fetchEvaluations(currentPage.value, pageSize, filters);
+    await loadDeletable();
+  }
+
+  // Eliminar (C22): el botón aparece solo en las evaluaciones que se pueden eliminar -- accesibles
+  // y SIN datos (el servidor lo informa con una sola consulta por página). Una evaluación con
+  // contenido no se borra: se archiva desde su detalle.
+  const notification = useNotification();
+  const deletableIds = ref<Set<string>>(new Set());
+  const deletingEval = ref<Evaluation | null>(null);
+  const showDeleteConfirm = ref(false);
+
+  async function loadDeletable() {
+    deletableIds.value = new Set();
+    if (!authStore.hasAnyRole('PRISMA_ADMIN', 'ORG_RESPONSIBLE') || evaluations.value.length === 0) {
+      return;
+    }
+    try {
+      const { data } = await evaluationsService.getDeletable(evaluations.value.map((e) => e.id));
+      deletableIds.value = new Set(data);
+    } catch {
+      // Sin esta ayuda visual la lista funciona igual (solo no ofrece el botón de eliminar).
+    }
+  }
+
+  function confirmDelete(evaluation: Evaluation) {
+    deletingEval.value = evaluation;
+    showDeleteConfirm.value = true;
+  }
+
+  async function handleDelete() {
+    if (!deletingEval.value) return;
+    try {
+      await store.deleteEvaluation(deletingEval.value.id);
+      notification.success('Evaluación eliminada correctamente');
+      await fetchData();
+    } catch (err) {
+      notification.error(getErrorMessage(err, 'No se pudo eliminar la evaluación'));
+    }
   }
 
   function canRespond(eval_: Evaluation): boolean {

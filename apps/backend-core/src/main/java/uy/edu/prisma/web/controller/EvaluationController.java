@@ -6,6 +6,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import uy.edu.prisma.application.EvaluationService;
+import uy.edu.prisma.web.dto.Dto.ChangeProfileDto;
 import uy.edu.prisma.web.dto.Dto.CreateEvaluationDto;
 import uy.edu.prisma.web.dto.Dto.EvaluationDto;
 import uy.edu.prisma.web.dto.Dto.EvaluationResponseDto;
@@ -63,6 +64,23 @@ public class EvaluationController {
   public ResponseEntity<EvaluationDto> updateStatus(
       @PathVariable UUID id, @RequestBody Map<String, String> body) {
     return ResponseEntity.ok(service.updateStatus(id, body.get("status")));
+  }
+
+  // Solo quien puede crear la evaluación puede cambiarle el perfil, y solo mientras no comenzó
+  // (ver EvaluationService.changeProfile).
+  @PatchMapping("/{id}/profile")
+  @PreAuthorize("hasAnyRole('PRISMA_ADMIN','ORG_RESPONSIBLE')")
+  public ResponseEntity<EvaluationDto> changeProfile(
+      @PathVariable UUID id, @RequestBody ChangeProfileDto body) {
+    return ResponseEntity.ok(service.changeProfile(id, body.communityProfileId()));
+  }
+
+  // Ids (de los pedidos) de las evaluaciones que se pueden eliminar ahora: la interfaz muestra el
+  // botón de eliminar solo para esas (ver EvaluationService.deletableIds).
+  @GetMapping("/deletable")
+  @PreAuthorize("hasAnyRole('PRISMA_ADMIN','ORG_RESPONSIBLE')")
+  public ResponseEntity<List<UUID>> deletable(@RequestParam List<UUID> ids) {
+    return ResponseEntity.ok(service.deletableIds(ids));
   }
 
   @DeleteMapping("/{id}")

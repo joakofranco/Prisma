@@ -143,7 +143,8 @@ class EvaluationServiceTest {
   @Test
   void listWithOrgOnly() {
     PageRequest pr = PageRequest.of(0, 10, Sort.by("createdAt").descending());
-    when(evalRepo.findByOrganizationIdOrderByCreatedAtDesc(org.getId(), pr))
+    when(evalRepo.findByOrganizationIdAndStatusNotOrderByCreatedAtDesc(
+            org.getId(), Evaluation.Status.ARCHIVED, pr))
         .thenReturn(new PageImpl<>(List.of(eval), pr, 1));
 
     PaginatedDto<EvaluationDto> result = service.list(null, org.getId(), 0, 10);
@@ -154,7 +155,7 @@ class EvaluationServiceTest {
   @Test
   void listWithoutFilters() {
     PageRequest pr = PageRequest.of(0, 10, Sort.by("createdAt").descending());
-    when(evalRepo.findAllByOrderByCreatedAtDesc(pr))
+    when(evalRepo.findByStatusNotOrderByCreatedAtDesc(Evaluation.Status.ARCHIVED, pr))
         .thenReturn(new PageImpl<>(List.of(eval), pr, 1));
 
     PaginatedDto<EvaluationDto> result = service.list(null, null, 0, 10);
@@ -173,7 +174,8 @@ class EvaluationServiceTest {
     Set<UUID> assigned = Set.of(org.getId(), otherOrgId);
     when(currentUser.organizationIds()).thenReturn(assigned);
     PageRequest pr = PageRequest.of(0, 10, Sort.by("createdAt").descending());
-    when(evalRepo.findByOrganizationIdInOrderByCreatedAtDesc(assigned, pr))
+    when(evalRepo.findByOrganizationIdInAndStatusNotOrderByCreatedAtDesc(
+            assigned, Evaluation.Status.ARCHIVED, pr))
         .thenReturn(new PageImpl<>(List.of(eval), pr, 1));
 
     PaginatedDto<EvaluationDto> result = service.list(null, null, 0, 10);
@@ -475,6 +477,102 @@ class EvaluationServiceTest {
     verify(evalRepo, never()).save(any());
   }
 
+  // ---- Cambiar el perfil de una evaluación sin comenzar (C15) ----
+
+  private CommunityProfile profile(String version) {
+    return CommunityProfile.builder()
+        .id(UUID.randomUUID())
+        .name("Gobierno")
+        .catalogVersion(version)
+        .build();
+  }
+
+  @Test
+  void changeProfileSetsTheProfileOnADraftEvaluationWithoutResponses() {
+    UUID id = UUID.randomUUID();
+    eval.setStatus(Evaluation.Status.DRAFT);
+    CommunityProfile p = profile(eval.getCatalogVersion());
+    when(evalRepo.findById(id)).thenReturn(Optional.of(eval));
+    when(evalRepo.countResponses(id)).thenReturn(0L);
+    when(profileRepo.findById(p.getId())).thenReturn(Optional.of(p));
+    when(evalRepo.save(eval)).thenReturn(eval);
+
+    service.changeProfile(id, p.getId());
+
+    assertSame(p, eval.getCommunityProfile());
+    verify(auditLog, times(1)).record(eq("UPDATE"), eq("evaluation:" + id), contains(p.getId().toString()));
+  }
+
+  @Test
+  void changeProfileToNullGoesBackToTheFullCatalog() {
+    UUID id = UUID.randomUUID();
+    eval.setStatus(Evaluation.Status.DRAFT);
+    eval.setCommunityProfile(profile(eval.getCatalogVersion()));
+    when(evalRepo.findById(id)).thenReturn(Optional.of(eval));
+    when(evalRepo.countResponses(id)).thenReturn(0L);
+    when(evalRepo.save(eval)).thenReturn(eval);
+
+    service.changeProfile(id, null);
+
+    assertNull(eval.getCommunityProfile());
+    verify(profileRepo, never()).findById(any());
+  }
+
+  @Test
+  void changeProfileIsRejectedOnceTheEvaluationStartedOrHasResponses() {
+    UUID id = UUID.randomUUID();
+    when(evalRepo.findById(id)).thenReturn(Optional.of(eval));
+
+    // Ya en curso (aunque no tenga respuestas):
+    eval.setStatus(Evaluation.Status.IN_PROGRESS);
+    when(evalRepo.countResponses(id)).thenReturn(0L);
+    assertThrows(
+        uy.edu.prisma.domain.exception.InvalidRequestException.class,
+        () -> service.changeProfile(id, null));
+
+    // En Borrador pero con respuestas cargadas:
+    eval.setStatus(Evaluation.Status.DRAFT);
+    when(evalRepo.countResponses(id)).thenReturn(3L);
+    uy.edu.prisma.domain.exception.InvalidRequestException ex =
+        assertThrows(
+            uy.edu.prisma.domain.exception.InvalidRequestException.class,
+            () -> service.changeProfile(id, null));
+    assertTrue(ex.getMessage().contains("sin comenzar"));
+    verify(evalRepo, never()).save(any());
+  }
+
+  @Test
+  void changeProfileRejectsAProfileFromAnotherCatalogVersion() {
+    UUID id = UUID.randomUUID();
+    eval.setStatus(Evaluation.Status.DRAFT);
+    CommunityProfile other = profile("9.9");
+    when(evalRepo.findById(id)).thenReturn(Optional.of(eval));
+    when(evalRepo.countResponses(id)).thenReturn(0L);
+    when(profileRepo.findById(other.getId())).thenReturn(Optional.of(other));
+
+    assertThrows(
+        uy.edu.prisma.domain.exception.InvalidRequestException.class,
+        () -> service.changeProfile(id, other.getId()));
+    verify(evalRepo, never()).save(any());
+  }
+
+  @Test
+  void changeProfileChecksOrganizationAccessAndMissingEvaluation() {
+    UUID id = UUID.randomUUID();
+    when(evalRepo.findById(id)).thenReturn(Optional.empty());
+    assertThrows(
+        uy.edu.prisma.domain.exception.ResourceNotFoundException.class,
+        () -> service.changeProfile(id, null));
+
+    when(evalRepo.findById(id)).thenReturn(Optional.of(eval));
+    doThrow(new org.springframework.security.access.AccessDeniedException("no"))
+        .when(currentUser)
+        .assertOrganizationAccess(eval.getOrganization().getId());
+    assertThrows(
+        org.springframework.security.access.AccessDeniedException.class,
+        () -> service.changeProfile(id, null));
+  }
+
   @Test
   void deleteIsBlockedWhenEvaluationHasData() {
     UUID id = UUID.randomUUID();
@@ -508,6 +606,107 @@ class EvaluationServiceTest {
     assertThrows(
         uy.edu.prisma.domain.exception.ConflictException.class, () -> service.delete(id));
     verify(evalRepo, never()).deleteById(any());
+  }
+
+  // ---- Archivar desde cualquier estado + listado sin archivadas + eliminables (C22) ----
+
+  @Test
+  void listWithoutStatusFilterHidesArchivedButAnExplicitArchivedFilterShowsThem() {
+    PageRequest pr = PageRequest.of(0, 10, Sort.by("createdAt").descending());
+    eval.setStatus(Evaluation.Status.ARCHIVED);
+    when(evalRepo.findByStatusOrderByCreatedAtDesc(Evaluation.Status.ARCHIVED, pr))
+        .thenReturn(new PageImpl<>(List.of(eval), pr, 1));
+
+    PaginatedDto<EvaluationDto> archived = service.list("ARCHIVED", null, 0, 10);
+
+    assertEquals(1, archived.total());
+    verify(evalRepo, never()).findByStatusNotOrderByCreatedAtDesc(any(), any());
+  }
+
+  @Test
+  void archiveIsAllowedFromDraftInProgressReturnedAndApproved() {
+    for (Evaluation.Status from :
+        List.of(
+            Evaluation.Status.DRAFT,
+            Evaluation.Status.IN_PROGRESS,
+            Evaluation.Status.RETURNED,
+            Evaluation.Status.APPROVED)) {
+      eval.setStatus(from);
+      when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+      when(evalRepo.save(eval)).thenReturn(eval);
+
+      EvaluationDto result = service.updateStatus(eval.getId(), "ARCHIVED");
+
+      assertEquals("ARCHIVED", result.status(), "desde " + from);
+    }
+  }
+
+  @Test
+  void archiveIsRejectedWhileTheAuditIsActive() {
+    for (Evaluation.Status from :
+        List.of(Evaluation.Status.READY_FOR_AUDIT, Evaluation.Status.IN_AUDIT)) {
+      eval.setStatus(from);
+      when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+
+      assertThrows(
+          uy.edu.prisma.domain.exception.InvalidRequestException.class,
+          () -> service.updateStatus(eval.getId(), "ARCHIVED"),
+          "desde " + from);
+    }
+    verify(evalRepo, never()).save(any());
+  }
+
+  @Test
+  void archiveRolePermissions() {
+    eval.setStatus(Evaluation.Status.DRAFT);
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(evalRepo.save(eval)).thenReturn(eval);
+    when(currentUser.isPrismaAdmin()).thenReturn(false);
+
+    // El responsable de la organización puede archivar.
+    when(currentUser.hasRole(UserRole.ORG_RESPONSIBLE)).thenReturn(true);
+    assertEquals("ARCHIVED", service.updateStatus(eval.getId(), "ARCHIVED").status());
+
+    // Un evaluador interno o un auditor NO.
+    eval.setStatus(Evaluation.Status.DRAFT);
+    when(currentUser.hasRole(UserRole.ORG_RESPONSIBLE)).thenReturn(false);
+    when(currentUser.hasRole(UserRole.INTERNAL_EVALUATOR)).thenReturn(true);
+    when(currentUser.isAuditor()).thenReturn(true);
+    assertThrows(
+        org.springframework.security.access.AccessDeniedException.class,
+        () -> service.updateStatus(eval.getId(), "ARCHIVED"));
+  }
+
+  @Test
+  void deletableIdsReturnsOnlyAccessibleEvaluationsWithoutData() {
+    Evaluation empty = Evaluation.builder().id(UUID.randomUUID()).organization(org).build();
+    Evaluation withData = Evaluation.builder().id(UUID.randomUUID()).organization(org).build();
+    Organization otherOrg = Organization.builder().id(UUID.randomUUID()).name("Otra").build();
+    Evaluation foreign = Evaluation.builder().id(UUID.randomUUID()).organization(otherOrg).build();
+    when(currentUser.isPrismaAdmin()).thenReturn(true);
+    when(evalRepo.findAllById(any())).thenReturn(List.of(empty, withData, foreign));
+    doThrow(new org.springframework.security.access.AccessDeniedException("no"))
+        .when(currentUser)
+        .assertOrganizationAccess(otherOrg.getId());
+    when(evalRepo.findIdsWithData(any())).thenReturn(List.of(withData.getId()));
+
+    List<UUID> result =
+        service.deletableIds(List.of(empty.getId(), withData.getId(), foreign.getId()));
+
+    assertEquals(List.of(empty.getId()), result);
+  }
+
+  @Test
+  void deletableIdsIsEmptyForRolesThatCannotDeleteAndForEmptyInput() {
+    when(currentUser.isPrismaAdmin()).thenReturn(false);
+    when(currentUser.hasRole(UserRole.ORG_RESPONSIBLE)).thenReturn(false);
+
+    assertTrue(service.deletableIds(List.of(UUID.randomUUID())).isEmpty());
+    verifyNoInteractions(evalRepo);
+
+    when(currentUser.isPrismaAdmin()).thenReturn(true);
+    assertTrue(service.deletableIds(List.of()).isEmpty());
+    assertTrue(service.deletableIds(null).isEmpty());
   }
 
   @Test

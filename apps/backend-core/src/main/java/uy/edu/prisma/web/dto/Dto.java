@@ -518,6 +518,10 @@ public class Dto {
       String catalogVersion,
       UUID communityProfileId) {}
 
+  // Cambio de perfil comunitario de una evaluación sin comenzar (EvaluationService.changeProfile).
+  // `communityProfileId` null = volver al catálogo completo.
+  public record ChangeProfileDto(UUID communityProfileId) {}
+
   // ---- Evaluation Response ----
   // El catalogo real modela cada control como un item de checklist (cumple / no cumple) dentro
   // de un Requisito graduado por nivel 1-4, no como una autoevaluacion de madurez 1-5 por

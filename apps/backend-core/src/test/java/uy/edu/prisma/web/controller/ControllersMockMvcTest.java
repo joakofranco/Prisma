@@ -301,6 +301,19 @@ class ControllersMockMvcTest {
   }
 
   @Test
+  void evaluationDeletableReturnsTheIds() throws Exception {
+    UUID a = UUID.randomUUID();
+    UUID b = UUID.randomUUID();
+    when(evaluationService.deletableIds(anyCollection())).thenReturn(java.util.List.of(a));
+
+    evaluations
+        .perform(get("/api/evaluations/deletable").param("ids", a + "," + b))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$[0]").value(a.toString()))
+        .andExpect(jsonPath("$.length()").value(1));
+  }
+
+  @Test
   void evaluationDelete() throws Exception {
     UUID id = UUID.randomUUID();
 

@@ -17,6 +17,14 @@
           <span v-if="evaluation?.communityProfileName">
             — Perfil: {{ evaluation.communityProfileName }}</span
           >
+          <button
+            v-if="canChangeProfile"
+            type="button"
+            class="ml-2 text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline"
+            @click="openProfileModal"
+          >
+            Cambiar perfil
+          </button>
         </p>
       </div>
       <div class="flex items-center gap-2">
@@ -32,6 +40,41 @@
         </span>
       </div>
     </div>
+
+    <BaseModal v-model="showProfileModal" title="Cambiar perfil comunitario" size="md">
+      <p class="text-sm text-slate-600 dark:text-slate-300 mb-4">
+        El perfil define qué controles se responden en esta evaluación. Solo se puede cambiar
+        mientras la evaluación no comenzó (en Borrador y sin respuestas cargadas).
+      </p>
+      <BaseSelect
+        v-model="selectedProfileId"
+        label="Perfil comunitario"
+        :options="profileOptions"
+        :error="profileError"
+      />
+      <template #footer>
+        <BaseButton variant="secondary" @click="showProfileModal = false">Cancelar</BaseButton>
+        <BaseButton variant="primary" :loading="savingProfile" @click="saveProfile">
+          Guardar
+        </BaseButton>
+      </template>
+    </BaseModal>
+
+    <ConfirmDialog
+      v-model="showArchiveConfirm"
+      title="Archivar evaluación"
+      message="La evaluación se retira de la lista activa y deja de admitir cambios, pero conserva todo su historial (respuestas, evidencias y auditoría). No se puede deshacer."
+      confirm-text="Archivar"
+      @confirm="changeStatus('ARCHIVED')"
+    />
+    <ConfirmDialog
+      v-model="showDeleteConfirm"
+      title="Eliminar evaluación"
+      message="La evaluación no tiene datos cargados, así que se elimina definitivamente."
+      confirm-text="Eliminar"
+      variant="danger"
+      @confirm="deleteEvaluation"
+    />
 
     <div v-if="loading" class="flex items-center justify-center py-12">
       <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
@@ -55,11 +98,27 @@
 
         <div v-if="statusActions.length > 0" class="flex flex-wrap gap-x-6 gap-y-3">
           <div v-for="action in statusActions" :key="action.status" class="flex flex-col gap-1.5">
-            <BaseButton :variant="action.variant" @click="changeStatus(action.status)">
+            <BaseButton :variant="action.variant" @click="onStatusAction(action.status)">
               {{ action.label }}
             </BaseButton>
-            <span class="text-xs text-slate-400 max-w-[220px]">{{ action.hint }}</span>
+            <span class="text-xs text-slate-500 max-w-[220px] dark:text-slate-400">{{ action.hint }}</span>
           </div>
+        </div>
+
+        <div
+          v-if="canDelete"
+          class="flex flex-col gap-1.5 pt-3 border-t border-slate-100 dark:border-slate-700"
+        >
+          <div>
+            <BaseButton variant="danger" @click="showDeleteConfirm = true">
+              <TrashIcon class="w-4 h-4" />
+              Eliminar evaluación
+            </BaseButton>
+          </div>
+          <span class="text-xs text-slate-500 dark:text-slate-400">
+            No tiene datos cargados, así que se puede eliminar definitivamente. Una evaluación con
+            contenido solo se puede archivar.
+          </span>
         </div>
 
         <div
@@ -330,7 +389,7 @@
   import { useRoute, useRouter } from 'vue-router';
   import { useEvaluationsStore } from '@/stores/evaluations';
   import { useAuthStore } from '@/stores/auth';
-  import { catalogService } from '@/services/resources';
+  import { catalogService, communityProfilesService, evaluationsService } from '@/services/resources';
   import {
     getStatusLabel,
     getStatusColor,
@@ -340,6 +399,10 @@
   } from '@/utils/helpers';
   import StatsCard from '@/components/common/StatsCard.vue';
   import BaseButton from '@/components/common/BaseButton.vue';
+  import BaseModal from '@/components/common/BaseModal.vue';
+  import ConfirmDialog from '@/components/common/ConfirmDialog.vue';
+  import BaseSelect from '@/components/common/BaseSelect.vue';
+  import { useNotification } from '@/composables/useUtils';
   import MaturityRadarChart from '@/components/charts/MaturityRadarChart.vue';
   import MaturitySummaryTables from '@/components/evaluations/MaturitySummaryTables.vue';
   import EvaluationLifecycleStepper from '@/components/evaluations/EvaluationLifecycleStepper.vue';
@@ -355,6 +418,7 @@
     ArrowTrendingUpIcon,
     ArrowDownTrayIcon,
     CalculatorIcon,
+    TrashIcon,
   } from '@heroicons/vue/24/outline';
   import type { MaturityCatalog, MaturityResult, MaturityFunction } from '@/types';
 
@@ -378,6 +442,56 @@
     if (!evaluation.value || totalControls.value === 0) return 0;
     return Math.min(100, Math.round((responses.value.length / totalControls.value) * 100));
   });
+
+  // Cambio de perfil (C15): solo quien puede crear la evaluación, y solo si todavía no comenzó
+  // (Borrador y sin respuestas) -- el backend lo exige igual (EvaluationService.changeProfile).
+  const notification = useNotification();
+  const showProfileModal = ref(false);
+  const savingProfile = ref(false);
+  const profileError = ref('');
+  const selectedProfileId = ref('');
+  const profileOptions = ref<{ value: string; label: string }[]>([]);
+
+  const canChangeProfile = computed(
+    () =>
+      !!evaluation.value &&
+      evaluation.value.status === 'DRAFT' &&
+      responses.value.length === 0 &&
+      authStore.hasAnyRole('PRISMA_ADMIN', 'ORG_RESPONSIBLE'),
+  );
+
+  async function openProfileModal() {
+    if (!evaluation.value) return;
+    profileError.value = '';
+    selectedProfileId.value = evaluation.value.communityProfileId || '';
+    try {
+      const { data } = await communityProfilesService.getAll(evaluation.value.catalogVersion || '5.0');
+      profileOptions.value = [
+        { value: '', label: 'Catálogo completo (todos los controles)' },
+        ...data.map((p) => ({ value: p.id, label: `${p.name} (${p.controlCount} controles)` })),
+      ];
+      showProfileModal.value = true;
+    } catch (err) {
+      notification.error(getErrorMessage(err, 'No se pudieron cargar los perfiles'));
+    }
+  }
+
+  async function saveProfile() {
+    if (!evaluation.value) return;
+    savingProfile.value = true;
+    profileError.value = '';
+    try {
+      const updated = await store.changeProfile(evaluation.value.id, selectedProfileId.value || null);
+      showProfileModal.value = false;
+      notification.success('Perfil actualizado correctamente');
+      // El árbol del catálogo viene podado al perfil: hay que volver a pedirlo.
+      await loadCatalogTree(updated.catalogVersion || '5.0', updated.communityProfileId);
+    } catch (err) {
+      profileError.value = getErrorMessage(err, 'No se pudo cambiar el perfil');
+    } finally {
+      savingProfile.value = false;
+    }
+  }
 
   const canRespondRole = computed(() => authStore.hasAnyRole('PRISMA_ADMIN', 'INTERNAL_EVALUATOR'));
   const canAuditRole = computed(() => authStore.hasAnyRole('PRISMA_ADMIN', 'AUDITOR'));
@@ -637,18 +751,59 @@
       }
     }
 
-    if (authStore.isAdmin) {
-      if (s === 'APPROVED')
-        actions.push({
-          label: 'Archivar',
-          status: 'ARCHIVED',
-          variant: 'secondary',
-          hint: 'La cierra como referencia histórica; deja de admitir cambios.',
-        });
+    // Archivar (descartar / cerrar): desde Borrador, En Curso, Devuelta o Aprobada -- no mientras hay
+    // una auditoría en marcha (el backend lo exige igual). Conserva todo el historial.
+    if (
+      authStore.hasAnyRole('PRISMA_ADMIN', 'ORG_RESPONSIBLE') &&
+      ['DRAFT', 'IN_PROGRESS', 'RETURNED', 'APPROVED'].includes(s)
+    ) {
+      actions.push({
+        label: 'Archivar',
+        status: 'ARCHIVED',
+        variant: 'secondary',
+        hint: 'La retira de la lista activa conservando su historial; deja de admitir cambios.',
+      });
     }
 
     return actions;
   });
+
+  // Archivar es definitivo (ARCHIVED es un estado terminal): pide confirmación.
+  const showArchiveConfirm = ref(false);
+
+  function onStatusAction(status: string) {
+    if (status === 'ARCHIVED') showArchiveConfirm.value = true;
+    else changeStatus(status);
+  }
+
+  // Eliminar (C22): solo una evaluación SIN datos y quien puede borrarla; el servidor lo informa.
+  const showDeleteConfirm = ref(false);
+  const isDeletable = ref(false);
+  const canDelete = computed(
+    () => isDeletable.value && authStore.hasAnyRole('PRISMA_ADMIN', 'ORG_RESPONSIBLE'),
+  );
+
+  async function loadDeletable(id: string) {
+    isDeletable.value = false;
+    if (!authStore.hasAnyRole('PRISMA_ADMIN', 'ORG_RESPONSIBLE')) return;
+    try {
+      const { data } = await evaluationsService.getDeletable([id]);
+      isDeletable.value = data.includes(id);
+    } catch {
+      // Solo se pierde la ayuda visual: sin el botón de eliminar la pantalla funciona igual.
+    }
+  }
+
+  async function deleteEvaluation() {
+    if (!evaluation.value) return;
+    try {
+      await store.deleteEvaluation(evaluation.value.id);
+      notification.success('Evaluación eliminada correctamente');
+      router.push('/evaluations');
+    } catch (err) {
+      notification.error(getErrorMessage(err, 'No se pudo eliminar la evaluación'));
+    }
+  }
 
   async function changeStatus(status: string) {
     if (!evaluation.value) return;
@@ -659,6 +814,35 @@
     }
   }
 
+  // Árbol del catálogo (podado al perfil si aplica): sirve para contar los controles a responder.
+  function loadCatalogTree(version: string, profileId?: string | null) {
+    return catalogService
+      .getByVersion(version, profileId ?? undefined)
+      .then(({ data }) => {
+        const functions = (data as MaturityCatalog).functions || [];
+        catalogFunctions.value = functions;
+        // Un Requisito puede pertenecer a varias Subcategorías -- sus Controles aparecen una
+        // vez por cada una en el árbol, pero cuentan una sola vez para el total a responder.
+        const controlIds = new Set<string>();
+        for (const fn of functions) {
+          for (const cat of fn.categories) {
+            for (const sub of cat.subcategories) {
+              for (const req of sub.requirements) {
+                for (const control of req.controls ?? []) {
+                  controlIds.add(control.id);
+                }
+              }
+            }
+          }
+        }
+        totalControls.value = controlIds.size;
+      })
+      .catch(() => {
+        totalControls.value = 0;
+        catalogFunctions.value = [];
+      });
+  }
+
   onMounted(async () => {
     const id = route.params.id as string;
     await store.fetchEvaluation(id);
@@ -667,31 +851,8 @@
       await Promise.all([
         store.fetchResponses(id),
         store.fetchResults(id),
-        catalogService
-          .getByVersion(version, evaluation.value.communityProfileId)
-          .then(({ data }) => {
-            const functions = (data as MaturityCatalog).functions || [];
-            catalogFunctions.value = functions;
-            // Un Requisito puede pertenecer a varias Subcategorías -- sus Controles aparecen una
-            // vez por cada una en el árbol, pero cuentan una sola vez para el total a responder.
-            const controlIds = new Set<string>();
-            for (const fn of functions) {
-              for (const cat of fn.categories) {
-                for (const sub of cat.subcategories) {
-                  for (const req of sub.requirements) {
-                    for (const control of req.controls ?? []) {
-                      controlIds.add(control.id);
-                    }
-                  }
-                }
-              }
-            }
-            totalControls.value = controlIds.size;
-          })
-          .catch(() => {
-            totalControls.value = 0;
-            catalogFunctions.value = [];
-          }),
+        loadCatalogTree(version, evaluation.value.communityProfileId),
+        loadDeletable(id),
       ]);
     }
   });
