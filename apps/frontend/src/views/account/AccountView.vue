@@ -5,7 +5,9 @@
       <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">Datos de tu cuenta y seguridad</p>
     </div>
 
-    <div class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6 max-w-lg">
+    <div
+      class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6 w-full md:w-[90%] mx-auto"
+    >
       <div class="flex items-center justify-between mb-1">
         <h2 class="text-lg font-semibold text-slate-900 dark:text-white">Perfil</h2>
         <button
@@ -67,35 +69,39 @@
       </dl>
     </div>
 
-    <div class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6 max-w-lg">
+    <div
+      class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6 w-full md:w-[90%] mx-auto"
+    >
       <h2 class="text-lg font-semibold text-slate-900 dark:text-white mb-1">Cambiar contraseña</h2>
       <p class="text-sm text-slate-500 dark:text-slate-400 mt-1 mb-5">
         Por seguridad, te pedimos tu contraseña actual antes de guardar la nueva.
       </p>
 
       <form class="space-y-4" @submit.prevent="handleSubmit">
-        <BaseInput
-          v-model="form.currentPassword"
-          label="Contraseña actual"
-          type="password"
-          :error="errors.currentPassword"
-          required
-        />
-        <BaseInput
-          v-model="form.newPassword"
-          label="Contraseña nueva"
-          type="password"
-          placeholder="Mínimo 8 caracteres"
-          :error="errors.newPassword"
-          required
-        />
-        <BaseInput
-          v-model="form.confirmPassword"
-          label="Confirmar contraseña nueva"
-          type="password"
-          :error="errors.confirmPassword"
-          required
-        />
+        <div class="grid grid-cols-1 xl:grid-cols-3 gap-4">
+          <BaseInput
+            v-model="form.currentPassword"
+            label="Contraseña actual"
+            type="password"
+            :error="errors.currentPassword"
+            required
+          />
+          <BaseInput
+            v-model="form.newPassword"
+            label="Contraseña nueva"
+            type="password"
+            placeholder="Mínimo 8 caracteres"
+            :error="errors.newPassword"
+            required
+          />
+          <BaseInput
+            v-model="form.confirmPassword"
+            label="Confirmar contraseña nueva"
+            type="password"
+            :error="errors.confirmPassword"
+            required
+          />
+        </div>
 
         <div class="flex justify-end pt-2">
           <BaseButton type="submit" variant="primary" :loading="saving">

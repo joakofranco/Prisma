@@ -150,6 +150,7 @@
             required
           />
         </div>
+        <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
         <BaseInput
           v-model="form.email"
           label="Email"
@@ -497,7 +498,9 @@
         roles: user.roles,
         organizationIds: user.organizationIds || [],
       });
-      notification.success(`Usuario ${user.enabled ? 'deshabilitado' : 'habilitado'} correctamente`);
+      notification.success(
+        `Usuario ${user.enabled ? 'deshabilitado' : 'habilitado'} correctamente`,
+      );
     } catch (err) {
       notification.error(getErrorMessage(err, `Error al ${verb} el usuario`));
     }

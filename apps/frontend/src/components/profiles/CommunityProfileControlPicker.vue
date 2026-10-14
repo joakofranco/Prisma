@@ -63,7 +63,7 @@
 
     <!-- Lista agrupada por dominio -->
     <div
-      class="max-h-96 overflow-y-auto border border-slate-200 dark:border-slate-700 rounded-lg divide-y divide-slate-100 dark:divide-slate-700"
+      class="max-h-[45vh] min-h-48 overflow-y-auto border border-slate-200 dark:border-slate-700 rounded-lg divide-y divide-slate-100 dark:divide-slate-700"
     >
       <div v-if="loading" class="text-center py-6 text-sm text-slate-500 dark:text-slate-400">
         Cargando controles...

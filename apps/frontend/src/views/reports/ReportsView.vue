@@ -7,7 +7,7 @@
 
     <div class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6">
       <h3 class="text-lg font-semibold text-slate-900 dark:text-white mb-4">Generar Reporte</h3>
-      <div class="space-y-4 max-w-xl">
+      <div class="grid grid-cols-1 xl:grid-cols-2 gap-4 items-end">
         <BaseSelect
           v-model="selectedEvaluation"
           label="Seleccionar Evaluación"
