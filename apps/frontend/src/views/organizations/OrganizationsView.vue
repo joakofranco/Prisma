@@ -95,7 +95,7 @@
       :title="editingOrg ? 'Editar Organización' : 'Nueva Organización'"
       size="lg"
     >
-      <form class="space-y-4" @submit.prevent="handleSubmit">
+      <form class="grid grid-cols-1 xl:grid-cols-2 gap-4" @submit.prevent="handleSubmit">
         <BaseInput
           v-model="form.name"
           label="Nombre"

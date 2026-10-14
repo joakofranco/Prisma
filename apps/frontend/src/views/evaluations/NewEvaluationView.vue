@@ -10,53 +10,62 @@
       </router-link>
       <div>
         <h1 class="text-2xl font-bold text-slate-900 dark:text-white">Nueva Evaluación</h1>
-        <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">Crear una nueva evaluación de madurez</p>
+        <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">
+          Crear una nueva evaluación de madurez
+        </p>
       </div>
     </div>
 
-    <div class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6 max-w-2xl">
+    <div
+      class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6 w-full md:w-[90%] mx-auto"
+    >
       <form class="space-y-5" @submit.prevent="handleSubmit">
-        <BaseInput
-          v-model="form.name"
-          label="Nombre de la Evaluación"
-          placeholder="Ej: Evaluación Anual 2026"
-          :error="errors.name"
-          required
-        />
-
-        <BaseSelect
-          v-model="form.organizationId"
-          label="Organización"
-          :options="orgOptions"
-          placeholder="Seleccione una organización"
-          :error="errors.organizationId"
-          required
-        />
-
-        <BaseSelect
-          v-model="form.catalogVersion"
-          label="Versión del Catálogo MCU"
-          :options="catalogOptions"
-          placeholder="Seleccione la versión"
-          :error="errors.catalogVersion"
-          required
-        />
-
-        <div>
-          <BaseSelect
-            v-model="form.communityProfileId"
-            label="Perfil Comunitario"
-            :options="profileOptions"
-            placeholder="Catálogo completo (todos los controles)"
+        <div class="grid grid-cols-1 xl:grid-cols-2 gap-5">
+          <BaseInput
+            v-model="form.name"
+            class="xl:col-span-2"
+            label="Nombre de la Evaluación"
+            placeholder="Ej: Evaluación Anual 2026"
+            :error="errors.name"
+            required
           />
-          <p class="mt-1 text-xs text-slate-400">
-            Opcional: acota la evaluación a los controles de un perfil comunitario (p.ej. Gobierno,
-            PYME) en vez del catálogo completo. Se aplica a toda la evaluación y auditoría
-            posterior.
-          </p>
+
+          <BaseSelect
+            v-model="form.organizationId"
+            label="Organización"
+            :options="orgOptions"
+            placeholder="Seleccione una organización"
+            :error="errors.organizationId"
+            required
+          />
+
+          <BaseSelect
+            v-model="form.catalogVersion"
+            label="Versión del Catálogo MCU"
+            :options="catalogOptions"
+            placeholder="Seleccione la versión"
+            :error="errors.catalogVersion"
+            required
+          />
+
+          <div class="xl:col-span-2">
+            <BaseSelect
+              v-model="form.communityProfileId"
+              label="Perfil Comunitario"
+              :options="profileOptions"
+              placeholder="Catálogo completo (todos los controles)"
+            />
+            <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">
+              Opcional: acota la evaluación a los controles de un perfil comunitario (p.ej.
+              Gobierno, PYME) en vez del catálogo completo. Se aplica a toda la evaluación y
+              auditoría posterior.
+            </p>
+          </div>
         </div>
 
-        <div class="flex items-center justify-end gap-3 pt-4 border-t border-slate-200 dark:border-slate-700">
+        <div
+          class="flex items-center justify-end gap-3 pt-4 border-t border-slate-200 dark:border-slate-700"
+        >
           <BaseButton variant="secondary" type="button" @click="router.push('/evaluations')">
             Cancelar
           </BaseButton>

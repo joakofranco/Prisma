@@ -1,5 +1,5 @@
 <template>
-  <div class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6 max-w-2xl">
+  <div class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6 w-full">
     <div class="flex items-start justify-between gap-4 mb-1">
       <div>
         <h2 class="text-lg font-semibold text-slate-900 dark:text-white">Correo electrónico (SMTP)</h2>

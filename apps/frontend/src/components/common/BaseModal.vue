@@ -21,13 +21,25 @@
           <div
             v-if="modelValue"
             :class="[
-              'relative bg-white dark:bg-slate-800 rounded-2xl shadow-2xl w-full',
-              size === 'sm' ? 'max-w-md' : size === 'lg' ? 'max-w-3xl' : 'max-w-xl',
+              // Altura acotada a la ventana (100dvh = alto visible real, también en móvil con barra de
+              // direcciones): cabecera y pie SIEMPRE visibles, y solo el cuerpo se desplaza. Antes el
+              // panel crecía con su contenido, se salía por arriba y por abajo y los botones de
+              // guardar quedaban fuera de pantalla.
+              'relative bg-white dark:bg-slate-800 rounded-2xl shadow-2xl w-full flex flex-col max-h-[calc(100dvh-2rem)]',
+              // Proporcional a la ventana (nunca un ancho fijo en px): en móvil ocupa todo; desde `md`,
+              // sm = avisos/confirmaciones cortos (40%), md = formularios medianos (60%) y lg =
+              // formularios y contenidos grandes (90%). El `min-w` solo evita que un diálogo corto
+              // quede ilegible en tabletas angostas.
+              size === 'sm'
+                ? 'md:w-[40%] md:min-w-[22rem]'
+                : size === 'lg'
+                  ? 'md:w-[90%]'
+                  : 'md:w-[60%] md:min-w-[28rem]',
             ]"
           >
             <div
               v-if="title"
-              class="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-700"
+              class="shrink-0 flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-700"
             >
               <h3 class="text-lg font-semibold text-slate-900 dark:text-white">
                 {{ title }}
@@ -41,13 +53,13 @@
               </button>
             </div>
 
-            <div class="px-6 py-4 text-slate-700 dark:text-slate-200">
+            <div class="flex-1 min-h-0 overflow-y-auto px-6 py-4 text-slate-700 dark:text-slate-200">
               <slot />
             </div>
 
             <div
               v-if="$slots.footer"
-              class="px-6 py-4 border-t border-slate-200 dark:border-slate-700 flex items-center justify-end gap-3"
+              class="shrink-0 px-6 py-4 border-t border-slate-200 dark:border-slate-700 flex items-center justify-end gap-3"
             >
               <slot name="footer" />
             </div>
@@ -59,7 +71,10 @@
 </template>
 
 <script setup lang="ts">
+  import { watch, onBeforeUnmount } from 'vue';
+  import { onKeyStroke } from '@vueuse/core';
   import { XMarkIcon } from '@heroicons/vue/24/outline';
+  import { lockBodyScroll, unlockBodyScroll } from '@/composables/useBodyScrollLock';
 
   const props = withDefaults(
     defineProps<{
@@ -84,4 +99,28 @@
       emit('update:modelValue', false);
     }
   }
+
+  // Mientras el modal está abierto la página de fondo no se desplaza (C19).
+  let locked = false;
+  watch(
+    () => props.modelValue,
+    (open) => {
+      if (open && !locked) {
+        lockBodyScroll();
+        locked = true;
+      } else if (!open && locked) {
+        unlockBodyScroll();
+        locked = false;
+      }
+    },
+    { immediate: true },
+  );
+  onBeforeUnmount(() => {
+    if (locked) unlockBodyScroll();
+  });
+
+  // ESC cierra el modal (WCAG 2.1.1), salvo los persistentes.
+  onKeyStroke('Escape', () => {
+    if (props.modelValue) close();
+  });
 </script>
