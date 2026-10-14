@@ -6,6 +6,28 @@
    la preferencia del sistema operativo. */
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* Insignias de estado y textos de madurez accesibles (WCAG 1.4.3). Los colores llegan como
+   variables CSS desde getStatusBadgeStyle() / getMaturityTextStyle() (utils/helpers.ts): un par
+   claro y uno oscuro, y esta clase elige según el tema -- no se puede hacer con un `style` en
+   línea porque ahí no existe la variante `dark:`. */
+.badge-themed {
+  color: var(--badge-fg);
+  background-color: var(--badge-bg);
+}
+
+.dark .badge-themed {
+  color: var(--badge-fg-dark);
+  background-color: var(--badge-bg-dark);
+}
+
+.maturity-text {
+  color: var(--maturity-fg);
+}
+
+.dark .maturity-text {
+  color: var(--maturity-fg-dark);
+}
+
 body {
   font-family:
     'Inter',

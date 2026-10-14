@@ -30,11 +30,8 @@
       <div class="flex items-center gap-2">
         <span
           v-if="evaluation"
-          class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium"
-          :style="{
-            backgroundColor: getStatusBgColor(evaluation.status),
-            color: getStatusColor(evaluation.status),
-          }"
+          class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium badge-themed"
+          :style="getStatusBadgeStyle(evaluation.status)"
         >
           {{ getStatusLabel(evaluation.status) }}
         </span>
@@ -123,7 +120,7 @@
 
         <div
           class="flex flex-wrap gap-x-6 gap-y-3"
-          :class="statusActions.length > 0 ? 'pt-3 border-t border-slate-100' : ''"
+          :class="statusActions.length > 0 ? 'pt-3 border-t border-slate-100 dark:border-slate-700' : ''"
         >
           <div v-for="action in flowActions" :key="action.key" class="flex flex-col gap-1.5">
             <BaseButton
@@ -134,7 +131,7 @@
               <component :is="action.icon" class="w-4 h-4" />
               {{ action.label }}
             </BaseButton>
-            <span class="text-xs text-slate-400 max-w-[220px]">{{ action.hint }}</span>
+            <span class="text-xs text-slate-500 max-w-[220px] dark:text-slate-400">{{ action.hint }}</span>
           </div>
         </div>
       </div>
@@ -144,22 +141,22 @@
           title="Nivel Global"
           :value="evaluation.globalMaturity != null ? `${evaluation.globalMaturity}/4` : '—'"
           :icon="ChartBarIcon"
-          icon-bg-class="bg-blue-50"
-          icon-color-class="text-blue-600"
+          icon-bg-class="bg-blue-50 dark:bg-blue-950"
+          icon-color-class="text-blue-600 dark:text-blue-400"
         />
         <StatsCard
           title="Progreso"
           :value="`${progressPercent}%`"
           :icon="ClipboardDocumentCheckIcon"
-          icon-bg-class="bg-emerald-50"
-          icon-color-class="text-emerald-600"
+          icon-bg-class="bg-emerald-50 dark:bg-emerald-950"
+          icon-color-class="text-emerald-700 dark:text-emerald-400"
         />
         <StatsCard
           title="Respuestas"
           :value="responses.length"
           :icon="DocumentTextIcon"
-          icon-bg-class="bg-amber-50"
-          icon-color-class="text-amber-600"
+          icon-bg-class="bg-amber-50 dark:bg-amber-950"
+          icon-color-class="text-amber-700 dark:text-amber-400"
         />
       </div>
 
@@ -181,7 +178,7 @@
                 :class="
                   groupBy === 'function'
                     ? 'bg-blue-600 text-white'
-                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-700'
+                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
                 "
                 @click="groupBy = 'function'"
               >
@@ -193,7 +190,7 @@
                 :class="
                   groupBy === 'level'
                     ? 'bg-blue-600 text-white'
-                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-700'
+                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
                 "
                 @click="groupBy = 'level'"
               >
@@ -227,14 +224,14 @@
               <router-link
                 v-if="evaluation.status === 'APPROVED'"
                 to="/reports"
-                class="text-sm text-blue-600 hover:text-blue-700"
+                class="text-sm text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
               >
                 <ArrowDownTrayIcon class="w-4 h-4 inline" /> Reportes
               </router-link>
               <router-link
                 v-if="!['DRAFT', 'ARCHIVED'].includes(evaluation.status)"
                 :to="`/improvement/${evaluation.id}`"
-                class="text-sm text-emerald-600 hover:text-emerald-700"
+                class="text-sm text-emerald-700 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300"
               >
                 <ArrowTrendingUpIcon class="w-4 h-4 inline" /> Plan de Mejora
               </router-link>
@@ -261,7 +258,7 @@
               :class="
                 resultsTab === 'desglose'
                   ? 'bg-blue-600 text-white'
-                  : 'text-slate-500 dark:text-slate-400 hover:text-slate-700'
+                  : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
               "
               @click="resultsTab = 'desglose'"
             >
@@ -273,7 +270,7 @@
               :class="
                 resultsTab === 'tablas'
                   ? 'bg-blue-600 text-white'
-                  : 'text-slate-500 dark:text-slate-400 hover:text-slate-700'
+                  : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
               "
               @click="resultsTab = 'tablas'"
             >
@@ -302,11 +299,11 @@
               >
                 <span class="text-sm font-semibold text-slate-800 dark:text-slate-100">
                   {{ group.title }}
-                  <span class="text-slate-400 font-normal">({{ group.total }})</span>
+                  <span class="text-slate-500 font-normal dark:text-slate-400">({{ group.total }})</span>
                 </span>
                 <ChevronDownIcon
                   :class="[
-                    'w-4 h-4 text-slate-400 transition-transform shrink-0',
+                    'w-4 h-4 text-slate-500 transition-transform shrink-0 dark:text-slate-400',
                     expandedGroups.has(group.key) ? 'rotate-180' : '',
                   ]"
                 />
@@ -324,13 +321,13 @@
                       {{ result.subcategoryName }}</span
                     >
                     <span
-                      class="text-sm font-semibold"
-                      :style="{ color: getMaturityColor(result.currentLevel) }"
+                      class="text-sm font-semibold maturity-text"
+                      :style="getMaturityTextStyle(result.currentLevel)"
                     >
                       {{ result.currentLevel }}/4 (Objetivo: {{ result.targetLevel }})
                     </span>
                   </div>
-                  <div class="w-full bg-slate-200 rounded-full h-2">
+                  <div class="w-full bg-slate-200 rounded-full h-2 dark:bg-slate-700">
                     <div
                       class="h-2 rounded-full"
                       :style="{
@@ -339,7 +336,7 @@
                       }"
                     />
                   </div>
-                  <div v-if="result.gap > 0" class="mt-1 text-xs text-red-600">
+                  <div v-if="result.gap > 0" class="mt-1 text-xs text-red-600 dark:text-red-400">
                     Brecha: {{ result.gap }} nivel(es)
                   </div>
                 </div>
@@ -392,9 +389,9 @@
   import { catalogService, communityProfilesService, evaluationsService } from '@/services/resources';
   import {
     getStatusLabel,
-    getStatusColor,
-    getStatusBgColor,
+    getStatusBadgeStyle,
     getMaturityColor,
+    getMaturityTextStyle,
     getErrorMessage,
   } from '@/utils/helpers';
   import StatsCard from '@/components/common/StatsCard.vue';

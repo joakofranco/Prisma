@@ -13,7 +13,7 @@
           <h1 class="text-xl font-bold text-slate-900 dark:text-white truncate">
             {{ evaluation?.name || 'Responder Evaluación' }}
           </h1>
-          <p class="text-xs text-slate-400 truncate">
+          <p class="text-xs text-slate-500 truncate dark:text-slate-400">
             {{ evaluation?.organizationName }} · Catálogo MCU {{ evaluation?.catalogVersion }}
             <span v-if="evaluation?.communityProfileName">
               · Perfil {{ evaluation.communityProfileName }}</span
@@ -45,7 +45,7 @@
       <aside
         class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4 lg:sticky lg:top-20 max-h-[calc(100vh-6rem)] overflow-y-auto"
       >
-        <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-3">
+        <h2 class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3 dark:text-slate-400">
           Estructura MCU {{ evaluation?.catalogVersion }}
         </h2>
         <nav class="space-y-1">
@@ -58,12 +58,12 @@
                 >{{ fi + 1 }}. {{ func.name }}</span
               >
               <span class="flex items-center gap-1.5 shrink-0">
-                <span class="text-xs font-medium text-slate-400">{{
+                <span class="text-xs font-medium text-slate-500 dark:text-slate-400">{{
                   functionProgressLabel(func.id)
                 }}</span>
                 <ChevronDownIcon
                   :class="[
-                    'w-4 h-4 text-slate-400 transition-transform shrink-0',
+                    'w-4 h-4 text-slate-500 transition-transform shrink-0 dark:text-slate-400',
                     expandedFunctions.has(func.id) ? 'rotate-180' : '',
                   ]"
                 />
@@ -72,7 +72,7 @@
 
             <div
               v-if="expandedFunctions.has(func.id)"
-              class="pl-2 ml-1 border-l border-slate-100 space-y-2 pb-2"
+              class="pl-2 ml-1 border-l border-slate-100 space-y-2 pb-2 dark:border-slate-700"
             >
               <div v-for="(cat, ci) in func.categories" :key="cat.id">
                 <p class="text-xs font-medium text-slate-500 dark:text-slate-400 px-2 mt-2 mb-1">
@@ -84,7 +84,7 @@
                   class="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left text-sm transition-colors"
                   :class="
                     isCurrentSubcategory(sub.id)
-                      ? 'bg-blue-50 text-blue-700 font-medium'
+                      ? 'bg-blue-50 text-blue-700 font-medium dark:bg-blue-950 dark:text-blue-300'
                       : 'text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700'
                   "
                   @click="goToSubcategory(sub.id)"
@@ -119,9 +119,9 @@
           </p>
           <div class="flex items-center justify-between gap-3 mt-3">
             <div class="flex items-center gap-1 text-xs min-w-0 overflow-hidden">
-              <span class="text-slate-400 truncate">{{ currentQuestion.func.name }}</span>
+              <span class="text-slate-500 truncate dark:text-slate-400">{{ currentQuestion.func.name }}</span>
               <ChevronRightIcon class="w-3 h-3 text-slate-300 shrink-0" />
-              <span class="text-slate-400 truncate">{{ currentQuestion.category.name }}</span>
+              <span class="text-slate-500 truncate dark:text-slate-400">{{ currentQuestion.category.name }}</span>
               <ChevronRightIcon class="w-3 h-3 text-slate-300 shrink-0" />
               <span class="text-slate-700 dark:text-slate-200 font-medium truncate">{{
                 currentQuestion.subcategory.name
@@ -142,13 +142,13 @@
               >
                 Nivel {{ currentQuestion.control.targetLevel }}
               </span>
-              <span class="text-xs text-slate-400">{{ currentQuestion.control.code }}</span>
+              <span class="text-xs text-slate-500 dark:text-slate-400">{{ currentQuestion.control.code }}</span>
             </div>
             <button
               class="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors"
               :class="
                 isFlagged
-                  ? 'bg-amber-50 border-amber-300 text-amber-700'
+                  ? 'bg-amber-50 border-amber-300 text-amber-700 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-700'
                   : 'bg-white dark:bg-slate-800 border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700'
               "
               @click="toggleFlag"
@@ -172,7 +172,7 @@
 
           <div
             v-if="isAutoFailed(currentQuestion)"
-            class="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800"
+            class="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800"
           >
             No se pregunta: el Requisito {{ currentQuestion.requirement.code }} ya no puede alcanzar
             el nivel {{ currentQuestion.control.targetLevel }} porque no cumplió un control de nivel
@@ -186,14 +186,14 @@
               class="flex items-center gap-3 p-4 rounded-xl border-2 text-left transition-colors"
               :class="
                 currentAnswer === true
-                  ? 'bg-emerald-50 border-emerald-500 ring-2 ring-emerald-300'
+                  ? 'bg-emerald-50 border-emerald-500 ring-2 ring-emerald-300 dark:bg-emerald-950'
                   : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 hover:border-emerald-300'
               "
               @click="selectCompliant(true)"
             >
               <CheckCircleIcon
                 class="w-6 h-6 shrink-0"
-                :class="currentAnswer === true ? 'text-emerald-600' : 'text-slate-300'"
+                :class="currentAnswer === true ? 'text-emerald-700 dark:text-emerald-400' : 'text-slate-300'"
               />
               <span class="font-semibold text-slate-900 dark:text-white">Cumple</span>
             </button>
@@ -203,14 +203,14 @@
               class="flex items-center gap-3 p-4 rounded-xl border-2 text-left transition-colors"
               :class="
                 currentAnswer === false
-                  ? 'bg-red-50 border-red-500 ring-2 ring-red-300'
+                  ? 'bg-red-50 border-red-500 ring-2 ring-red-300 dark:bg-red-950'
                   : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 hover:border-red-300'
               "
               @click="selectCompliant(false)"
             >
               <XCircleIcon
                 class="w-6 h-6 shrink-0"
-                :class="currentAnswer === false ? 'text-red-600' : 'text-slate-300'"
+                :class="currentAnswer === false ? 'text-red-600 dark:text-red-400' : 'text-slate-300'"
               />
               <span class="font-semibold text-slate-900 dark:text-white">No cumple</span>
             </button>
@@ -219,7 +219,7 @@
           <div class="mt-4">
             <button
               v-if="!showObservations && !currentObservations"
-              class="text-xs font-medium text-blue-600 hover:underline"
+              class="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
               @click="showObservations = true"
             >
               + Agregar observación
@@ -286,10 +286,10 @@
   // por nivel 1-4 -- el badge sólo indica a qué nivel pertenece, no se autoevalúa 1-5 por
   // control (ver EvaluationService.calculateMaturity en el backend para el cálculo acumulativo).
   const LEVEL_BADGE: Record<number, string> = {
-    1: 'bg-red-100 text-red-700',
-    2: 'bg-orange-100 text-orange-700',
-    3: 'bg-yellow-100 text-yellow-700',
-    4: 'bg-emerald-100 text-emerald-700',
+    1: 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300',
+    2: 'bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-300',
+    3: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300',
+    4: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300',
   };
 
   const route = useRoute();

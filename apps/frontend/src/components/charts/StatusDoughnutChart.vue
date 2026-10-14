@@ -1,6 +1,6 @@
 <template>
   <div class="relative" style="height: 220px">
-    <Doughnut :data="chartData" :options="chartOptions" />
+    <Doughnut :data="chartData" :options="chartOptions" :aria-label="ariaLabel" />
   </div>
 </template>
 
@@ -9,6 +9,7 @@
   import { Doughnut } from 'vue-chartjs';
   import { useThemeStore } from '@/stores/theme';
   import { EVALUATION_STATUS_CONFIG } from '@/utils/constants';
+  import { describeChart } from '@/utils/helpers';
   import type { EvaluationStatus } from '@/types';
 
   const props = defineProps<{
@@ -39,6 +40,10 @@
       datasets: [{ data: values, backgroundColor: colors, borderWidth: 0, hoverOffset: 6 }],
     };
   });
+
+  const ariaLabel = computed(() =>
+    describeChart('Evaluaciones por estado', chartData.value.labels, chartData.value.datasets),
+  );
 
   const chartOptions = computed(() => ({
     responsive: true,

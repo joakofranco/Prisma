@@ -1,6 +1,6 @@
 <template>
   <div class="relative" style="height: 260px">
-    <Bar :data="chartData" :options="chartOptions" />
+    <Bar :data="chartData" :options="chartOptions" :aria-label="ariaLabel" />
   </div>
 </template>
 
@@ -9,7 +9,7 @@
   import { Bar } from 'vue-chartjs';
   import type { TooltipItem } from 'chart.js';
   import { useThemeStore } from '@/stores/theme';
-  import { getMaturityColor } from '@/utils/helpers';
+  import { describeChart, getMaturityColor } from '@/utils/helpers';
 
   const props = defineProps<{
     items: { name: string; level: number }[];
@@ -32,6 +32,10 @@
       },
     ],
   }));
+
+  const ariaLabel = computed(() =>
+    describeChart('Madurez por función (nivel 0 a 4)', chartData.value.labels, chartData.value.datasets),
+  );
 
   const chartOptions = computed(() => {
     const isDark = themeStore.theme === 'dark';

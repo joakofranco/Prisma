@@ -16,7 +16,7 @@
       </div>
 
       <div class="bg-white dark:bg-slate-800/10 backdrop-blur-lg rounded-2xl p-8 border border-white/20 shadow-2xl">
-        <p class="text-slate-300 text-sm text-center mb-6">
+        <p class="text-slate-600 dark:text-slate-300 text-sm text-center mb-6">
           El acceso se gestiona a través de Keycloak. Al continuar serás redirigido a la página de
           inicio de sesión segura.
         </p>
@@ -55,7 +55,7 @@
         </button>
 
         <div class="mt-6 pt-6 border-t border-white/10 text-center">
-          <p class="text-xs text-slate-400">Autenticación gestionada por Keycloak</p>
+          <p class="text-xs text-slate-500 dark:text-slate-400">Autenticación gestionada por Keycloak</p>
         </div>
       </div>
 

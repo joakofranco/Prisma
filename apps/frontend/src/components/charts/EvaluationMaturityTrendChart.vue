@@ -1,6 +1,6 @@
 <template>
   <div class="relative" style="height: 220px">
-    <Bar :data="chartData" :options="chartOptions" />
+    <Bar :data="chartData" :options="chartOptions" :aria-label="ariaLabel" />
   </div>
 </template>
 
@@ -9,7 +9,7 @@
   import { Bar } from 'vue-chartjs';
   import type { TooltipItem } from 'chart.js';
   import { useThemeStore } from '@/stores/theme';
-  import { getMaturityColor } from '@/utils/helpers';
+  import { describeChart, getMaturityColor } from '@/utils/helpers';
   import type { Evaluation } from '@/types';
 
   const props = defineProps<{
@@ -39,6 +39,10 @@
       },
     ],
   }));
+
+  const ariaLabel = computed(() =>
+    describeChart('Evolución de la madurez global por evaluación', chartData.value.labels, chartData.value.datasets),
+  );
 
   const chartOptions = computed(() => {
     const isDark = themeStore.theme === 'dark';

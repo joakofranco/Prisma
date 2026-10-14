@@ -16,30 +16,30 @@
         title="Total Evaluaciones"
         :value="stats?.totalEvaluations || 0"
         :icon="ClipboardDocumentCheckIcon"
-        icon-bg-class="bg-blue-50"
-        icon-color-class="text-blue-600"
+        icon-bg-class="bg-blue-50 dark:bg-blue-950"
+        icon-color-class="text-blue-600 dark:text-blue-400"
       />
       <StatsCard
         title="Organizaciones Activas"
         :value="stats?.activeOrganizations || 0"
         :icon="BuildingOffice2Icon"
-        icon-bg-class="bg-emerald-50"
-        icon-color-class="text-emerald-600"
+        icon-bg-class="bg-emerald-50 dark:bg-emerald-950"
+        icon-color-class="text-emerald-700 dark:text-emerald-400"
       />
       <StatsCard
         title="Nivel de Madurez Promedio"
         :value="stats?.avgMaturityLevel?.toFixed(1) || '0.0'"
         :icon="ChartBarIcon"
-        icon-bg-class="bg-amber-50"
-        icon-color-class="text-amber-600"
+        icon-bg-class="bg-amber-50 dark:bg-amber-950"
+        icon-color-class="text-amber-700 dark:text-amber-400"
         subtitle="Escala 1-5"
       />
       <StatsCard
         title="Mejoras Pendientes"
         :value="stats?.pendingImprovements || 0"
         :icon="ArrowTrendingUpIcon"
-        icon-bg-class="bg-red-50"
-        icon-color-class="text-red-600"
+        icon-bg-class="bg-red-50 dark:bg-red-950"
+        icon-color-class="text-red-600 dark:text-red-400"
       />
     </div>
 
@@ -47,7 +47,7 @@
       <div class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-5">
         <h3 class="text-sm font-semibold text-slate-900 dark:text-white mb-4">Evaluaciones por Estado</h3>
         <StatusDoughnutChart v-if="totalByStatus > 0" :data="stats?.evaluationsByStatus || {}" />
-        <p v-else class="text-sm text-slate-400 text-center py-16">No hay evaluaciones aún</p>
+        <p v-else class="text-sm text-slate-500 text-center py-16 dark:text-slate-400">No hay evaluaciones aún</p>
       </div>
 
       <div class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-5">
@@ -56,7 +56,7 @@
           v-if="stats?.maturityByFunction?.length"
           :items="stats.maturityByFunction"
         />
-        <p v-else class="text-sm text-slate-400 text-center py-16">
+        <p v-else class="text-sm text-slate-500 text-center py-16 dark:text-slate-400">
           Todavía no hay resultados de madurez calculados
         </p>
       </div>
@@ -67,7 +67,7 @@
         <h3 class="text-sm font-semibold text-slate-900 dark:text-white">Últimas Evaluaciones</h3>
         <router-link
           to="/evaluations"
-          class="text-sm text-blue-600 hover:text-blue-700 font-medium"
+          class="text-sm text-blue-600 hover:text-blue-700 font-medium dark:text-blue-400 dark:hover:text-blue-300"
         >
           Ver todas →
         </router-link>
@@ -75,11 +75,8 @@
       <DataTable :columns="evaluationColumns" :data="recentEvaluations" :loading="loading">
         <template #cell-status="{ value }">
           <span
-            class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium"
-            :style="{
-              backgroundColor: getStatusBgColor(value as string),
-              color: getStatusColor(value as string),
-            }"
+            class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium badge-themed"
+            :style="getStatusBadgeStyle(value as string)"
           >
             {{ getStatusLabel(value as string) }}
           </span>
@@ -97,7 +94,7 @@
   import { useRouter } from 'vue-router';
   import { useDashboardStore } from '@/stores/dashboard';
   import { useEvaluationsStore } from '@/stores/evaluations';
-  import { getStatusLabel, getStatusColor, getStatusBgColor, formatDate } from '@/utils/helpers';
+  import { getStatusLabel, getStatusBadgeStyle, formatDate } from '@/utils/helpers';
   import StatsCard from '@/components/common/StatsCard.vue';
   import DataTable from '@/components/common/DataTable.vue';
   import BaseButton from '@/components/common/BaseButton.vue';

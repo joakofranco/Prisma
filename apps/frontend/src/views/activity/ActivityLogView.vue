@@ -20,7 +20,8 @@
           v-model="searchTerm"
           type="text"
           placeholder="Buscar por acción o recurso..."
-          class="w-full pl-10 pr-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          aria-label="Buscar por acción o recurso"
+          class="w-full pl-10 pr-4 py-2 rounded-lg border border-slate-300 dark:border-slate-500 bg-white dark:bg-slate-700 text-slate-900 dark:text-white placeholder:text-slate-500 dark:placeholder:text-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           @input="debouncedSearch"
         />
       </div>
@@ -62,13 +63,13 @@
       <template #cell-userEmail="{ row }">
         <span v-if="(row as AuditLog).userEmail" class="text-slate-700 dark:text-slate-200">
           {{ (row as AuditLog).userFullName }}
-          <span class="text-slate-400">({{ (row as AuditLog).userEmail }})</span>
+          <span class="text-slate-500 dark:text-slate-400">({{ (row as AuditLog).userEmail }})</span>
         </span>
-        <span v-else class="text-slate-400">Usuario eliminado</span>
+        <span v-else class="text-slate-500 dark:text-slate-400">Usuario eliminado</span>
       </template>
       <template #cell-tenantName="{ value }">
         <span v-if="value" class="text-slate-700 dark:text-slate-200">{{ value }}</span>
-        <span v-else class="text-slate-400">—</span>
+        <span v-else class="text-slate-500 dark:text-slate-400">—</span>
       </template>
       <template #cell-ipAddress="{ value }">
         <span class="text-slate-500 dark:text-slate-400 text-xs">{{ value || '—' }}</span>
@@ -138,13 +139,13 @@
   });
 
   function actionBadgeClass(action: string): string {
-    if (action === 'CREATE') return 'bg-emerald-50 text-emerald-700';
-    if (action === 'DELETE') return 'bg-red-50 text-red-700';
-    if (action === 'LOGIN') return 'bg-teal-50 text-teal-700';
-    if (action === 'LOGOUT') return 'bg-amber-50 text-amber-700';
+    if (action === 'CREATE' || action === 'REACTIVATE') return 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300';
+    if (action === 'DELETE') return 'bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300';
+    if (action === 'LOGIN') return 'bg-teal-50 text-teal-700 dark:bg-teal-950 dark:text-teal-300';
+    if (action === 'LOGOUT') return 'bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300';
     if (action === 'LOGIN_FAILED') return 'bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300';
-    if (action.startsWith('UPDATE') || action === 'CHANGE_PASSWORD' || action === 'SAVE_RESPONSE')
-      return 'bg-blue-50 text-blue-700';
+    if (action.startsWith('UPDATE') || action === 'CHANGE_PASSWORD' || action === 'LINK_KEYCLOAK_ACCOUNT' || action === 'SAVE_RESPONSE')
+      return 'bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300';
     return 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300';
   }
 

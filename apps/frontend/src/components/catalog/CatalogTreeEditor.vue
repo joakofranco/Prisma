@@ -8,7 +8,7 @@
       <div class="flex items-center gap-2 px-3 py-2.5 bg-slate-50 dark:bg-slate-900">
         <button
           type="button"
-          class="p-1 rounded hover:bg-slate-200 shrink-0"
+          class="p-1 rounded hover:bg-slate-200 shrink-0 dark:hover:bg-slate-700"
           :title="expanded.has(func.clientId) ? 'Contraer' : 'Expandir'"
           @click="toggle(func.clientId)"
         >
@@ -19,7 +19,7 @@
             ]"
           />
         </button>
-        <span class="text-[11px] font-semibold text-slate-400 shrink-0">F{{ fi + 1 }}</span>
+        <span class="text-[11px] font-semibold text-slate-500 shrink-0 dark:text-slate-400">F{{ fi + 1 }}</span>
         <input v-model="func.code" placeholder="Código" :class="[inputCls, 'w-24']" />
         <input
           v-model="func.name"
@@ -28,7 +28,7 @@
         />
         <button
           type="button"
-          class="p-1.5 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-600 shrink-0"
+          class="p-1.5 rounded-lg hover:bg-red-50 text-slate-500 hover:text-red-600 shrink-0 dark:hover:bg-red-950 dark:hover:text-red-300 dark:text-slate-400"
           title="Eliminar función"
           @click="removeAt(modelValue, fi)"
         >
@@ -44,14 +44,14 @@
           :class="[inputCls, 'w-full']"
         />
 
-        <div class="pl-4 border-l-2 border-slate-100 space-y-2">
+        <div class="pl-4 border-l-2 border-slate-100 space-y-2 dark:border-slate-700">
           <div
             v-for="(cat, ci) in func.categories"
             :key="cat.clientId"
-            class="border border-slate-100 rounded-lg p-2.5 bg-slate-50 dark:bg-slate-900/60 space-y-2"
+            class="border border-slate-100 rounded-lg p-2.5 bg-slate-50 dark:bg-slate-900/60 space-y-2 dark:border-slate-700"
           >
             <div class="flex items-center gap-2">
-              <span class="text-[11px] font-semibold text-slate-400 shrink-0">C{{ ci + 1 }}</span>
+              <span class="text-[11px] font-semibold text-slate-500 shrink-0 dark:text-slate-400">C{{ ci + 1 }}</span>
               <input v-model="cat.code" placeholder="Código" :class="[inputCls, 'w-24']" />
               <input
                 v-model="cat.name"
@@ -60,7 +60,7 @@
               />
               <button
                 type="button"
-                class="p-1.5 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-600 shrink-0"
+                class="p-1.5 rounded-lg hover:bg-red-50 text-slate-500 hover:text-red-600 shrink-0 dark:hover:bg-red-950 dark:hover:text-red-300 dark:text-slate-400"
                 title="Eliminar categoría"
                 @click="removeAt(func.categories, ci)"
               >
@@ -68,14 +68,14 @@
               </button>
             </div>
 
-            <div class="pl-4 border-l-2 border-slate-100 space-y-2">
+            <div class="pl-4 border-l-2 border-slate-100 space-y-2 dark:border-slate-700">
               <div
                 v-for="(sub, si) in cat.subcategories"
                 :key="sub.clientId"
-                class="border border-slate-100 rounded-lg p-2.5 bg-white dark:bg-slate-800 space-y-2"
+                class="border border-slate-100 rounded-lg p-2.5 bg-white dark:bg-slate-800 space-y-2 dark:border-slate-700"
               >
                 <div class="flex items-center gap-2">
-                  <span class="text-[11px] font-semibold text-slate-400 shrink-0">
+                  <span class="text-[11px] font-semibold text-slate-500 shrink-0 dark:text-slate-400">
                     SC{{ si + 1 }}
                   </span>
                   <input v-model="sub.code" placeholder="Código" :class="[inputCls, 'w-24']" />
@@ -86,7 +86,7 @@
                   />
                   <button
                     type="button"
-                    class="p-1.5 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-600 shrink-0"
+                    class="p-1.5 rounded-lg hover:bg-red-50 text-slate-500 hover:text-red-600 shrink-0 dark:hover:bg-red-950 dark:hover:text-red-300 dark:text-slate-400"
                     title="Eliminar subcategoría"
                     @click="removeAt(cat.subcategories, si)"
                   >
@@ -94,14 +94,14 @@
                   </button>
                 </div>
 
-                <div class="pl-4 border-l-2 border-slate-100 space-y-2">
+                <div class="pl-4 border-l-2 border-slate-100 space-y-2 dark:border-slate-700">
                   <div
                     v-for="(req, ri) in sub.requirements"
                     :key="req.clientId"
-                    class="border border-slate-100 rounded-lg p-2.5 bg-slate-50 dark:bg-slate-900/40 space-y-2"
+                    class="border border-slate-100 rounded-lg p-2.5 bg-slate-50 dark:bg-slate-900/40 space-y-2 dark:border-slate-700"
                   >
                     <div class="flex items-center gap-2">
-                      <span class="text-[11px] font-semibold text-slate-400 shrink-0">
+                      <span class="text-[11px] font-semibold text-slate-500 shrink-0 dark:text-slate-400">
                         R{{ ri + 1 }}
                       </span>
                       <input v-model="req.code" placeholder="Código" :class="[inputCls, 'w-24']" />
@@ -112,7 +112,7 @@
                       />
                       <button
                         type="button"
-                        class="p-1.5 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-600 shrink-0"
+                        class="p-1.5 rounded-lg hover:bg-red-50 text-slate-500 hover:text-red-600 shrink-0 dark:hover:bg-red-950 dark:hover:text-red-300 dark:text-slate-400"
                         title="Eliminar requisito"
                         @click="removeAt(sub.requirements, ri)"
                       >
@@ -120,13 +120,13 @@
                       </button>
                     </div>
 
-                    <div class="pl-4 border-l-2 border-slate-100 space-y-1.5">
+                    <div class="pl-4 border-l-2 border-slate-100 space-y-1.5 dark:border-slate-700">
                       <div
                         v-for="(ctrl, cti) in req.controls"
                         :key="ctrl.clientId"
                         class="flex items-center gap-2"
                       >
-                        <span class="text-[11px] font-semibold text-slate-400 shrink-0">
+                        <span class="text-[11px] font-semibold text-slate-500 shrink-0 dark:text-slate-400">
                           CT{{ cti + 1 }}
                         </span>
                         <input
@@ -146,7 +146,7 @@
                         </select>
                         <button
                           type="button"
-                          class="p-1.5 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-600 shrink-0"
+                          class="p-1.5 rounded-lg hover:bg-red-50 text-slate-500 hover:text-red-600 shrink-0 dark:hover:bg-red-950 dark:hover:text-red-300 dark:text-slate-400"
                           title="Eliminar control"
                           @click="removeAt(req.controls, cti)"
                         >
@@ -198,9 +198,9 @@
   const modelValue = defineModel<CatalogImportFunction[]>({ required: true });
 
   const inputCls =
-    'px-2 py-1.5 rounded-md border border-slate-300 dark:border-slate-600 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500';
+    'px-2 py-1.5 rounded-md border border-slate-300 dark:border-slate-500 bg-white dark:bg-slate-700 text-slate-900 dark:text-white placeholder:text-slate-500 dark:placeholder:text-slate-300 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500';
   const addBtnCls =
-    'inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-700 hover:underline';
+    'inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-700 hover:underline dark:text-blue-400 dark:hover:text-blue-300';
 
   const expanded = reactive(new Set<string>());
 

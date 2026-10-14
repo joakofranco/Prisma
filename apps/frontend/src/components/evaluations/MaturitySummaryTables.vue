@@ -69,7 +69,7 @@
                   colspan="2"
                 >
                   {{ grp.functionName }}
-                  <span class="text-slate-400 font-normal">({{ grp.functionCode || '—' }})</span>
+                  <span class="text-slate-500 font-normal dark:text-slate-400">({{ grp.functionCode || '—' }})</span>
                 </td>
                 <td
                   class="px-4 py-1.5 text-right font-semibold tabular-nums"

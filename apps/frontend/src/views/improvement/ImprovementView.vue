@@ -43,22 +43,22 @@
           title="En Progreso"
           :value="plansByStatus('IN_PROGRESS')"
           :icon="PlayIcon"
-          icon-bg-class="bg-blue-50"
-          icon-color-class="text-blue-600"
+          icon-bg-class="bg-blue-50 dark:bg-blue-950"
+          icon-color-class="text-blue-600 dark:text-blue-400"
         />
         <StatsCard
           title="Completadas"
           :value="plansByStatus('COMPLETED')"
           :icon="CheckCircleIcon"
-          icon-bg-class="bg-emerald-50"
-          icon-color-class="text-emerald-600"
+          icon-bg-class="bg-emerald-50 dark:bg-emerald-950"
+          icon-color-class="text-emerald-700 dark:text-emerald-400"
         />
         <StatsCard
           title="Vencidas"
           :value="plansByStatus('OVERDUE')"
           :icon="ExclamationCircleIcon"
-          icon-bg-class="bg-red-50"
-          icon-color-class="text-red-600"
+          icon-bg-class="bg-red-50 dark:bg-red-950"
+          icon-color-class="text-red-600 dark:text-red-400"
         />
       </div>
 
@@ -90,8 +90,8 @@
                   >
                     {{ planStatusLabel(plan.status) }}
                   </span>
-                  <span class="text-xs text-slate-400">Responsable: {{ plan.responsible }}</span>
-                  <span class="text-xs text-slate-400">Vence: {{ formatDate(plan.dueDate) }}</span>
+                  <span class="text-xs text-slate-500 dark:text-slate-400">Responsable: {{ plan.responsible }}</span>
+                  <span class="text-xs text-slate-500 dark:text-slate-400">Vence: {{ formatDate(plan.dueDate) }}</span>
                 </div>
               </div>
               <div class="flex gap-1 shrink-0">
@@ -175,7 +175,7 @@
             <input
               v-model="s.selected"
               type="checkbox"
-              class="mt-1 w-4 h-4 rounded border-slate-300 dark:border-slate-600 text-blue-600 focus:ring-blue-500"
+              class="mt-1 w-4 h-4 rounded border-slate-300 dark:border-slate-500 text-blue-600 focus:ring-blue-500 dark:text-blue-400"
             />
             <div class="flex-1 space-y-2">
               <div class="flex items-center justify-between flex-wrap gap-2">
@@ -190,7 +190,7 @@
 
               <button
                 type="button"
-                class="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-700 disabled:opacity-50"
+                class="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-700 disabled:opacity-50 dark:text-indigo-400 dark:hover:text-indigo-300"
                 :disabled="loadingTipsFor === s.controlId"
                 @click="loadTips(s)"
               >
@@ -205,15 +205,15 @@
               </button>
               <div
                 v-if="tipsByControl[s.controlId]"
-                class="p-3 rounded-lg bg-indigo-50 border border-indigo-100 space-y-1.5"
+                class="p-3 rounded-lg bg-indigo-50 border border-indigo-100 space-y-1.5 dark:bg-indigo-950"
               >
                 <p
                   v-if="tipsByControl[s.controlId].summary"
-                  class="text-xs font-medium text-indigo-900"
+                  class="text-xs font-medium text-indigo-900 dark:text-indigo-400"
                 >
                   {{ tipsByControl[s.controlId].summary }}
                 </p>
-                <ul class="text-xs text-indigo-800 list-disc pl-4 space-y-0.5">
+                <ul class="text-xs text-indigo-800 list-disc pl-4 space-y-0.5 dark:text-indigo-400">
                   <li v-for="(tip, i) in tipsByControl[s.controlId].tips" :key="i">
                     {{ tip }}
                   </li>
@@ -226,7 +226,7 @@
                 <input
                   v-model="s.suggestedDueDate"
                   type="date"
-                  class="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  class="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
             </div>
@@ -348,9 +348,9 @@
   function priorityClass(p: string) {
     return (
       {
-        HIGH: 'bg-red-50 text-red-700',
-        MEDIUM: 'bg-amber-50 text-amber-700',
-        LOW: 'bg-emerald-50 text-emerald-700',
+        HIGH: 'bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300',
+        MEDIUM: 'bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300',
+        LOW: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300',
       }[p] || 'bg-slate-50 dark:bg-slate-900 text-slate-700 dark:text-slate-200'
     );
   }
@@ -370,9 +370,9 @@
     return (
       {
         PENDING: 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300',
-        IN_PROGRESS: 'bg-blue-100 text-blue-700',
-        COMPLETED: 'bg-emerald-100 text-emerald-700',
-        OVERDUE: 'bg-red-100 text-red-700',
+        IN_PROGRESS: 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300',
+        COMPLETED: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300',
+        OVERDUE: 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300',
       }[s] || 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
     );
   }

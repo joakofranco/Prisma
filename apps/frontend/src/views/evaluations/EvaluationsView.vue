@@ -40,11 +40,8 @@
     >
       <template #cell-status="{ value }">
         <span
-          class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium"
-          :style="{
-            backgroundColor: getStatusBgColor(value as string),
-            color: getStatusColor(value as string),
-          }"
+          class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium badge-themed"
+          :style="getStatusBadgeStyle(value as string)"
         >
           {{ getStatusLabel(value as string) }}
         </span>
@@ -57,7 +54,7 @@
           />
           {{ value }}/4
         </span>
-        <span v-else class="text-slate-400">—</span>
+        <span v-else class="text-slate-500 dark:text-slate-400">—</span>
       </template>
       <template #cell-createdByName="{ value }">
         {{ value || '—' }}
@@ -66,7 +63,7 @@
         <span v-if="(value as string[])?.length" class="text-slate-700 dark:text-slate-200">
           {{ (value as string[]).join(', ') }}
         </span>
-        <span v-else class="text-slate-400">Sin asignar</span>
+        <span v-else class="text-slate-500 dark:text-slate-400">Sin asignar</span>
       </template>
       <template #cell-createdAt="{ value }">
         {{ formatDate(value as string) }}
@@ -74,7 +71,7 @@
       <template #actions="{ row }">
         <router-link
           :to="`/evaluations/${row.id}`"
-          class="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-slate-700"
+          class="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
           title="Ver evaluación"
         >
           <EyeIcon class="w-4 h-4" />
@@ -82,7 +79,7 @@
         <router-link
           v-if="canRespond(row)"
           :to="`/evaluations/${row.id}/respond`"
-          class="p-1.5 rounded-lg hover:bg-blue-50 text-slate-500 dark:text-slate-400 hover:text-blue-600"
+          class="p-1.5 rounded-lg hover:bg-blue-50 text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:bg-blue-950 dark:hover:text-blue-300"
           title="Responder evaluación"
         >
           <PencilSquareIcon class="w-4 h-4" />
@@ -90,7 +87,7 @@
         <router-link
           v-if="canAudit(row)"
           :to="`/audit/${row.id}`"
-          class="p-1.5 rounded-lg hover:bg-amber-50 text-slate-500 dark:text-slate-400 hover:text-amber-600"
+          class="p-1.5 rounded-lg hover:bg-amber-50 text-slate-500 dark:text-slate-400 hover:text-amber-700 dark:hover:bg-amber-950 dark:hover:text-amber-300"
           title="Auditar evaluación"
         >
           <MagnifyingGlassCircleIcon class="w-4 h-4" />
@@ -129,8 +126,7 @@
   import { useAuthStore } from '@/stores/auth';
   import {
     getStatusLabel,
-    getStatusColor,
-    getStatusBgColor,
+    getStatusBadgeStyle,
     getMaturityColor,
     formatDate,
     getErrorMessage,

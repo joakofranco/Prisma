@@ -20,6 +20,33 @@ export const MATURITY_LEVELS: Record<number, { label: string; color: string }> =
   4: { label: 'Gestionado', color: '#22c55e' },
 };
 
+// Colores ACCESIBLES (WCAG 1.4.3, contraste >= 4.5:1) de las insignias de estado, en claro y en
+// oscuro. Los `color` / `bgColor` de EVALUATION_STATUS_CONFIG de más abajo son colores "de marca"
+// pensados para gráficos y puntos; como texto sobre su fondo claro daban 3.0-4.4:1 (no llegaban a
+// AA). Cada insignia usa estos pares vía variables CSS (ver `.badge-themed` en main.css).
+export const STATUS_BADGE_COLORS: Record<
+  string,
+  { fg: string; bg: string; fgDark: string; bgDark: string }
+> = {
+  DRAFT: { fg: '#374151', bg: '#f3f4f6', fgDark: '#e5e7eb', bgDark: '#374151' },
+  IN_PROGRESS: { fg: '#1d4ed8', bg: '#dbeafe', fgDark: '#bfdbfe', bgDark: '#1e3a8a' },
+  READY_FOR_AUDIT: { fg: '#6d28d9', bg: '#ede9fe', fgDark: '#ddd6fe', bgDark: '#4c1d95' },
+  IN_AUDIT: { fg: '#92400e', bg: '#fef3c7', fgDark: '#fde68a', bgDark: '#78350f' },
+  APPROVED: { fg: '#166534', bg: '#dcfce7', fgDark: '#bbf7d0', bgDark: '#14532d' },
+  RETURNED: { fg: '#b91c1c', bg: '#fee2e2', fgDark: '#fecaca', bgDark: '#7f1d1d' },
+  ARCHIVED: { fg: '#374151', bg: '#f3f4f6', fgDark: '#e5e7eb', bgDark: '#374151' },
+};
+
+// Color de TEXTO por nivel de madurez (el `color` de MATURITY_LEVELS sirve para puntos y gráficos
+// pero no llega a 4.5:1 como texto sobre blanco): par claro / oscuro, ver `.maturity-text`.
+export const MATURITY_TEXT_COLORS: Record<number, { fg: string; fgDark: string }> = {
+  0: { fg: '#b91c1c', fgDark: '#f87171' },
+  1: { fg: '#c2410c', fgDark: '#fb923c' },
+  2: { fg: '#a16207', fgDark: '#facc15' },
+  3: { fg: '#4d7c0f', fgDark: '#a3e635' },
+  4: { fg: '#15803d', fgDark: '#4ade80' },
+};
+
 export const EVALUATION_STATUS_CONFIG: Record<
   string,
   {
