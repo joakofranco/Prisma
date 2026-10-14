@@ -11,7 +11,7 @@
         <button
           v-if="!editingProfile"
           type="button"
-          class="text-sm text-blue-600 hover:text-blue-700 font-medium"
+          class="text-sm text-blue-600 hover:text-blue-700 font-medium dark:text-blue-400 dark:hover:text-blue-300"
           @click="startEditingProfile"
         >
           Corregir nombre

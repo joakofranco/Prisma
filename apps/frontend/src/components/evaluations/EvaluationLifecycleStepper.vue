@@ -4,7 +4,7 @@
       <h3 class="text-sm font-semibold text-slate-900 dark:text-white">Ciclo de vida de la evaluación</h3>
       <button
         type="button"
-        class="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-700 hover:underline"
+        class="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-700 hover:underline dark:text-blue-400 dark:hover:text-blue-300"
         @click="showGlossary = true"
       >
         <QuestionMarkCircleIcon class="w-4 h-4" />
@@ -57,17 +57,17 @@
           v-for="s in glossaryOrder"
           :key="s"
           class="flex items-start gap-3 p-3 rounded-lg"
-          :class="s === status ? 'bg-blue-50 ring-1 ring-blue-200' : 'bg-slate-50 dark:bg-slate-900'"
+          :class="s === status ? 'bg-blue-50 ring-1 ring-blue-200 dark:bg-blue-950' : 'bg-slate-50 dark:bg-slate-900'"
         >
           <span
-            class="mt-0.5 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium shrink-0"
-            :style="{ backgroundColor: getStatusBgColor(s), color: getStatusColor(s) }"
+            class="mt-0.5 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium shrink-0 badge-themed"
+            :style="getStatusBadgeStyle(s)"
           >
             {{ getStatusLabel(s) }}
           </span>
           <div class="min-w-0">
             <p class="text-sm text-slate-700 dark:text-slate-200">{{ getStatusDescription(s) }}</p>
-            <p v-if="getStatusResponsibleLabel(s)" class="text-xs text-slate-400 mt-0.5">
+            <p v-if="getStatusResponsibleLabel(s)" class="text-xs text-slate-500 mt-0.5 dark:text-slate-400">
               Responsable: {{ getStatusResponsibleLabel(s) }}
             </p>
           </div>
@@ -86,8 +86,7 @@
   import { EVALUATION_LIFECYCLE_STEPS } from '@/utils/constants';
   import {
     getStatusLabel,
-    getStatusColor,
-    getStatusBgColor,
+    getStatusBadgeStyle,
     getStatusDescription,
     getStatusResponsibleLabel,
   } from '@/utils/helpers';
@@ -141,19 +140,19 @@
     // ARCHIVED es un paso manual/opcional (no todas las evaluaciones se archivan): se marca con
     // borde punteado en vez del sólido de los pasos que sí son obligatorios en el camino.
     return steps[i] === 'ARCHIVED'
-      ? 'bg-white dark:bg-slate-800 border-dashed border-slate-300 dark:border-slate-600 text-slate-400'
-      : 'bg-white dark:bg-slate-800 border-slate-300 dark:border-slate-600 text-slate-400';
+      ? 'bg-white dark:bg-slate-800 border-dashed border-slate-300 dark:border-slate-600 text-slate-500 dark:text-slate-400'
+      : 'bg-white dark:bg-slate-800 border-slate-300 dark:border-slate-600 text-slate-500 dark:text-slate-400';
   }
 
   function labelClass(i: number) {
     const state = stepState(i);
     if (state === 'current')
-      return isReturned.value ? 'text-red-600 font-semibold' : 'text-slate-900 dark:text-white font-semibold';
+      return isReturned.value ? 'text-red-600 font-semibold dark:text-red-400' : 'text-slate-900 dark:text-white font-semibold';
     if (state === 'done') return 'text-slate-600 dark:text-slate-300';
-    return 'text-slate-400';
+    return 'text-slate-500 dark:text-slate-400';
   }
 
   function connectorClass(i: number) {
-    return i < currentIndex.value ? 'bg-emerald-400' : 'bg-slate-200';
+    return i < currentIndex.value ? 'bg-emerald-400' : 'bg-slate-200 dark:bg-slate-700';
   }
 </script>

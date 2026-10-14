@@ -56,8 +56,8 @@
                   :class="[
                     'inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium',
                     organization.enabled
-                      ? 'bg-emerald-50 text-emerald-700'
-                      : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400',
+                      ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
+                      : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300',
                   ]"
                 >
                   {{ organization.enabled ? 'Activa' : 'Inactiva' }}
@@ -86,7 +86,7 @@
             <h3 class="text-lg font-semibold text-slate-900 dark:text-white">Evaluaciones</h3>
             <router-link
               :to="`/evaluations?organizationId=${organization.id}`"
-              class="text-sm text-blue-600 hover:text-blue-700 font-medium"
+              class="text-sm text-blue-600 hover:text-blue-700 font-medium dark:text-blue-400 dark:hover:text-blue-300"
             >
               Ver todas →
             </router-link>
@@ -117,11 +117,8 @@
                   {{ eval_.globalMaturity != null ? `${eval_.globalMaturity}/4` : '—' }}
                 </span>
                 <span
-                  class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium"
-                  :style="{
-                    backgroundColor: getStatusBgColor(eval_.status),
-                    color: getStatusColor(eval_.status),
-                  }"
+                  class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium badge-themed"
+                  :style="getStatusBadgeStyle(eval_.status)"
                 >
                   {{ getStatusLabel(eval_.status) }}
                 </span>
@@ -158,7 +155,7 @@
   import { ref, computed, onMounted } from 'vue';
   import { useRoute, useRouter } from 'vue-router';
   import { organizationsService, evaluationsService } from '@/services/resources';
-  import { formatDate, getStatusLabel, getStatusColor, getStatusBgColor } from '@/utils/helpers';
+  import { formatDate, getStatusLabel, getStatusBadgeStyle } from '@/utils/helpers';
   import BaseButton from '@/components/common/BaseButton.vue';
   import EvaluationMaturityTrendChart from '@/components/charts/EvaluationMaturityTrendChart.vue';
   import { ArrowLeftIcon, ClipboardDocumentCheckIcon, TrashIcon } from '@heroicons/vue/24/outline';

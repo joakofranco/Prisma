@@ -21,7 +21,7 @@
       </div>
       <router-link
         :to="`/improvement/${evaluationId}`"
-        class="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white text-sm font-medium rounded-lg hover:bg-emerald-700"
+        class="inline-flex items-center gap-2 px-4 py-2 bg-emerald-700 text-white text-sm font-medium rounded-lg hover:bg-emerald-800"
       >
         <ArrowTrendingUpIcon class="w-4 h-4" /> Plan de Mejora
       </router-link>
@@ -35,7 +35,7 @@
       <EvaluationLifecycleStepper v-if="evaluation" :status="evaluation.status" />
       <div class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6">
         <div class="flex items-center gap-2 mb-1">
-          <SparklesIcon class="w-5 h-5 text-indigo-600" />
+          <SparklesIcon class="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
           <h3 class="text-lg font-semibold text-slate-900 dark:text-white">
             Asistente de IA — Evidencias por control
           </h3>
@@ -74,13 +74,13 @@
             </div>
 
             <div v-if="citationsByControl[c.controlId]" class="mt-3 space-y-2">
-              <p v-if="citationsByControl[c.controlId].length === 0" class="text-xs text-slate-400">
+              <p v-if="citationsByControl[c.controlId].length === 0" class="text-xs text-slate-500 dark:text-slate-400">
                 No se encontraron fragmentos relevantes en la evidencia cargada.
               </p>
               <div
                 v-for="(cit, i) in citationsByControl[c.controlId]"
                 :key="i"
-                class="p-3 rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-100"
+                class="p-3 rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-700"
               >
                 <div class="flex items-center justify-between gap-2">
                   <p class="text-xs font-medium text-slate-700 dark:text-slate-200 truncate">
@@ -90,14 +90,14 @@
                     v-if="documentUrl(cit)"
                     :href="documentUrl(cit) || undefined"
                     target="_blank"
-                    class="text-xs text-blue-600 hover:underline shrink-0"
+                    class="text-xs text-blue-600 hover:underline shrink-0 dark:text-blue-400"
                   >
                     Ver documento
                   </a>
                 </div>
                 <p class="text-xs text-slate-600 dark:text-slate-300 mt-1">{{ cit.snippet }}</p>
                 <button
-                  class="mt-2 text-xs font-medium text-indigo-600 hover:underline"
+                  class="mt-2 text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400"
                   @click="openObservationForCitation(c, cit)"
                 >
                   Registrar validación
@@ -155,7 +155,7 @@
                 <p class="text-sm text-slate-700 dark:text-slate-200">
                   {{ obs.description }}
                 </p>
-                <p class="text-xs text-slate-400 mt-2">
+                <p class="text-xs text-slate-500 mt-2 dark:text-slate-400">
                   {{ formatDate(obs.createdAt) }}
                   <span v-if="obs.createdByName"> — Registrada por {{ obs.createdByName }}</span>
                 </p>
@@ -163,7 +163,7 @@
               <div class="flex gap-1 shrink-0">
                 <button
                   v-if="obs.status === 'OPEN'"
-                  class="p-1.5 rounded-lg hover:bg-blue-50 text-slate-400 hover:text-blue-600"
+                  class="p-1.5 rounded-lg hover:bg-blue-50 text-slate-500 hover:text-blue-600 dark:hover:bg-blue-950 dark:hover:text-blue-300 dark:text-slate-400"
                   title="Marcar en progreso"
                   @click="updateObservationStatus(obs.id, 'IN_PROGRESS')"
                 >
@@ -171,7 +171,7 @@
                 </button>
                 <button
                   v-if="obs.status === 'IN_PROGRESS'"
-                  class="p-1.5 rounded-lg hover:bg-emerald-50 text-slate-400 hover:text-emerald-600"
+                  class="p-1.5 rounded-lg hover:bg-emerald-50 text-slate-500 hover:text-emerald-700 dark:hover:bg-emerald-950 dark:hover:text-emerald-300 dark:text-slate-400"
                   title="Marcar resuelta"
                   @click="updateObservationStatus(obs.id, 'RESOLVED')"
                 >
@@ -373,9 +373,9 @@
   function obsTypeClass(type: string) {
     return (
       {
-        OBSERVATION: 'bg-blue-50 border-blue-200',
-        NON_CONFORMITY: 'bg-red-50 border-red-200',
-        RECOMMENDATION: 'bg-amber-50 border-amber-200',
+        OBSERVATION: 'bg-blue-50 border-blue-200 dark:bg-blue-950 dark:border-blue-800',
+        NON_CONFORMITY: 'bg-red-50 border-red-200 dark:bg-red-950 dark:border-red-800',
+        RECOMMENDATION: 'bg-amber-50 border-amber-200 dark:bg-amber-950 dark:border-amber-800',
       }[type] || 'bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-700'
     );
   }
@@ -383,9 +383,9 @@
   function obsTypeTextClass(type: string) {
     return (
       {
-        OBSERVATION: 'text-blue-700',
-        NON_CONFORMITY: 'text-red-700',
-        RECOMMENDATION: 'text-amber-700',
+        OBSERVATION: 'text-blue-700 dark:text-blue-400',
+        NON_CONFORMITY: 'text-red-700 dark:text-red-400',
+        RECOMMENDATION: 'text-amber-700 dark:text-amber-400',
       }[type] || 'text-slate-700 dark:text-slate-200'
     );
   }
@@ -402,9 +402,9 @@
     return (
       {
         OPEN: 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300',
-        IN_PROGRESS: 'bg-blue-100 text-blue-700',
-        RESOLVED: 'bg-emerald-100 text-emerald-700',
-        CLOSED: 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400',
+        IN_PROGRESS: 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300',
+        RESOLVED: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300',
+        CLOSED: 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300',
       }[status] || 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
     );
   }

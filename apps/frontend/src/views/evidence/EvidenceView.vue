@@ -37,8 +37,8 @@
         class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4 hover:shadow-md transition-shadow"
       >
         <div class="flex items-start gap-3">
-          <div class="p-2 bg-blue-50 rounded-lg">
-            <DocumentIcon class="w-6 h-6 text-blue-600" />
+          <div class="p-2 bg-blue-50 rounded-lg dark:bg-blue-950">
+            <DocumentIcon class="w-6 h-6 text-blue-600 dark:text-blue-400" />
           </div>
           <div class="flex-1 min-w-0">
             <p class="text-sm font-medium text-slate-900 dark:text-white truncate">
@@ -47,22 +47,22 @@
             <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">
               {{ formatFileSize(ev.fileSize) }} — {{ ev.fileType }}
             </p>
-            <p v-if="ev.description" class="text-xs text-slate-400 mt-1 truncate">
+            <p v-if="ev.description" class="text-xs text-slate-500 mt-1 truncate dark:text-slate-400">
               {{ ev.description }}
             </p>
           </div>
         </div>
-        <div class="flex items-center justify-between mt-3 pt-3 border-t border-slate-100">
+        <div class="flex items-center justify-between mt-3 pt-3 border-t border-slate-100 dark:border-slate-700">
           <span
             v-if="ev.aiIndexed"
-            class="inline-flex items-center gap-1 text-xs text-emerald-600"
+            class="inline-flex items-center gap-1 text-xs text-emerald-700 dark:text-emerald-400"
             title="El asistente de IA extrajo el contenido y puede citarlo para el auditor"
           >
             <SparklesIcon class="w-3.5 h-3.5" /> Indexado
           </span>
           <button
             v-else
-            class="inline-flex items-center gap-1 text-xs text-slate-400 hover:text-blue-600 disabled:opacity-50"
+            class="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-blue-600 disabled:opacity-50 dark:hover:text-blue-300 dark:text-slate-400"
             :disabled="reindexingId === ev.id"
             @click="reindexEvidence(ev)"
           >
@@ -72,14 +72,14 @@
           <div class="flex gap-1">
             <button
               v-if="ev.url"
-              class="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-400 hover:text-blue-600"
+              class="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 hover:text-blue-600 dark:hover:text-blue-300 dark:text-slate-400"
               title="Descargar evidencia"
               @click="downloadEvidence(ev)"
             >
               <ArrowDownTrayIcon class="w-4 h-4" />
             </button>
             <button
-              class="p-1.5 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-600"
+              class="p-1.5 rounded-lg hover:bg-red-50 text-slate-500 hover:text-red-600 dark:hover:bg-red-950 dark:hover:text-red-300 dark:text-slate-400"
               title="Eliminar evidencia"
               @click="confirmDeleteEvidence(ev)"
             >
@@ -87,7 +87,7 @@
             </button>
           </div>
         </div>
-        <p class="text-xs text-slate-400 mt-2">{{ formatDate(ev.uploadedAt) }}</p>
+        <p class="text-xs text-slate-500 mt-2 dark:text-slate-400">{{ formatDate(ev.uploadedAt) }}</p>
       </div>
     </div>
 
@@ -118,7 +118,7 @@
             type="file"
             class="w-full text-sm text-slate-600 dark:text-slate-300 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
           />
-          <p v-if="uploadErrors.file" class="mt-1 text-xs text-red-600">
+          <p v-if="uploadErrors.file" class="mt-1 text-xs text-red-600 dark:text-red-400">
             {{ uploadErrors.file }}
           </p>
         </div>

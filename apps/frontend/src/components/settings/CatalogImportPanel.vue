@@ -53,7 +53,7 @@
 
       <div class="flex flex-wrap items-center gap-3 mb-5">
         <label
-          class="inline-flex items-center gap-2 px-4 py-2 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 text-sm font-medium rounded-lg hover:bg-slate-200 cursor-pointer"
+          class="inline-flex items-center gap-2 px-4 py-2 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 text-sm font-medium rounded-lg hover:bg-slate-200 cursor-pointer dark:hover:bg-slate-700"
         >
           <ArrowUpTrayIcon class="w-4 h-4" />
           Subir JSON o CSV
@@ -67,14 +67,14 @@
         </label>
         <button
           type="button"
-          class="text-xs text-blue-600 hover:underline"
+          class="text-xs text-blue-600 hover:underline dark:text-blue-400"
           @click="downloadJsonExample"
         >
           Descargar JSON de ejemplo
         </button>
         <button
           type="button"
-          class="text-xs text-blue-600 hover:underline"
+          class="text-xs text-blue-600 hover:underline dark:text-blue-400"
           @click="downloadCsvExample"
         >
           Descargar CSV de ejemplo
@@ -120,7 +120,7 @@
         <h3 class="text-sm font-semibold text-slate-700 dark:text-slate-200">
           Funciones, categorías, subcategorías, requisitos y controles
         </h3>
-        <span v-if="errors.functions" class="text-xs text-red-600">{{ errors.functions }}</span>
+        <span v-if="errors.functions" class="text-xs text-red-600 dark:text-red-400">{{ errors.functions }}</span>
       </div>
 
       <CatalogTreeEditor v-model="functions" />

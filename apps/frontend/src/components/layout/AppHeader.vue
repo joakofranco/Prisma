@@ -42,7 +42,7 @@
             <span class="text-sm font-medium text-blue-700 dark:text-blue-300">{{ userInitials }}</span>
           </div>
           <span class="text-sm font-medium text-slate-700 dark:text-slate-200 hidden md:block">{{ userName }}</span>
-          <ChevronDownIcon class="w-4 h-4 text-slate-400" />
+          <ChevronDownIcon class="w-4 h-4 text-slate-500 dark:text-slate-400" />
         </button>
 
         <Transition

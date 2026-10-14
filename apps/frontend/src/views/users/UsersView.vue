@@ -3,7 +3,9 @@
     <div class="flex items-center justify-between">
       <div>
         <h1 class="text-2xl font-bold text-slate-900 dark:text-white">Usuarios</h1>
-        <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">Gestión de usuarios del sistema</p>
+        <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">
+          Gestión de usuarios del sistema
+        </p>
       </div>
       <BaseButton variant="primary" @click="openCreateModal">
         <PlusIcon class="w-4 h-4" />
@@ -20,7 +22,8 @@
           v-model="searchTerm"
           type="text"
           placeholder="Buscar usuarios..."
-          class="w-full pl-10 pr-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          aria-label="Buscar usuarios"
+          class="w-full pl-10 pr-4 py-2 rounded-lg border border-slate-300 dark:border-slate-500 bg-white dark:bg-slate-700 text-slate-900 dark:text-white placeholder:text-slate-500 dark:placeholder:text-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           @input="debouncedSearch"
         />
       </div>
@@ -51,7 +54,7 @@
           <span
             v-for="role in value as UserRole[]"
             :key="role"
-            class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700"
+            class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300"
           >
             {{ ROLE_LABELS[role] || role }}
           </span>
@@ -61,7 +64,9 @@
         <span
           :class="[
             'inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium',
-            value ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400',
+            value
+              ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
+              : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300',
           ]"
         >
           {{ value ? 'Activo' : 'Inactivo' }}
@@ -70,13 +75,13 @@
       <template #cell-canLogin="{ value }">
         <span
           v-if="value"
-          class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700"
+          class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
         >
           Puede iniciar sesión
         </span>
         <span
           v-else
-          class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-700"
+          class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
           title="Todavía no tiene cuenta para loguearse: edite el usuario y fíjele una contraseña"
         >
           Sin acceso todavía
@@ -84,7 +89,7 @@
       </template>
       <template #actions="{ row }">
         <button
-          class="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+          class="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent dark:hover:text-slate-200"
           :title="
             (row as User).id === authStore.user?.id
               ? 'No podés deshabilitar tu propia cuenta'
@@ -99,14 +104,14 @@
           <CheckCircleIcon v-else class="w-4 h-4" />
         </button>
         <button
-          class="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-slate-700"
+          class="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
           title="Editar usuario"
           @click="editUser(row)"
         >
           <PencilIcon class="w-4 h-4" />
         </button>
         <button
-          class="p-1.5 rounded-lg hover:bg-red-50 text-slate-500 dark:text-slate-400 hover:text-red-600"
+          class="p-1.5 rounded-lg hover:bg-red-50 text-slate-500 dark:text-slate-400 hover:text-red-600 dark:hover:bg-red-950 dark:hover:text-red-300"
           title="Eliminar usuario"
           @click="confirmDelete(row)"
         >
@@ -123,7 +128,7 @@
       <form class="space-y-4" @submit.prevent="handleSubmit">
         <div
           v-if="guidedNewOrgName && !editingUser"
-          class="rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-xs text-blue-700"
+          class="rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-xs text-blue-700 dark:bg-blue-950 dark:text-blue-300 dark:border-blue-800"
         >
           Estás asignando el responsable de <strong>{{ guidedNewOrgName }}</strong
           >. Una vez creado, vas a poder sumar evaluadores, auditores y visualizadores a esta
@@ -162,7 +167,7 @@
             :error="errors.password"
             :required="!editingUser"
           />
-          <p class="mt-1 text-xs text-slate-400">
+          <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">
             {{
               editingUser
                 ? 'Dejar en blanco para no cambiarla. Fijar una acá es lo que le habilita el acceso a un usuario que todavía no puede iniciar sesión.'
@@ -186,7 +191,7 @@
             v-model="form.enabled"
             type="checkbox"
             :disabled="isEditingOwnAccount"
-            class="rounded border-slate-300 dark:border-slate-600 text-blue-600 focus:ring-blue-500 disabled:cursor-not-allowed"
+            class="rounded border-slate-300 dark:border-slate-500 text-blue-600 focus:ring-blue-500 disabled:cursor-not-allowed dark:text-blue-400"
           />
           <span class="text-sm text-slate-700 dark:text-slate-200">Usuario habilitado</span>
         </label>
@@ -195,8 +200,10 @@
           (evaluaciones, evidencia, auditoría) intacto -- a diferencia de eliminarlo.
         </p>
         <div>
-          <label class="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-2">Roles</label>
-          <p v-if="needsResponsibleFirst" class="text-xs text-amber-600 mb-2">
+          <label class="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-2"
+            >Roles</label
+          >
+          <p v-if="needsResponsibleFirst" class="text-xs text-amber-700 mb-2 dark:text-amber-400">
             Esta organización todavía no tiene un Responsable asignado. Elegí primero el rol
             "Responsable de Organización" -- después vas a poder sumar Evaluadores, Auditores y
             Visualizadores.
@@ -213,12 +220,12 @@
                 type="checkbox"
                 :value="role.value"
                 :disabled="isRoleLocked(role.value)"
-                class="rounded border-slate-300 dark:border-slate-600 text-blue-600 focus:ring-blue-500 disabled:cursor-not-allowed"
+                class="rounded border-slate-300 dark:border-slate-500 text-blue-600 focus:ring-blue-500 disabled:cursor-not-allowed dark:text-blue-400"
               />
               <span class="text-sm text-slate-700 dark:text-slate-200">{{ role.label }}</span>
             </label>
           </div>
-          <p v-if="errors.roles" class="mt-1 text-xs text-red-600">
+          <p v-if="errors.roles" class="mt-1 text-xs text-red-600 dark:text-red-400">
             {{ errors.roles }}
           </p>
         </div>

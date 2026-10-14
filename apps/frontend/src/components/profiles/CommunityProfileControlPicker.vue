@@ -6,7 +6,8 @@
         v-model="search"
         type="search"
         placeholder="Buscar por código o descripción..."
-        class="flex-1 min-w-[12rem] px-3 py-1.5 text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-500"
+        aria-label="Buscar controles por código o descripción"
+        class="flex-1 min-w-[12rem] px-3 py-1.5 text-sm rounded-lg border border-slate-300 dark:border-slate-500 bg-white dark:bg-slate-800 text-slate-900 dark:text-white placeholder:text-slate-500 dark:placeholder:text-slate-300 focus:outline-none focus:ring-1 focus:ring-blue-500"
       />
       <div class="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-300">
         <span>Nivel:</span>
@@ -18,7 +19,7 @@
           <input
             v-model="levelFilters[lvl]"
             type="checkbox"
-            class="rounded border-slate-300 text-blue-600"
+            class="rounded border-slate-300 text-blue-600 dark:text-blue-400 dark:border-slate-600"
           />
           {{ lvl }}
         </label>
@@ -64,10 +65,10 @@
     <div
       class="max-h-96 overflow-y-auto border border-slate-200 dark:border-slate-700 rounded-lg divide-y divide-slate-100 dark:divide-slate-700"
     >
-      <div v-if="loading" class="text-center py-6 text-sm text-slate-400">
+      <div v-if="loading" class="text-center py-6 text-sm text-slate-500 dark:text-slate-400">
         Cargando controles...
       </div>
-      <div v-else-if="groupedDomains.length === 0" class="text-center py-6 text-sm text-slate-400">
+      <div v-else-if="groupedDomains.length === 0" class="text-center py-6 text-sm text-slate-500 dark:text-slate-400">
         No hay controles que coincidan con el filtro.
       </div>
       <div v-for="grp in groupedDomains" :key="grp.domain">
@@ -77,7 +78,8 @@
         >
           <input
             type="checkbox"
-            class="rounded border-slate-300 text-blue-600"
+            :aria-label="`Seleccionar todos los controles de ${grp.domain}`"
+            class="rounded border-slate-300 text-blue-600 dark:text-blue-400 dark:border-slate-600"
             :checked="grp.selectedCount > 0 && grp.selectedCount === grp.controls.length"
             :indeterminate.prop="grp.selectedCount > 0 && grp.selectedCount < grp.controls.length"
             @change="toggleDomain(grp)"
@@ -87,7 +89,7 @@
             class="flex-1 flex items-center gap-2 text-left"
             @click="toggleExpanded(grp.domain)"
           >
-            <span class="text-slate-400 text-xs w-3">{{
+            <span class="text-slate-500 text-xs w-3 dark:text-slate-400">{{
               expanded.has(grp.domain) ? '▾' : '▸'
             }}</span>
             <span class="text-sm font-semibold text-slate-800 dark:text-slate-100">
@@ -107,7 +109,7 @@
           >
             <input
               type="checkbox"
-              class="mt-0.5 rounded border-slate-300 dark:border-slate-600 text-blue-600 focus:ring-blue-500"
+              class="mt-0.5 rounded border-slate-300 dark:border-slate-500 text-blue-600 focus:ring-blue-500 dark:text-blue-400"
               :checked="selectedSet.has(c.id)"
               @change="toggleControl(c.id)"
             />

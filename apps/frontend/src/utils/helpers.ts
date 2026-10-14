@@ -2,6 +2,8 @@ import { format, formatDistanceToNow } from 'date-fns';
 import { es } from 'date-fns/locale';
 import {
   MATURITY_LEVELS,
+  MATURITY_TEXT_COLORS,
+  STATUS_BADGE_COLORS,
   EVALUATION_STATUS_CONFIG,
   PRIORITY_CONFIG,
   ROLE_LABELS,
@@ -39,6 +41,26 @@ export function getStatusBgColor(status: string): string {
   return EVALUATION_STATUS_CONFIG[status]?.bgColor || '#f3f4f6';
 }
 
+/**
+ * Estilo de una insignia de estado accesible: variables CSS que la clase `.badge-themed` (main.css)
+ * convierte en color/fondo según el tema. Usar junto con `class="badge-themed"`.
+ */
+export function getStatusBadgeStyle(status: string): Record<string, string> {
+  const c = STATUS_BADGE_COLORS[status] ?? STATUS_BADGE_COLORS.DRAFT;
+  return {
+    '--badge-fg': c.fg,
+    '--badge-bg': c.bg,
+    '--badge-fg-dark': c.fgDark,
+    '--badge-bg-dark': c.bgDark,
+  };
+}
+
+/** Estilo de texto accesible para un nivel de madurez; usar con `class="maturity-text"`. */
+export function getMaturityTextStyle(level: number): Record<string, string> {
+  const c = MATURITY_TEXT_COLORS[level] ?? MATURITY_TEXT_COLORS[0];
+  return { '--maturity-fg': c.fg, '--maturity-fg-dark': c.fgDark };
+}
+
 export function getStatusDescription(status: string): string {
   return EVALUATION_STATUS_CONFIG[status]?.description || '';
 }
@@ -58,6 +80,24 @@ export function getPriorityColor(priority: string): string {
 }
 
 /** Formatea un número con N decimales fijos ("1.38"); "—" si no es finito (p. ej. media de 0 items). */
+/**
+ * Alternativa textual de un gráfico (Chart.js dibuja en un <canvas>, que un lector de pantalla no
+ * puede interpretar): "Título. Serie: etiqueta valor, etiqueta valor". WCAG 1.1.1.
+ */
+export function describeChart(
+  title: string,
+  labels: readonly string[],
+  datasets: readonly { label?: string; data: readonly number[] }[],
+): string {
+  const series = datasets
+    .map((ds) => {
+      const points = labels.map((l, i) => `${l} ${ds.data[i] ?? 0}`).join(', ');
+      return ds.label ? `${ds.label}: ${points}` : points;
+    })
+    .join('. ');
+  return series ? `${title}. ${series}` : `${title}. Sin datos`;
+}
+
 export function formatDecimals(value: number, decimals = 2): string {
   return Number.isFinite(value) ? value.toFixed(decimals) : '—';
 }

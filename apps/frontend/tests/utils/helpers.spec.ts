@@ -17,7 +17,15 @@ import {
   generateId,
   getErrorMessage,
   getFieldError,
+  describeChart,
+  getStatusBadgeStyle,
+  getMaturityTextStyle,
 } from '../../src/utils/helpers';
+import {
+  STATUS_BADGE_COLORS,
+  MATURITY_TEXT_COLORS,
+  EVALUATION_STATUS_CONFIG,
+} from '../../src/utils/constants';
 
 describe('formatDate / formatDateTime', () => {
   it('formatea una fecha ISO a dd/MM/yyyy', () => {
@@ -93,9 +101,7 @@ describe('truncate', () => {
   });
 
   it('corta y agrega elipsis a strings más largos que el límite', () => {
-    expect(truncate('Plataforma de Revisión Integral de Seguridad', 12)).toBe(
-      'Plataforma d...',
-    );
+    expect(truncate('Plataforma de Revisión Integral de Seguridad', 12)).toBe('Plataforma d...');
   });
 });
 
@@ -162,5 +168,69 @@ describe('getErrorMessage', () => {
   it('cae al fallback cuando no reconoce la forma del error', () => {
     expect(getErrorMessage('algo raro')).toBe('Ocurrió un error inesperado');
     expect(getErrorMessage(null, 'mensaje custom')).toBe('mensaje custom');
+  });
+});
+
+describe('describeChart (alternativa textual de los gráficos)', () => {
+  it('describe cada serie con sus etiquetas y valores', () => {
+    expect(
+      describeChart(
+        'Madurez por función',
+        ['Gobernar', 'Proteger'],
+        [{ label: 'Nivel', data: [2, 3] }],
+      ),
+    ).toBe('Madurez por función. Nivel: Gobernar 2, Proteger 3');
+  });
+
+  it('une varias series y omite el prefijo si la serie no tiene nombre', () => {
+    const text = describeChart('Radar', ['A'], [{ label: 'Actual', data: [1] }, { data: [4] }]);
+    expect(text).toBe('Radar. Actual: A 1. A 4');
+  });
+
+  it('avisa cuando no hay datos', () => {
+    expect(describeChart('Vacío', [], [])).toBe('Vacío. Sin datos');
+  });
+});
+
+// WCAG 1.4.3: texto normal >= 4.5:1. Los pares de las insignias y del texto de madurez se validan
+// acá para que nadie los vuelva a "aclarar" y rompa el contraste sin que lo note.
+function luminance(hex: string): number {
+  const c = [1, 3, 5]
+    .map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
+    .map((v) => (v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4)));
+  return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+}
+function contrast(a: string, b: string): number {
+  const [x, y] = [luminance(a), luminance(b)];
+  return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+}
+
+describe('colores accesibles de insignias y madurez (WCAG 1.4.3)', () => {
+  it('cada estado tiene par de insignia y todos llegan a 4.5:1 en claro y en oscuro', () => {
+    for (const status of Object.keys(EVALUATION_STATUS_CONFIG)) {
+      const c = STATUS_BADGE_COLORS[status];
+      expect(c, status).toBeDefined();
+      expect(contrast(c.fg, c.bg), `${status} claro`).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(c.fgDark, c.bgDark), `${status} oscuro`).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it('el texto de cada nivel de madurez llega a 4.5:1 sobre blanco (claro) y sobre slate-800 (oscuro)', () => {
+    for (const [level, c] of Object.entries(MATURITY_TEXT_COLORS)) {
+      expect(contrast(c.fg, '#ffffff'), `nivel ${level} claro`).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(c.fgDark, '#1d293d'), `nivel ${level} oscuro`).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it('getStatusBadgeStyle / getMaturityTextStyle devuelven variables CSS y caen a un valor por defecto', () => {
+    expect(getStatusBadgeStyle('APPROVED')).toEqual({
+      '--badge-fg': STATUS_BADGE_COLORS.APPROVED.fg,
+      '--badge-bg': STATUS_BADGE_COLORS.APPROVED.bg,
+      '--badge-fg-dark': STATUS_BADGE_COLORS.APPROVED.fgDark,
+      '--badge-bg-dark': STATUS_BADGE_COLORS.APPROVED.bgDark,
+    });
+    expect(getStatusBadgeStyle('NO_EXISTE')['--badge-fg']).toBe(STATUS_BADGE_COLORS.DRAFT.fg);
+    expect(getMaturityTextStyle(3)['--maturity-fg']).toBe(MATURITY_TEXT_COLORS[3].fg);
+    expect(getMaturityTextStyle(99)['--maturity-fg']).toBe(MATURITY_TEXT_COLORS[0].fg);
   });
 });

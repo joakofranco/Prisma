@@ -12,7 +12,7 @@
         v-if="!loading"
         :class="[
           'shrink-0 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium',
-          settings.configured ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400',
+          settings.configured ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300',
         ]"
       >
         {{ settings.configured ? 'Configurado' : 'Sin configurar' }}

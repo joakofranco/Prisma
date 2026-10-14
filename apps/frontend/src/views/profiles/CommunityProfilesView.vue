@@ -30,14 +30,14 @@
       </template>
       <template #actions="{ row }">
         <button
-          class="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-slate-700"
+          class="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
           title="Editar perfil"
           @click="editProfile(row)"
         >
           <PencilIcon class="w-4 h-4" />
         </button>
         <button
-          class="p-1.5 rounded-lg hover:bg-red-50 text-slate-500 dark:text-slate-400 hover:text-red-600"
+          class="p-1.5 rounded-lg hover:bg-red-50 text-slate-500 dark:text-slate-400 hover:text-red-600 dark:hover:bg-red-950 dark:hover:text-red-300"
           title="Eliminar perfil"
           @click="confirmDelete(row)"
         >
@@ -90,13 +90,13 @@
             <div class="flex items-center gap-2">
               <button
                 type="button"
-                class="text-xs text-blue-600 hover:underline"
+                class="text-xs text-blue-600 hover:underline dark:text-blue-400"
                 :disabled="form.controlIds.length === 0"
                 @click="exportSelection"
               >
                 Exportar CSV
               </button>
-              <label class="text-xs text-blue-600 hover:underline cursor-pointer">
+              <label class="text-xs text-blue-600 hover:underline cursor-pointer dark:text-blue-400">
                 Importar
                 <input
                   ref="importInput"
@@ -110,13 +110,13 @@
                 <input
                   v-model="importMerge"
                   type="checkbox"
-                  class="rounded border-slate-300 text-blue-600"
+                  class="rounded border-slate-300 text-blue-600 dark:text-blue-400 dark:border-slate-600"
                 />
                 sumar a la actual
               </label>
             </div>
           </div>
-          <p v-if="errors.controlIds" class="mb-2 text-xs text-red-600">{{ errors.controlIds }}</p>
+          <p v-if="errors.controlIds" class="mb-2 text-xs text-red-600 dark:text-red-400">{{ errors.controlIds }}</p>
           <BaseAlert
             v-if="importInfo"
             variant="warning"

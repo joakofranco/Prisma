@@ -1,6 +1,6 @@
 <template>
   <div class="relative" style="height: 320px">
-    <Radar :data="chartData" :options="chartOptions" />
+    <Radar :data="chartData" :options="chartOptions" :aria-label="ariaLabel" />
   </div>
 </template>
 
@@ -8,6 +8,7 @@
   import { computed } from 'vue';
   import { Radar } from 'vue-chartjs';
   import { useThemeStore } from '@/stores/theme';
+  import { describeChart } from '@/utils/helpers';
 
   const props = withDefaults(
     defineProps<{
@@ -44,6 +45,10 @@
     }
     return { labels: props.items.map((i) => i.name), datasets };
   });
+
+  const ariaLabel = computed(() =>
+    describeChart('Nivel de madurez por función', chartData.value.labels, chartData.value.datasets),
+  );
 
   const chartOptions = computed(() => {
     const isDark = themeStore.theme === 'dark';

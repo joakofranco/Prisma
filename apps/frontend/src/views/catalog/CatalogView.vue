@@ -55,10 +55,10 @@
             <span class="font-semibold text-slate-900 dark:text-white">{{ func.name }}</span>
           </div>
           <div class="flex items-center gap-3">
-            <span class="text-xs text-slate-400">{{ func.categories.length }} categorías</span>
+            <span class="text-xs text-slate-500 dark:text-slate-400">{{ func.categories.length }} categorías</span>
             <ChevronDownIcon
               :class="[
-                'w-5 h-5 text-slate-400 transition-transform',
+                'w-5 h-5 text-slate-500 transition-transform dark:text-slate-400',
                 expandedFunctions.has(func.id) ? 'rotate-180' : '',
               ]"
             />
@@ -102,7 +102,7 @@
                   <span class="text-xs text-slate-500 dark:text-slate-400"
                     >{{ control.code }}: {{ control.description }}</span
                   >
-                  <span class="text-xs text-slate-400">(Objetivo: {{ control.targetLevel }})</span>
+                  <span class="text-xs text-slate-500 dark:text-slate-400">(Objetivo: {{ control.targetLevel }})</span>
                 </div>
               </div>
             </div>
