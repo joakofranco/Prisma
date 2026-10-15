@@ -95,20 +95,15 @@
                 </div>
               </div>
               <div class="flex gap-1 shrink-0">
-                <select
-                  :value="plan.status"
-                  class="text-xs border border-slate-300 dark:border-slate-600 rounded-lg px-2 py-1"
-                  @change="
-                    updatePlanStatus(
-                      plan.id,
-                      ($event.target as HTMLSelectElement).value as ImprovementPlan['status'],
-                    )
-                  "
-                >
-                  <option value="PENDING">Pendiente</option>
-                  <option value="IN_PROGRESS">En Progreso</option>
-                  <option value="COMPLETED">Completada</option>
-                </select>
+                <BaseSelect
+                  :model-value="plan.status"
+                  :options="planStatusOptions"
+                  :searchable="false"
+                  size="sm"
+                  aria-label="Estado del plan de mejora"
+                  class="w-36"
+                  @update:model-value="updatePlanStatus(plan.id, $event as ImprovementPlan['status'])"
+                />
               </div>
             </div>
           </div>
@@ -330,6 +325,12 @@
     responsible: '',
     dueDate: '',
   });
+
+  const planStatusOptions = [
+    { value: 'PENDING', label: 'Pendiente' },
+    { value: 'IN_PROGRESS', label: 'En Progreso' },
+    { value: 'COMPLETED', label: 'Completada' },
+  ];
 
   const priorityOptions = [
     { value: 'HIGH', label: 'Alta' },

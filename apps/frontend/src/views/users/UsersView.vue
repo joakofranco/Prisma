@@ -176,13 +176,27 @@
             }}
           </p>
         </div>
-        <BaseSelect
-          v-model="form.organizationId"
-          label="Organización"
-          :options="orgOptions"
-          placeholder="Seleccione una organización"
-          :disabled="!isPlatformAdmin"
-        />
+        </div>
+        <div v-if="orgMode === 'none'">
+          <label class="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1"
+            >Organizaciones</label
+          >
+          <p class="text-xs text-slate-500 dark:text-slate-400">{{ organizationsHint }}</p>
+        </div>
+        <div v-else>
+          <!-- Selector con buscador y etiquetas (escala con muchas organizaciones). Responsable /
+               visualizador: exactamente una (elegir otra reemplaza a la actual). -->
+          <BaseMultiSelect
+            v-model="form.organizationIds"
+            label="Organizaciones"
+            placeholder="Buscar y elegir organizaciones…"
+            :options="orgOptions"
+            :max="orgMode === 'single' ? 1 : undefined"
+            :disabled="!isPlatformAdmin"
+            :error="errors.organizationIds"
+          />
+          <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">{{ organizationsHint }}</p>
+        </div>
         <label
           class="flex items-center gap-2"
           :class="{ 'opacity-50': isEditingOwnAccount }"
@@ -255,6 +269,7 @@
   import { emailSchema, personNameSchema } from '@/utils/validators';
   import { getOrgMode, validateOrganizationCount } from '@/utils/organizationRules';
   import { assignableOrganizationOptions } from '@/utils/organizationOptions';
+  import BaseMultiSelect from '@/components/common/BaseMultiSelect.vue';
   import DataTable from '@/components/common/DataTable.vue';
   import BaseButton from '@/components/common/BaseButton.vue';
   import BaseModal from '@/components/common/BaseModal.vue';

@@ -93,7 +93,7 @@
 
     <BaseModal v-model="showUploadModal" title="Subir Evidencia" size="lg">
       <form class="space-y-4" @submit.prevent="handleUpload">
-        <BaseCombobox
+        <BaseSelect
           v-if="controlOptions.length > 0"
           v-model="uploadForm.controlId"
           label="Control Asociado"
@@ -141,7 +141,7 @@
   import { useNotification } from '@/composables/useUtils';
   import BaseButton from '@/components/common/BaseButton.vue';
   import BaseModal from '@/components/common/BaseModal.vue';
-  import BaseCombobox from '@/components/common/BaseCombobox.vue';
+  import BaseSelect from '@/components/common/BaseSelect.vue';
   import BaseTextarea from '@/components/common/BaseTextarea.vue';
   import {
     ArrowLeftIcon,

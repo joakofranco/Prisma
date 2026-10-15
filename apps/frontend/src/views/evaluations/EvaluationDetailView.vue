@@ -197,20 +197,20 @@
                 Por nivel de madurez
               </button>
             </div>
-            <label
+            <div
               v-if="results.length > 0 && resultsTab === 'desglose'"
               class="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400"
             >
-              Mostrar por página
-              <select
-                v-model.number="pageSize"
-                class="rounded-lg border border-slate-300 dark:border-slate-600 py-1 pl-2 pr-6 text-xs text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option v-for="size in pageSizeOptions" :key="size" :value="size">
-                  {{ size }}
-                </option>
-              </select>
-            </label>
+              <span aria-hidden="true">Mostrar por página</span>
+              <BaseSelect
+                v-model="pageSize"
+                :options="pageSizeSelectOptions"
+                :searchable="false"
+                size="sm"
+                aria-label="Mostrar por página"
+                class="w-20"
+              />
+            </div>
             <div class="flex gap-2">
               <BaseButton
                 v-if="canCalculate"
@@ -601,6 +601,7 @@
   // grupo o de agrupador no arrastra la página de otro. `pageSize` es compartido por todos los
   // grupos a la vez -- no hay necesidad real de que cada uno tenga el suyo propio.
   const pageSizeOptions = [10, 20, 50, 100] as const;
+  const pageSizeSelectOptions = pageSizeOptions.map((n) => ({ value: n, label: String(n) }));
   const pageSize = ref<number>(10);
   const groupPages = ref<Map<string, number>>(new Map());
 

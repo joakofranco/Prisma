@@ -220,9 +220,8 @@ describe('userSchema', () => {
   });
 
   it('organizationId es opcional (p.ej. un AUDITOR sin tenant propio)', () => {
-    const { organizationId: _unused, ...withoutOrg } = valid as typeof valid & {
-      organizationId?: string;
-    };
+    const withoutOrg: Record<string, unknown> = { ...valid };
+    delete withoutOrg.organizationId;
     expect(userSchema.safeParse(withoutOrg).success).toBe(true);
   });
 });
