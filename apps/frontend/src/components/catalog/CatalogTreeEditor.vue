@@ -139,11 +139,14 @@
                           placeholder="Descripción del control"
                           :class="[inputCls, 'flex-1']"
                         />
-                        <select v-model.number="ctrl.targetLevel" :class="[inputCls, 'w-28']">
-                          <option v-for="lvl in [1, 2, 3, 4]" :key="lvl" :value="lvl">
-                            Nivel {{ lvl }}
-                          </option>
-                        </select>
+                        <BaseSelect
+                          v-model="ctrl.targetLevel"
+                          :options="levelOptions"
+                          :searchable="false"
+                          size="sm"
+                          aria-label="Nivel objetivo"
+                          class="w-28"
+                        />
                         <button
                           type="button"
                           class="p-1.5 rounded-lg hover:bg-red-50 text-slate-500 hover:text-red-600 shrink-0 dark:hover:bg-red-950 dark:hover:text-red-300 dark:text-slate-400"
@@ -183,6 +186,7 @@
 
 <script setup lang="ts">
   import { reactive } from 'vue';
+  import BaseSelect from '@/components/common/BaseSelect.vue';
   import { ChevronDownIcon, TrashIcon, PlusIcon } from '@heroicons/vue/24/outline';
   import type {
     CatalogImportFunction,
@@ -196,6 +200,8 @@
   // referencia que expone CatalogImportPanel, así que no hace falta re-emitir en cada cambio de
   // un input individual -- typear cada código/nombre no dispara un evento por tecla.
   const modelValue = defineModel<CatalogImportFunction[]>({ required: true });
+
+  const levelOptions = [1, 2, 3, 4].map((lvl) => ({ value: lvl, label: `Nivel ${lvl}` }));
 
   const inputCls =
     'px-2 py-1.5 rounded-md border border-slate-300 dark:border-slate-500 bg-white dark:bg-slate-700 text-slate-900 dark:text-white placeholder:text-slate-500 dark:placeholder:text-slate-300 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500';

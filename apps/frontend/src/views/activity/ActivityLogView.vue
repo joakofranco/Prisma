@@ -25,16 +25,13 @@
           @input="debouncedSearch"
         />
       </div>
-      <select
+      <BaseSelect
         v-model="actionFilter"
-        class="px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-        @change="refresh"
-      >
-        <option value="">Todas las acciones</option>
-        <option v-for="a in KNOWN_ACTIONS" :key="a" :value="a">
-          {{ AUDIT_ACTION_LABELS[a] || a }}
-        </option>
-      </select>
+        :options="actionFilterOptions"
+        aria-label="Filtrar por acción"
+        class="w-64"
+        @update:model-value="refresh"
+      />
     </div>
 
     <DataTable
@@ -91,6 +88,7 @@
   import { formatDateTime } from '@/utils/helpers';
   import { AUDIT_ACTION_LABELS, AUDIT_RESOURCE_TYPE_LABELS } from '@/utils/constants';
   import DataTable from '@/components/common/DataTable.vue';
+  import BaseSelect from '@/components/common/BaseSelect.vue';
   import { MagnifyingGlassIcon } from '@heroicons/vue/24/outline';
   import type { AuditLog } from '@/types';
 
@@ -107,6 +105,10 @@
   const pageSize = 20;
   const searchTerm = ref('');
   const actionFilter = ref('');
+  const actionFilterOptions = computed(() => [
+    { value: '', label: 'Todas las acciones' },
+    ...KNOWN_ACTIONS.map((a) => ({ value: a, label: AUDIT_ACTION_LABELS[a] || a })),
+  ]);
 
   // Acciones que hoy efectivamente registra el backend (ver los usos de AuditLogService.record) --
   // es sólo para poblar el filtro; una acción nueva que se agregue ahí sigue viéndose en la
