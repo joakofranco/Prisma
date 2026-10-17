@@ -250,7 +250,7 @@ services:
   # 5. OLLAMA (LLM local para RAG — Llama 3)
   # -------------------------------------------------------------------
   ollama:
-    image: ollama/ollama:latest
+    image: ollama/ollama:0.40.6
     container_name: prisma-ollama
     restart: unless-stopped
     profiles: [app, full]
@@ -449,7 +449,7 @@ services:
     networks: [prisma-net]
 
   sonarqube:
-    image: sonarqube:community
+    image: sonarqube:26.10.0.133078-community
     container_name: prisma-sonarqube
     restart: unless-stopped
     profiles: [quality, full]
@@ -479,7 +479,7 @@ services:
   # 10. OBSERVABILITY (Prometheus + Grafana + Loki)
   # -------------------------------------------------------------------
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v3.15.0
     container_name: prisma-prometheus
     restart: unless-stopped
     profiles: [observability, full]
@@ -496,7 +496,7 @@ services:
     networks: [prisma-net]
 
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:13.2.4
     container_name: prisma-grafana
     restart: unless-stopped
     profiles: [observability, full]
@@ -520,7 +520,7 @@ services:
     networks: [prisma-net]
 
   loki:
-    image: grafana/loki:latest
+    image: grafana/loki:3.7.8
     container_name: prisma-loki
     restart: unless-stopped
     profiles: [observability, full]
@@ -532,7 +532,7 @@ services:
     networks: [prisma-net]
 
   promtail:
-    image: grafana/promtail:latest
+    image: grafana/promtail:3.6.11
     container_name: prisma-promtail
     restart: unless-stopped
     profiles: [observability, full]
@@ -544,7 +544,7 @@ services:
     networks: [prisma-net]
 
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:latest
+    image: ghcr.io/google/cadvisor:v0.60.6
     container_name: prisma-cadvisor
     restart: unless-stopped
     profiles: [observability, full]
@@ -558,7 +558,7 @@ services:
     networks: [prisma-net]
 
   node-exporter:
-    image: prom/node-exporter:latest
+    image: prom/node-exporter:v1.12.1
     container_name: prisma-node-exporter
     restart: unless-stopped
     profiles: [observability, full]
@@ -578,7 +578,7 @@ services:
   # en su puerto nativo): prometheus.yml apuntaba antes a postgres:5432 y redis:6379 y
   # el target quedaba siempre "down". Estos exporters traducen sus métricas a /metrics.
   postgres-exporter:
-    image: prometheuscommunity/postgres-exporter:latest
+    image: prometheuscommunity/postgres-exporter:v0.20.1
     container_name: prisma-postgres-exporter
     restart: unless-stopped
     profiles: [observability, full]
@@ -589,7 +589,7 @@ services:
     networks: [prisma-net]
 
   redis-exporter:
-    image: oliver006/redis_exporter:latest
+    image: oliver006/redis_exporter:v1.94.0
     container_name: prisma-redis-exporter
     restart: unless-stopped
     profiles: [observability, full]
@@ -741,7 +741,7 @@ services:
   # 11. GESTIÓN DE CONTENEDORES
   # -------------------------------------------------------------------
   portainer:
-    image: portainer/portainer-ce:latest
+    image: portainer/portainer-ce:2.45.2
     container_name: prisma-portainer
     restart: unless-stopped
     profiles: [management, full]
@@ -770,7 +770,7 @@ services:
     networks: [prisma-net]
 
   pgadmin:
-    image: dpage/pgadmin4:latest
+    image: dpage/pgadmin4:9.18.0
     container_name: prisma-pgadmin
     restart: unless-stopped
     profiles: [management, full]
