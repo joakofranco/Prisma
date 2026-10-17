@@ -92,7 +92,7 @@ Cada servicio en `docker-compose.yml` tiene un rol claro. Los perfiles (`--profi
 | **`redis`** | `redis:7-alpine` | Caché de sesiones, refresh tokens, rate limiting. Passworded, AOF activo. |
 | **`backend-core`** | Build local Spring Boot | API principal. Endpoints REST, motor de cálculo de madurez, workflow de auditoría, RBAC. Actuator expuesto en `/actuator`. |
 | **`backend-ai`** | Build local FastAPI | Servicio de IA que consulta a Ollama y hace RAG sobre la documentación MCU. |
-| **`ollama`** | `ollama/ollama:latest` | Motor de LLM local (Llama 3 8B por defecto). Corre inferencia sin salir a internet — cumple con requisito de privacidad. |
+| **`ollama`** | `ollama/ollama:0.40.6` | Motor de LLM local (Llama 3 8B por defecto). Corre inferencia sin salir a internet — cumple con requisito de privacidad. |
 | **`frontend`** | Build local Nginx+Vue | SPA con dashboards, cuestionario, visor de evidencias. |
 
 ### Perfil `security` — IAM y almacenamiento
@@ -108,12 +108,12 @@ Cada servicio en `docker-compose.yml` tiene un rol claro. Los perfiles (`--profi
 
 | Servicio | Imagen | Rol |
 |---|---|---|
-| **`prometheus`** | `prom/prometheus:latest` | Scrape de métricas de todos los servicios. Retención 30 días. Reglas de alerta en `infra/monitoring/prometheus/rules/`. |
-| **`grafana`** | `grafana/grafana:latest` | Dashboards de negocio (madurez global, cumplimiento) y de sistema (CPU, RAM, latencias). Datasources y dashboards provisionados. |
-| **`loki`** | `grafana/loki:latest` | Agregación de logs de contenedores. Consultables desde Grafana con LogQL. |
-| **`promtail`** | `grafana/promtail:latest` | Agente que envía los logs de los contenedores a Loki. |
-| **`cadvisor`** | `gcr.io/cadvisor/cadvisor:latest` | Métricas de recursos por contenedor. |
-| **`node-exporter`** | `prom/node-exporter:latest` | Métricas del host (CPU, RAM, disco, red). |
+| **`prometheus`** | `prom/prometheus:v3.15.0` | Scrape de métricas de todos los servicios. Retención 30 días. Reglas de alerta en `infra/monitoring/prometheus/rules/`. |
+| **`grafana`** | `grafana/grafana:13.2.4` | Dashboards de negocio (madurez global, cumplimiento) y de sistema (CPU, RAM, latencias). Datasources y dashboards provisionados. |
+| **`loki`** | `grafana/loki:3.7.8` | Agregación de logs de contenedores. Consultables desde Grafana con LogQL. |
+| **`promtail`** | `grafana/promtail:3.6.11` | Agente que envía los logs de los contenedores a Loki. |
+| **`cadvisor`** | `ghcr.io/google/cadvisor:v0.60.6` | Métricas de recursos por contenedor. |
+| **`node-exporter`** | `prom/node-exporter:v1.12.1` | Métricas del host (CPU, RAM, disco, red). |
 
 ### Perfil `elastic` — Logs centralizados (Elasticsearch)
 
@@ -171,16 +171,16 @@ o `docker.container.labels.com_docker_compose_service` acotan a un servicio punt
 
 | Servicio | Imagen | Rol |
 |---|---|---|
-| **`sonarqube`** | `sonarqube:community` | Análisis SAST, cobertura, code smells, deuda técnica. Quality Gate configurable. |
+| **`sonarqube`** | `sonarqube:26.10.0.133078-community` | Análisis SAST, cobertura, code smells, deuda técnica. Quality Gate configurable. |
 | **`sonar-db`** | `postgres:17-alpine` | BD dedicada de SonarQube. |
 
 ### Perfil `management` — Gestión
 
 | Servicio | Imagen | Rol |
 |---|---|---|
-| **`portainer`** | `portainer/portainer-ce:latest` | UI web para gestionar contenedores, imágenes, volúmenes y redes. Alternativa gráfica a la CLI de Docker. |
-| **`watchtower`** | `containrrr/watchtower:latest` | Auto-update de contenedores cuando aparece una nueva imagen en el registry. Sólo actúa sobre los que tienen la label `com.centurylinklabs.watchtower.enable=true`. |
-| **`pgadmin`** | `dpage/pgadmin4:latest` | Cliente web para PostgreSQL. Servers preconfigurados en `scripts/db/pgadmin-servers.json`. |
+| **`portainer`** | `portainer/portainer-ce:2.45.2` | UI web para gestionar contenedores, imágenes, volúmenes y redes. Alternativa gráfica a la CLI de Docker. |
+| **`watchtower`** | `containrrr/watchtower:1.7.1` | Auto-update de contenedores cuando aparece una nueva imagen en el registry. Sólo actúa sobre los que tienen la label `com.centurylinklabs.watchtower.enable=true`. |
+| **`pgadmin`** | `dpage/pgadmin4:9.18.0` | Cliente web para PostgreSQL. Servers preconfigurados en `scripts/db/pgadmin-servers.json`. |
 
 ### Perfil `proxy`
 
