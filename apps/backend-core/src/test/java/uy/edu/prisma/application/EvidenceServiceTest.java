@@ -4,11 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
-import io.minio.BucketExistsArgs;
-import io.minio.GetPresignedObjectUrlArgs;
-import io.minio.MinioClient;
-import io.minio.PutObjectArgs;
-import io.minio.RemoveObjectArgs;
+import java.net.URI;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -23,7 +19,17 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.mock.web.MockMultipartFile;
-import uy.edu.prisma.config.MinioConfig.MinioProperties;
+import software.amazon.awssdk.core.sync.RequestBody;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
+import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
+import software.amazon.awssdk.services.s3.model.HeadBucketRequest;
+import software.amazon.awssdk.services.s3.model.NoSuchBucketException;
+import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import software.amazon.awssdk.services.s3.presigner.S3Presigner;
+import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest;
+import software.amazon.awssdk.services.s3.presigner.model.PresignedGetObjectRequest;
+import uy.edu.prisma.config.ObjectStorageConfig.StorageProperties;
 import uy.edu.prisma.domain.entity.CatalogControl;
 import uy.edu.prisma.domain.entity.Evaluation;
 import uy.edu.prisma.domain.entity.Evidence;
@@ -45,14 +51,15 @@ class EvidenceServiceTest {
   @Mock private EvidenceRepository evidenceRepo;
   @Mock private EvaluationRepository evaluationRepo;
   @Mock private CatalogControlRepository controlRepo;
-  @Mock private MinioClient minioClient;
-  @Mock private MinioClient minioPublicClient;
+  @Mock private S3Client s3Client;
+  @Mock private S3Presigner internalPresigner;
+  @Mock private S3Presigner publicPresigner;
   @Mock private CurrentUserService currentUser;
   @Mock private AiEvidenceClient aiClient;
 
-  private final MinioProperties properties =
-      new MinioProperties(
-          "http://minio:9000", "http://localhost:9001", "ak", "sk", "prisma-evidences");
+  private final StorageProperties properties =
+      new StorageProperties(
+          "http://rustfs:9000", "http://localhost:9001", "ak", "sk", "prisma-evidences");
 
   private EvidenceService service;
   private Evaluation eval;
@@ -66,8 +73,9 @@ class EvidenceServiceTest {
             evidenceRepo,
             evaluationRepo,
             controlRepo,
-            minioClient,
-            minioPublicClient,
+            s3Client,
+            internalPresigner,
+            publicPresigner,
             properties,
             currentUser,
             aiClient);
@@ -90,6 +98,13 @@ class EvidenceServiceTest {
             .build();
   }
 
+  /** Respuesta de firma con la URL indicada (el presigner real firma offline, sin red). */
+  private static PresignedGetObjectRequest signed(String url) throws Exception {
+    PresignedGetObjectRequest presigned = mock(PresignedGetObjectRequest.class);
+    when(presigned.url()).thenReturn(URI.create(url).toURL());
+    return presigned;
+  }
+
   /** Simula lo que hace Hibernate en un persist() real: asigna el id si aún es null. */
   private static Evidence simulatePersist(InvocationOnMock inv) {
     Evidence e = inv.getArgument(0);
@@ -107,8 +122,8 @@ class EvidenceServiceTest {
         .thenReturn(List.of(evidence));
     // El link que ve el frontend se firma con el cliente PÚBLICO (ver comentario en
     // EvidenceService.publicPresignedUrl), no con el interno.
-    when(minioPublicClient.getPresignedObjectUrl(any(GetPresignedObjectUrlArgs.class)))
-        .thenReturn(url);
+    when(publicPresigner.presignGetObject(any(GetObjectPresignRequest.class)))
+        .thenAnswer(inv -> signed(url));
 
     List<EvidenceDto> result = service.listByEvaluation(eval.getId());
 
@@ -125,8 +140,8 @@ class EvidenceServiceTest {
     when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
     when(evidenceRepo.findByEvaluationIdOrderByUploadedAtDesc(eval.getId()))
         .thenReturn(List.of(evidence));
-    when(minioPublicClient.getPresignedObjectUrl(any()))
-        .thenThrow(new RuntimeException("minio down"));
+    when(publicPresigner.presignGetObject(any(GetObjectPresignRequest.class)))
+        .thenThrow(new RuntimeException("storage down"));
 
     List<EvidenceDto> result = service.listByEvaluation(eval.getId());
 
@@ -139,7 +154,7 @@ class EvidenceServiceTest {
     MockMultipartFile file =
         new MockMultipartFile("file", "reporte.pdf", "application/pdf", new byte[] {1, 2, 3});
     when(evaluationRepo.findById(evalId)).thenReturn(Optional.of(eval));
-    when(minioClient.bucketExists(any(BucketExistsArgs.class))).thenReturn(true);
+    when(s3Client.headBucket(any(HeadBucketRequest.class))).thenReturn(null);
     when(currentUser.currentUser()).thenReturn(Optional.empty());
     when(evidenceRepo.save(any(Evidence.class))).thenAnswer(EvidenceServiceTest::simulatePersist);
 
@@ -148,7 +163,7 @@ class EvidenceServiceTest {
     assertNotNull(result.id());
     assertEquals("reporte.pdf", result.fileName());
     assertEquals(3L, result.fileSize());
-    verify(minioClient, times(1)).putObject(any(PutObjectArgs.class));
+    verify(s3Client, times(1)).putObject(any(PutObjectRequest.class), any(RequestBody.class));
     ArgumentCaptor<Evidence> captor = ArgumentCaptor.forClass(Evidence.class);
     // Un solo save(): el flag aiIndexed se fija sobre la misma instancia administrada que
     // devuelve este save(), sin volver a llamar a save() (ver comentario en EvidenceService).
@@ -160,13 +175,14 @@ class EvidenceServiceTest {
   void uploadCreatesBucketWhenMissing() throws Exception {
     MockMultipartFile file = new MockMultipartFile("file", "f.txt", "text/plain", new byte[] {9});
     when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
-    when(minioClient.bucketExists(any(BucketExistsArgs.class))).thenReturn(false);
+    when(s3Client.headBucket(any(HeadBucketRequest.class)))
+        .thenThrow(NoSuchBucketException.builder().build());
     when(evidenceRepo.save(any(Evidence.class))).thenAnswer(EvidenceServiceTest::simulatePersist);
 
     service.upload(eval.getId(), null, null, file);
 
-    verify(minioClient, times(1)).makeBucket(any());
-    verify(minioClient, times(1)).putObject(any(PutObjectArgs.class));
+    verify(s3Client, times(1)).createBucket(any(CreateBucketRequest.class));
+    verify(s3Client, times(1)).putObject(any(PutObjectRequest.class), any(RequestBody.class));
   }
 
   @Test
@@ -176,7 +192,7 @@ class EvidenceServiceTest {
     MockMultipartFile file = new MockMultipartFile("file", "f.txt", "text/plain", new byte[] {9});
     when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
     when(controlRepo.findById(controlId)).thenReturn(Optional.of(control));
-    when(minioClient.bucketExists(any(BucketExistsArgs.class))).thenReturn(true);
+    when(s3Client.headBucket(any(HeadBucketRequest.class))).thenReturn(null);
     when(evidenceRepo.save(any(Evidence.class))).thenAnswer(EvidenceServiceTest::simulatePersist);
 
     service.upload(eval.getId(), controlId, null, file);
@@ -201,9 +217,9 @@ class EvidenceServiceTest {
   void uploadSucceedsEvenWhenAiIndexingFails() throws Exception {
     MockMultipartFile file = new MockMultipartFile("file", "f.txt", "text/plain", new byte[] {9});
     when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
-    when(minioClient.bucketExists(any(BucketExistsArgs.class))).thenReturn(true);
-    when(minioClient.getPresignedObjectUrl(any(GetPresignedObjectUrlArgs.class)))
-        .thenReturn("http://minio/signed");
+    when(s3Client.headBucket(any(HeadBucketRequest.class))).thenReturn(null);
+    when(internalPresigner.presignGetObject(any(GetObjectPresignRequest.class)))
+        .thenAnswer(inv -> signed("http://rustfs/signed"));
     when(evidenceRepo.save(any(Evidence.class))).thenAnswer(EvidenceServiceTest::simulatePersist);
     when(aiClient.ingest(any(), any(), any(), any(), any(), any())).thenReturn(false);
 
@@ -233,7 +249,7 @@ class EvidenceServiceTest {
     assertThrows(
         uy.edu.prisma.domain.exception.InvalidRequestException.class,
         () -> service.upload(eval.getId(), null, null, file));
-    verify(minioClient, never()).putObject(any());
+    verify(s3Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));
     verify(evidenceRepo, never()).save(any());
   }
 
@@ -249,8 +265,8 @@ class EvidenceServiceTest {
   @Test
   void reindexUpdatesAiIndexedFlag() throws Exception {
     when(evidenceRepo.findById(evidence.getId())).thenReturn(Optional.of(evidence));
-    when(minioClient.getPresignedObjectUrl(any(GetPresignedObjectUrlArgs.class)))
-        .thenReturn("http://minio/signed");
+    when(internalPresigner.presignGetObject(any(GetObjectPresignRequest.class)))
+        .thenAnswer(inv -> signed("http://rustfs/signed"));
     when(aiClient.ingest(any(), any(), any(), any(), any(), any())).thenReturn(true);
     when(evidenceRepo.save(any(Evidence.class))).thenAnswer(EvidenceServiceTest::simulatePersist);
 
@@ -305,7 +321,7 @@ class EvidenceServiceTest {
 
     service.delete(evidence.getId());
 
-    verify(minioClient, times(1)).removeObject(any(RemoveObjectArgs.class));
+    verify(s3Client, times(1)).deleteObject(any(DeleteObjectRequest.class));
     verify(aiClient, times(1)).deleteEvidence(eval.getOrganization().getId(), evidence.getId());
     verify(evidenceRepo, times(1)).delete(evidence);
   }
@@ -319,13 +335,15 @@ class EvidenceServiceTest {
         uy.edu.prisma.domain.exception.InvalidRequestException.class,
         () -> service.delete(evidence.getId()));
     verify(evidenceRepo, never()).delete(any());
-    verify(minioClient, never()).removeObject(any());
+    verify(s3Client, never()).deleteObject(any(DeleteObjectRequest.class));
   }
 
   @Test
   void deleteIgnoresStorageErrors() throws Exception {
     when(evidenceRepo.findById(evidence.getId())).thenReturn(Optional.of(evidence));
-    doThrow(new RuntimeException("minio")).when(minioClient).removeObject(any());
+    doThrow(new RuntimeException("storage"))
+        .when(s3Client)
+        .deleteObject(any(DeleteObjectRequest.class));
 
     service.delete(evidence.getId());
 
@@ -343,8 +361,8 @@ class EvidenceServiceTest {
   @Test
   void generateDownloadUrlReturnsUrl() throws Exception {
     when(evidenceRepo.findById(evidence.getId())).thenReturn(Optional.of(evidence));
-    when(minioPublicClient.getPresignedObjectUrl(any(GetPresignedObjectUrlArgs.class)))
-        .thenReturn("http://signed/url");
+    when(publicPresigner.presignGetObject(any(GetObjectPresignRequest.class)))
+        .thenAnswer(inv -> signed("http://signed/url"));
 
     DownloadUrlDto dto = service.generateDownloadUrl(evidence.getId());
 
@@ -354,21 +372,21 @@ class EvidenceServiceTest {
   @Test
   void uploadIndexesInAiUsingTheInternalEndpointNotThePublicOne() throws Exception {
     // La URL que backend-ai usa para bajar el archivo es server-to-server (dentro de la red de
-    // contenedores): tiene que salir del cliente INTERNO, nunca del público (que apunta a un host
+    // contenedores): tiene que salir del presigner INTERNO, nunca del público (que apunta a un host
     // como localhost:9001 que solo tiene sentido desde el navegador del usuario).
     MockMultipartFile file = new MockMultipartFile("file", "f.txt", "text/plain", new byte[] {9});
     when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
-    when(minioClient.bucketExists(any(BucketExistsArgs.class))).thenReturn(true);
-    when(minioClient.getPresignedObjectUrl(any(GetPresignedObjectUrlArgs.class)))
-        .thenReturn("http://minio:9000/internal-signed");
+    when(s3Client.headBucket(any(HeadBucketRequest.class))).thenReturn(null);
+    when(internalPresigner.presignGetObject(any(GetObjectPresignRequest.class)))
+        .thenAnswer(inv -> signed("http://rustfs:9000/internal-signed"));
     when(evidenceRepo.save(any(Evidence.class))).thenAnswer(EvidenceServiceTest::simulatePersist);
     when(aiClient.ingest(any(), any(), any(), any(), any(), any())).thenReturn(true);
 
     service.upload(eval.getId(), null, null, file);
 
     verify(aiClient, times(1))
-        .ingest(any(), any(), any(), isNull(), any(), eq("http://minio:9000/internal-signed"));
-    verify(minioPublicClient, never()).getPresignedObjectUrl(any());
+        .ingest(any(), any(), any(), isNull(), any(), eq("http://rustfs:9000/internal-signed"));
+    verify(publicPresigner, never()).presignGetObject(any(GetObjectPresignRequest.class));
   }
 
   @Test
