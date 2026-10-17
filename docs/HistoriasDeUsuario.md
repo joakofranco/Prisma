@@ -666,22 +666,6 @@ y roles habilitados en [`docs/API.md`](API.md).
 - **Implementado en:** `docker-compose.yml` (perfiles `app`, `security`, `full`, etc.). Ver
   [`README.md`](../README.md) (Quickstart) y [`docs/Dev-Config.md`](Dev-Config.md).
 
-### HU-INFRA-02 — Desplegar en un cluster Kubernetes con redundancia
-> Como equipo de operación, quiero desplegar PRISMA en un cluster Kubernetes (minikube en local)
-> con al menos dos réplicas de cada componente que pueda escalar horizontalmente sin
-> inconsistencias, para que la caída de un pod no tumbe la aplicación.
-
-- Frontend y backend-core: **2 réplicas** (stateless, sin estado local).
-- backend-ai: **2 réplicas** (stateless; el índice de ChromaDB vive en un volumen persistente
-  compartido, no en memoria del proceso).
-- Postgres, Redis, MinIO, Ollama y la base de Keycloak son, a propósito, réplica única en este
-  manifiesto: son componentes con estado (bases de datos, cache, object storage, modelo de IA)
-  donde escalar a 2 réplicas sin un mecanismo de clustering real (replicación, Sentinel, modo
-  distribuido) no da redundancia -- corrompe o duplica el estado. Ver
-  [`docs/Kubernetes-Minikube-Portainer.md`](Kubernetes-Minikube-Portainer.md) para el detalle de
-  por qué cada uno queda así y qué camino seguir para una HA real de producción.
-- **Implementado en:** `infra/kubernetes/base/*.yaml`, `infra/kubernetes/overlays/*/patches.yaml`.
-
 ### HU-INFRA-03 — CI/CD automático
 > Como equipo de desarrollo, quiero que cada push corra lint + tests + build automáticamente, y
 > que cada release construya y publique las imágenes, para no depender de que alguien se acuerde

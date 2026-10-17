@@ -140,7 +140,6 @@ prisma/
 │
 ├── infra/                         # Infraestructura como código (IaC)
 │   ├── docker/                    # Dockerfiles multi-stage por servicio
-│   ├── kubernetes/                # Manifiestos K8s (ver docs/Kubernetes-Minikube-Portainer.md)
 │   ├── keycloak/                  # Realm import (realm-prisma.json) + configuración SSO
 │   ├── monitoring/                # Dashboards de Grafana + reglas/config de Prometheus y Loki
 │   └── nginx/                     # Reverse proxy + certificado TLS local
@@ -185,7 +184,7 @@ prisma/
 | **Seguridad SCA** | Trivy (FS + imágenes) + OWASP Dependency-Check + Gitleaks + CodeQL + Snyk (opcional) | Ver [Flujo CI/CD](#flujo-cicd). |
 | **Gestión de contenedores** | Portainer CE | UI web para los contenedores de Docker Compose. |
 | **Auto-update** | Watchtower | Refresco de imágenes locales cuando cambia el tag. |
-| **Orquestación** | Docker Compose (dev/local) + manifiestos Kubernetes (`infra/kubernetes/`) | Ver `docs/Kubernetes-Minikube-Portainer.md`. |
+| **Orquestación** | Docker Compose | Una migración a Kubernetes es viable: ver `docs/mcu-5.0/Kubernetes-Analisis-Viabilidad.md`. |
 | **CI/CD** | GitHub Actions | Ver [Flujo CI/CD](#flujo-cicd). |
 
 ---
@@ -277,17 +276,16 @@ Hay cuatro niveles, cada uno con un mecanismo de despliegue distinto:
 |---|---|---|---|
 | **Local** | `make up` (`docker compose --profile full up -d --build`) | Manual, en tu máquina | Docker Compose, todo en un host |
 | **Dev remoto** | Automático | `push`/merge a la rama `dev` | Servidor único, Docker Compose (vía SSH) |
-| **Staging** | Automático | Tag `v*.*.*-rc*` (ej. `v1.2.0-rc1`) | Kubernetes (Kustomize), namespace `prisma-staging` |
-| **Producción** | Automático, con aprobación | Tag `v*.*.*` (ej. `v1.2.0`) | Kubernetes (Kustomize), namespace `prisma-prod` |
+| **Staging** | Automático | Tag `v*.*.*-rc*` (ej. `v1.2.0-rc1`) | Servidor de staging, Docker Compose (vía SSH) |
+| **Producción** | Automático, con aprobación | Tag `v*.*.*` (ej. `v1.2.0`) | Servidor de producción, Docker Compose (vía SSH) |
 
 Los tres ambientes remotos (dev, staging, prod) los despliega el workflow **`deploy.yml`** una vez
 configurados — no hace falta correr nada a mano en el día a día. Pero cada uno necesita una puesta
-a punto manual la primera vez (servidor/cluster + secrets de GitHub, placeholders `CHANGE_ME_*` a
+a punto manual la primera vez (servidor + secrets de GitHub, placeholders `CHANGE_ME_*` a
 rotar, configuración de Keycloak). La guía paso a paso de **cómo instalar cada uno desde cero**,
 pensada para alguien que nunca lo hizo, vive en
 [`docs/Ambientes-Despliegue.md`](docs/Ambientes-Despliegue.md); el detalle de cada job del workflow
-que los dispara está en [`docs/CI-CD-Infra.md`](docs/CI-CD-Infra.md) (sección "5. `deploy.yml`" y
-"Parte 3 — Deployment a Kubernetes").
+que los dispara está en [`docs/CI-CD-Infra.md`](docs/CI-CD-Infra.md) (sección "5. `deploy.yml`").
 
 ---
 
@@ -331,7 +329,7 @@ Cada `push` y cada `pull request` dispara pipelines automáticos definidos en `.
 
 | Workflow | Trigger | Qué hace |
 |---|---|---|
-| **`ci.yml`** | `push` + `PR` | Detecta qué apps cambiaron y corre en paralelo: lint + type-check + tests + coverage + build de frontend, backend-core (spotless/checkstyle/spotbugs/pmd + JUnit + Testcontainers) y backend-ai (ruff/black/mypy + pytest); valida además `docker-compose`, Dockerfiles (hadolint), manifiestos K8s (kubeconform) y YAML (yamllint). |
+| **`ci.yml`** | `push` + `PR` | Detecta qué apps cambiaron y corre en paralelo: lint + type-check + tests + coverage + build de frontend, backend-core (spotless/checkstyle/spotbugs/pmd + JUnit + Testcontainers) y backend-ai (ruff/black/mypy + pytest); valida además `docker-compose`, Dockerfiles (hadolint) y YAML (yamllint). |
 | **`security.yml`** | `push`/`PR` a `main` + semanal (cron) | Gitleaks (secretos), Trivy (filesystem + imágenes de los 3 servicios), OWASP Dependency-Check, CodeQL, y Snyk (opcional, solo si está seteada la variable de repo `ENABLE_SNYK`). |
 | **`sonarqube.yml`** | `push` + `PR` | Análisis SAST contra la instancia de SonarQube configurada — **opcional**, solo corre si la variable de repo `SONAR_HOST_URL` está seteada. |
 | **`build-and-push.yml`** | `push` a `main`/`dev` + tags `v*` | Construye las imágenes de las 3 apps y las publica en GHCR. |
@@ -438,7 +436,7 @@ MCU 5.0 se carga como parte de esas mismas migraciones.
 - 📄 [`docs/RUNBOOK.md`](docs/RUNBOOK.md) — Operación, incidentes y recuperación.
 - 📄 [`docs/CI-CD-Infra.md`](docs/CI-CD-Infra.md) — Pipelines de CI/CD e infraestructura.
 - 📄 [`docs/Ambientes-Despliegue.md`](docs/Ambientes-Despliegue.md) — Instructivo paso a paso para levantar PRISMA en cada ambiente (local, dev remoto, staging, producción).
-- 📄 [`docs/Kubernetes-Minikube-Portainer.md`](docs/Kubernetes-Minikube-Portainer.md) — Cluster Kubernetes local (minikube) y gestión desde Portainer.
+- 📄 [`docs/mcu-5.0/Kubernetes-Analisis-Viabilidad.md`](docs/mcu-5.0/Kubernetes-Analisis-Viabilidad.md) — Análisis de viabilidad de una eventual migración a Kubernetes (no implementada).
 
 ### Contribución y contexto del proyecto
 

@@ -14,6 +14,14 @@
 >   
 >   
 >   
+> **Nota de vigencia.** Este documento es un análisis teórico de cómo se podría desplegar PRISMA en
+> Kubernetes; **el sistema no se despliega en Kubernetes**. Fue redactado cuando el repositorio
+> incluía manifiestos Kustomize (`infra/kubernetes/`), targets `make k8s-*`, la demo con minikube y
+> un modo de ChromaDB como servidor aparte para escalar `backend-ai`. Esos artefactos se retiraron
+> del repositorio (el despliegue usa Docker Compose); las secciones que los mencionan describen
+> su contenido original y sirven de guía si algún día se retoma la migración, momento en el que
+> habría que reintroducirlos. El historial de git conserva los archivos eliminados.
+
 Evaluación de la viabilidad técnica, operativa y económica de adoptar Kubernetes como plataforma de orquestación de contenedores para PRISMA, tomando como base el estado real del repositorio (docker-compose.yml, infra/kubernetes/, .github/workflows/).
 
 [**1\. Descripción de la actividad	3**](#1.-descripción-de-la-actividad)
@@ -300,7 +308,7 @@ Principio rector: cada fase entrega valor y es reversible. Nada obliga a la sigu
    - Pinnear todas las imágenes :latest.  
 2. make k8s-dev contra **minikube**; kubectl apply \-k overlays/dev de punta a punta.  
 3. Ensayo de resiliencia: borrar 1 pod de backend-core/backend-ai y confirmar que /actuator/health y /ai/health siguen respondiendo por el Service.  
-4. Documentar el resultado en docs/Kubernetes-Minikube-Portainer.md.
+4. Documentar el resultado del piloto.
 
 **Entregable:** evidencia real de que los manifiestos se despliegan y la app funciona en K8s.
 
@@ -392,7 +400,7 @@ Mecanismos de rollback por fase
 | Equipo — rol "prod" | RoleBinding a view (+ 1 admin nominal) | prisma-prod |
 | Prometheus | ClusterRole de sólo lectura sobre pods,endpoints,nodes/metrics | Cluster |
 
-El agente de Portainer descrito en docs/Kubernetes-Minikube-Portainer.md usa cluster-admin, eso es sólo para la **gestión visual** desde Portainer, no debe ser el sujeto que usa el pipeline de deploy.
+El agente de Portainer (si se usara para gestionar el cluster) usaría cluster-admin, eso es sólo para la **gestión visual** desde Portainer, no debe ser el sujeto que usa el pipeline de deploy.
 
 ## 8.3 Aislamiento de red — NetworkPolicy {#8.3-aislamiento-de-red-—-networkpolicy}
 

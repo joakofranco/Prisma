@@ -61,10 +61,10 @@ COPY app ./app
 
 # Base de conocimiento del RAG (docs/mcu-5.0 del repo). En local, docker-compose.yml la
 # bind-mountea en vivo sobre este mismo path (así se edita sin rebuild); esta copia es la que
-# usan las imágenes publicadas a GHCR (K8s, docker-compose.prod.yml) donde no hay bind mount.
-# El directorio "knowledge-base" lo puebla `make sync-k8s-assets` antes del build (ver Makefile);
+# usan las imágenes publicadas a GHCR (docker-compose.prod.yml) donde no hay bind mount.
+# El directorio "knowledge-base" lo puebla `make sync-knowledge-base` antes del build (ver Makefile);
 # si nunca corrió, queda vacío (placeholder .gitkeep versionado) y el build no falla, sólo el
-# RAG no tiene contexto -- ver infra/kubernetes/README.md.
+# RAG no tiene contexto.
 COPY knowledge-base ./knowledge-base
 RUN mkdir -p /data/chroma /data/knowledge-base \
  && cp -r ./knowledge-base/. /data/knowledge-base/ \

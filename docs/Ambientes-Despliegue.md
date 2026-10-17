@@ -4,22 +4,22 @@ Instructivo de cómo levantar PRISMA desde cero en cada uno de los cuatro ambien
 Pensado para alguien que nunca lo hizo: qué instalar antes, qué archivo/variable tocar en cada
 paso, y cómo confirmar que quedó bien. El detalle de cada job del workflow que dispara estos
 despliegues está en [`CI-CD-Infra.md`](CI-CD-Infra.md) (sección "5. `deploy.yml`" y "Parte 3 —
-Deployment a Kubernetes").
+Deployment por ambiente").
 
 | Ambiente | Cómo se levanta | Trigger | Infraestructura |
 |---|---|---|---|
 | **Local** | `make up` (`docker compose --profile full up -d --build`) | Manual, en tu máquina | Docker Compose, todo en un host |
 | **Dev remoto** | Automático | `push`/merge a la rama `dev` | Servidor único, Docker Compose (vía SSH) |
-| **Staging** | Automático | Tag `v*.*.*-rc*` (ej. `v1.2.0-rc1`) | Kubernetes (Kustomize), namespace `prisma-staging` |
-| **Producción** | Automático, con aprobación | Tag `v*.*.*` (ej. `v1.2.0`) | Kubernetes (Kustomize), namespace `prisma-prod` |
+| **Staging** | Automático | Tag `v*.*.*-rc*` (ej. `v1.2.0-rc1`) | Servidor de staging, Docker Compose (vía SSH) |
+| **Producción** | Automático, con aprobación | Tag `v*.*.*` (ej. `v1.2.0`) | Servidor de producción, Docker Compose (vía SSH) |
 
 Los tres ambientes remotos (dev, staging, prod) los despliega el workflow **`deploy.yml`** una vez
 configurados — no hace falta correr nada a mano en el día a día. Pero **cada uno necesita una
-puesta a punto manual la primera vez** (servidor/cluster + secrets de GitHub): eso es lo que cubre
+puesta a punto manual la primera vez** (servidor + secrets de GitHub): eso es lo que cubre
 cada sección de abajo.
 
 > **Placeholders que vas a tener que rotar en cualquier ambiente que no sea tu máquina local**:
-> `.env.example` (Compose) e `infra/kubernetes/base/secret.example.yaml` (K8s) traen valores
+> `.env.example` trae valores
 > `CHANGE_ME_*` a propósito — nunca uses esos valores tal cual en un servidor real. Generá cada
 > uno con, por ejemplo, `openssl rand -base64 32`:
 >
@@ -29,7 +29,7 @@ cada sección de abajo.
 > | `JWT_SECRET` | Firma de las sesiones de la app — el más crítico de rotar |
 > | `AI_INTERNAL_API_KEY` | Sin esto, `backend-ai` queda alcanzable sin autenticación interna |
 > | `KEYCLOAK_ADMIN_PASSWORD`, `KEYCLOAK_ADMIN_CLIENT_SECRET` | Admin de Keycloak (IAM completo) |
-> | `MINIO_ROOT_PASSWORD` (Compose) / `MINIO_SECRET_KEY` (K8s) | Acceso a las evidencias almacenadas |
+> | `MINIO_ROOT_PASSWORD` | Acceso a las evidencias almacenadas |
 > | `GF_SECURITY_ADMIN_PASSWORD`, `PORTAINER_ADMIN_PASSWORD` | Admin de las herramientas de infraestructura |
 > | `PGADMIN_DEFAULT_PASSWORD` | Admin de pgAdmin |
 >
@@ -244,182 +244,58 @@ Para reproducirlo a mano (ej. si el pipeline está caído), corré esos mismos c
 servidor — no hay ningún paso oculto. También se puede disparar manualmente desde
 **Actions → Deploy → Run workflow**, eligiendo `environment: dev`.
 
-## 3) Staging — Kubernetes, por tag release-candidate
+## 3) Staging — Docker Compose por SSH, por tag release-candidate
 
-### Prerrequisitos (cluster)
+Igual que [Dev remoto](#2-dev-remoto--servidor-único-automático-al-mergear-a-dev), pero en un
+servidor propio de staging y disparado por un tag release-candidate.
 
-- Un cluster Kubernetes real (cloud o [minikube local](Kubernetes-Minikube-Portainer.md) para
-  probar el flujo antes de ir a uno de verdad) con **ingress-nginx** y **cert-manager**
-  instalados — `infra/kubernetes/base/ingress.yaml` asume `kubernetes.io/ingress.class: nginx` y
-  un `ClusterIssuer` llamado **`letsencrypt`** ya creado en el cluster; sin eso el Ingress no va a
-  poder emitir el certificado TLS.
-- `kubectl` (con acceso al cluster) y el binario standalone `kustomize` si vas a correr los pasos
-  a mano (CI ya lo trae en `ubuntu-latest`).
-- Un subdominio real apuntando (DNS) a la IP del ingress del cluster, ej. `staging.prisma.example.uy`.
+### Prerrequisitos y configuración inicial del servidor (una sola vez)
 
-### Primer deploy a este namespace (una sola vez)
-
-```bash
-# 1) Namespace
-kubectl create namespace prisma-staging
-```
-
-**2) Secret real.** Generar los 9 valores primero (guardarlos en variables de shell para no
-tipearlos dos veces ni dejarlos en el historial de `kubectl`):
-```bash
-export SPRING_DATASOURCE_PASSWORD=$(openssl rand -base64 32)
-export SPRING_DATA_REDIS_PASSWORD=$(openssl rand -base64 32)
-export JWT_SECRET=$(openssl rand -base64 32)
-export MINIO_ACCESS_KEY=$(openssl rand -hex 16)
-export MINIO_SECRET_KEY=$(openssl rand -base64 32)
-export KEYCLOAK_DB_PASSWORD=$(openssl rand -base64 32)
-export KEYCLOAK_ADMIN_PASSWORD=$(openssl rand -base64 32)
-export KEYCLOAK_ADMIN_CLIENT_SECRET=$(openssl rand -base64 32)
-export AI_INTERNAL_API_KEY=$(openssl rand -base64 32)
-```
-Anotar `KEYCLOAK_ADMIN_CLIENT_SECRET` aparte (lo vas a necesitar de nuevo más abajo, para
-pegarlo también dentro de Keycloak). Crear el Secret con esos valores:
-```bash
-kubectl create secret generic prisma-secrets -n prisma-staging \
-  --from-literal=SPRING_DATASOURCE_USERNAME=prisma \
-  --from-literal=SPRING_DATASOURCE_PASSWORD="$SPRING_DATASOURCE_PASSWORD" \
-  --from-literal=SPRING_DATA_REDIS_PASSWORD="$SPRING_DATA_REDIS_PASSWORD" \
-  --from-literal=JWT_SECRET="$JWT_SECRET" \
-  --from-literal=MINIO_ACCESS_KEY="$MINIO_ACCESS_KEY" \
-  --from-literal=MINIO_SECRET_KEY="$MINIO_SECRET_KEY" \
-  --from-literal=KEYCLOAK_DB_PASSWORD="$KEYCLOAK_DB_PASSWORD" \
-  --from-literal=KEYCLOAK_ADMIN_PASSWORD="$KEYCLOAK_ADMIN_PASSWORD" \
-  --from-literal=KEYCLOAK_ADMIN_CLIENT_SECRET="$KEYCLOAK_ADMIN_CLIENT_SECRET" \
-  --from-literal=AI_INTERNAL_API_KEY="$AI_INTERNAL_API_KEY"
-```
-(referencia de las keys en [`infra/kubernetes/base/secret.example.yaml`](../infra/kubernetes/base/secret.example.yaml)).
-
-**3) Dominio.** Si tu dominio real no es `staging.prisma.example.uy`, reemplazalo en los dos
-archivos que lo tienen hardcodeado, antes de aplicar:
-```bash
-sed -i 's/staging\.prisma\.example\.uy/staging.<tu-dominio-real>/' \
-  infra/kubernetes/overlays/staging/ingress-patch.yaml \
-  infra/kubernetes/overlays/staging/configmap-patch.yaml
-```
-Confirmar el reemplazo: `grep -r staging.prisma.example.uy infra/kubernetes/overlays/staging/`
-no debe imprimir nada.
-
-```bash
-# 4) Generar las copias que Kustomize/la imagen de backend-ai necesitan
-make sync-k8s-assets
-
-# 5) Aplicar
-kubectl apply -k infra/kubernetes/overlays/staging
-kubectl -n prisma-staging rollout status deployment/backend-core --timeout=5m
-kubectl -n prisma-staging rollout status deployment/backend-ai   --timeout=5m
-kubectl -n prisma-staging rollout status deployment/frontend     --timeout=5m
-```
-
-**Después del primer deploy**, rotar el secret del client `prisma-backend` (el realm lo importa
-con el valor de ejemplo `CHANGE_ME_IN_PRODUCTION`, que no coincide con el
-`KEYCLOAK_ADMIN_CLIENT_SECRET` recién generado arriba):
-1. Entrar a `https://staging.<tu-dominio>/auth/admin`, loguearse con `KEYCLOAK_ADMIN` /
-   `KEYCLOAK_ADMIN_PASSWORD` (los valores que pusiste en el Secret).
-2. Realm **prisma** (selector arriba a la izquierda) → **Clients** → `prisma-backend` →
-   pestaña **Credentials** → botón **Regenerate**.
-3. Copiar el secret que Keycloak generó y actualizar el Secret de Kubernetes con ESE valor
-   (tiene que coincidir exacto en los dos lados):
-   ```bash
-   kubectl create secret generic prisma-secrets -n prisma-staging \
-     --from-literal=KEYCLOAK_ADMIN_CLIENT_SECRET='<el-valor-que-copiaste-de-keycloak>' \
-     --dry-run=client -o yaml | kubectl apply -f -
-   kubectl -n prisma-staging rollout restart deployment/backend-core
-   ```
-No hace falta tocar **Valid redirect URIs**/**Web origins** de `prisma-frontend` (ya vienen en
-`"*"`, ver [`SECURITY.md`](SECURITY.md#endurecimientos-recientes-para-que-no-se-repitan), ítem
-10). Detalle completo de otros caveats de Keycloak en K8s (qué probes/Jobs tienen gotchas) en
-[`../infra/kubernetes/README.md`](../infra/kubernetes/README.md).
+Repetir la sección "Prerrequisitos" y "Configuración inicial del servidor" de Dev remoto en el
+servidor de staging: Docker + Compose, repo clonado en `/opt/prisma`, `.env` con todos los
+`CHANGE_ME_*` reemplazados, `GHCR_ORG`/login a GHCR y certificado TLS. Un dominio real apuntando
+(DNS) al servidor, ej. `staging.prisma.example.uy`, y las variables `KEYCLOAK_TRUSTED_ISSUERS` y
+`CORS_ALLOWED_ORIGINS` del `.env` con ese dominio.
 
 ### Configurar el pipeline
 
-1. Generar el kubeconfig a pasarle a GitHub. Lo más simple (cuenta admin completa del cluster):
-   ```bash
-   cat ~/.kube/config | base64 -w0
-   ```
-   Más seguro (recomendado): crear un `ServiceAccount` acotado al namespace `prisma-staging`,
-   con permisos sólo sobre ese namespace, y armar un kubeconfig a partir de su token:
-   ```bash
-   kubectl create serviceaccount prisma-deployer -n prisma-staging
-   kubectl create rolebinding prisma-deployer-binding -n prisma-staging \
-     --clusterrole=edit --serviceaccount=prisma-staging:prisma-deployer
-   kubectl create token prisma-deployer -n prisma-staging --duration=8760h > /tmp/sa-token
-
-   # armar el kubeconfig apuntando al mismo cluster/CA que ya usás, pero con este token
-   CLUSTER_NAME=$(kubectl config view --minify -o jsonpath='{.clusters[0].name}')
-   CLUSTER_SERVER=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')
-   kubectl config view --minify --raw -o jsonpath='{.clusters[0].cluster.certificate-authority-data}' > /tmp/ca.b64
-
-   cat > /tmp/kubeconfig-staging.yaml <<EOF
-   apiVersion: v1
-   kind: Config
-   clusters:
-   - name: $CLUSTER_NAME
-     cluster:
-       server: $CLUSTER_SERVER
-       certificate-authority-data: $(cat /tmp/ca.b64)
-   contexts:
-   - name: prisma-staging
-     context: {cluster: $CLUSTER_NAME, namespace: prisma-staging, user: prisma-deployer}
-   current-context: prisma-staging
-   users:
-   - name: prisma-deployer
-     user: {token: "$(cat /tmp/sa-token)"}
-   EOF
-
-   cat /tmp/kubeconfig-staging.yaml | base64 -w0   # esto es lo que pegás en el secret KUBE_CONFIG
-   rm /tmp/sa-token /tmp/ca.b64 /tmp/kubeconfig-staging.yaml
-   ```
-2. En GitHub: repo → **Settings → Environments → New environment** → escribir `staging` →
-   **Configure environment**.
-3. Agregar:
+1. Generar el par de claves SSH (`ssh-keygen -t ed25519 -C "prisma-deploy-staging" -f deploy_staging_key -N ""`)
+   y copiar la clave pública al servidor, igual que en Dev remoto.
+2. GitHub: repo → **Settings → Environments → New environment** → `staging`.
+3. Dentro del environment agregar:
 
    | Tipo | Nombre | Valor |
    |---|---|---|
-   | Secret | `KUBE_CONFIG` | El base64 generado en el paso 1 (pegado completo, una sola línea) |
-   | Variable | `APP_URL` | `https://staging.<tu-dominio>` |
+   | Secret | `STAGING_HOST` | IP o dominio del servidor de staging |
+   | Secret | `STAGING_USER` | Usuario SSH |
+   | Secret | `STAGING_SSH_KEY` | Clave **privada** completa |
+   | Variable | `APP_URL` | URL pública para el smoke test, ej. `https://staging.prisma.example.uy` |
 
 ### Deploys siguientes
 
-Empujar un tag `v*.*.*-rc*` (ej. `v1.3.0-rc1`), o disparar manualmente desde
-**Actions → Deploy → Run workflow** con `environment: staging`. El pipeline sólo hace
-`kustomize edit set image` + `kubectl apply -k .` + esperar el rollout — los pasos 1-4 de arriba
-no se repiten (son de una sola vez por namespace).
+```bash
+git tag v1.3.0-rc1
+git push origin v1.3.0-rc1
+```
 
-## 4) Producción — Kubernetes, por tag semver + aprobación
+`deploy.yml` conecta por SSH, hace `git fetch --tags` y `git checkout` del tag, y corre
+`docker compose -f docker-compose.yml -f docker-compose.prod.yml pull` y `up -d --remove-orphans`
+con `TAG` igual al tag publicado. Después corre el smoke test (`GET {APP_URL}/actuator/health`).
+
+## 4) Producción — Docker Compose por SSH, por tag semver + aprobación
 
 ### Prerrequisitos
 
-Los mismos que staging, más 2 revisores obligatorios (configurados más abajo). Dominio real de
-producción, ej. `prisma.example.uy`.
-
-### Primer deploy al namespace `prisma-prod`
-
-Mismos pasos que [Staging](#3-staging--kubernetes-por-tag-release-candidate) punto por punto,
-reemplazando `staging` por `prod` en namespace y comandos (`kubectl create namespace prisma-prod`,
-`-n prisma-prod`, etc.). Para el dominio, el `sed` del paso 3 de staging queda así (los archivos
-de `prod` ya traen `prisma.example.uy` como default — sólo hace falta tocarlos si tu dominio real
-es otro):
-```bash
-sed -i 's/prisma\.example\.uy/<tu-dominio-real>/' \
-  infra/kubernetes/overlays/prod/ingress-patch.yaml \
-  infra/kubernetes/overlays/prod/configmap-patch.yaml
-```
-Y el paso de rotar `KEYCLOAK_ADMIN_CLIENT_SECRET` después del primer deploy es igual de
-obligatorio acá (mismos comandos que en staging, con `-n prisma-prod`).
+Los mismos que staging, en un servidor de producción propio, más 2 revisores obligatorios
+(configurados más abajo). Dominio real de producción, ej. `prisma.example.uy`.
 
 ### Configurar el pipeline
 
-1. Repetir el paso 1 de staging (generar el `KUBE_CONFIG`, en lo posible con un `ServiceAccount`
-   acotado a `prisma-prod`, no el mismo que staging).
-2. GitHub: repo → **Settings → Environments → New environment** → escribir `prod` →
-   **Configure environment**.
-3. Agregar `KUBE_CONFIG` (Secret) y `APP_URL` (Variable, ej. `https://<tu-dominio-real>`) igual
-   que en staging.
+1. Generar un par de claves SSH **distinto** al de staging (`deploy_prod_key`) y copiar la
+   pública al servidor de producción.
+2. GitHub: repo → **Settings → Environments → New environment** → `prod`.
+3. Agregar los secrets `PROD_HOST`, `PROD_USER` y `PROD_SSH_KEY` y la variable `APP_URL` (ej.
+   `https://<tu-dominio-real>`), igual que en staging.
 4. **Bloquear el deploy hasta aprobación manual** — en la misma pantalla del environment `prod`:
    sección **Deployment protection rules** → tildar **Required reviewers** → buscar y agregar
    (mínimo) 2 usuarios/equipos de GitHub → **Save protection rules**. Sin este paso el tag
@@ -432,32 +308,26 @@ git tag v1.3.0        # semver, SIN sufijo -rc
 git push origin v1.3.0
 ```
 
-El job queda **pausado esperando aprobación** antes de aplicar los manifiestos contra
-`infra/kubernetes/overlays/prod` / namespace `prisma-prod`. Después de aprobar y aplicar, corre un
-smoke test (`GET {APP_URL}/actuator/health`) antes de dar el deploy por exitoso.
-
-### Alternativa sin Kubernetes (un solo servidor)
-
-Para un despliegue más simple (sin cluster), mismos pasos que
-[Dev remoto](#2-dev-remoto--servidor-único-automático-al-mergear-a-dev) pero con los overrides de
+El job queda **pausado esperando aprobación**. Después de aprobar, `deploy.yml` hace el mismo
+proceso que en staging contra el servidor de producción, usando los overrides de
 `docker-compose.prod.yml` (menos puertos expuestos, límites de recursos, `ssl=on` en Postgres,
-Keycloak en modo `start` en vez de `start-dev`):
+Keycloak en modo `start` en vez de `start-dev`), y corre el smoke test antes de dar el deploy por
+exitoso.
+
+Para reproducirlo a mano en el servidor:
 
 ```bash
-ssh <usuario>@<servidor-prod>
 cd /opt/prisma
-git pull origin main
-# Primera vez en este servidor: mismos pasos de configuración de .env/certs/GHCR login que
-# "Dev remoto" más arriba.
-docker compose pull
+git fetch --tags origin && git checkout v1.3.0
+export TAG=v1.3.0
+docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
 docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile full up -d --remove-orphans
 ```
 
 ## Referencias
 
 - Detalle de cada job del pipeline que dispara estos despliegues: [`CI-CD-Infra.md`](CI-CD-Infra.md)
-- Cluster Kubernetes local para probar antes de ir a un cluster real: [`Kubernetes-Minikube-Portainer.md`](Kubernetes-Minikube-Portainer.md)
-- Secret/assets de Kubernetes, caveats de Keycloak/MinIO en K8s: [`../infra/kubernetes/README.md`](../infra/kubernetes/README.md)
+- Análisis de viabilidad de una eventual migración a Kubernetes (no implementada): [`mcu-5.0/Kubernetes-Analisis-Viabilidad.md`](mcu-5.0/Kubernetes-Analisis-Viabilidad.md)
 - HTTPS, certificado autofirmado y su renovación: [`Certificados-TLS.md`](Certificados-TLS.md)
 - Setup de desarrollo local por SO, con más detalle que la sección 1 de acá: [`Dev-Config.md`](Dev-Config.md)
 - Incidentes reales de operación y su causa raíz: [`RUNBOOK.md`](RUNBOOK.md)

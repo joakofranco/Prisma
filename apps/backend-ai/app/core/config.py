@@ -10,13 +10,6 @@ class Settings(BaseSettings):
     ollama_model: str = "llama3:8b"
     ollama_embedding_model: str = "nomic-embed-text"
     chroma_persist_dir: str = "/data/chroma"
-    # Sin setear (default): modo local de siempre (PersistentClient, un solo proceso) -- así
-    # queda docker-compose y los tests. Seteado (Kubernetes): backend-ai se conecta a un servidor
-    # ChromaDB aparte por HTTP en vez de tocar el filesystem directamente, lo que le permite
-    # correr con más de una réplica sin arriesgar corromper el índice. Ver
-    # app/rag/chroma_client.py.
-    chroma_server_host: str | None = None
-    chroma_server_port: int = 8000
     rag_docs_dir: str = "/data/knowledge-base"
     rag_chunk_size: int = 1000
     rag_chunk_overlap: int = 200

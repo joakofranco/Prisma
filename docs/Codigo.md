@@ -98,9 +98,7 @@ app/
 - **`rag/loaders.py`** — extracción de texto por tipo de archivo (`.pdf` vía `PyPDFLoader`,
   `.docx`, `.txt`/`.md`).
 - **`rag/chroma_client.py`** — fábrica del cliente ChromaDB subyacente: `PersistentClient` local
-  (docker-compose, tests, default) o `HttpClient` contra un servidor Chroma aparte si
-  `CHROMA_SERVER_HOST` está seteado (Kubernetes, backend-ai con 2+ réplicas — ver
-  [`docs/Kubernetes-Minikube-Portainer.md`](Kubernetes-Minikube-Portainer.md)). Compartida por
+  (docker-compose y tests). Compartida por
   `vector_store.py` y `evidence_store.py` para que ambos usen el mismo criterio.
 - **`core/security.py`** — valida el header `X-Internal-Api-Key` en los endpoints llamados por
   `backend-core` (no expuestos directamente a usuarios finales).

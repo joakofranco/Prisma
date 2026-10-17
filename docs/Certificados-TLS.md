@@ -97,8 +97,7 @@ restart-nginx` — nada más. No hace falta reconstruir ninguna imagen ni tocar 
 Un certificado de una CA pública (Let's Encrypt, etc.) exige que el dominio sea resoluble desde
 internet para el challenge de validación — no aplica a `prisma.local`, que solo existe en el
 `/etc/hosts` de cada desarrollador. Para producción (dominio real, público), la recomendación es
-Let's Encrypt + `cert-manager` (si se despliega en Kubernetes, ver
-[`Kubernetes-Minikube-Portainer.md`](Kubernetes-Minikube-Portainer.md)) o el certificado que
+Let's Encrypt o el certificado que
 gestione el balanceador de carga del proveedor cloud — no este script, que es exclusivamente para
 desarrollo local.
 

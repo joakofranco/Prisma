@@ -9,7 +9,7 @@
 # defecto ese `make` NO usa ningún shell para una línea sin metacaracteres (sin &&, |, ; ni
 # $()) -- llama directo a CreateProcess() con el PATH heredado del proceso, y esa PowerShell NO
 # tiene el `usr/bin` de Git (cp/rm/mkdir/openssl) en el PATH -- de ahí el error "El sistema no
-# puede encontrar el archivo especificado" en targets como sync-k8s-assets. Fix: forzar el
+# puede encontrar el archivo especificado" en targets como sync-knowledge-base. Fix: forzar el
 # shell de las recetas a bash.exe de Git Bash y, como bash -c (no login) NO sourcea /etc/profile
 # (que es justamente lo que arma el PATH con /usr/bin), BASH_ENV hace que lo sourcee igual (ver
 # la doc de bash: "when invoked non-interactively", lee BASH_ENV). $(wildcard ...) en esta
@@ -36,9 +36,7 @@ DC := docker compose
 .PHONY: help up down restart logs ps build rebuild pull clean nuke \
         test test-frontend test-core test-ai lint format \
         seed migrate backup restore health pull-llm shell-core shell-ai \
-        sonar security-scan sync-k8s-assets k8s-dev k8s-staging k8s-prod \
-        k8s-demo-images k8s-demo-secrets k8s-demo-up k8s-demo-status k8s-demo-dashboard \
-        k8s-demo-open k8s-demo-down k8s-demo-destroy \
+        sonar security-scan sync-knowledge-base \
         certs certs-force restart-nginx \
         mvp-up mvp-down mvp-logs mvp-ps mvp-seed \
         mcu50-build mcu50-validate bugasura-build
@@ -217,102 +215,12 @@ security-scan: ## Trivy scan local
 	@echo "$(CYAN)🛡  Ejecutando Trivy...$(RESET)"
 	docker run --rm -v $(PWD):/src aquasec/trivy:latest fs /src --severity CRITICAL,HIGH
 
-# ---------- KUBERNETES ----------
-sync-k8s-assets: ## Genera las copias que Kustomize necesita (realm de Keycloak, init de Postgres, knowledge base RAG)
-	@echo "$(CYAN)🔄 Sincronizando assets para K8s/imagen de backend-ai...$(RESET)"
-	cp infra/keycloak/realm-prisma.json infra/kubernetes/base/keycloak-realm.json;
-	cp scripts/db/init.sql infra/kubernetes/base/postgres-init.sql;
+# ---------- RAG: BASE DE CONOCIMIENTO ----------
+sync-knowledge-base: ## Copia docs/mcu-5.0 al build context de backend-ai (la empaqueta la imagen)
+	@echo "$(CYAN)🔄 Sincronizando la knowledge base del RAG para la imagen de backend-ai...$(RESET)"
 	rm -rf apps/backend-ai/knowledge-base;
 	mkdir -p apps/backend-ai/knowledge-base;
 	cp -r docs/mcu-5.0/. apps/backend-ai/knowledge-base/;
-
-k8s-dev: sync-k8s-assets ## Aplicar manifiestos K8s del entorno dev
-	kubectl apply -k infra/kubernetes/overlays/dev
-
-k8s-staging: sync-k8s-assets ## Aplicar manifiestos K8s del entorno staging
-	kubectl apply -k infra/kubernetes/overlays/staging
-
-k8s-prod: sync-k8s-assets ## Aplicar manifiestos K8s del entorno prod
-	kubectl apply -k infra/kubernetes/overlays/prod
-
-# ---------- KUBERNETES: DEMO MVP (minikube, para el video guiado) ----------
-# Guion completo paso a paso: docs/Demo-Kubernetes-MVP.md
-k8s-demo-images: sync-k8s-assets ## Demo: construir las 3 imagenes DENTRO del daemon docker de minikube
-	@echo "$(CYAN)🐳 Construyendo imagenes dentro de minikube (driver docker)...$(RESET)"
-	# MSYS_NO_PATHCONV=1 es necesario en Windows/Git Bash: MSYS2 reescribe cualquier argumento
-	# que "parezca" un path Unix absoluto (empieza con "/") a un path de Windows ANTES de que
-	# docker lo vea -- sin esto, --build-arg VITE_KEYCLOAK_URL=/auth le llega a `docker build`
-	# como VITE_KEYCLOAK_URL=C:/Program Files/Git/auth (la raíz de instalación de Git Bash), que
-	# termina horneado tal cual en el bundle de JS -- Keycloak intenta redirigir a
-	# file:///C:/Program%20Files/Git/auth/... y el login nunca completa ("Timeout when waiting
-	# for 3rd party check iframe message" en la consola del navegador). Inocuo en Linux/Mac (la
-	# variable no significa nada para esos `docker build`).
-	export MSYS_NO_PATHCONV=1 && \
-	eval $$(minikube docker-env --shell bash) && \
-	docker build -f infra/docker/backend-core.Dockerfile --target runtime \
-	  -t prisma-backend-core:demo apps/backend-core && \
-	docker build -f infra/docker/backend-ai.Dockerfile --target runtime \
-	  -t prisma-backend-ai:demo apps/backend-ai && \
-	docker build -f infra/docker/frontend.Dockerfile --target runtime \
-	  --build-arg VITE_API_BASE_URL=/api \
-	  --build-arg VITE_AI_API_BASE_URL=/ai/api/v1 \
-	  --build-arg VITE_KEYCLOAK_URL=/auth \
-	  --build-arg VITE_KEYCLOAK_REALM=prisma \
-	  --build-arg VITE_KEYCLOAK_CLIENT_ID=prisma-frontend \
-	  -t prisma-frontend:demo apps/frontend
-
-k8s-demo-secrets: ## Demo: namespace + Secret real, SOLO si no existe (passwords random; admin client secret fijo del realm importado)
-	kubectl create namespace prisma-demo --dry-run=client -o yaml | kubectl apply -f -
-	@if kubectl get secret prisma-secrets -n prisma-demo >/dev/null 2>&1; then \
-	  echo "$(CYAN)ℹ prisma-secrets ya existe en prisma-demo -- no se toca (ver nota abajo).$(RESET)"; \
-	else \
-	  kubectl create secret generic prisma-secrets -n prisma-demo \
-	    --from-literal=SPRING_DATASOURCE_USERNAME=prisma \
-	    --from-literal=SPRING_DATASOURCE_PASSWORD="$$(openssl rand -base64 24)" \
-	    --from-literal=SPRING_DATA_REDIS_PASSWORD="$$(openssl rand -base64 24)" \
-	    --from-literal=JWT_SECRET="$$(openssl rand -base64 48)" \
-	    --from-literal=MINIO_ACCESS_KEY=unused \
-	    --from-literal=MINIO_SECRET_KEY=unused \
-	    --from-literal=KEYCLOAK_DB_PASSWORD="$$(openssl rand -base64 24)" \
-	    --from-literal=KEYCLOAK_ADMIN_PASSWORD="$$(openssl rand -base64 16)" \
-	    --from-literal=KEYCLOAK_ADMIN_CLIENT_SECRET=CHANGE_ME_IN_PRODUCTION \
-	    --from-literal=AI_INTERNAL_API_KEY="$$(openssl rand -base64 32)"; \
-	fi
-	# A propósito SIN --dry-run=client -o yaml | kubectl apply -f - (como en el resto de este
-	# Makefile): eso REEMPLAZA el Secret con passwords nuevas en cada corrida, aunque el
-	# namespace ya tenga a Postgres/Keycloak-DB con SU password inicial de la primera vez (ver
-	# infra/kubernetes/README.md, "Por qué el Secret no vive en Kustomize" -- mismo problema,
-	# ahora también acá). Si `k8s-demo-up` se corre de nuevo sobre un namespace ya inicializado,
-	# generaría credenciales que ya no matchean lo que Postgres tiene en disco -> backend-core
-	# cae en CrashLoopBackOff con "password authentication failed" apenas se reinicie un pod.
-	# Para rotar el Secret a propósito: `kubectl delete secret prisma-secrets -n prisma-demo`
-	# y volver a correr este target -- pero después hay que actualizar Postgres/keycloak-db a
-	# mano (ALTER USER ... WITH PASSWORD, ver Troubleshooting en docs/Demo-Kubernetes-MVP.md) o
-	# borrar el namespace entero y arrancar de cero.
-
-k8s-demo-up: sync-k8s-assets k8s-demo-secrets ## Demo: aplicar el overlay MVP y esperar a que todo quede Ready
-	kubectl apply -k infra/kubernetes/overlays/demo
-	kubectl rollout status statefulset/postgres    -n prisma-demo --timeout=180s
-	kubectl rollout status statefulset/keycloak-db -n prisma-demo --timeout=180s
-	kubectl rollout status deployment/keycloak     -n prisma-demo --timeout=180s
-	kubectl rollout status deployment/backend-core -n prisma-demo --timeout=180s
-	kubectl rollout status deployment/backend-ai   -n prisma-demo --timeout=180s
-	kubectl rollout status deployment/frontend     -n prisma-demo --timeout=180s
-
-k8s-demo-status: ## Demo: ver pods/servicios/hpa del namespace de la demo
-	kubectl get pods,svc,hpa -n prisma-demo -o wide
-
-k8s-demo-dashboard: ## Demo: abrir el Kubernetes Dashboard en el navegador (complemento visual, ver docs/Demo-Kubernetes-MVP.md)
-	minikube dashboard
-
-k8s-demo-open: ## Demo: port-forward al frontend -- dejar corriendo y abrir http://localhost:8888
-	kubectl port-forward svc/frontend 8888:80 -n prisma-demo
-
-k8s-demo-down: ## Demo: borrar el namespace de la demo (pods + PVCs); conserva el cluster minikube
-	kubectl delete namespace prisma-demo --ignore-not-found
-
-k8s-demo-destroy: ## Demo: apagar y borrar el cluster minikube entero
-	minikube delete
 
 # ---------- TLS / CERTIFICADOS ----------
 certs: ## Generar el certificado autofirmado de nginx (pide confirmación si ya existe uno)
