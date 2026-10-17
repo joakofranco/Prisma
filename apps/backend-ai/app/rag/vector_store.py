@@ -219,9 +219,7 @@ class VectorStore:
     # Internos
     # ------------------------------------------------------------------
     def _connect(self) -> Chroma:
-        # Ver app/rag/chroma_client.py: cliente HTTP contra un servidor Chroma aparte si
-        # CHROMA_SERVER_HOST está seteado (Kubernetes, backend-ai con más de una réplica);
-        # PersistentClient local si no (docker-compose, tests).
+        # Ver app/rag/chroma_client.py: PersistentClient local.
         return Chroma(
             client=build_chroma_client(self.settings),
             collection_name=self.collection_name,

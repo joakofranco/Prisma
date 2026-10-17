@@ -199,8 +199,7 @@ class EvidenceStore:
         return f"evidence-{organization_id}"
 
     def _connect(self, organization_id: str) -> Any:
-        # Ver app/rag/chroma_client.py: mismo criterio que VectorStore -- HTTP contra un servidor
-        # Chroma aparte si CHROMA_SERVER_HOST está seteado, PersistentClient local si no.
+        # Ver app/rag/chroma_client.py: mismo criterio que VectorStore (PersistentClient local).
         if organization_id not in self._stores:
             self._stores[organization_id] = Chroma(
                 client=build_chroma_client(self.settings),
