@@ -98,22 +98,21 @@ no lo son ya). Nada de esto requiere tocar código ni reiniciar contenedores sal
 **Síntoma:** `GET /api/evidence/{id}/download` responde 200 con una URL, pero el navegador no
 puede resolverla (`ERR_NAME_NOT_RESOLVED` / `No se puede acceder a este sitio web`).
 
-**Causa raíz:** la URL prefirmada de MinIO se estaba generando con el mismo cliente S3 que usa
-`backend-core` para hablarle al bucket internamente (`MINIO_ENDPOINT=http://minio:9000`, el nombre
+**Causa raíz:** la URL prefirmada se estaba generando con el mismo cliente S3 que usa
+`backend-core` para hablarle al bucket internamente (`S3_ENDPOINT=http://rustfs:9000`, el nombre
 DNS interno de Docker) — ese host no significa nada fuera de la red `prisma-net`.
 
-**Cómo se resolvió:** `EvidenceService` usa ahora dos `MinioClient` distintos —
-`minioClient` (interno, para `putObject`/`removeObject`/y para que backend-ai baje el archivo a
-indexar) y `minioPublicClient` (`MINIO_PUBLIC_ENDPOINT`, `http://localhost:9001` en dev local) sólo
-para firmar la URL que ve el navegador. Ver `MinioConfig`.
+**Cómo se resolvió:** `EvidenceService` usa ahora un `S3Client` más dos `S3Presigner` distintos —
+`internalPresigner` (`S3_ENDPOINT`, para que backend-ai baje el archivo a indexar) y
+`publicPresigner` (`S3_PUBLIC_ENDPOINT`, `http://localhost:9001` en dev local) sólo para firmar la
+URL que ve el navegador. Ver `ObjectStorageConfig`.
 
-**Efecto colateral no obvio al aplicar este fix:** el SDK de MinIO necesita poder *conectarse él
-mismo* al endpoint configurado la primera vez que firma una URL, para resolver la región del bucket
-(`GetBucketLocation`) si no se la diste de antemano — así que `minioPublicClient`, apuntado a
-`localhost:9001`, fallaba con `ConnectException` **dentro del contenedor de backend-core** (ahí
-"localhost" es el propio contenedor, no el host). Se resolvió fijando `.region("us-east-1")`
-explícitamente en ambos clientes — con la región conocida de antemano, firmar queda 100% offline y
-no hace falta conectividad real hacia el endpoint que sólo va a usar el navegador.
+**Nota sobre la región:** el `S3Presigner` firma 100% offline, pero con el SDK anterior (MinIO) el
+cliente público necesitaba *conectarse él mismo* al endpoint para resolver la región del bucket
+(`GetBucketLocation`) y fallaba con `ConnectException` **dentro del contenedor de backend-core**
+(ahí "localhost" es el propio contenedor, no el host). Por eso la región se fija explícitamente
+(`us-east-1`) en `ObjectStorageConfig`: no hace falta conectividad real hacia el endpoint que sólo
+va a usar el navegador.
 
 ---
 
@@ -141,7 +140,7 @@ cambios de otra rama/PR al catálogo.
    atrás — hay que tirar el volumen y levantar de cero:**
    ```bash
    docker compose --profile app --profile security down --remove-orphans   # sin -v todavía
-   docker volume rm prisma-postgres-data prisma-keycloak-db-data prisma-minio-data prisma-chroma-data prisma-evidences-data
+   docker volume rm prisma-postgres-data prisma-keycloak-db-data prisma-rustfs-data prisma-chroma-data prisma-evidences-data
    docker compose --profile app --profile security up -d
    ```
    Esto borra datos locales (organizaciones/evaluaciones/usuarios de prueba) — nunca hacerlo contra
@@ -346,8 +345,8 @@ make restore   # restaura desde el backup MÁS RECIENTE en backups/
 ```
 
 > **Importante — cobertura real del backup:** pese a lo que dice el comentario del target en el
-> `Makefile` ("Backup completo (Postgres + MinIO)"), **`make backup` solo respalda Postgres.** Los
-> archivos de evidencia en MinIO (bucket `prisma-evidences`) no tienen ningún backup automatizado
+> `Makefile` ("Backup de Postgres"), **`make backup` solo respalda Postgres.** Los
+> archivos de evidencia en RustFS (bucket `prisma-evidences`) no tienen ningún backup automatizado
 > hoy — sólo viven en el volumen `prisma-evidences-data`. Si se necesita recuperación real ante
 > desastre, hay que agregar `mc mirror` (o equivalente) contra el bucket como parte de la rutina de
 > backup, o al menos documentar el volumen Docker como la única copia existente.
@@ -366,7 +365,7 @@ make restore   # restaura desde el backup MÁS RECIENTE en backups/
 
 - Disponibilidad: 99.5%
 - Latencia p95 API: < 500 ms
-- Backup Postgres: diario, retención 30 días (recordatorio: no cubre MinIO, ver arriba)
+- Backup Postgres: diario, retención 30 días (recordatorio: no cubre RustFS, ver arriba)
 
 ## Referencias
 

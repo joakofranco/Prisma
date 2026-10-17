@@ -143,7 +143,7 @@ make up-app                # frontend + backends + BD + Redis + Ollama
 ### Opción media (con IAM y almacenamiento)
 
 ```bash
-make up-core               # + Keycloak + MinIO
+make up-core               # + Keycloak + RustFS
 ```
 
 ### Opción completa (todo, incluye monitoreo y calidad)
@@ -185,7 +185,7 @@ usuarios nuevos, ver [`SECURITY.md`](SECURITY.md)):
 - 📘 **API docs (backend-core):** http://localhost:8081/swagger-ui
 - 🤖 **API docs (backend-ai):** http://localhost:8000/docs
 - 🔐 **Keycloak admin:** http://localhost:8180/auth (usuario `admin`, contraseña = `KEYCLOAK_ADMIN_PASSWORD` de tu `.env`)
-- 🗂️ **MinIO Console:** http://localhost:9002 (usuario `minioadmin` o `MINIO_ROOT_USER`, contraseña = `MINIO_ROOT_PASSWORD`)
+- 🗂️ **RustFS Console:** http://localhost:9002 (usuario = `RUSTFS_ACCESS_KEY`, contraseña = `RUSTFS_SECRET_KEY`)
 - 🐳 **Portainer:** http://localhost:9000 (`make up` solamente — setup inicial en la propia UI)
 - 📊 **Grafana:** http://localhost:3000 (usuario `admin`, contraseña = `GF_SECURITY_ADMIN_PASSWORD`)
 - 🔬 **SonarQube:** http://localhost:9003 (usuario/contraseña por defecto `admin`/`admin`, pide cambiarla al primer login)
@@ -248,7 +248,7 @@ make shell-db           # Consola psql
 make shell-core         # Shell dentro del contenedor Java
 make sonar              # Análisis SonarQube local
 make security-scan      # Trivy local
-make backup             # Backup Postgres + MinIO
+make backup             # Backup Postgres
 make nuke               # ⚠️ Reset TOTAL de datos locales
 ```
 

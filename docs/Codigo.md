@@ -26,7 +26,7 @@ uy.edu.prisma
 | `CatalogService` | Lectura del catálogo MCU 5.0 (`getByVersion`, `listVersions`), con soporte para acotar el árbol a un `CommunityProfile` (poda funciones/categorías/subcategorías/requisitos que se quedan sin controles tras filtrar). |
 | `CommunityProfileService` | CRUD de perfiles comunitarios (subconjuntos curados de controles). Catálogo de referencia compartido entre organizaciones — solo `PRISMA_ADMIN` puede escribir. |
 | `EvaluationService` | El servicio más grande: ciclo de vida completo de una evaluación (crear, cambiar estado con una tabla de transiciones válidas + rol autorizado por transición, responder controles) y `calculateMaturity()` — el motor de cálculo de madurez acumulativa por subcategoría y del promedio global de la evaluación. Las respuestas sólo se pueden editar mientras `Evaluation.isSelfAssessmentEditable()` es verdadero (`DRAFT`/`IN_PROGRESS`/`RETURNED`). |
-| `EvidenceService` | Sube evidencia a MinIO, dispara indexado best-effort en `backend-ai` (RAG) y expone la búsqueda de citas relevantes por control. Usa **dos** `MinioClient` (ver `MinioConfig`): el interno (`minioClient`) para hablarle al bucket y para que `backend-ai` baje el archivo a indexar, y uno público (`minioPublicClient`) sólo para firmar la URL de descarga que ve el navegador — necesitan endpoints distintos porque uno es un hostname interno de Docker. Igual que las respuestas, subir/borrar/reindexar evidencia respeta `isSelfAssessmentEditable()`. |
+| `EvidenceService` | Sube evidencia a RustFS (S3), dispara indexado best-effort en `backend-ai` (RAG) y expone la búsqueda de citas relevantes por control. Usa un `S3Client` y **dos** `S3Presigner` (ver `ObjectStorageConfig`): el cliente y el presigner interno para hablarle al bucket y para que `backend-ai` baje el archivo a indexar, y el presigner público sólo para firmar la URL de descarga que ve el navegador — necesitan endpoints distintos porque uno es un hostname interno de Docker. Igual que las respuestas, subir/borrar/reindexar evidencia respeta `isSelfAssessmentEditable()`. |
 | `ImprovementPlanService` | CRUD del plan de mejora (acciones correctivas por control) + motor de sugerencias automáticas a partir de los controles con mayor `gap`. |
 | `AuditObservationService` | Observaciones/no conformidades/recomendaciones que un `AUDITOR` registra sobre una evaluación en estado `IN_AUDIT`. |
 | `DashboardService` | Agregados de solo lectura para el panel: totales, madurez promedio, distribución por estado/función — acotados por organización salvo rol global. |
@@ -49,7 +49,7 @@ uy.edu.prisma
 | Clase | Hacia dónde | Nota |
 |---|---|---|
 | `KeycloakAdminClient` | Keycloak Admin REST API | Usa credenciales de *service account* del client `prisma-backend` (roles `manage-users`/`view-users`/`view-events` de `realm-management`), no un usuario admin humano. `fetchLoginFailures()` (usado por `LoginFailureAuditSyncService`) lee el endpoint de eventos, no de usuarios. |
-| `AiEvidenceClient` | `backend-ai` (RAG de evidencias) | Todas las llamadas son best-effort: si `backend-ai` está caído, la evidencia ya quedó guardada en MinIO/Postgres y el auditor simplemente no ve citas, pero el flujo principal no se interrumpe. |
+| `AiEvidenceClient` | `backend-ai` (RAG de evidencias) | Todas las llamadas son best-effort: si `backend-ai` está caído, la evidencia ya quedó guardada en el almacenamiento/Postgres y el auditor simplemente no ve citas, pero el flujo principal no se interrumpe. |
 
 ### `config/` — beans de configuración
 
@@ -59,7 +59,7 @@ uy.edu.prisma
 | `PasswordHasher` | Hash Argon2id vía `Argon2PasswordEncoder` de Spring Security (Bouncy Castle puro-Java — ver el comentario en el código sobre por qué se abandonó `argon2-jvm`). |
 | `AiConfig` | Cliente HTTP (`RestClient`) hacia `backend-ai`, con la clave interna `X-Internal-Api-Key`. |
 | `KeycloakAdminConfig` | Cliente HTTP hacia la Admin REST API de Keycloak + sus credenciales de service account. |
-| `MinioConfig` | Dos beans `MinioClient` — interno (`MINIO_ENDPOINT`) y público (`MINIO_PUBLIC_ENDPOINT`, sólo para firmar URLs de descarga) — ambos con `region` fija (`us-east-1`): sin ella, el SDK necesita conectividad real hacia el endpoint sólo para resolver la región antes de firmar, lo que rompe el cliente público al correr dentro de un contenedor. |
+| `ObjectStorageConfig` | Un `S3Client` (AWS SDK v2, path-style, endpoint `S3_ENDPOINT`) y dos `S3Presigner` — interno (`S3_ENDPOINT`) y público (`S3_PUBLIC_ENDPOINT`, sólo para firmar URLs de descarga) — todos con región fija (`us-east-1`): así la firma SigV4 queda 100% offline y no necesita conectividad hacia el endpoint público al correr dentro de un contenedor. Propiedades en `prisma.storage.*`. |
 
 ### `web/` — capa REST
 

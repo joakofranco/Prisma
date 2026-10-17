@@ -63,7 +63,7 @@ Funcionalidades operativas:
   niveles 1-4) y de brechas por función/categoría/subcategoría, y un **ciclo de vida** con estados
   Borrador → En Curso → Lista para Auditoría → En Auditoría → Aprobada / Devuelta → Archivada
   (con stepper visual y glosario de estados en el detalle de cada evaluación).
-- **Evidencias**: carga de documentos asociados a un control, almacenados en MinIO (S3-compatible)
+- **Evidencias**: carga de documentos asociados a un control, almacenados en RustFS (S3-compatible)
   con URLs de descarga firmadas.
 - **Asistente de IA sobre evidencia (RAG)**: dado un control, busca en la evidencia ya cargada por
   esa organización y cita el fragmento relevante indicando documento, página y sección (heurística
@@ -108,7 +108,7 @@ PRISMA se implementa como una **arquitectura de microservicios contenerizada**, 
                             ┌────────┴─────────┐                ▼
                             ▼                  ▼         ┌──────────────┐
                     ┌──────────────┐  ┌──────────────┐   │    Ollama    │
-                    │  PostgreSQL  │  │    MinIO     │   │ (Llama 3 LLM │
+                    │  PostgreSQL  │  │   RustFS     │   │ (Llama 3 LLM │
                     │  (relacional,│  │ (Evidencias  │   │  local para  │
                     │   Flyway)    │  │  S3 API)     │   │     RAG)     │
                     └──────────────┘  └──────────────┘   └──────────────┘
@@ -175,7 +175,7 @@ prisma/
 | **Backend IA** | FastAPI + LangChain + Ollama (Llama 3) + ChromaDB | RAG sobre evidencia cargada y sobre la documentación del MCU 5.0. |
 | **BD Relacional** | PostgreSQL 17 | Esquema versionado con Flyway (`apps/backend-core/src/main/resources/db/migration`). |
 | **Caché / sesiones** | Redis 7 | Dependencia declarada en el stack; sin uso activo todavía en el código (no hay sesiones ni rate-limiting implementados sobre Redis a la fecha). |
-| **Almacenamiento** | MinIO (S3-compatible) | Evidencias con URLs firmadas. |
+| **Almacenamiento** | RustFS (S3-compatible) | Evidencias con URLs firmadas. |
 | **SSO / IAM** | Keycloak 26 | Servido bajo `/auth` (`KC_HTTP_RELATIVE_PATH`), JWT, RBAC. |
 | **Reverse Proxy** | Nginx 1.30 | HTTPS con certificado local (ver `docs/Certificados-TLS.md`). |
 | **Monitoreo** | Prometheus + Grafana + Loki + Promtail + cAdvisor + node/postgres/redis-exporter | Métricas + logs centralizados. |
@@ -241,7 +241,7 @@ make mvp-up     # postgres, redis, keycloak(+db), backend-core, backend-ai, fron
 ```
 
 Queda **afuera**: el LLM (`ollama` y el modelo de ~4.7 GB — no se descarga), la subida de
-archivos de evidencia (necesita MinIO) y las funciones de RAG (citas de evidencia y tips de
+archivos de evidencia (necesita RustFS) y las funciones de RAG (citas de evidencia y tips de
 remediación degradan sin romper). `backend-ai` se levanta ocioso sólo para que nginx arranque.
 Comandos: `make mvp-ps`, `make mvp-logs`, `make mvp-seed`, `make mvp-down`.
 
@@ -262,7 +262,7 @@ Una vez arriba, las URLs por defecto son (los puertos se pueden cambiar en `.env
 | **Grafana** | http://localhost:3000 | `admin` / valor de `GF_SECURITY_ADMIN_PASSWORD` en tu `.env` |
 | **Prometheus** | http://localhost:9090 | — |
 | **Kibana** | http://localhost:5601 | `elastic` / valor de `ELASTIC_PASSWORD` en tu `.env` |
-| **MinIO Console** | http://localhost:9002 | `minioadmin` / valor de `MINIO_ROOT_PASSWORD` en tu `.env` |
+| **RustFS Console** | http://localhost:9002 | `RUSTFS_ACCESS_KEY` / `RUSTFS_SECRET_KEY` de tu `.env` |
 | **pgAdmin** | http://localhost:5050 | `admin@prisma.uy` / `admin` |
 | **Ollama API** | http://localhost:11434 | — |
 | **Nginx (HTTPS)** | https://localhost | certificado local autofirmado, ver `docs/Certificados-TLS.md` |
@@ -366,7 +366,7 @@ docker compose --profile full up -d
 ### Perfiles definidos
 
 - `app` → frontend, backend-core, backend-ai, postgres, redis, ollama
-- `security` → keycloak, keycloak-db, minio
+- `security` → keycloak, keycloak-db, rustfs
 - `observability` → prometheus, grafana, loki, promtail, cadvisor, node-exporter, postgres-exporter, redis-exporter
 - `elastic` → elasticsearch, kibana, filebeat (logs de seguridad/BD/apps, aparte de Loki)
 - `quality` → sonarqube, sonar-db
