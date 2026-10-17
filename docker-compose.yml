@@ -524,6 +524,8 @@ services:
       - ./infra/monitoring/promtail-config.yml:/etc/promtail/config.yml:ro
       - /var/log:/var/log:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      # docker_sd_configs de promtail-config.yml descubre los contenedores por este socket
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     networks: [prisma-net]
 
   cadvisor:
