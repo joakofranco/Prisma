@@ -2,8 +2,12 @@ package uy.edu.prisma.config;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import java.net.URL;
+import java.time.Duration;
 import org.junit.jupiter.api.Test;
-import uy.edu.prisma.config.MinioConfig.MinioProperties;
+import software.amazon.awssdk.services.s3.model.GetObjectRequest;
+import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest;
+import uy.edu.prisma.config.ObjectStorageConfig.StorageProperties;
 
 class PasswordHasherTest {
 
@@ -27,21 +31,44 @@ class PasswordHasherTest {
   }
 
   @Test
-  void minioPropertiesAccessors() {
-    MinioProperties p =
-        new MinioProperties("http://minio:9000", "http://localhost:9001", "ak", "sk", "bucket");
+  void storagePropertiesAccessors() {
+    StorageProperties p =
+        new StorageProperties("http://rustfs:9000", "http://localhost:9001", "ak", "sk", "bucket");
 
-    assertEquals("http://minio:9000", p.endpoint());
+    assertEquals("http://rustfs:9000", p.endpoint());
     assertEquals("http://localhost:9001", p.publicEndpoint());
     assertEquals("ak", p.accessKey());
     assertEquals("sk", p.secretKey());
     assertEquals("bucket", p.bucket());
 
-    MinioConfig config = new MinioConfig();
-    assertNotNull(config.minioClient(p));
-    // El cliente público apunta a un endpoint distinto del interno -- ver el comentario en
-    // MinioConfig sobre por qué la URL de descarga que ve el navegador no puede firmarse con el
-    // mismo cliente que usa backend-core para hablarle a MinIO dentro de la red de Docker.
-    assertNotNull(config.minioPublicClient(p));
+    ObjectStorageConfig config = new ObjectStorageConfig();
+    assertNotNull(config.s3Client(p));
+    assertNotNull(config.internalPresigner(p));
+    assertNotNull(config.publicPresigner(p));
+  }
+
+  @Test
+  void presignersSignOfflineAgainstTheirOwnEndpointWithPathStyle() {
+    StorageProperties p =
+        new StorageProperties("http://rustfs:9000", "http://localhost:9001", "ak", "sk", "bucket");
+    ObjectStorageConfig config = new ObjectStorageConfig();
+    GetObjectPresignRequest request =
+        GetObjectPresignRequest.builder()
+            .signatureDuration(Duration.ofMinutes(15))
+            .getObjectRequest(GetObjectRequest.builder().bucket("bucket").key("evidence/x").build())
+            .build();
+
+    // El presigner público firma para el host que ve el navegador; el interno, para el de la red
+    // de contenedores. Ambos en path-style (/bucket/key) y sin ninguna llamada de red.
+    URL publicUrl = config.publicPresigner(p).presignGetObject(request).url();
+    URL internalUrl = config.internalPresigner(p).presignGetObject(request).url();
+
+    assertEquals("localhost", publicUrl.getHost());
+    assertEquals(9001, publicUrl.getPort());
+    assertEquals("/bucket/evidence/x", publicUrl.getPath());
+    assertTrue(publicUrl.getQuery().contains("X-Amz-Signature="));
+    assertTrue(publicUrl.getQuery().contains("us-east-1"));
+    assertEquals("rustfs", internalUrl.getHost());
+    assertEquals(9000, internalUrl.getPort());
   }
 }

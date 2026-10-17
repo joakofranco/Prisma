@@ -67,7 +67,8 @@ public interface EvaluationRepository extends JpaRepository<Evaluation, UUID> {
   // hacia CatalogVersion, así que la integridad referencial hay que garantizarla acá a mano -- la
   // base no la impone.
   // Datos que cuelgan de una evaluación con ON DELETE CASCADE: borrarla los destruiría en silencio
-  // (y dejaría archivos huérfanos en MinIO), así que EvaluationService.delete solo la permite
+  // (y dejaría archivos huérfanos en el almacenamiento), así que EvaluationService.delete solo la
+  // permite
   // cuando todos estos conteos son 0.
   @Query("SELECT COUNT(r) FROM EvaluationResponse r WHERE r.evaluation.id = :evaluationId")
   long countResponses(@Param("evaluationId") UUID evaluationId);

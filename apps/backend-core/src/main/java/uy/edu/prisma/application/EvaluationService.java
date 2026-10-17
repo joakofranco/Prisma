@@ -232,7 +232,8 @@ public class EvaluationService {
     eval.setCommunityProfile(profile);
     EvaluationDto result =
         toDto(
-            evalRepo.save(eval), auditorNamesByOrganization(Set.of(eval.getOrganization().getId())));
+            evalRepo.save(eval),
+            auditorNamesByOrganization(Set.of(eval.getOrganization().getId())));
     auditLog.record(
         "UPDATE",
         "evaluation:" + id,
@@ -247,7 +248,8 @@ public class EvaluationService {
   // claves ausentes del mapa (ARCHIVED) son estados terminales: no admiten ninguna transición.
   private static final Map<Evaluation.Status, Set<Evaluation.Status>> ALLOWED_TRANSITIONS =
       Map.of(
-          // ARCHIVED (descartar / cerrar) se permite desde cualquier estado que NO esté en manos del
+          // ARCHIVED (descartar / cerrar) se permite desde cualquier estado que NO esté en manos
+          // del
           // auditor: Borrador, En Curso, Devuelta y Aprobada. READY_FOR_AUDIT e IN_AUDIT quedan
           // afuera a propósito (hay una auditoría en marcha: primero se aprueba o se devuelve).
           Evaluation.Status.DRAFT,
@@ -303,7 +305,8 @@ public class EvaluationService {
               currentUser.hasRole(UserRole.ORG_RESPONSIBLE)
                   || currentUser.hasRole(UserRole.INTERNAL_EVALUATOR);
           case IN_AUDIT, APPROVED, RETURNED -> currentUser.isAuditor();
-          // Archivar: el responsable de la organización (además de PRISMA_ADMIN, que siempre puede).
+          // Archivar: el responsable de la organización (además de PRISMA_ADMIN, que siempre
+          // puede).
           case ARCHIVED -> currentUser.hasRole(UserRole.ORG_RESPONSIBLE);
           default -> false;
         };
@@ -348,7 +351,8 @@ public class EvaluationService {
     currentUser.assertOrganizationAccess(eval.getOrganization().getId());
     // Respuestas, resultados de madurez, evidencias, observaciones de auditoría y planes de mejora
     // cuelgan de la evaluación con ON DELETE CASCADE: borrarla los destruiría en silencio (y
-    // dejaría archivos huérfanos en MinIO). Solo se permite borrar una evaluación vacía; si ya
+    // dejaría archivos huérfanos en el almacenamiento). Solo se permite borrar una evaluación
+    // vacía; si ya
     // tiene contenido, se archiva (estado ARCHIVED) para conservar el historial.
     List<String> dependents = new ArrayList<>();
     addIfAny(dependents, evalRepo.countResponses(id), "respuestas");

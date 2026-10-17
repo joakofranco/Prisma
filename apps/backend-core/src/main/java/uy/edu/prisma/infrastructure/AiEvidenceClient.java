@@ -12,13 +12,13 @@ import uy.edu.prisma.web.dto.Dto.EvidenceCitationDto;
 import uy.edu.prisma.web.dto.Dto.RemediationTipsDto;
 
 /**
- * Cliente hacia backend-ai: el pipeline RAG de evidencias (app.api.v1.evidence en Python) y,
- * desde acá, también las sugerencias de remediación de brechas (app.api.v1.rag).
+ * Cliente hacia backend-ai: el pipeline RAG de evidencias (app.api.v1.evidence en Python) y, desde
+ * acá, también las sugerencias de remediación de brechas (app.api.v1.rag).
  *
  * <p>Ninguna llamada acá lanza hacia el llamador: la ingesta es best-effort (una evidencia ya quedó
- * guardada en MinIO/Postgres aunque backend-ai esté caído), y tanto las citas como las
- * sugerencias de remediación son asistentes opcionales (si fallan, el usuario simplemente no ve
- * esa ayuda puntual, pero puede seguir trabajando).
+ * guardada en el almacenamiento/Postgres aunque backend-ai esté caído), y tanto las citas como las
+ * sugerencias de remediación son asistentes opcionales (si fallan, el usuario simplemente no ve esa
+ * ayuda puntual, pero puede seguir trabajando).
  */
 @Component
 public class AiEvidenceClient {
