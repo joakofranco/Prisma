@@ -5,7 +5,7 @@ services=(
   "http://localhost:8081/actuator/health|backend-core"
   "http://localhost:8000/health|backend-ai"
   "http://localhost:8080|frontend"
-  "http://localhost:8180/health/ready|keycloak"
+  "http://localhost:8180/auth/realms/prisma|keycloak"
   "http://localhost:9001/health|rustfs"
 )
 for entry in "${services[@]}"; do
