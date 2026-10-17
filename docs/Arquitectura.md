@@ -101,7 +101,7 @@ implementar rate-limiting real.
 ## Seguridad transversal
 
 - HTTPS en todos los entornos (certificado autofirmado propio o `mkcert` en local — ver
-  [`Certificados-TLS.md`](Certificados-TLS.md) —, Let's Encrypt/cert-manager en Kubernetes).
+  [`Certificados-TLS.md`](Certificados-TLS.md) —, Let's Encrypt o el certificado del balanceador en producción).
 - Argon2id para el hash de contraseñas locales (`PasswordHasher`, ver [`Codigo.md`](Codigo.md));
   Keycloak gestiona el suyo propio para las credenciales con las que se loguea.
 - JWT firmado por Keycloak (RS256), validado por `backend-core` contra las JWKS del realm; sin

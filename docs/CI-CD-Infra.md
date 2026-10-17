@@ -19,7 +19,7 @@ Todos los workflows están en `.github/workflows/`.
 | **`frontend`** | ESLint + vue-tsc (type-check) + Vitest (unit + coverage) + build Vite | Si cambió `apps/frontend/**` o es un PR |
 | **`backend-core`** | Spotless (format) + Checkstyle + Compile + JUnit unit + Failsafe integration (con Testcontainers para Postgres real) + JaCoCo report | Si cambió `apps/backend-core/**` o es un PR |
 | **`backend-ai`** | Ruff (lint) + Black (format) + mypy (types) + pytest + coverage | Si cambió `apps/backend-ai/**` o es un PR |
-| **`infra-validation`** | `docker compose config` + hadolint (Dockerfiles) + kubeconform (K8s) + yamllint | Si cambió `infra/**` |
+| **`infra-validation`** | `docker compose config` + hadolint (Dockerfiles) + yamllint | Si cambió `infra/**` |
 | **`ci-summary`** | Gate final. Falla el CI si alguno de los jobs anteriores falló. | Siempre |
 
 **Cobertura y test reports:** Se suben como artifacts (`coverage-frontend`, `coverage-backend-core`, etc.) y se re-usan en SonarQube.
@@ -62,8 +62,8 @@ Tags automáticos:
 
 **Trigger:**
 - merge a `dev` → deploy automático a `dev` (SSH + docker compose)
-- tag `v*-rc*` → deploy a `staging` (Kubernetes + Kustomize)
-- tag `v*` → deploy a `prod` (Kubernetes + Kustomize)
+- tag `v*-rc*` → deploy a `staging` (SSH + docker compose)
+- tag `v*` → deploy a `prod` (SSH + docker compose)
 - `workflow_dispatch` → manual, con selección de entorno y tag
 
 Usa **GitHub Environments** para forzar aprobaciones (2 reviewers obligatorios para `prod`).
@@ -189,37 +189,12 @@ o `docker.container.labels.com_docker_compose_service` acotan a un servicio punt
 
 ---
 
-## Parte 3 — Deployment a Kubernetes (`infra/kubernetes/`)
+## Parte 3 — Deployment por ambiente (Docker Compose vía SSH)
 
-Estructura **Kustomize** (base + overlays por entorno):
-
-```
-infra/kubernetes/
-├── base/                       # Manifiestos comunes
-│   ├── namespace.yaml
-│   ├── configmap.yaml          # ConfigMap + PVC evidencias (el Secret real NO está acá, ver abajo)
-│   ├── secret.example.yaml     # Plantilla del Secret -- se crea a mano por namespace, nunca vía kustomize
-│   ├── postgres.yaml           # StatefulSet con PVC
-│   ├── redis.yaml
-│   ├── keycloak.yaml           # StatefulSet keycloak-db + Deployment keycloak
-│   ├── minio.yaml              # StatefulSet con PVC 50 GB
-│   ├── minio-init-job.yaml     # Job: crea los buckets de evidencias/reportes
-│   ├── backend-core.yaml       # Deployment (2 replicas) + Service + HPA + PDB
-│   ├── chroma.yaml             # Deployment (1 réplica, con estado) + PVC 10 GB + Service -- índice RAG
-│   ├── backend-ai.yaml         # Deployment (2 replicas, sin PVC propio -- stateless, le pega a "chroma" por HTTP)
-│   ├── ollama.yaml             # StatefulSet con PVC 30 GB para modelos
-│   ├── frontend.yaml           # Deployment 2 replicas + Service
-│   ├── ingress.yaml            # Ingress NGINX + cert-manager (incluye /auth → Keycloak)
-│   └── kustomization.yaml
-└── overlays/
-    ├── dev/                    # Namespace prisma-dev, tags dev
-    ├── staging/                # Namespace prisma-staging
-    └── prod/                   # Namespace prisma-prod, 4 replicas, más recursos
-```
-
-Ver [`infra/kubernetes/README.md`](../infra/kubernetes/README.md) para el detalle de cómo crear el
-Secret real y sincronizar los assets (`make sync-k8s-assets`) antes del primer deploy a un
-namespace nuevo.
+Los tres ambientes remotos se despliegan con el mismo paso del workflow `deploy.yml`: conexión por
+SSH al servidor del ambiente y `docker compose` con las imágenes publicadas en GHCR. Cada ambiente
+usa sus propios secrets de GitHub: `DEV_*`, `STAGING_*` y `PROD_*` (cada uno con `HOST`, `USER` y
+`SSH_KEY`).
 
 **Cómo se despliega cada ambiente** (ver también la tabla resumen en el README, sección
 "Ambientes: de desarrollo local a producción", y la guía paso a paso completa en
@@ -227,9 +202,9 @@ namespace nuevo.
 
 | Ambiente | Trigger de `deploy.yml` | Mecanismo |
 |---|---|---|
-| **dev** | `push`/merge a la rama `dev` | SSH a un único servidor + `docker compose --profile full up -d` (**no** usa Kubernetes) |
-| **staging** | tag `v*.*.*-rc*` | `kubectl apply -k infra/kubernetes/overlays/staging`, namespace `prisma-staging` |
-| **prod** | tag `v*.*.*` (semver, sin `-rc`) | `kubectl apply -k infra/kubernetes/overlays/prod`, namespace `prisma-prod`, requiere 2 aprobadores en el Environment `prod` de GitHub |
+| **dev** | `push`/merge a la rama `dev` | SSH a un único servidor + `git pull origin dev` + `docker compose --profile full up -d` |
+| **staging** | tag `v*.*.*-rc*` | SSH al servidor de staging + `docker compose -f docker-compose.yml -f docker-compose.prod.yml` con `TAG` = el tag |
+| **prod** | tag `v*.*.*` (semver, sin `-rc`) | Igual que staging contra el servidor de producción; requiere 2 aprobadores en el Environment `prod` de GitHub |
 
 > **Sobre la rama `dev`:** existe en el remoto y el trigger de arriba es real (el workflow sí la
 > escucha), pero **no forma parte del flujo de trabajo diario** de nadie en el equipo — el
@@ -239,33 +214,8 @@ namespace nuevo.
 > no se ha disparado en el ciclo de vida del proyecto hasta ahora — documentado tal cual está
 > configurado, no tal cual se usa, para que quien lo active sepa qué esperar.
 
-El overlay `dev` de Kubernetes (`infra/kubernetes/overlays/dev/`) existe en el repo y se puede
-aplicar a mano contra un cluster local (`make k8s-dev`, ver Makefile) para probar los manifiestos
-sin depender de staging — pero el deploy automático a "dev" del pipeline **no** pasa por ahí, usa
-el servidor con Docker Compose de la tabla de arriba.
-
-Aplicar manualmente (equivalente a lo que hace el job `deploy` del workflow):
-
-```bash
-# Staging (reemplazar <org> y el tag por los reales)
-cd infra/kubernetes/overlays/staging
-kustomize edit set image \
-  ghcr.io/<org>/prisma-frontend=ghcr.io/<org>/prisma-frontend:v1.3.0-rc1 \
-  ghcr.io/<org>/prisma-backend-core=ghcr.io/<org>/prisma-backend-core:v1.3.0-rc1 \
-  ghcr.io/<org>/prisma-backend-ai=ghcr.io/<org>/prisma-backend-ai:v1.3.0-rc1
-kubectl apply -k .
-
-# Prod: mismos pasos contra infra/kubernetes/overlays/prod y namespace prisma-prod
-```
-
-Requiere `kubectl` y `kustomize` con acceso al cluster (el mismo kubeconfig que CI recibe vía el
-secret `KUBE_CONFIG` del Environment correspondiente).
-
-**Auto-escalado:**  
-HPA sobre backend-core (2-8 réplicas basadas en CPU/RAM).
-
-**Alta disponibilidad:**  
-PDB garantiza mínimo 1 pod disponible durante actualizaciones. Postgres usa StatefulSet con PVC para persistencia; en prod se recomienda migrar a **CloudNativePG** o RDS.
+Una eventual migración a Kubernetes es viable pero no está implementada: el análisis está en
+[`mcu-5.0/Kubernetes-Analisis-Viabilidad.md`](mcu-5.0/Kubernetes-Analisis-Viabilidad.md).
 
 ---
 
