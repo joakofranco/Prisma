@@ -22,7 +22,7 @@ Closes #
 - [ ] Backend Core (Spring Boot)
 - [ ] Backend AI (FastAPI)
 - [ ] Base de datos / migraciones
-- [ ] Infra / Docker / K8s
+- [ ] Infra / Docker
 - [ ] CI/CD
 - [ ] Documentación
 

@@ -12,10 +12,7 @@ rules:
   document-start: disable
   truthy:
     check-keys: false
-  # Los manifiestos de infra/kubernetes/base usan mappings/secuencias en flujo ({ key: value },
-  # [a, b]) con relleno de un espacio, y algunos ConfigMap/Secret alinean los valores en columna
-  # (espacios extra despues de los ":") para que se lean mas facil -- ambos son intencionales, no
-  # errores de formato.
+  # Se permiten mappings/secuencias en flujo ({ key: value }, [a, b]) con relleno de un espacio.
   braces:
     max-spaces-inside: 1
   brackets:
