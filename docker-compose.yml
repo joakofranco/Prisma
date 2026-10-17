@@ -4,12 +4,12 @@
 # Uso mediante perfiles (--profile) para elegir qué levantar:
 #
 #   docker compose --profile app up -d                           # Sólo la app
-#   docker compose --profile app --profile security up -d        # + Keycloak/MinIO
+#   docker compose --profile app --profile security up -d        # + Keycloak/RustFS
 #   docker compose --profile full up -d                          # TODO
 #
 # Perfiles disponibles:
 #   app           → frontend, backend-core, backend-ai, postgres, redis, ollama
-#   security      → keycloak, keycloak-db, minio
+#   security      → keycloak, keycloak-db, rustfs
 #   observability → prometheus, grafana, loki, promtail, cadvisor, node-exporter
 #   elastic       → elasticsearch, kibana, filebeat (logs de seguridad/BD/apps, aparte de Loki)
 #   quality       → sonarqube, sonar-db
@@ -31,7 +31,7 @@ networks:
 volumes:
   postgres-data:        { name: prisma-postgres-data }
   redis-data:           { name: prisma-redis-data }
-  minio-data:           { name: prisma-minio-data }
+  rustfs-data:          { name: prisma-rustfs-data }
   ollama-data:          { name: prisma-ollama-data }
   chroma-data:          { name: prisma-chroma-data }
   keycloak-db-data:     { name: prisma-keycloak-db-data }
@@ -171,16 +171,16 @@ services:
       # provisionar usuarios en Keycloak al crearlos en la app. Debe coincidir con el secret
       # configurado en Keycloak para ese client (infra/keycloak/realm-prisma.json).
       KEYCLOAK_ADMIN_CLIENT_SECRET: ${KEYCLOAK_ADMIN_CLIENT_SECRET}
-      MINIO_ENDPOINT: http://minio:9000
+      S3_ENDPOINT: http://rustfs:9000
       # Endpoint PÚBLICO (resoluble desde el navegador del usuario), usado solo para firmar las
-      # URLs de descarga de evidencia que ve el frontend -- MINIO_ENDPOINT de arriba es el nombre
+      # URLs de descarga de evidencia que ve el frontend -- S3_ENDPOINT de arriba es el nombre
       # DNS interno de Docker (solo resuelve entre contenedores), así que una URL firmada con ese
-      # host da "no se puede resolver" en cualquier navegador real. Si se cambia MINIO_PORT_API en
+      # host da "no se puede resolver" en cualquier navegador real. Si se cambia S3_PORT_API en
       # el .env, este valor lo sigue automáticamente.
-      MINIO_PUBLIC_ENDPOINT: http://localhost:${MINIO_PORT_API:-9001}
-      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
-      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
-      MINIO_BUCKET: ${MINIO_BUCKET_EVIDENCES}
+      S3_PUBLIC_ENDPOINT: http://localhost:${S3_PORT_API:-9001}
+      S3_ACCESS_KEY: ${RUSTFS_ACCESS_KEY}
+      S3_SECRET_KEY: ${RUSTFS_SECRET_KEY}
+      S3_BUCKET: ${S3_BUCKET_EVIDENCES}
       AI_SERVICE_URL: http://backend-ai:8000
       AI_INTERNAL_API_KEY: ${AI_INTERNAL_API_KEY}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:8080,http://localhost:5173,https://localhost,https://prisma.local}
@@ -387,44 +387,27 @@ services:
       start_period: 90s
 
   # -------------------------------------------------------------------
-  # 8. MINIO (almacenamiento S3-compatible de evidencias)
+  # 8. RUSTFS (almacenamiento S3-compatible de evidencias)
   # -------------------------------------------------------------------
-  minio:
-    image: minio/minio:latest
-    container_name: prisma-minio
+  # Sin job de init: backend-core crea el bucket (privado por defecto) en la primera subida.
+  rustfs:
+    image: rustfs/rustfs:1.0.3
+    container_name: prisma-rustfs
     restart: unless-stopped
     profiles: [security, full]
-    command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY}
     ports:
-      - "${MINIO_PORT_API:-9001}:9000"
-      - "${MINIO_PORT_CONSOLE:-9002}:9001"
+      - "${S3_PORT_API:-9001}:9000"
+      - "${S3_PORT_CONSOLE:-9002}:9001"
     volumes:
-      - minio-data:/data
+      - rustfs-data:/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD-SHELL", "curl -f http://localhost:9000/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
-    networks: [prisma-net]
-
-  minio-init:
-    image: minio/mc:latest
-    container_name: prisma-minio-init
-    profiles: [security, full]
-    depends_on:
-      minio: { condition: service_healthy }
-    entrypoint: >
-      /bin/sh -c "
-      mc alias set local http://minio:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD};
-      mc mb -p local/${MINIO_BUCKET_EVIDENCES} || true;
-      mc mb -p local/${MINIO_BUCKET_REPORTS} || true;
-      mc anonymous set none local/${MINIO_BUCKET_EVIDENCES};
-      mc anonymous set none local/${MINIO_BUCKET_REPORTS};
-      exit 0;
-      "
     networks: [prisma-net]
 
   # -------------------------------------------------------------------
@@ -619,7 +602,7 @@ services:
       ES_JAVA_OPTS: ${ELASTICSEARCH_JAVA_OPTS:--Xms1g -Xmx1g}
       # Nodo único de dev: sin TLS entre contenedores (sólo xpack.security para autenticación),
       # "elastic" queda expuesto sólo dentro de prisma-net (no hay puerto público salvo el que vos
-      # mismo abras). Igual criterio que Postgres/Redis/MinIO en este mismo archivo -- la
+      # mismo abras). Igual criterio que Postgres/Redis/RustFS en este mismo archivo -- la
       # superficie externa la cierra nginx.
       xpack.security.enabled: "true"
       xpack.security.http.ssl.enabled: "false"
@@ -642,7 +625,7 @@ services:
       start_period: 60s
     networks: [prisma-net]
 
-  # Job one-shot (mismo patrón que minio-init): Kibana RECHAZA arrancar si se le configura el
+  # Job one-shot (mismo patrón que los jobs de init): Kibana RECHAZA arrancar si se le configura el
   # superusuario "elastic" (falla con "this is a superuser account that cannot write to system
   # indices" -- lo aprendimos por las malas, Kibana entraba en loop de restart). Hace falta el
   # usuario de servicio reservado "kibana_system", que no trae password por defecto -- este job
