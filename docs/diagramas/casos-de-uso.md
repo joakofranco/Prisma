@@ -159,7 +159,7 @@ graph LR
 
 ### UC8 — Cargar evidencia
 - **Actores:** `PRISMA_ADMIN`, `INTERNAL_EVALUATOR`, `ORG_RESPONSIBLE`.
-- **Endpoint:** `POST /api/evidence` (sube a MinIO) → dispara indexado asíncrono en `backend-ai`
+- **Endpoint:** `POST /api/evidence` (sube a RustFS) → dispara indexado asíncrono en `backend-ai`
   (`POST /api/v1/evidence/ingest`) para poder consultarla luego por RAG.
 
 ### UC9 — Consultar evidencia por RAG

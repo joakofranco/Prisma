@@ -101,8 +101,7 @@ Cada servicio en `docker-compose.yml` tiene un rol claro. Los perfiles (`--profi
 |---|---|---|
 | **`keycloak`** | `quay.io/keycloak/keycloak:26.7` | Identity Provider. SSO, OAuth2, políticas de contraseña. Política de OTP/TOTP configurada a nivel de realm pero **no forzada** para ningún rol (ver [`SECURITY.md`](SECURITY.md)) — un usuario puede activarla desde su propia cuenta, no es obligatoria hoy. Realm `prisma` importado automáticamente desde `infra/keycloak/realm-prisma.json`. |
 | **`keycloak-db`** | `postgres:17-alpine` | BD dedicada de Keycloak (separada de la de la app). |
-| **`minio`** | `minio/minio:latest` | Storage S3-compatible para evidencias. Buckets creados automáticamente por `minio-init`. |
-| **`minio-init`** | `minio/mc:latest` | Job one-shot que crea los buckets al arrancar. |
+| **`rustfs`** | `rustfs/rustfs:1.0.3` | Storage S3-compatible para evidencias. El bucket lo crea `backend-core` en la primera subida (no hay job de init). |
 
 ### Perfil `observability` — Monitoreo
 
@@ -125,7 +124,7 @@ de Filebeat en `infra/monitoring/filebeat/filebeat.yml`.
 | Servicio | Imagen | Rol |
 |---|---|---|
 | **`elasticsearch`** | `docker.elastic.co/elasticsearch/elasticsearch:9.5.3` | Motor de indexado/búsqueda, nodo único. Seguridad (`xpack.security`) habilitada, usuario `elastic`. |
-| **`kibana-init`** | `docker.elastic.co/elasticsearch/elasticsearch:9.5.3` | Job one-shot (mismo patrón que `minio-init`) que le setea password al usuario de servicio `kibana_system`. Kibana rechaza arrancar (loop de restart) si se le da el superusuario `elastic` en cambio. |
+| **`kibana-init`** | `docker.elastic.co/elasticsearch/elasticsearch:9.5.3` | Job one-shot (job one-shot) que le setea password al usuario de servicio `kibana_system`. Kibana rechaza arrancar (loop de restart) si se le da el superusuario `elastic` en cambio. |
 | **`kibana`** | `docker.elastic.co/kibana/kibana:9.5.3` | UI para buscar/filtrar/armar dashboards sobre los logs indexados. Se conecta a Elasticsearch como `kibana_system`, no como `elastic`. Healthcheck contra `/api/status` (no basta con que el contenedor esté "Up": tarda ~30-40s en levantar sus plugins). |
 | **`kibana-dashboards-init`** | `curlimages/curl:8.11.0` | Job one-shot que importa `infra/monitoring/kibana/dashboards.ndjson` (data view + 4 dashboards, ver abajo) apenas Kibana está sano, para no tener que rearmarlos a mano en cada ambiente nuevo. |
 | **`filebeat`** | `docker.elastic.co/beats/filebeat:9.5.3` | Agente que descubre los contenedores del proyecto (por nombre, `prisma-*`) y les manda los logs, igual rol que Promtail para Loki. Usa el input `filestream` con el parser `container` (`infra/monitoring/filebeat/filebeat.yml`) — el input `container` a secas, deprecado desde Beats 8.x, Filebeat 9.x directamente lo rechaza ("won't start runner") sin tumbar el contenedor ni loguear el error a stdout, así que el síntoma es "arranca sano pero no indexa nada". |
@@ -145,7 +144,7 @@ política de ILM — no se fuerza un nombre de índice propio a propósito, ver 
 | Dashboard | Contenido |
 |---|---|
 | **PRISMA - Overview** | Volumen de logs de TODOS los servicios en el tiempo, tabla de top servicios por volumen, y una tabla con los logs más recientes de todo el stack. |
-| **PRISMA - Seguridad** | Igual, filtrado a Keycloak, nginx y MinIO. |
+| **PRISMA - Seguridad** | Igual, filtrado a Keycloak, nginx y RustFS. |
 | **PRISMA - Base de Datos** | Igual, filtrado a Postgres, Redis, keycloak-db y sonar-db. |
 | **PRISMA - Aplicaciones** | Igual, filtrado a backend-core, backend-ai y frontend. |
 

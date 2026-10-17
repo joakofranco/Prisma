@@ -298,7 +298,7 @@ original, no es una restricción que Hibernate haga cumplir contra una columna `
 | Campo | Columna | Nota |
 |---|---|---|
 | `control` | `control_id` | `@ManyToOne(LAZY)`, **nullable** — evidencia puede no estar atada a un control puntual |
-| `storageKey` | `storage_key` | `@Column(nullable=false, length=500)` — clave del objeto en MinIO, no la URL (las URLs son firmadas y expiran) |
+| `storageKey` | `storage_key` | `@Column(nullable=false, length=500)` — clave del objeto en RustFS (S3), no la URL (las URLs son firmadas y expiran) |
 | `aiIndexed` | `ai_indexed` | `boolean` primitivo (no `Boolean`) — único caso del modelo; `@Builder.Default = false` |
 
 ---

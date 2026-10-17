@@ -34,7 +34,7 @@ Responsabilidades:
 - CRUD del catálogo MCU 5.0 (versionado)
 - Motor de evaluación y cálculo de madurez
 - Máquina de estados del workflow de auditoría
-- Almacenamiento seguro de evidencias (MinIO + URLs firmadas)
+- Almacenamiento seguro de evidencias (RustFS + URLs firmadas)
 - Bitácora inmutable de auditoría (append-only)
 - Generación de reportes PDF/Excel
 
@@ -78,11 +78,11 @@ la fecha (la autenticación es 100% stateless vía JWT de Keycloak). Queda reser
 futuro hace falta cachear resultados costosos (p.ej. el árbol completo del catálogo) o
 implementar rate-limiting real.
 
-### 6. Almacenamiento (MinIO)
+### 6. Almacenamiento (RustFS)
 
-- Bucket `prisma-evidences` — evidencias privadas.
-- Bucket `prisma-reports` — PDFs generados.
-- URLs firmadas con TTL para descargas.
+- Servidor de objetos S3-compatible (RustFS); `backend-core` lo consume con el AWS SDK v2 (path-style).
+- Bucket `prisma-evidences` — evidencias privadas; lo crea `backend-core` en la primera subida.
+- URLs firmadas (SigV4) con TTL para descargas.
 
 ### 7. IAM (Keycloak)
 

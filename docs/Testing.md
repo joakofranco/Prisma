@@ -105,7 +105,7 @@ texto secundario, headings duplicados) — leerla antes de asumir que un fallo n
 ## QA manual contra el stack real
 
 Los cuatro suites de arriba prueban unidades aisladas (con mocks) o, como mucho, un contexto
-Spring contra un Postgres efímero. Ninguna levanta el stack completo con Keycloak, nginx, MinIO y
+Spring contra un Postgres efímero. Ninguna levanta el stack completo con Keycloak, nginx, RustFS y
 Ollama reales, con dos organizaciones distintas y un usuario de cada rol interactuando — y ahí es
 donde en la práctica aparecieron los bugs más importantes de este proyecto, ninguno detectado por
 un test unitario:
@@ -116,7 +116,7 @@ un test unitario:
 | `KEYCLOAK_TRUSTED_ISSUERS` sin el origen correcto → 401 en loop | Necesita un JWT real emitido por un Keycloak real, con el `iss` que le corresponde a cómo se accedió |
 | `GET /api/organizations`/`GET /api/users` sin aislamiento por tenant | Los tests unitarios de `OrganizationServiceTest`/`UserServiceTest` de ese momento nunca probaban "un segundo tenant no debería ver esto" porque nadie había escrito ese caso — hacía falta *dos organizaciones reales* para notarlo |
 | URL de evidencia con el hostname interno de Docker | El mock de `MinioClient` no valida si la URL resultante es alcanzable desde fuera de la red de contenedores |
-| El SDK de MinIO necesita conectividad real para firmar sin región fija | Sólo aparece contra un MinIO real, corriendo dentro de Docker |
+| Compatibilidad del servidor S3 (path-style, checksums, URLs firmadas) | Sólo aparece contra un RustFS real, corriendo dentro de Docker |
 | Filebeat 9.x dejó de indexar nada tras el upgrade de ELK 8→9 (input `container` removido, deprecado desde 8.x) | El contenedor arrancaba "sano" (healthcheck en verde) y sin errores visibles a simple vista — el log de error quedaba en un archivo dentro del propio contenedor, no en stdout; sólo se notó al confirmar `docs.count` en Elasticsearch |
 | `X-Forwarded-For` spoofeable en la bitácora (nginx usaba `$proxy_add_x_forwarded_for`, que hereda el header del cliente en vez de fijarlo) | Sólo se nota probando con un cliente que manda su propio header — ningún test unitario ni de integración pasa por nginx |
 
