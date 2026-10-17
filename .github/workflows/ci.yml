@@ -111,7 +111,7 @@ jobs:
   # Login real contra Keycloak + recorrido de las vistas principales + escaneo WCAG 2.1 AA
   # (nivel exigido por el Decreto N° 406/022 a los sitios del Estado uruguayo -- ver
   # apps/frontend/e2e/README.md). Levanta el subconjunto mínimo del stack que necesitan esas
-  # vistas (Postgres, Redis, backend-core, Keycloak) -- se salta backend-ai/MinIO/Ollama y el
+  # vistas (Postgres, Redis, backend-core, Keycloak) -- se salta backend-ai/RustFS/Ollama y el
   # resto de los perfiles de observabilidad/gestión, que ninguna de las rutas cubiertas requiere.
   # -------------------------------------------------------------------
   e2e-a11y:

@@ -186,7 +186,7 @@ seed: ## Precargar catálogo MCU 5.0 y datos demo
 	$(DC) exec backend-core java -jar /app/app.jar --seed
 	$(DC) exec backend-ai python -m app.scripts.ingest_mcu_docs
 
-backup: ## Backup completo (Postgres + MinIO)
+backup: ## Backup de Postgres
 	@mkdir -p backups
 	@STAMP=$$(date +%Y%m%d_%H%M%S); \
 	$(DC) exec -T postgres pg_dump -U $(POSTGRES_USER) $(POSTGRES_DB) | gzip > backups/postgres_$${STAMP}.sql.gz; \
