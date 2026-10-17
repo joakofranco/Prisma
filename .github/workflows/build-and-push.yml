@@ -60,7 +60,7 @@ jobs:
       # .gitkeep versionado), pero la imagen queda sin contexto para el RAG.
       - name: Sincronizar knowledge base RAG
         if: matrix.app == 'backend-ai'
-        run: make sync-k8s-assets
+        run: make sync-knowledge-base
 
       # ---------- Setup Buildx para multi-arch ----------
       - name: Set up QEMU

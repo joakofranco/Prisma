@@ -42,7 +42,7 @@ AREAS = {
     12: ("UX", "P3", "Experiencia transversal: notificaciones, tooltips, aislamiento multi-tenant transparente, tema claro/oscuro."),
     13: ("Configuración", "P3", "Configuración de la plataforma (SMTP de Keycloak, administración del catálogo)."),
     14: ("Observabilidad", "P3", "Bitácora de acciones sensibles, intentos de login fallidos, logs y métricas centralizadas."),
-    15: ("Infraestructura", "P3", "Levantar y desplegar el stack (Docker Compose, Kubernetes, CI/CD)."),
+    15: ("Infraestructura", "P3", "Levantar y desplegar el stack (Docker Compose, CI/CD)."),
 }
 
 # Overrides de prioridad por código de HU (default = prioridad del área)

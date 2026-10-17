@@ -314,7 +314,7 @@ jobs:
           path: apps/backend-ai/htmlcov/
 
   # -------------------------------------------------------------------
-  # 4. VALIDACIÓN DE INFRA (docker-compose, Dockerfiles, K8s manifests)
+  # 4. VALIDACIÓN DE INFRA (docker-compose, Dockerfiles)
   # -------------------------------------------------------------------
   infra-validation:
     name: Validar infra
@@ -341,20 +341,6 @@ jobs:
           # único RUN para extraer un jar en una subshell -- un WORKDIR ahí cambiaría el
           # directorio para el resto del stage, que es justo lo que no queremos.
           ignore: DL3008,DL3018,DL3013,DL3003
-
-      - name: Validar manifiestos Kubernetes (kubeconform)
-        run: |
-          curl -sL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz | tar xz
-          # No se puede correr kubeconform sobre los .yaml sueltos de infra/kubernetes/**:
-          # kustomization.yaml no es un recurso de Kubernetes (no tiene schema) y los patches.yaml
-          # de los overlays son fragmentos parciales a proposito (les faltan campos obligatorios,
-          # como Deployment.spec.selector, que Kustomize completa al mergear con base/) -- siempre
-          # fallaban con -strict. Se valida en cambio la salida ya renderizada de cada overlay
-          # (kubectl kustomize), que es el manifiesto completo que realmente se aplicaria al cluster.
-          for overlay in infra/kubernetes/overlays/*/; do
-            echo "== $overlay =="
-            kubectl kustomize "$overlay" | ./kubeconform -strict -summary -
-          done
 
       - name: Lint YAML (yamllint)
         uses: ibiqlik/action-yamllint@v3

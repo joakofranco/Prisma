@@ -96,12 +96,6 @@ poetry.lock
 *.pid
 docker-compose-dev.local.yml
 
-# ---------- Kubernetes / Helm ----------
-*.tgz
-charts/
-!infra/kubernetes/**/charts/
-!apps/frontend/src/components/charts/
-
 # ---------- Terraform ----------
 *.tfstate
 *.tfstate.*
@@ -152,23 +146,11 @@ infra/nginx/certs/*.crt
 infra/nginx/certs/*.key
 !infra/nginx/certs/.gitkeep
 
-# ---------- K8s: copias generadas por `make sync-k8s-assets` ----------
-# realm-prisma.json vive en infra/keycloak/ (fuente de verdad); esta es una copia gitignorada
-# porque Kustomize no permite leer archivos fuera del árbol de infra/kubernetes/base -- ver
-# infra/kubernetes/README.md.
-infra/kubernetes/base/keycloak-realm.json
-# scripts/db/init.sql (fuente de verdad) copiado acá por el mismo motivo -- crea los schemas
-# prisma/audit + extensiones que Flyway necesita; en docker-compose se monta directo por bind
-# mount (docker-entrypoint-initdb.d), acá hace falta que sea un ConfigMap dentro del árbol.
-infra/kubernetes/base/postgres-init.sql
+# ---------- RAG: copia generada por `make sync-knowledge-base` ----------
 # docs/mcu-5.0 (fuente de verdad) copiado acá para que el Dockerfile de backend-ai lo empaquete
 # en la imagen -- ver infra/docker/backend-ai.Dockerfile.
 apps/backend-ai/knowledge-base/*
 !apps/backend-ai/knowledge-base/.gitkeep
-
-# ---------- K8s: Secret real (nunca commitear) ----------
-infra/kubernetes/**/secret.*.yaml
-!infra/kubernetes/**/secret.example.yaml
 
 # ---------- Archivos temporales ----------
 tmp/

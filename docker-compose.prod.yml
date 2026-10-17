@@ -53,8 +53,8 @@ services:
       LOGGING_LEVEL_ROOT: WARN
     # NOTA: sin "replicas" -- container_name (fijo en docker-compose.yml) es incompatible con
     # escalar a más de una réplica vía docker compose (Compose lo rechaza al cargar el archivo).
-    # El escalado horizontal real de este servicio se hace en Kubernetes (ver
-    # infra/kubernetes/overlays/prod), donde no hay ese conflicto.
+    # Escalar horizontalmente requeriría un orquestador (ver
+    # docs/mcu-5.0/Kubernetes-Analisis-Viabilidad.md).
     deploy:
       resources:
         limits: { cpus: '2.0', memory: 2G }
@@ -81,8 +81,7 @@ services:
       resources:
         limits: { cpus: '0.5', memory: 256M }
 
-  # "start" (no "start-dev"): modo apto para producción -- ver infra/kubernetes/base/keycloak.yaml,
-  # que usa el mismo modo por consistencia. KC_HOSTNAME_STRICT=false conserva el "hostname
+  # "start" (no "start-dev"): modo apto para producción. KC_HOSTNAME_STRICT=false conserva el "hostname
   # dinámico" (docs/Certificados-TLS.md) que "start" fija a un único hostname por defecto.
   keycloak:
     restart: always
