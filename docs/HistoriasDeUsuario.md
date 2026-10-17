@@ -349,7 +349,7 @@ y roles habilitados en [`docs/API.md`](API.md).
 > Como sistema, quiero indexar automáticamente el contenido de cada evidencia (embeddings +
 > ChromaDB) al subirla, para que después se puedan buscar citas relevantes por control.
 
-- Best-effort: si backend-ai está caído, la evidencia queda igual guardada en MinIO/Postgres, y
+- Best-effort: si backend-ai está caído, la evidencia queda igual guardada en RustFS/Postgres, y
   el usuario puede reintentar la indexación más tarde.
 - **Implementado en:** `AiEvidenceClient.ingest`, `EvidenceService.upload`.
 

@@ -1,12 +1,7 @@
 package uy.edu.prisma.application;
 
-import io.minio.BucketExistsArgs;
-import io.minio.GetPresignedObjectUrlArgs;
-import io.minio.MakeBucketArgs;
-import io.minio.MinioClient;
-import io.minio.PutObjectArgs;
-import io.minio.RemoveObjectArgs;
-import io.minio.http.Method;
+import java.io.InputStream;
+import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
 import org.slf4j.Logger;
@@ -15,7 +10,17 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
-import uy.edu.prisma.config.MinioConfig.MinioProperties;
+import software.amazon.awssdk.core.sync.RequestBody;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
+import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
+import software.amazon.awssdk.services.s3.model.GetObjectRequest;
+import software.amazon.awssdk.services.s3.model.HeadBucketRequest;
+import software.amazon.awssdk.services.s3.model.NoSuchBucketException;
+import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import software.amazon.awssdk.services.s3.presigner.S3Presigner;
+import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest;
+import uy.edu.prisma.config.ObjectStorageConfig.StorageProperties;
 import uy.edu.prisma.domain.entity.CatalogControl;
 import uy.edu.prisma.domain.entity.Evaluation;
 import uy.edu.prisma.domain.entity.Evidence;
@@ -35,14 +40,15 @@ import uy.edu.prisma.web.dto.Dto.UploadEvidenceResponseDto;
 public class EvidenceService {
 
   private static final Logger log = LoggerFactory.getLogger(EvidenceService.class);
-  private static final int PRESIGNED_EXPIRY_SECONDS = 900;
+  private static final Duration PRESIGNED_EXPIRY = Duration.ofSeconds(900);
 
   private final EvidenceRepository evidenceRepo;
   private final EvaluationRepository evaluationRepo;
   private final CatalogControlRepository controlRepo;
-  private final MinioClient minioClient;
-  private final MinioClient minioPublicClient;
-  private final MinioProperties minioProperties;
+  private final S3Client s3Client;
+  private final S3Presigner internalPresigner;
+  private final S3Presigner publicPresigner;
+  private final StorageProperties storageProperties;
   private final CurrentUserService currentUser;
   private final AiEvidenceClient aiClient;
 
@@ -50,17 +56,19 @@ public class EvidenceService {
       EvidenceRepository evidenceRepo,
       EvaluationRepository evaluationRepo,
       CatalogControlRepository controlRepo,
-      MinioClient minioClient,
-      @Qualifier("minioPublicClient") MinioClient minioPublicClient,
-      MinioProperties minioProperties,
+      S3Client s3Client,
+      @Qualifier("internalPresigner") S3Presigner internalPresigner,
+      @Qualifier("publicPresigner") S3Presigner publicPresigner,
+      StorageProperties storageProperties,
       CurrentUserService currentUser,
       AiEvidenceClient aiClient) {
     this.evidenceRepo = evidenceRepo;
     this.evaluationRepo = evaluationRepo;
     this.controlRepo = controlRepo;
-    this.minioClient = minioClient;
-    this.minioPublicClient = minioPublicClient;
-    this.minioProperties = minioProperties;
+    this.s3Client = s3Client;
+    this.internalPresigner = internalPresigner;
+    this.publicPresigner = publicPresigner;
+    this.storageProperties = storageProperties;
     this.currentUser = currentUser;
     this.aiClient = aiClient;
   }
@@ -95,22 +103,24 @@ public class EvidenceService {
                 .orElseThrow(() -> new ResourceNotFoundException("Control", controlId))
             : null;
 
-    // Solo para la storage key en MinIO -- no se asigna como @Id de la entidad: Evidence usa
+    // Solo para la storage key en el bucket -- no se asigna como @Id de la entidad: Evidence usa
     // @GeneratedValue(strategy = GenerationType.UUID), y si se le asigna manualmente un id antes
     // de la primera persistencia, Spring Data JPA decide (via isNew()) llamar a
     // entityManager.merge() en vez de persist() para el primer save(), lo cual revienta con
     // StaleObjectStateException porque Hibernate trata la fila (inexistente) como "detached".
     String storageKey = "evidence/" + UUID.randomUUID();
     ensureBucket();
-    try {
-      minioClient.putObject(
-          PutObjectArgs.builder().bucket(minioProperties.bucket()).object(storageKey).stream(
-                  file.getInputStream(), file.getSize(), -1)
+    try (InputStream in = file.getInputStream()) {
+      s3Client.putObject(
+          PutObjectRequest.builder()
+              .bucket(storageProperties.bucket())
+              .key(storageKey)
               .contentType(
                   file.getContentType() != null
                       ? file.getContentType()
                       : "application/octet-stream")
-              .build());
+              .build(),
+          RequestBody.fromInputStream(in, file.getSize()));
     } catch (Exception e) {
       throw new RuntimeException("No se pudo guardar el archivo de evidencia", e);
     }
@@ -168,7 +178,8 @@ public class EvidenceService {
   private boolean indexInAi(Evidence evidence) {
     // A diferencia de la URL que va al frontend, esta la consume backend-ai del lado del
     // servidor (dentro de la misma red de contenedores) -- tiene que ser el endpoint INTERNO
-    // (minioClient), no el público: "localhost:9001" no significa nada dentro del contenedor de
+    // (presigner interno), no el público: "localhost:9001" no significa nada dentro del contenedor
+    // de
     // backend-ai.
     String fileUrl;
     try {
@@ -212,16 +223,16 @@ public class EvidenceService {
     currentUser.assertOrganizationAccess(evidence.getEvaluation().getOrganization().getId());
     assertSelfAssessmentEditable(evidence.getEvaluation(), "eliminar evidencia");
     try {
-      minioClient.removeObject(
-          RemoveObjectArgs.builder()
-              .bucket(minioProperties.bucket())
-              .object(evidence.getStorageKey())
+      s3Client.deleteObject(
+          DeleteObjectRequest.builder()
+              .bucket(storageProperties.bucket())
+              .key(evidence.getStorageKey())
               .build());
     } catch (Exception e) {
-      // best-effort: si ya no existe en MinIO, igual se elimina el registro; se deja constancia
-      // en el log para poder detectar si MinIO empieza a fallar de verdad.
+      // best-effort: si ya no existe en el bucket, igual se elimina el registro; se deja constancia
+      // en el log para poder detectar si el almacenamiento empieza a fallar de verdad.
       log.warn(
-          "No se pudo borrar el objeto {} de MinIO al eliminar la evidencia {}",
+          "No se pudo borrar el objeto {} del almacenamiento al eliminar la evidencia {}",
           evidence.getStorageKey(),
           id,
           e);
@@ -236,15 +247,7 @@ public class EvidenceService {
         evidenceRepo.findById(id).orElseThrow(() -> new ResourceNotFoundException("Evidencia", id));
     currentUser.assertOrganizationAccess(evidence.getEvaluation().getOrganization().getId());
     try {
-      String url =
-          minioPublicClient.getPresignedObjectUrl(
-              GetPresignedObjectUrlArgs.builder()
-                  .method(Method.GET)
-                  .bucket(minioProperties.bucket())
-                  .object(evidence.getStorageKey())
-                  .expiry(PRESIGNED_EXPIRY_SECONDS)
-                  .build());
-      return new DownloadUrlDto(url);
+      return new DownloadUrlDto(presign(publicPresigner, evidence));
     } catch (Exception e) {
       throw new RuntimeException("No se pudo generar la URL de descarga", e);
     }
@@ -252,11 +255,11 @@ public class EvidenceService {
 
   private void ensureBucket() {
     try {
-      boolean exists =
-          minioClient.bucketExists(
-              BucketExistsArgs.builder().bucket(minioProperties.bucket()).build());
-      if (!exists) {
-        minioClient.makeBucket(MakeBucketArgs.builder().bucket(minioProperties.bucket()).build());
+      try {
+        s3Client.headBucket(HeadBucketRequest.builder().bucket(storageProperties.bucket()).build());
+      } catch (NoSuchBucketException notFound) {
+        s3Client.createBucket(
+            CreateBucketRequest.builder().bucket(storageProperties.bucket()).build());
       }
     } catch (Exception e) {
       throw new RuntimeException("No se pudo verificar/crear el bucket de almacenamiento", e);
@@ -265,28 +268,31 @@ public class EvidenceService {
 
   // Usada por indexInAi: URL interna, para que backend-ai (server-side) baje el archivo.
   private String presignedUrlOrThrow(Evidence e) throws Exception {
-    return minioClient.getPresignedObjectUrl(
-        GetPresignedObjectUrlArgs.builder()
-            .method(Method.GET)
-            .bucket(minioProperties.bucket())
-            .object(e.getStorageKey())
-            .expiry(PRESIGNED_EXPIRY_SECONDS)
-            .build());
+    return presign(internalPresigner, e);
+  }
+
+  private String presign(S3Presigner presigner, Evidence e) {
+    return presigner
+        .presignGetObject(
+            GetObjectPresignRequest.builder()
+                .signatureDuration(PRESIGNED_EXPIRY)
+                .getObjectRequest(
+                    GetObjectRequest.builder()
+                        .bucket(storageProperties.bucket())
+                        .key(e.getStorageKey())
+                        .build())
+                .build())
+        .url()
+        .toString();
   }
 
   // Usada en los DTOs que devuelve la API: URL pública, para que el navegador del usuario pueda
   // bajar el archivo directamente. Antes se reusaba presignedUrlOrThrow (endpoint interno) acá
   // también, y el link de "Descargar" del frontend quedaba con un host que ningún navegador podía
-  // resolver (ver MinioConfig).
+  // resolver (ver ObjectStorageConfig).
   private String publicPresignedUrl(Evidence e) {
     try {
-      return minioPublicClient.getPresignedObjectUrl(
-          GetPresignedObjectUrlArgs.builder()
-              .method(Method.GET)
-              .bucket(minioProperties.bucket())
-              .object(e.getStorageKey())
-              .expiry(PRESIGNED_EXPIRY_SECONDS)
-              .build());
+      return presign(publicPresigner, e);
     } catch (Exception ex) {
       log.warn("No se pudo firmar la URL pública de descarga para la evidencia {}", e.getId(), ex);
       return null;

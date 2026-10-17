@@ -6,7 +6,7 @@ services=(
   "http://localhost:8000/health|backend-ai"
   "http://localhost:8080|frontend"
   "http://localhost:8180/health/ready|keycloak"
-  "http://localhost:9001/minio/health/live|minio"
+  "http://localhost:9001/health|rustfs"
 )
 for entry in "${services[@]}"; do
   url="${entry%%|*}"; name="${entry##*|}"

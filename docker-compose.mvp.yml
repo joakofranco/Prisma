@@ -7,7 +7,7 @@
 #   (o simplemente: make mvp-up)
 #
 # Incluye: postgres, redis, keycloak(+db), backend-core, backend-ai, frontend, nginx.
-# NO levanta: ollama (LLM), minio, observabilidad, elastic, sonarqube, portainer, etc.
+# NO levanta: ollama (LLM), rustfs, observabilidad, elastic, sonarqube, portainer, etc.
 #
 # El LLM (ollama) queda afuera a propósito: cargar catálogos y hacer evaluaciones no
 # lo necesitan, y backend-ai está diseñado para arrancar y degradar sin Ollama
@@ -16,7 +16,7 @@
 #
 # backend-ai se mantiene sólo para que nginx (que tiene un upstream estático hacia
 # backend-ai:8000) arranque sin parches. Subir archivos de evidencia NO funcionará
-# sin minio.
+# sin rustfs.
 # =====================================================================
 
 name: prisma

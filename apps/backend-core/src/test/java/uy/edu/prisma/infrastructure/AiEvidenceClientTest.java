@@ -47,7 +47,7 @@ class AiEvidenceClientTest {
             UUID.randomUUID(),
             UUID.randomUUID(),
             "evidencia.pdf",
-            "http://minio/evidencia.pdf");
+            "http://rustfs/evidencia.pdf");
 
     assertTrue(result);
     server.verify();
@@ -77,7 +77,7 @@ class AiEvidenceClientTest {
             UUID.randomUUID(),
             null,
             "evidencia.pdf",
-            "http://minio/x");
+            "http://rustfs/x");
 
     assertFalse(result);
   }

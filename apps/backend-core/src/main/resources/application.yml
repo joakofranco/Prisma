@@ -85,15 +85,15 @@ prisma:
     secret: ${JWT_SECRET:change-me-in-production-at-least-256-bits}
     access-expiration-minutes: ${JWT_ACCESS_EXPIRATION_MINUTES:15}
     refresh-expiration-days:  ${JWT_REFRESH_EXPIRATION_DAYS:7}
-  minio:
-    endpoint:   ${MINIO_ENDPOINT:http://localhost:9001}
-    # Ver el comentario en MinioConfig: host desde el que un navegador real puede bajar la
-    # evidencia. Sin MINIO_ENDPOINT/MINIO_PUBLIC_ENDPOINT en el entorno (perfil por defecto, fuera
+  storage:
+    endpoint:   ${S3_ENDPOINT:http://localhost:9001}
+    # Ver el comentario en ObjectStorageConfig: host desde el que un navegador real puede bajar la
+    # evidencia. Sin S3_ENDPOINT/S3_PUBLIC_ENDPOINT en el entorno (perfil por defecto, fuera
     # de Docker) ambos son el mismo localhost:9001, así que no hace falta nada especial ahí.
-    public-endpoint: ${MINIO_PUBLIC_ENDPOINT:http://localhost:9001}
-    access-key: ${MINIO_ACCESS_KEY:minioadmin}
-    secret-key: ${MINIO_SECRET_KEY:minioadmin}
-    bucket:     ${MINIO_BUCKET:prisma-evidences}
+    public-endpoint: ${S3_PUBLIC_ENDPOINT:http://localhost:9001}
+    access-key: ${S3_ACCESS_KEY:rustfsadmin}
+    secret-key: ${S3_SECRET_KEY:rustfsadmin}
+    bucket:     ${S3_BUCKET:prisma-evidences}
   security:
     argon2:
       iterations:  ${ARGON2_ITERATIONS:3}
