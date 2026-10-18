@@ -8,7 +8,7 @@
 | **XSS** | Vue escapa interpolaciones por default (no se usa `v-html` con datos de usuario); CSP restrictiva servida por nginx (`default-src 'self'`, ver `apps/frontend/nginx.conf`). |
 | **CSRF** | No aplica en el sentido clásico: la API es 100% stateless (JWT en header `Authorization: Bearer`, sin cookies de sesión que un request cross-site pueda reenviar solo). |
 | **BOLA / IDOR** | **No es un middleware global** — cada `Service` llama explícitamente a `CurrentUserService.assertOrganizationAccess(organizationId)` (o filtra por tenant en la query) antes de devolver/mutar un recurso. Es responsabilidad de quien escribe un `Service` nuevo acordarse de llamarlo; nada a nivel de framework lo fuerza. **Esto no siempre se cumplió**: `OrganizationService`/`UserService` no tuvieron ningún chequeo de este tipo hasta que se detectó en una pasada de QA exhaustiva y se corrigió (cualquier usuario autenticado podía enumerar todas las organizaciones y usuarios de la plataforma, sin importar su propio tenant) — ver "Endurecimientos recientes" más abajo. Al agregar un `Service` nuevo que exponga datos por organización, agregar el chequeo explícitamente y no asumir que "ya está cubierto en otro lado". |
-| **Broken auth** | Keycloak (SSO, JWT firmado RS256, brute-force protection — `failureFactor: 5`, bloqueo escalonado hasta 900s, configurable en vivo desde la consola de Keycloak sin redeploy) + Argon2id para contraseñas locales. Los intentos fallidos además quedan en la bitácora propia (`LOGIN_FAILED`, ver "Registro de intentos de login fallidos" abajo) para verlos sin entrar a Keycloak. **MFA/TOTP está configurado pero no es obligatorio** para ningún rol (ver [`Arquitectura.md`](Arquitectura.md)) — queda como mejora pendiente, no como control ya activo. |
+| **Broken auth** | Keycloak (SSO, JWT firmado RS256, **MFA TOTP obligatoria para `PRISMA_ADMIN` y `ORG_RESPONSIBLE`** — ver "MFA (TOTP) obligatoria por rol" abajo, brute-force protection — `failureFactor: 5`, bloqueo escalonado hasta 900s, configurable en vivo desde la consola de Keycloak sin redeploy) + Argon2id para contraseñas locales. Los intentos fallidos además quedan en la bitácora propia (`LOGIN_FAILED`, ver "Registro de intentos de login fallidos" abajo) para verlos sin entrar a Keycloak. **MFA/TOTP está configurado pero no es obligatorio** para ningún rol (ver [`Arquitectura.md`](Arquitectura.md)) — queda como mejora pendiente, no como control ya activo. |
 | **Sensitive Data Exposure** | HTTPS forzado desde el navegador vía nginx (certificado propio, ver [`Certificados-TLS.md`](Certificados-TLS.md)); evidencias en RustFS con URLs firmadas de corta duración (900s) en vez de un bucket público. |
 | **Components with known vulnerabilities** | Trivy (FS + imágenes) + OWASP Dependency-Check + Gitleaks + CodeQL, semanal y en cada push a `main`/`dev` (`security.yml`). |
 | **Insufficient Logging** | Bitácora de auditoría de acciones sensibles (`audit.audit_logs`, escritura síncrona — ver [`Arquitectura.md`](Arquitectura.md)), consultable desde la app ("Actividad del Sistema", `GET /api/audit-logs`) e incluye **login/logout y login fallido** (ver "Registro de intentos de login fallidos" abajo); logs de todos los contenedores centralizados en Loki/Grafana y, opcionalmente, Elasticsearch/Kibana (perfil `elastic`). |
@@ -96,6 +96,40 @@ código) — se documentan con su causa para que un patrón similar se evite en 
     completar el intercambio por un token. Para un despliegue con un dominio fijo conocido de
     antemano (el caso real de producción, no de un ambiente de pruebas con IP variable), lo
     correcto es volver a una lista explícita de hosts en vez de `"*"`.
+
+## MFA (TOTP) obligatoria por rol
+
+Los usuarios con rol `PRISMA_ADMIN` u `ORG_RESPONSIBLE` deben usar un segundo factor (TOTP: Google
+Authenticator, Microsoft Authenticator, FreeOTP, etc.). Respalda el Marco de Ciberseguridad MCU 5.0
+(controles de acceso con MFA, ver `docs/mcu-5.0/`).
+
+**Cómo funciona** (todo en Keycloak, sin cambios en frontend ni backend):
+- Flujo de login `browser-mfa-por-rol` (copia de `browser`) con un sub-flujo condicional por rol:
+  si el usuario tiene el rol y **todavía no** tiene OTP, Keycloak le exige registrarlo con un QR en
+  ese mismo login; si ya lo tiene, le pide el código de 6 dígitos (una sola vez, aunque tenga
+  ambos roles). Los demás roles (`INTERNAL_EVALUATOR`, `AUDITOR`, `VIEWER`) siguen sin MFA
+  obligatoria, aunque cualquiera puede activarla desde su cuenta de Keycloak.
+- Excepción deliberada: `backend-core` valida la contraseña actual con *direct grant*
+  (`KeycloakAdminClient.verifyPassword`, para el cambio de contraseña) y no puede enviar un
+  código OTP, así que el cliente `prisma-backend` (confidencial, solo servidor) usa el flujo
+  `direct-grant-sin-otp`. El resto del realm conserva el direct grant con OTP condicional.
+
+**Activar / consultar / desactivar** (idempotente; se corre en cada ambiente después del primer
+arranque de Keycloak, porque `--import-realm` solo importa `realm-prisma.json` cuando el realm no
+existe todavía):
+
+```bash
+make mfa-enable    # scripts/keycloak/enable-mfa.sh
+make mfa-status    # flujo activo y qué usuarios con rol obligado ya registraron OTP
+make mfa-disable   # vuelve al flujo "browser" original (los OTP ya registrados se conservan)
+```
+
+Por defecto cubre `PRISMA_ADMIN` y `ORG_RESPONSIBLE`; otros roles: `MFA_ROLES="PRISMA_ADMIN AUDITOR" make mfa-enable`.
+Se pone `otpPolicyLookAheadWindow=1` (tolera ±30 s de desfase del reloj del teléfono). Se mantienen
+SHA1 y 6 dígitos porque las apps autenticadoras más usadas no soportan otros parámetros.
+
+**Recuperación** (el usuario perdió o cambió el teléfono): ver
+[`RUNBOOK.md`](RUNBOOK.md#un-usuario-con-mfa-perdió-el-dispositivo-del-otp).
 
 ## Registro de intentos de login fallidos
 
