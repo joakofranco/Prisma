@@ -197,6 +197,19 @@ scripts/generate-nginx-cert.sh --cn <tu-host> --san <tu-host>,localhost,127.0.0.
 docker compose --profile full up -d --build
 ```
 
+**MFA obligatoria para `PRISMA_ADMIN` y `ORG_RESPONSIBLE`**: cuando Keycloak ya esté arriba
+(`make ps` en `healthy`), activar el flujo de login con segundo factor. Hay que repetirlo en
+**cada ambiente nuevo** (dev, staging, producción), porque `--import-realm` solo importa
+`realm-prisma.json` la primera vez que se crea el realm:
+
+```bash
+make mfa-enable     # idempotente; detalle en docs/SECURITY.md → "MFA (TOTP) obligatoria por rol"
+make mfa-status     # confirmar el flujo y quién todavía tiene que registrar OTP
+```
+
+El primer login de cada usuario con esos roles (incluido `admin@prisma.local`) le va a pedir
+registrar una app autenticadora (Google/Microsoft Authenticator, FreeOTP...).
+
 **Accedas por el host que accedas** (una IP, un dominio real, `localhost`) no hace falta tocar
 nada en Keycloak: el client `prisma-frontend` trae `redirectUris`/`webOrigins` en `"*"` a propósito
 (ver [`SECURITY.md`](SECURITY.md#endurecimientos-recientes-para-que-no-se-repitan), ítem 10) —

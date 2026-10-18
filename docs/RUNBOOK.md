@@ -337,6 +337,25 @@ Keycloak realmente está escuchando, sin ventana de 502.
 1. Bajar el modelo: `OLLAMA_MODEL=llama3:8b-instruct-q4_0` en `.env`
 2. Reiniciar: `make restart`
 
+### Un usuario con MFA perdió el dispositivo del OTP
+
+**Síntoma:** un usuario con rol `PRISMA_ADMIN` u `ORG_RESPONSIBLE` pone usuario y contraseña
+correctos pero no puede pasar el pedido de código (perdió, cambió o reseteó el teléfono).
+
+**Solución:** un administrador de Keycloak elimina su credencial OTP; en el siguiente login el
+sistema le vuelve a exigir registrar el TOTP con un QR nuevo.
+
+1. Keycloak Admin Console (`http://localhost:8180/auth`, realm `prisma`) → **Users** → buscar el
+   usuario → pestaña **Credentials** → fila **OTP** → **Delete**.
+2. El usuario entra de nuevo con su contraseña y registra la app autenticadora otra vez.
+
+`make mfa-status` lista, por rol obligado, quién ya registró OTP y quién todavía no. Si el que
+perdió el acceso es el **único** `PRISMA_ADMIN`, el mismo borrado se puede hacer con el usuario
+`admin` del realm `master` (credenciales `KEYCLOAK_ADMIN` / `KEYCLOAK_ADMIN_PASSWORD` del `.env`),
+que no está sujeto a esta política.
+
+**Para apagar la MFA por rol** (p. ej. un ambiente de demo): `make mfa-disable`.
+
 ## Backup y recuperación
 
 ```bash
