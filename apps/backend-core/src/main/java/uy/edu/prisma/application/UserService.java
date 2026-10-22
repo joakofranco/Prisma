@@ -138,7 +138,7 @@ public class UserService {
             .email(dto.email())
             .firstName(dto.firstName())
             .lastName(dto.lastName())
-            .enabled(dto.enabled() != null ? dto.enabled() : true)
+            .enabled(dto.enabled() == null || dto.enabled())
             .roles(parseRoles(dto.roles()))
             .organizations(resolveOrganizations(organizationIds))
             .build();
@@ -396,7 +396,7 @@ public class UserService {
 
   // No se puede asignar a un usuario una organización inactiva: ahí no hay actividad nueva (ver
   // OrganizationService.delete, que además deshabilita a sus usuarios).
-  private void assertOrganizationsActive(java.util.Collection<Organization> organizations) {
+  private void assertOrganizationsActive(Collection<Organization> organizations) {
     for (Organization o : organizations) {
       if (!Boolean.TRUE.equals(o.getEnabled())) {
         throw new InvalidRequestException(
