@@ -524,7 +524,8 @@ class ControllersMockMvcTest {
         .perform(
             put("/api/users/{id}", id)
                 .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"email\":\"up@test.com\",\"firstName\":\"Nuevo\",\"lastName\":\"Lopez\"}"))
+                .content(
+                    "{\"email\":\"up@test.com\",\"firstName\":\"Nuevo\",\"lastName\":\"Lopez\"}"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.firstName").value("Nuevo"));
   }

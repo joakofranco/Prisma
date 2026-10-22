@@ -39,7 +39,8 @@ class PersonNameValidationTest {
   }
 
   private static CreateUserDto user(String firstName, String lastName) {
-    return new CreateUserDto("a@test.com", firstName, lastName, null, Set.of("VIEWER"), "Passw0rd!");
+    return new CreateUserDto(
+        "a@test.com", firstName, lastName, null, Set.of("VIEWER"), "Passw0rd!");
   }
 
   @ParameterizedTest
