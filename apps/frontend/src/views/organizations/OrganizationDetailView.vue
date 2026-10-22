@@ -22,8 +22,12 @@
 
     <div v-else-if="organization" class="grid grid-cols-1 lg:grid-cols-3 gap-6">
       <div class="lg:col-span-2 space-y-6">
-        <div class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6">
-          <h3 class="text-lg font-semibold text-slate-900 dark:text-white mb-4">Información General</h3>
+        <div
+          class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6"
+        >
+          <h3 class="text-lg font-semibold text-slate-900 dark:text-white mb-4">
+            Información General
+          </h3>
           <dl class="grid grid-cols-2 gap-4">
             <div>
               <dt class="text-sm text-slate-500 dark:text-slate-400">Nombre</dt>
@@ -77,11 +81,15 @@
           v-if="maturityHistory.length > 0"
           class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6"
         >
-          <h3 class="text-lg font-semibold text-slate-900 dark:text-white mb-4">Evolución de la Madurez</h3>
+          <h3 class="text-lg font-semibold text-slate-900 dark:text-white mb-4">
+            Evolución de la Madurez
+          </h3>
           <EvaluationMaturityTrendChart :evaluations="maturityHistory" />
         </div>
 
-        <div class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6">
+        <div
+          class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6"
+        >
           <div class="flex items-center justify-between mb-4">
             <h3 class="text-lg font-semibold text-slate-900 dark:text-white">Evaluaciones</h3>
             <router-link
@@ -94,7 +102,10 @@
           <div v-if="evalsLoading" class="flex items-center justify-center py-8">
             <div class="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600" />
           </div>
-          <p v-else-if="evaluations.length === 0" class="text-sm text-slate-500 dark:text-slate-400">
+          <p
+            v-else-if="evaluations.length === 0"
+            class="text-sm text-slate-500 dark:text-slate-400"
+          >
             Esta organización todavía no tiene evaluaciones.
           </p>
           <div v-else class="space-y-2">
@@ -129,7 +140,9 @@
       </div>
 
       <div>
-        <div class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6">
+        <div
+          class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6"
+        >
           <h3 class="text-lg font-semibold text-slate-900 dark:text-white mb-4">Acciones</h3>
           <div class="space-y-3">
             <BaseButton

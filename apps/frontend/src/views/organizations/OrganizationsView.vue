@@ -47,7 +47,9 @@
         <span
           :class="[
             'inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium',
-            value ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300',
+            value
+              ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
+              : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300',
           ]"
         >
           {{ value ? 'Activa' : 'Inactiva' }}

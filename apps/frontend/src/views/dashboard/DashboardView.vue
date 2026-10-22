@@ -3,7 +3,9 @@
     <div class="flex items-center justify-between">
       <div>
         <h1 class="text-2xl font-bold text-slate-900 dark:text-white">Panel</h1>
-        <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">Resumen general de la plataforma PRISMA</p>
+        <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">
+          Resumen general de la plataforma PRISMA
+        </p>
       </div>
       <BaseButton variant="primary" @click="router.push('/evaluations/new')">
         <PlusIcon class="w-4 h-4" />
@@ -44,14 +46,24 @@
     </div>
 
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      <div class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-5">
-        <h3 class="text-sm font-semibold text-slate-900 dark:text-white mb-4">Evaluaciones por Estado</h3>
+      <div
+        class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-5"
+      >
+        <h3 class="text-sm font-semibold text-slate-900 dark:text-white mb-4">
+          Evaluaciones por Estado
+        </h3>
         <StatusDoughnutChart v-if="totalByStatus > 0" :data="stats?.evaluationsByStatus || {}" />
-        <p v-else class="text-sm text-slate-500 text-center py-16 dark:text-slate-400">No hay evaluaciones aún</p>
+        <p v-else class="text-sm text-slate-500 text-center py-16 dark:text-slate-400">
+          No hay evaluaciones aún
+        </p>
       </div>
 
-      <div class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-5">
-        <h3 class="text-sm font-semibold text-slate-900 dark:text-white mb-4">Madurez por Función</h3>
+      <div
+        class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-5"
+      >
+        <h3 class="text-sm font-semibold text-slate-900 dark:text-white mb-4">
+          Madurez por Función
+        </h3>
         <MaturityBarChart
           v-if="stats?.maturityByFunction?.length"
           :items="stats.maturityByFunction"
@@ -62,7 +74,9 @@
       </div>
     </div>
 
-    <div class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-5">
+    <div
+      class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-5"
+    >
       <div class="flex items-center justify-between mb-4">
         <h3 class="text-sm font-semibold text-slate-900 dark:text-white">Últimas Evaluaciones</h3>
         <router-link

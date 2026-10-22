@@ -47,7 +47,9 @@
         >
           {{ (value as string[]).join(', ') }}
         </span>
-        <span v-else class="text-slate-500 dark:text-slate-400">{{ noOrganizationLabel(row as User) }}</span>
+        <span v-else class="text-slate-500 dark:text-slate-400">{{
+          noOrganizationLabel(row as User)
+        }}</span>
       </template>
       <template #cell-roles="{ value }">
         <div class="flex flex-wrap gap-1">
@@ -151,31 +153,31 @@
           />
         </div>
         <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
-        <BaseInput
-          v-model="form.email"
-          label="Email"
-          type="email"
-          placeholder="usuario@prisma.local"
-          :error="errors.email"
-          required
-        />
-        <div>
           <BaseInput
-            v-model="form.password"
-            label="Contraseña"
-            type="password"
-            placeholder="••••••••"
-            :error="errors.password"
-            :required="!editingUser"
+            v-model="form.email"
+            label="Email"
+            type="email"
+            placeholder="usuario@prisma.local"
+            :error="errors.email"
+            required
           />
-          <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">
-            {{
-              editingUser
-                ? 'Dejar en blanco para no cambiarla. Fijar una acá es lo que le habilita el acceso a un usuario que todavía no puede iniciar sesión.'
-                : 'Sin esto el usuario no va a poder iniciar sesión.'
-            }}
-          </p>
-        </div>
+          <div>
+            <BaseInput
+              v-model="form.password"
+              label="Contraseña"
+              type="password"
+              placeholder="••••••••"
+              :error="errors.password"
+              :required="!editingUser"
+            />
+            <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">
+              {{
+                editingUser
+                  ? 'Dejar en blanco para no cambiarla. Fijar una acá es lo que le habilita el acceso a un usuario que todavía no puede iniciar sesión.'
+                  : 'Sin esto el usuario no va a poder iniciar sesión.'
+              }}
+            </p>
+          </div>
         </div>
         <div v-if="orgMode === 'none'">
           <label class="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1"

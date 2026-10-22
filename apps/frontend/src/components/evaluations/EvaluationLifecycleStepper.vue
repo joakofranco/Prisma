@@ -1,7 +1,11 @@
 <template>
-  <div class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6">
+  <div
+    class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6"
+  >
     <div class="flex items-center justify-between mb-5">
-      <h3 class="text-sm font-semibold text-slate-900 dark:text-white">Ciclo de vida de la evaluación</h3>
+      <h3 class="text-sm font-semibold text-slate-900 dark:text-white">
+        Ciclo de vida de la evaluación
+      </h3>
       <button
         type="button"
         class="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-700 hover:underline dark:text-blue-400 dark:hover:text-blue-300"
@@ -57,7 +61,11 @@
           v-for="s in glossaryOrder"
           :key="s"
           class="flex items-start gap-3 p-3 rounded-lg"
-          :class="s === status ? 'bg-blue-50 ring-1 ring-blue-200 dark:bg-blue-950' : 'bg-slate-50 dark:bg-slate-900'"
+          :class="
+            s === status
+              ? 'bg-blue-50 ring-1 ring-blue-200 dark:bg-blue-950'
+              : 'bg-slate-50 dark:bg-slate-900'
+          "
         >
           <span
             class="mt-0.5 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium shrink-0 badge-themed"
@@ -67,7 +75,10 @@
           </span>
           <div class="min-w-0">
             <p class="text-sm text-slate-700 dark:text-slate-200">{{ getStatusDescription(s) }}</p>
-            <p v-if="getStatusResponsibleLabel(s)" class="text-xs text-slate-500 mt-0.5 dark:text-slate-400">
+            <p
+              v-if="getStatusResponsibleLabel(s)"
+              class="text-xs text-slate-500 mt-0.5 dark:text-slate-400"
+            >
               Responsable: {{ getStatusResponsibleLabel(s) }}
             </p>
           </div>
@@ -147,7 +158,9 @@
   function labelClass(i: number) {
     const state = stepState(i);
     if (state === 'current')
-      return isReturned.value ? 'text-red-600 font-semibold dark:text-red-400' : 'text-slate-900 dark:text-white font-semibold';
+      return isReturned.value
+        ? 'text-red-600 font-semibold dark:text-red-400'
+        : 'text-slate-900 dark:text-white font-semibold';
     if (state === 'done') return 'text-slate-600 dark:text-slate-300';
     return 'text-slate-500 dark:text-slate-400';
   }
