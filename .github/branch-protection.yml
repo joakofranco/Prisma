@@ -82,16 +82,6 @@ dev:
   required_conversation_resolution: true
 
 # ---------------------------------------------------------------------
-# dev/* — Ramas personales (dev/fernando, dev/federico, dev/joaquin)
-# ---------------------------------------------------------------------
-# En un repo de cuenta personal no se puede restringir quién pushea a cada rama, así que la
-# regla es solo de seguridad: no se borran ni se les hace force-push (se aplica como ruleset,
-# ver scripts/apply-branch-protection.sh). Sin PR obligatorio: se puede pushear directo.
-"dev/*":
-  allow_force_pushes: false
-  allow_deletions: false
-
-# ---------------------------------------------------------------------
 # release/* y hotfix/* — Protegidas al igual que main
 # ---------------------------------------------------------------------
 "release/*":
