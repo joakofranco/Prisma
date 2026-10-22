@@ -34,9 +34,13 @@
         <spotless.version>3.10.1</spotless.version>
         <checkstyle.version>10.21.1</checkstyle.version>
         <!-- Overrides puntuales sobre lo que trae spring-boot-starter-parent, por CVEs (Trivy):
-             netty (via lettuce-core/spring-data-redis) CVE-2026-59901, postgresql driver
-             CVE-2026-54291. Propiedades reconocidas por el BOM de Spring Boot. -->
-        <netty.version>4.1.136.Final</netty.version>
+             netty (via lettuce-core/spring-data-redis) CVE-2026-59901 y CVE-2026-75595, postgresql
+             driver CVE-2026-54291, jackson (CVE-2026-89407, 89425, 68497, 91776, 91777) y tomcat
+             embebido (CVE-2026-65182, 65905, 68525). Propiedades reconocidas por el BOM de Spring
+             Boot. Quitar cada override cuando el parent traiga una versión igual o mayor. -->
+        <netty.version>4.1.139.Final</netty.version>
+        <jackson-bom.version>2.21.8</jackson-bom.version>
+        <tomcat.version>10.1.61</tomcat.version>
         <postgresql.version>42.7.12</postgresql.version>
         <sonar.coverage.jacoco.xmlReportPaths>${project.build.directory}/site/jacoco/jacoco.xml</sonar.coverage.jacoco.xmlReportPaths>
     </properties>
