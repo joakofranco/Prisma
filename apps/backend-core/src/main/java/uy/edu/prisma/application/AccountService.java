@@ -106,10 +106,10 @@ public class AccountService {
   /**
    * Quien llega autenticado con un JWT de Keycloak tiene, por definición, una cuenta ahí. Si la
    * fila local todavía no tiene {@code keycloakId} (caso típico: el administrador sembrado en V4,
-   * cuya cuenta sale del realm-prisma.json y nunca pasó por UserService.create), se completa con
-   * el {@code sub} del token. Sin esto la lista de usuarios lo mostraba "Sin acceso todavía"
-   * aunque ya hubiera ingresado, y el cambio de contraseña fallaba con "tu cuenta todavía no tiene
-   * acceso habilitado". Nunca pisa un {@code keycloakId} ya existente.
+   * cuya cuenta sale del realm-prisma.json y nunca pasó por UserService.create), se completa con el
+   * {@code sub} del token. Sin esto la lista de usuarios lo mostraba "Sin acceso todavía" aunque ya
+   * hubiera ingresado, y el cambio de contraseña fallaba con "tu cuenta todavía no tiene acceso
+   * habilitado". Nunca pisa un {@code keycloakId} ya existente.
    */
   private void linkKeycloakAccountIfMissing(User user) {
     if (user.getKeycloakId() != null) {

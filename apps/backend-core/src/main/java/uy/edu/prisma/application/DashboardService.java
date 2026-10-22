@@ -44,7 +44,8 @@ public class DashboardService {
   // un elemento). Un Set vacio (auditor sin organizaciones asignadas, o usuario sin tenant) no
   // consulta nada: no hay "sin restriccion" implicito para ellos.
   public DashboardStatsDto getStats() {
-    Set<UUID> orgIds = currentUser.hasAllOrganizationsAccess() ? null : currentUser.organizationIds();
+    Set<UUID> orgIds =
+        currentUser.hasAllOrganizationsAccess() ? null : currentUser.organizationIds();
     if (orgIds != null && orgIds.isEmpty()) {
       return new DashboardStatsDto(0, 0, 0.0, 0, new LinkedHashMap<>(), new ArrayList<>());
     }
@@ -83,8 +84,8 @@ public class DashboardService {
                 ? evalRepo.findAll(recentPage)
                 : evalRepo.findByOrganizationIdInOrderByCreatedAtDesc(orgIds, recentPage))
             .getContent().stream()
-            .filter(e -> e.getStatus() != Evaluation.Status.ARCHIVED)
-            .toList();
+                .filter(e -> e.getStatus() != Evaluation.Status.ARCHIVED)
+                .toList();
 
     double avgMaturity =
         recentEvals.stream()

@@ -171,8 +171,8 @@ public class KeycloakAdminClient {
    * inmediato, sin forzar otro cambio en el próximo login. Se usa tanto para autoservicio (el
    * propio usuario cambiando SU contraseña vía AccountService, ya validada contra la actual con
    * {@link #verifyPassword}) como para que un PRISMA_ADMIN le restablezca la clave a otro usuario
-   * ya activo desde el panel de usuarios (UserService.update) -- en ambos casos quien fija la
-   * clave espera que esa sea, sin pasos extra, la que habilita el acceso.
+   * ya activo desde el panel de usuarios (UserService.update) -- en ambos casos quien fija la clave
+   * espera que esa sea, sin pasos extra, la que habilita el acceso.
    */
   public void setPermanentPassword(UUID keycloakId, String newPassword) {
     setPassword(keycloakId, newPassword, false);
@@ -199,8 +199,8 @@ public class KeycloakAdminClient {
    * Keycloak responde 400 cuando rechaza los DATOS (email mal formado, contraseña que no cumple la
    * política del realm...). Eso es un error del usuario, no del servidor: se traduce a {@link
    * InvalidRequestException} (HTTP 400 con un mensaje legible) en vez de dejarlo escapar como un
-   * 500 "Error inesperado". La validación de entrada del DTO debería frenar los casos comunes
-   * antes de llegar acá; esto es la red de seguridad para lo que Keycloak valida distinto.
+   * 500 "Error inesperado". La validación de entrada del DTO debería frenar los casos comunes antes
+   * de llegar acá; esto es la red de seguridad para lo que Keycloak valida distinto.
    */
   private static InvalidRequestException invalidData(HttpClientErrorException.BadRequest e) {
     String body = e.getResponseBodyAsString();
@@ -255,7 +255,8 @@ public class KeycloakAdminClient {
       // configuración puede responder 401. También es 401 si el client secret de prisma-backend
       // está mal: se loguea para que esa mala configuración no pase por "contraseña incorrecta"
       // sin dejar rastro.
-      log.warn("Keycloak respondió 401 al verificar la contraseña: {}", e.getResponseBodyAsString());
+      log.warn(
+          "Keycloak respondió 401 al verificar la contraseña: {}", e.getResponseBodyAsString());
       return false;
     }
   }
@@ -313,15 +314,15 @@ public class KeycloakAdminClient {
 
   /**
    * Intentos de login fallidos desde {@code sinceEpochMillisExclusive} (exclusivo), más recientes
-   * primero según Keycloak. Requiere {@code eventsEnabled=true} en el realm (ver
-   * realm-prisma.json) -- si no, Keycloak simplemente no guarda estos eventos y esto siempre
-   * devuelve vacío, no falla. El client "prisma-backend" necesita además el rol "view-events" de
-   * realm-management (ver el mismo archivo) o la Admin REST API responde 403.
+   * primero según Keycloak. Requiere {@code eventsEnabled=true} en el realm (ver realm-prisma.json)
+   * -- si no, Keycloak simplemente no guarda estos eventos y esto siempre devuelve vacío, no falla.
+   * El client "prisma-backend" necesita además el rol "view-events" de realm-management (ver el
+   * mismo archivo) o la Admin REST API responde 403.
    *
-   * <p>{@code max=100}: no pagina más allá de eso -- pensado para sondearse cada
-   * pocos segundos (ver LoginFailureAuditSyncService), así que un burst que superara 100 intentos
-   * fallidos entre dos sondeos ya es en sí mismo un ataque en curso mucho más urgente que
-   * completar el historial exacto.
+   * <p>{@code max=100}: no pagina más allá de eso -- pensado para sondearse cada pocos segundos
+   * (ver LoginFailureAuditSyncService), así que un burst que superara 100 intentos fallidos entre
+   * dos sondeos ya es en sí mismo un ataque en curso mucho más urgente que completar el historial
+   * exacto.
    */
   public List<LoginFailureEvent> fetchLoginFailures(long sinceEpochMillisExclusive) {
     KeycloakEventRepresentation[] events =

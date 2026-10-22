@@ -596,7 +596,8 @@ class UserServiceTest {
     when(currentUser.currentUserId()).thenReturn(UUID.randomUUID());
 
     CreateUserDto dto =
-        new CreateUserDto("admin@prisma.local", "Admin", "PRISMA", null, null, Set.of(), null, false);
+        new CreateUserDto(
+            "admin@prisma.local", "Admin", "PRISMA", null, null, Set.of(), null, false);
 
     assertThrows(InvalidRequestException.class, () -> service.update(systemAdminId, dto));
   }
@@ -613,14 +614,20 @@ class UserServiceTest {
     // VIEWER exige exactamente una organización (ver UserService.validateOrganizationsForRoles).
     CreateUserDto dto =
         new CreateUserDto(
-            "new@test.com", "New", "User", tenant.getId(), Set.of("VIEWER"), Set.of(), "Pass1234!", false);
+            "new@test.com",
+            "New",
+            "User",
+            tenant.getId(),
+            Set.of("VIEWER"),
+            Set.of(),
+            "Pass1234!",
+            false);
     UserDto result = service.create(dto);
 
     assertFalse(result.enabled());
     // createUser() en Keycloak siempre nace habilitado -- hace falta un segundo llamado para
     // sincronizar que en realidad se lo pidió deshabilitado desde el alta.
-    verify(keycloakAdmin, times(1))
-        .updateProfile(keycloakId, "new@test.com", "New", "User", false);
+    verify(keycloakAdmin, times(1)).updateProfile(keycloakId, "new@test.com", "New", "User", false);
   }
 
   // --- ORG_RESPONSIBLE como "administrador" de su propia organización -----------------------
@@ -655,8 +662,7 @@ class UserServiceTest {
             "new@test.com", "N", "L", otherOrgId, Set.of("VIEWER"), null, "Secreto123!");
 
     assertThrows(
-        org.springframework.security.access.AccessDeniedException.class,
-        () -> service.create(dto));
+        org.springframework.security.access.AccessDeniedException.class, () -> service.create(dto));
     verify(userRepo, never()).save(any());
   }
 
@@ -675,7 +681,13 @@ class UserServiceTest {
     UserDto result =
         service.create(
             new CreateUserDto(
-                "ev@test.com", "Eva", "Luador", null, Set.of("INTERNAL_EVALUATOR"), null, "Secreto123!"));
+                "ev@test.com",
+                "Eva",
+                "Luador",
+                null,
+                Set.of("INTERNAL_EVALUATOR"),
+                null,
+                "Secreto123!"));
 
     assertEquals(Set.of(tenant.getId()), result.organizationIds());
   }
@@ -692,8 +704,7 @@ class UserServiceTest {
             "new@test.com", "N", "L", null, Set.of("PRISMA_ADMIN"), null, "Secreto123!");
 
     assertThrows(
-        org.springframework.security.access.AccessDeniedException.class,
-        () -> service.create(dto));
+        org.springframework.security.access.AccessDeniedException.class, () -> service.create(dto));
     verify(userRepo, never()).save(any());
     verify(keycloakAdmin, never()).createUser(any(), any(), any(), any(), any());
   }
@@ -708,17 +719,10 @@ class UserServiceTest {
 
     CreateUserDto dto =
         new CreateUserDto(
-            "new@test.com",
-            "N",
-            "L",
-            null,
-            Set.of("AUDITOR"),
-            Set.of(otherOrgId),
-            "Secreto123!");
+            "new@test.com", "N", "L", null, Set.of("AUDITOR"), Set.of(otherOrgId), "Secreto123!");
 
     assertThrows(
-        org.springframework.security.access.AccessDeniedException.class,
-        () -> service.create(dto));
+        org.springframework.security.access.AccessDeniedException.class, () -> service.create(dto));
     verify(userRepo, never()).save(any());
   }
 
@@ -737,8 +741,7 @@ class UserServiceTest {
         new CreateUserDto("new@test.com", "N", "L", null, Set.of("VIEWER"), null, "Secreto123!");
 
     assertThrows(
-        org.springframework.security.access.AccessDeniedException.class,
-        () -> service.create(dto));
+        org.springframework.security.access.AccessDeniedException.class, () -> service.create(dto));
     verify(userRepo, never()).save(any());
   }
 
@@ -805,8 +808,7 @@ class UserServiceTest {
     when(currentUser.organizationIds()).thenReturn(Set.of(tenant.getId()));
 
     CreateUserDto dto =
-        new CreateUserDto(
-            "u@test.com", "Jane", "Doe", tenant.getId(), Set.of("VIEWER"), null);
+        new CreateUserDto("u@test.com", "Jane", "Doe", tenant.getId(), Set.of("VIEWER"), null);
     UserDto result = service.update(user.getId(), dto);
 
     assertEquals(Set.of("VIEWER"), result.roles());
@@ -964,7 +966,8 @@ class UserServiceTest {
           () -> createWith(Set.of(role), Set.of(a.getId(), b.getId()), List.of(a, b)),
           role + " con dos organizaciones");
       assertEquals(
-          Set.of(a.getId()), createWith(Set.of(role), Set.of(a.getId()), List.of(a)).organizationIds());
+          Set.of(a.getId()),
+          createWith(Set.of(role), Set.of(a.getId()), List.of(a)).organizationIds());
     }
   }
 

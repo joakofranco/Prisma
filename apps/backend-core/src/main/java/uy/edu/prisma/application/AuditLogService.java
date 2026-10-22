@@ -84,7 +84,10 @@ public class AuditLogService {
     // de ESE OTRO usuario como resource. Se unen ambos conjuntos para resolver los dos con una
     // sola consulta por tipo en vez de una por columna.
     Set<UUID> userIds =
-        content.stream().map(AuditLog::getUserId).filter(Objects::nonNull).collect(Collectors.toSet());
+        content.stream()
+            .map(AuditLog::getUserId)
+            .filter(Objects::nonNull)
+            .collect(Collectors.toSet());
     resourceRefs.stream()
         .filter(r -> "user".equals(r.type()) && r.id() != null)
         .forEach(r -> userIds.add(r.id()));
@@ -116,7 +119,8 @@ public class AuditLogService {
     Map<UUID, Organization> orgsById =
         orgIds.isEmpty()
             ? Map.of()
-            : orgRepo.findAllById(orgIds).stream().collect(Collectors.toMap(Organization::getId, o -> o));
+            : orgRepo.findAllById(orgIds).stream()
+                .collect(Collectors.toMap(Organization::getId, o -> o));
     Map<UUID, Evaluation> evaluationsById =
         evaluationIds.isEmpty()
             ? Map.of()
@@ -180,7 +184,8 @@ public class AuditLogService {
     int idx = resource.indexOf(':');
     if (idx == -1) return new ResourceRef(resource, null);
     try {
-      return new ResourceRef(resource.substring(0, idx), UUID.fromString(resource.substring(idx + 1)));
+      return new ResourceRef(
+          resource.substring(0, idx), UUID.fromString(resource.substring(idx + 1)));
     } catch (IllegalArgumentException e) {
       // Id malformado (no debería pasar, los que graba record() siempre son UUID.toString()) --
       // se sigue mostrando el tipo, simplemente sin nombre resuelto.
@@ -231,16 +236,17 @@ public class AuditLogService {
    * Keycloak) en vez de leerlos del request actual -- no hay ningún request actual, esto corre en
    * un hilo del scheduler.
    *
-   * <p>{@code resource} es directamente el email/username intentado, SIN el prefijo "tipo:" que
-   * usa el resto de las acciones: si no matchea ningún tipo conocido, AuditLogController lo deja
-   * pasar tal cual (ver AuditLogService.list -> parseResource), y el frontend termina mostrando
-   * el email intentado tal cual en la columna "Recurso Afectado" -- que es exactamente el dato
-   * útil acá. Si el email SÍ pertenece a un usuario real de PRISMA, además se lo linkea como
-   * actor/tenant: así un ORG_RESPONSIBLE ve los intentos fallidos contra SUS propios usuarios
-   * (mismo aislamiento multi-tenant que el resto de list()), no sólo PRISMA_ADMIN.
+   * <p>{@code resource} es directamente el email/username intentado, SIN el prefijo "tipo:" que usa
+   * el resto de las acciones: si no matchea ningún tipo conocido, AuditLogController lo deja pasar
+   * tal cual (ver AuditLogService.list -> parseResource), y el frontend termina mostrando el email
+   * intentado tal cual en la columna "Recurso Afectado" -- que es exactamente el dato útil acá. Si
+   * el email SÍ pertenece a un usuario real de PRISMA, además se lo linkea como actor/tenant: así
+   * un ORG_RESPONSIBLE ve los intentos fallidos contra SUS propios usuarios (mismo aislamiento
+   * multi-tenant que el resto de list()), no sólo PRISMA_ADMIN.
    */
   public void recordLoginFailure(String attemptedUsername, String ip, OffsetDateTime occurredAt) {
-    User user = attemptedUsername == null ? null : userRepo.findByEmail(attemptedUsername).orElse(null);
+    User user =
+        attemptedUsername == null ? null : userRepo.findByEmail(attemptedUsername).orElse(null);
     UUID tenantId = user != null ? user.singleOrganizationId() : null;
     AuditLog log =
         AuditLog.builder()

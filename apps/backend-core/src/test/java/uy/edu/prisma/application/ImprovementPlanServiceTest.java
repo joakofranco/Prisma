@@ -311,8 +311,7 @@ class ImprovementPlanServiceTest {
 
   @Test
   void tipsDelegatesToAiClientWithDtoFields() {
-    RemediationTipsDto expected =
-        new RemediationTipsDto("Resumen", List.of("Paso 1", "Paso 2"));
+    RemediationTipsDto expected = new RemediationTipsDto("Resumen", List.of("Paso 1", "Paso 2"));
     when(aiClient.suggestRemediation(
             "PR.AC-1", "descripción", "Proteger", "Control de Acceso", "Identidades", 0, 1))
         .thenReturn(expected);
