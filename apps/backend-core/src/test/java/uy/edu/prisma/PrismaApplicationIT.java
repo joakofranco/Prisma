@@ -79,6 +79,9 @@ class PrismaApplicationIT {
     // no es lo que EvaluationService/DashboardService consultan para la rama "sin restriccion".
     when(currentUser.isPrismaAdmin()).thenReturn(true);
     when(currentUser.isGlobalRole()).thenReturn(true);
+    // Los servicios consultan el acceso a TODAS las organizaciones (administrador o evaluador
+    // general); sin este stub el mock devuelve false y los listados salen vacios.
+    when(currentUser.hasAllOrganizationsAccess()).thenReturn(true);
   }
 
   @Test

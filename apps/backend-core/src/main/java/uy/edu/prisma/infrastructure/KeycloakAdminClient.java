@@ -204,7 +204,7 @@ public class KeycloakAdminClient {
    */
   private static InvalidRequestException invalidData(HttpClientErrorException.BadRequest e) {
     String body = e.getResponseBodyAsString();
-    String lower = body == null ? "" : body.toLowerCase(java.util.Locale.ROOT);
+    String lower = body.toLowerCase(java.util.Locale.ROOT);
     log.warn("Keycloak rechazó los datos con 400: {}", body);
     if (lower.contains("invalid-email") || lower.contains("\"field\":\"email\"")) {
       return new InvalidRequestException("El email no es válido");
@@ -248,9 +248,9 @@ public class KeycloakAdminClient {
           .retrieve()
           .body(TokenResponse.class);
       return true;
-    } catch (org.springframework.web.client.HttpClientErrorException.BadRequest e) {
+    } catch (HttpClientErrorException.BadRequest e) {
       return false;
-    } catch (org.springframework.web.client.HttpClientErrorException.Unauthorized e) {
+    } catch (HttpClientErrorException.Unauthorized e) {
       // Keycloak 26 responde 400 invalid_grant ante credenciales incorrectas, pero según versión o
       // configuración puede responder 401. También es 401 si el client secret de prisma-backend
       // está mal: se loguea para que esa mala configuración no pase por "contraseña incorrecta"
