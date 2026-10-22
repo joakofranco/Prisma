@@ -30,9 +30,7 @@ public interface UserRepository extends JpaRepository<User, UUID> {
           + "OR LOWER(u.firstName) LIKE LOWER(CONCAT('%',CAST(:search AS string),'%')) "
           + "OR LOWER(u.lastName) LIKE LOWER(CONCAT('%',CAST(:search AS string),'%')))")
   Page<User> searchByOrganizationIdIn(
-      @Param("orgIds") Collection<UUID> orgIds,
-      @Param("search") String search,
-      Pageable pageable);
+      @Param("orgIds") Collection<UUID> orgIds, @Param("search") String search, Pageable pageable);
 
   // Usada por EvaluationService para mostrar "qué auditor está asignado" en la grilla de
   // evaluaciones: usuarios con rol AUDITOR que tienen alguna de estas organizaciones. Ahora que

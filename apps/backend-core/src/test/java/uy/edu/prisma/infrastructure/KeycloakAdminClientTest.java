@@ -321,7 +321,8 @@ class KeycloakAdminClientTest {
         .andRespond(
             withStatus(HttpStatus.BAD_REQUEST)
                 .contentType(MediaType.APPLICATION_JSON)
-                .body("{\"error\":\"invalid_password\",\"error_description\":\"Invalid password\"}"));
+                .body(
+                    "{\"error\":\"invalid_password\",\"error_description\":\"Invalid password\"}"));
 
     InvalidRequestException ex =
         assertThrows(
@@ -344,9 +345,7 @@ class KeycloakAdminClientTest {
   @Test
   void createUserStillPropagatesServerErrors() {
     expectAdminToken();
-    server
-        .expect(requestTo(BASE_URL + "/admin/realms/prisma/users"))
-        .andRespond(withServerError());
+    server.expect(requestTo(BASE_URL + "/admin/realms/prisma/users")).andRespond(withServerError());
 
     assertThrows(
         RestClientException.class,
@@ -403,9 +402,7 @@ class KeycloakAdminClientTest {
   void fetchLoginFailuresFiltersOutEventsAtOrBeforeSince() {
     expectAdminToken();
     server
-        .expect(
-            requestTo(
-                BASE_URL + "/admin/realms/prisma/events?type=LOGIN_ERROR&max=100"))
+        .expect(requestTo(BASE_URL + "/admin/realms/prisma/events?type=LOGIN_ERROR&max=100"))
         .andExpect(method(HttpMethod.GET))
         .andRespond(
             withSuccess(
@@ -431,9 +428,7 @@ class KeycloakAdminClientTest {
   void fetchLoginFailuresReturnsEmptyWhenKeycloakHasNoEvents() {
     expectAdminToken();
     server
-        .expect(
-            requestTo(
-                BASE_URL + "/admin/realms/prisma/events?type=LOGIN_ERROR&max=100"))
+        .expect(requestTo(BASE_URL + "/admin/realms/prisma/events?type=LOGIN_ERROR&max=100"))
         .andExpect(method(HttpMethod.GET))
         .andRespond(withSuccess("[]", MediaType.APPLICATION_JSON));
 

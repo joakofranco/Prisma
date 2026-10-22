@@ -75,8 +75,7 @@ class AuditObservationServiceTest {
 
   @Test
   void listByEvaluationIncludesAuditorStampName() {
-    User auditor =
-        User.builder().id(UUID.randomUUID()).firstName("Aud").lastName("Itor").build();
+    User auditor = User.builder().id(UUID.randomUUID()).firstName("Aud").lastName("Itor").build();
     AuditObservation obs =
         AuditObservation.builder()
             .id(UUID.randomUUID())
@@ -205,7 +204,8 @@ class AuditObservationServiceTest {
     when(controlRepo.findById(control.getId())).thenReturn(Optional.of(control));
     when(repo.save(any(AuditObservation.class))).thenAnswer(inv -> inv.getArgument(0));
 
-    UpdateAuditObservationDto dto = new UpdateAuditObservationDto(control.getId(), null, null, null);
+    UpdateAuditObservationDto dto =
+        new UpdateAuditObservationDto(control.getId(), null, null, null);
     AuditObservationDto result = service.update(obs.getId(), dto);
 
     assertEquals(control.getId(), result.controlId());

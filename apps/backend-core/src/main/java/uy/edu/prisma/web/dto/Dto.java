@@ -214,7 +214,8 @@ public class Dto {
           @Size(min = 2, max = 100, message = "El apellido debe tener entre 2 y 100 caracteres")
           @Pattern(regexp = PERSON_NAME_REGEX, message = PERSON_NAME_MESSAGE_LAST)
           String lastName,
-      // Organizaciones del usuario (ver User.organizations y UserService.validateOrganizationsForRoles
+      // Organizaciones del usuario (ver User.organizations y
+      // UserService.validateOrganizationsForRoles
       // para cuántas corresponden según el rol). CREATE: null = ninguna. UPDATE: null = "sin
       // cambios"; un set vacío = "quitarle todas" (p.ej. para volver a "sin organización").
       Set<UUID> organizationIds,

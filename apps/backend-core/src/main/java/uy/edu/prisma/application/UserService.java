@@ -95,7 +95,8 @@ public class UserService {
     }
   }
 
-  // Para MODIFICAR o borrar a otro usuario (no solo verlo) un ORG_RESPONSIBLE necesita que TODAS las
+  // Para MODIFICAR o borrar a otro usuario (no solo verlo) un ORG_RESPONSIBLE necesita que TODAS
+  // las
   // organizaciones del objetivo sean suyas: si no, podría pisar o eliminar a alguien que también
   // trabaja en otra organización (p.ej. un evaluador de varias). Esos los gestiona PRISMA_ADMIN.
   private void assertCanManage(User target) {
@@ -319,7 +320,9 @@ public class UserService {
     auditLog.record("DELETE", "user:" + id, null);
   }
 
-  /** Descripción legible de cada tipo de dato que referencia al usuario; vacía si no hay ninguno. */
+  /**
+   * Descripción legible de cada tipo de dato que referencia al usuario; vacía si no hay ninguno.
+   */
   private List<String> dependentData(UUID userId) {
     List<String> out = new ArrayList<>();
     addIfAny(out, userRepo.countEvaluationsCreatedBy(userId), "evaluaciones creadas");

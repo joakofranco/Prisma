@@ -469,9 +469,7 @@ class EvaluationServiceTest {
     uy.edu.prisma.domain.exception.InvalidRequestException ex =
         assertThrows(
             uy.edu.prisma.domain.exception.InvalidRequestException.class,
-            () ->
-                service.create(
-                    new CreateEvaluationDto("Nueva", org.getId(), "5.0", null)));
+            () -> service.create(new CreateEvaluationDto("Nueva", org.getId(), "5.0", null)));
 
     assertTrue(ex.getMessage().contains("inactiva"));
     verify(evalRepo, never()).save(any());
@@ -500,7 +498,8 @@ class EvaluationServiceTest {
     service.changeProfile(id, p.getId());
 
     assertSame(p, eval.getCommunityProfile());
-    verify(auditLog, times(1)).record(eq("UPDATE"), eq("evaluation:" + id), contains(p.getId().toString()));
+    verify(auditLog, times(1))
+        .record(eq("UPDATE"), eq("evaluation:" + id), contains(p.getId().toString()));
   }
 
   @Test
@@ -598,13 +597,11 @@ class EvaluationServiceTest {
     UUID id = UUID.randomUUID();
     when(evalRepo.findById(id)).thenReturn(Optional.of(eval));
     when(evalRepo.countAuditObservations(id)).thenReturn(1L);
-    assertThrows(
-        uy.edu.prisma.domain.exception.ConflictException.class, () -> service.delete(id));
+    assertThrows(uy.edu.prisma.domain.exception.ConflictException.class, () -> service.delete(id));
 
     when(evalRepo.countAuditObservations(id)).thenReturn(0L);
     when(evalRepo.countMaturityResults(id)).thenReturn(4L);
-    assertThrows(
-        uy.edu.prisma.domain.exception.ConflictException.class, () -> service.delete(id));
+    assertThrows(uy.edu.prisma.domain.exception.ConflictException.class, () -> service.delete(id));
     verify(evalRepo, never()).deleteById(any());
   }
 

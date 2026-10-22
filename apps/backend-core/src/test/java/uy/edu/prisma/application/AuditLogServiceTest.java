@@ -53,7 +53,11 @@ class AuditLogServiceTest {
             auditRepo, userRepo, orgRepo, evaluationRepo, catalogVersionRepo, currentUser);
 
     tenant =
-        Organization.builder().id(UUID.randomUUID()).name("Acme").rut("NIT-1").enabled(true)
+        Organization.builder()
+            .id(UUID.randomUUID())
+            .name("Acme")
+            .rut("NIT-1")
+            .enabled(true)
             .build();
     actor =
         User.builder()
@@ -145,8 +149,7 @@ class AuditLogServiceTest {
     when(currentUser.isPrismaAdmin()).thenReturn(true);
 
     Organization otherOrg = Organization.builder().id(UUID.randomUUID()).name("Otra Org").build();
-    Evaluation eval =
-        Evaluation.builder().id(UUID.randomUUID()).name("Evaluación Q3").build();
+    Evaluation eval = Evaluation.builder().id(UUID.randomUUID()).name("Evaluación Q3").build();
     CatalogVersion catalogVersion =
         CatalogVersion.builder().id(UUID.randomUUID()).version("5.0").label("MCU 5.0").build();
 

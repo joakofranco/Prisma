@@ -175,9 +175,9 @@ public class OrganizationService {
    *
    * Todo o nada: si Keycloak falla con alguno, se re-habilitan en Keycloak los que ya se habían
    * deshabilitado (la base se revierte sola con la transacción) y se propaga el error -- la
-   * organización no queda deshabilitada a medias. Reactivar la organización NO vuelve a habilitar
-   * a sus usuarios: no hay forma de distinguir a quienes se deshabilitaron por esto de quienes ya
-   * lo estaban a mano, así que el administrador los rehabilita uno por uno.
+   * organización no queda deshabilitada a medias. Reactivar la organización NO vuelve a habilitar a
+   * sus usuarios: no hay forma de distinguir a quienes se deshabilitaron por esto de quienes ya lo
+   * estaban a mano, así que el administrador los rehabilita uno por uno.
    */
   private int disableUsersOf(UUID organizationId) {
     List<User> toDisable =
@@ -202,7 +202,9 @@ public class OrganizationService {
               u.getKeycloakId(), u.getEmail(), u.getFirstName(), u.getLastName(), true);
         } catch (RuntimeException undoError) {
           log.error(
-              "No se pudo revertir la deshabilitación en Keycloak del usuario {}", u.getId(), undoError);
+              "No se pudo revertir la deshabilitación en Keycloak del usuario {}",
+              u.getId(),
+              undoError);
         }
       }
       throw e;
