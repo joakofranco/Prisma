@@ -18,6 +18,10 @@ const PREVIEW_PORT = 5173;
 // fallar tests de forma intermitente sin que haya ningún bug real de por medio.
 const baseURL = process.env.E2E_BASE_URL ?? `http://localhost:${PREVIEW_PORT}`;
 
+// Sesión de WebKit (login propio, ver el proyecto "setup-webkit"); la de Chromium/Firefox es
+// e2e/.auth/admin.json.
+const WEBKIT_STORAGE_STATE = 'e2e/.auth/admin-webkit.json';
+
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: true,
@@ -48,6 +52,16 @@ export default defineConfig({
     // resto de los tests autenticados no repitan el login -- ver e2e/auth.setup.ts.
     { name: 'setup', testMatch: /auth\.setup\.ts/ },
 
+    // WebKit hace su PROPIO login: reutilizar la sesión que guardó Chromium no funciona, porque al
+    // reabrirla WebKit no manda las cookies de sesión de Keycloak (localhost:8180) y la app
+    // vuelve al login. Cada motor que no pueda reusar el estado de Chromium necesita su setup.
+    {
+      name: 'setup-webkit',
+      testMatch: /auth\.setup\.ts/,
+      use: { ...devices['Desktop Safari'] },
+      metadata: { storageState: WEBKIT_STORAGE_STATE },
+    },
+
     // Suite pública: no depende de "setup" porque debe correr SIN sesión (ej. accesibilidad de
     // /login). Vive en e2e/public/**.
     {
@@ -73,8 +87,8 @@ export default defineConfig({
     {
       name: 'webkit',
       testDir: './e2e/authenticated',
-      use: { ...devices['Desktop Safari'], storageState: 'e2e/.auth/admin.json' },
-      dependencies: ['setup'],
+      use: { ...devices['Desktop Safari'], storageState: WEBKIT_STORAGE_STATE },
+      dependencies: ['setup-webkit'],
     },
   ],
 
