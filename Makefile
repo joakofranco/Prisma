@@ -222,6 +222,16 @@ sync-knowledge-base: ## Copia docs/mcu-5.0 al build context de backend-ai (la em
 	mkdir -p apps/backend-ai/knowledge-base;
 	cp -r docs/mcu-5.0/. apps/backend-ai/knowledge-base/;
 
+# ---------- KEYCLOAK: MFA (TOTP) POR ROL ----------
+mfa-enable: ## Activar MFA obligatoria en Keycloak para PRISMA_ADMIN y ORG_RESPONSIBLE (idempotente)
+	./scripts/keycloak/enable-mfa.sh
+
+mfa-status: ## Ver el estado de la MFA y qué usuarios con rol obligado ya registraron OTP
+	./scripts/keycloak/enable-mfa.sh --status
+
+mfa-disable: ## Volver al flujo de login original de Keycloak (MFA solo voluntaria)
+	./scripts/keycloak/enable-mfa.sh --disable
+
 # ---------- TLS / CERTIFICADOS ----------
 certs: ## Generar el certificado autofirmado de nginx (pide confirmación si ya existe uno)
 	./scripts/generate-nginx-cert.sh
