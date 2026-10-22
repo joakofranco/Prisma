@@ -9,8 +9,8 @@ import lombok.*;
  * puede pertenecer a varias Subcategorías (p.ej. "GR.1" referenciado desde "GV.RM-07", "GV.RM-06",
  * "GV.RM-03", "GV.SC-01", etc.) -- ver CatalogService.importCatalog para cómo se arma esta
  * asociación al importar sin duplicar el Requisito ni sus Controles, y EvaluationService.
- * calculateMaturity para cómo un mismo Control aporta al cálculo de nivel de cada Subcategoría a
- * la que llega por esta tabla.
+ * calculateMaturity para cómo un mismo Control aporta al cálculo de nivel de cada Subcategoría a la
+ * que llega por esta tabla.
  */
 @Entity
 @Table(name = "catalog_requirement_subcategories", schema = "prisma")
@@ -30,7 +30,9 @@ public class CatalogRequirementSubcategory {
   // ningun coleccion cascade=ALL del arbol principal -- este es el unico camino por el que
   // CatalogService.importCatalog logra persistirlo (y, en cascada desde el, sus controles) al
   // guardar unicamente la CatalogVersion raiz.
-  @ManyToOne(fetch = FetchType.LAZY, cascade = {CascadeType.PERSIST, CascadeType.MERGE})
+  @ManyToOne(
+      fetch = FetchType.LAZY,
+      cascade = {CascadeType.PERSIST, CascadeType.MERGE})
   @JoinColumn(name = "requirement_id", nullable = false)
   private CatalogRequirement requirement;
 

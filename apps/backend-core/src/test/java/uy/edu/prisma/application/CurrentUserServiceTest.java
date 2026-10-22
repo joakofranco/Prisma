@@ -71,7 +71,11 @@ class CurrentUserServiceTest {
 
   private void authenticateWithSubject(String subject) {
     Jwt jwt =
-        Jwt.withTokenValue("t").header("alg", "none").subject(subject).claim("email", "a@b.com").build();
+        Jwt.withTokenValue("t")
+            .header("alg", "none")
+            .subject(subject)
+            .claim("email", "a@b.com")
+            .build();
     SecurityContextHolder.getContext()
         .setAuthentication(new UsernamePasswordAuthenticationToken(jwt, null, java.util.List.of()));
   }

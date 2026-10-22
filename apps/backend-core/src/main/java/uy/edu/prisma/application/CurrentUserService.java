@@ -3,12 +3,10 @@ package uy.edu.prisma.application;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
-import java.util.stream.Collectors;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
-import uy.edu.prisma.domain.entity.Organization;
 import uy.edu.prisma.domain.entity.User;
 import uy.edu.prisma.domain.entity.UserRole;
 import uy.edu.prisma.domain.repository.UserRepository;
@@ -42,9 +40,9 @@ public class CurrentUserService {
   }
 
   /**
-   * Id de la cuenta de Keycloak del JWT autenticado (claim {@code sub}), si es un UUID válido. Sirve
-   * para vincular una fila de {@code prisma.users} con su cuenta de Keycloak cuando todavía no lo
-   * está (ver AccountService.linkKeycloakAccountIfMissing).
+   * Id de la cuenta de Keycloak del JWT autenticado (claim {@code sub}), si es un UUID válido.
+   * Sirve para vincular una fila de {@code prisma.users} con su cuenta de Keycloak cuando todavía
+   * no lo está (ver AccountService.linkKeycloakAccountIfMissing).
    */
   public Optional<UUID> currentKeycloakSubject() {
     Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
@@ -94,8 +92,8 @@ public class CurrentUserService {
 
   /**
    * Id de la organizacion del usuario actual SI tiene exactamente una (ORG_RESPONSIBLE, VIEWER,
-   * evaluador de una sola organizacion); {@code null} si no tiene ninguna o tiene varias (PRISMA_ADMIN,
-   * evaluador general, auditor de varias).
+   * evaluador de una sola organizacion); {@code null} si no tiene ninguna o tiene varias
+   * (PRISMA_ADMIN, evaluador general, auditor de varias).
    */
   public UUID currentTenantId() {
     return currentUser().map(User::singleOrganizationId).orElse(null);
@@ -113,7 +111,10 @@ public class CurrentUserService {
    */
   public boolean isGeneralEvaluator() {
     return currentUser()
-        .map(u -> u.getRoles().contains(UserRole.INTERNAL_EVALUATOR) && u.getOrganizations().isEmpty())
+        .map(
+            u ->
+                u.getRoles().contains(UserRole.INTERNAL_EVALUATOR)
+                    && u.getOrganizations().isEmpty())
         .orElse(false);
   }
 
@@ -123,10 +124,11 @@ public class CurrentUserService {
   }
 
   /**
-   * Verifica que el usuario actual pueda operar sobre datos de la organizacion dada. PRISMA_ADMIN
-   * y el evaluador general siempre pasan; el resto solo si esa organizacion esta entre las suyas. Lanza 403 en caso contrario, para no filtrar
-   * evaluaciones, evidencias, observaciones de auditoria, planes de mejora ni reportes entre
-   * organizaciones distintas (aislamiento multi-tenant, ver docs/Proyecto.md).
+   * Verifica que el usuario actual pueda operar sobre datos de la organizacion dada. PRISMA_ADMIN y
+   * el evaluador general siempre pasan; el resto solo si esa organizacion esta entre las suyas.
+   * Lanza 403 en caso contrario, para no filtrar evaluaciones, evidencias, observaciones de
+   * auditoria, planes de mejora ni reportes entre organizaciones distintas (aislamiento
+   * multi-tenant, ver docs/Proyecto.md).
    */
   public void assertOrganizationAccess(UUID organizationId) {
     if (hasAllOrganizationsAccess()) {

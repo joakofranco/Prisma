@@ -17,8 +17,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
-import uy.edu.prisma.domain.exception.InvalidRequestException;
 import uy.edu.prisma.domain.entity.*;
+import uy.edu.prisma.domain.exception.InvalidRequestException;
 import uy.edu.prisma.domain.repository.*;
 import uy.edu.prisma.web.dto.Dto.*;
 

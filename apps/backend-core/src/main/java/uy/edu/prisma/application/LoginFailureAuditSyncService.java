@@ -15,16 +15,16 @@ import uy.edu.prisma.infrastructure.KeycloakAdminClient.LoginFailureEvent;
 /**
  * Trae a la bitácora propia ({@link AuditLogService#recordLoginFailure}) los intentos de login
  * fallidos que Keycloak ya audita solo (eventsEnabled=true, ver realm-prisma.json) -- backend-core
- * nunca ve el POST del login en sí (lo maneja Keycloak directamente, ver
- * services/auth.ts del frontend), así que no hay forma de enterarse de un intento fallido más que
- * yendo a buscarlo del lado de Keycloak. El BLOQUEO en sí (cuántos intentos antes de bloquear la
- * cuenta) lo hace Keycloak (Brute Force Detection, "failureFactor" en el realm) -- esto sólo le da
- * visibilidad a PRISMA_ADMIN/ORG_RESPONSIBLE desde "Actividad del Sistema" sin que tengan que
- * entrar a la consola de Keycloak.
+ * nunca ve el POST del login en sí (lo maneja Keycloak directamente, ver services/auth.ts del
+ * frontend), así que no hay forma de enterarse de un intento fallido más que yendo a buscarlo del
+ * lado de Keycloak. El BLOQUEO en sí (cuántos intentos antes de bloquear la cuenta) lo hace
+ * Keycloak (Brute Force Detection, "failureFactor" en el realm) -- esto sólo le da visibilidad a
+ * PRISMA_ADMIN/ORG_RESPONSIBLE desde "Actividad del Sistema" sin que tengan que entrar a la consola
+ * de Keycloak.
  *
- * <p>{@code lastPolledEpochMillis} es en memoria, no persistido: arranca en "ahora" en cada boot
- * de backend-core, así que un restart no reproduce el historial completo de fallos viejos (sólo
- * los que ocurran de ahí en adelante). Aceptable para este propósito -- es una vista de actividad
+ * <p>{@code lastPolledEpochMillis} es en memoria, no persistido: arranca en "ahora" en cada boot de
+ * backend-core, así que un restart no reproduce el historial completo de fallos viejos (sólo los
+ * que ocurran de ahí en adelante). Aceptable para este propósito -- es una vista de actividad
  * reciente, no el registro forense definitivo, que sigue existiendo íntegro del lado de Keycloak
  * (Admin Console > Realm Settings > Sessions/Events) mientras dure "eventsExpiration".
  */
@@ -61,7 +61,8 @@ public class LoginFailureAuditSyncService {
       // sin el rol "view-events" en un ambiente ya desplegado antes de este cambio -- no debe
       // tumbar el scheduler. Al no avanzar lastPolledEpochMillis, la próxima corrida reintenta
       // desde el mismo punto en vez de perder los eventos de este intervalo.
-      log.warn("No se pudo sincronizar intentos de login fallidos desde Keycloak: {}", e.getMessage());
+      log.warn(
+          "No se pudo sincronizar intentos de login fallidos desde Keycloak: {}", e.getMessage());
       return;
     }
     if (events.isEmpty()) {

@@ -35,8 +35,10 @@ class LoginFailureAuditSyncServiceTest {
     when(keycloakAdminClient.fetchLoginFailures(anyLong()))
         .thenReturn(
             List.of(
-                new LoginFailureEvent(1_700_000_000_000L, "1.1.1.1", "a@test.com", "invalid_user_credentials"),
-                new LoginFailureEvent(1_700_000_005_000L, "2.2.2.2", "b@test.com", "user_not_found")));
+                new LoginFailureEvent(
+                    1_700_000_000_000L, "1.1.1.1", "a@test.com", "invalid_user_credentials"),
+                new LoginFailureEvent(
+                    1_700_000_005_000L, "2.2.2.2", "b@test.com", "user_not_found")));
 
     service.syncLoginFailures();
 
@@ -73,7 +75,9 @@ class LoginFailureAuditSyncServiceTest {
     long eventTime = System.currentTimeMillis() + 60_000;
     when(keycloakAdminClient.fetchLoginFailures(anyLong()))
         .thenReturn(
-            List.of(new LoginFailureEvent(eventTime, "1.1.1.1", "a@test.com", "invalid_user_credentials")))
+            List.of(
+                new LoginFailureEvent(
+                    eventTime, "1.1.1.1", "a@test.com", "invalid_user_credentials")))
         .thenReturn(List.of());
 
     service.syncLoginFailures();

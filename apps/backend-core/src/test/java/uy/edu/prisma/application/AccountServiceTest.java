@@ -14,8 +14,8 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.security.access.AccessDeniedException;
 import uy.edu.prisma.domain.entity.User;
-import uy.edu.prisma.infrastructure.KeycloakAdminClient;
 import uy.edu.prisma.domain.exception.InvalidRequestException;
+import uy.edu.prisma.infrastructure.KeycloakAdminClient;
 import uy.edu.prisma.web.dto.Dto.ChangePasswordDto;
 import uy.edu.prisma.web.dto.Dto.SessionEventDto;
 import uy.edu.prisma.web.dto.Dto.UpdateProfileDto;
@@ -141,7 +141,8 @@ class AccountServiceTest {
     service.recordSessionEvent(new SessionEventDto("LOGIN"));
 
     assertEquals(subject, user.getKeycloakId());
-    verify(auditLog, times(1)).record(eq("LINK_KEYCLOAK_ACCOUNT"), eq("user:" + user.getId()), any());
+    verify(auditLog, times(1))
+        .record(eq("LINK_KEYCLOAK_ACCOUNT"), eq("user:" + user.getId()), any());
     verify(auditLog, times(1)).record(eq("LOGIN"), eq("user:" + user.getId()), isNull());
   }
 
@@ -201,6 +202,7 @@ class AccountServiceTest {
     when(currentUser.currentUser()).thenReturn(Optional.empty());
 
     assertThrows(
-        AccessDeniedException.class, () -> service.recordSessionEvent(new SessionEventDto("LOGIN")));
+        AccessDeniedException.class,
+        () -> service.recordSessionEvent(new SessionEventDto("LOGIN")));
   }
 }
