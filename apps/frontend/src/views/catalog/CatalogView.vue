@@ -3,8 +3,8 @@
     <div>
       <h1 class="text-2xl font-bold text-slate-900 dark:text-white">Catálogos</h1>
       <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">
-        Estructura de funciones, categorías, subcategorías, requisitos y controles de cada
-        catálogo disponible
+        Estructura de funciones, categorías, subcategorías, requisitos y controles de cada catálogo
+        disponible
       </p>
     </div>
 
@@ -55,7 +55,9 @@
             <span class="font-semibold text-slate-900 dark:text-white">{{ func.name }}</span>
           </div>
           <div class="flex items-center gap-3">
-            <span class="text-xs text-slate-500 dark:text-slate-400">{{ func.categories.length }} categorías</span>
+            <span class="text-xs text-slate-500 dark:text-slate-400"
+              >{{ func.categories.length }} categorías</span
+            >
             <ChevronDownIcon
               :class="[
                 'w-5 h-5 text-slate-500 transition-transform dark:text-slate-400',
@@ -102,7 +104,9 @@
                   <span class="text-xs text-slate-500 dark:text-slate-400"
                     >{{ control.code }}: {{ control.description }}</span
                   >
-                  <span class="text-xs text-slate-500 dark:text-slate-400">(Objetivo: {{ control.targetLevel }})</span>
+                  <span class="text-xs text-slate-500 dark:text-slate-400"
+                    >(Objetivo: {{ control.targetLevel }})</span
+                  >
                 </div>
               </div>
             </div>

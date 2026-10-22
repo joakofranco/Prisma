@@ -96,7 +96,9 @@
               >
                 Exportar CSV
               </button>
-              <label class="text-xs text-blue-600 hover:underline cursor-pointer dark:text-blue-400">
+              <label
+                class="text-xs text-blue-600 hover:underline cursor-pointer dark:text-blue-400"
+              >
                 Importar
                 <input
                   ref="importInput"
@@ -116,7 +118,9 @@
               </label>
             </div>
           </div>
-          <p v-if="errors.controlIds" class="mb-2 text-xs text-red-600 dark:text-red-400">{{ errors.controlIds }}</p>
+          <p v-if="errors.controlIds" class="mb-2 text-xs text-red-600 dark:text-red-400">
+            {{ errors.controlIds }}
+          </p>
           <BaseAlert
             v-if="importInfo"
             variant="warning"

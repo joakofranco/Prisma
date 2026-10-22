@@ -50,7 +50,8 @@ export const useOrganizationsStore = defineStore('organizations', () => {
   async function deleteOrganization(id: string) {
     await organizationsService.delete(id);
     const index = organizations.value.findIndex((o) => o.id === id);
-    if (index !== -1) organizations.value[index] = { ...organizations.value[index], enabled: false };
+    if (index !== -1)
+      organizations.value[index] = { ...organizations.value[index], enabled: false };
   }
 
   async function reactivateOrganization(id: string) {

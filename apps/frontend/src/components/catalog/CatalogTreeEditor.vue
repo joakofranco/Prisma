@@ -19,7 +19,9 @@
             ]"
           />
         </button>
-        <span class="text-[11px] font-semibold text-slate-500 shrink-0 dark:text-slate-400">F{{ fi + 1 }}</span>
+        <span class="text-[11px] font-semibold text-slate-500 shrink-0 dark:text-slate-400"
+          >F{{ fi + 1 }}</span
+        >
         <input v-model="func.code" placeholder="Código" :class="[inputCls, 'w-24']" />
         <input
           v-model="func.name"
@@ -51,7 +53,9 @@
             class="border border-slate-100 rounded-lg p-2.5 bg-slate-50 dark:bg-slate-900/60 space-y-2 dark:border-slate-700"
           >
             <div class="flex items-center gap-2">
-              <span class="text-[11px] font-semibold text-slate-500 shrink-0 dark:text-slate-400">C{{ ci + 1 }}</span>
+              <span class="text-[11px] font-semibold text-slate-500 shrink-0 dark:text-slate-400"
+                >C{{ ci + 1 }}</span
+              >
               <input v-model="cat.code" placeholder="Código" :class="[inputCls, 'w-24']" />
               <input
                 v-model="cat.name"
@@ -75,7 +79,9 @@
                 class="border border-slate-100 rounded-lg p-2.5 bg-white dark:bg-slate-800 space-y-2 dark:border-slate-700"
               >
                 <div class="flex items-center gap-2">
-                  <span class="text-[11px] font-semibold text-slate-500 shrink-0 dark:text-slate-400">
+                  <span
+                    class="text-[11px] font-semibold text-slate-500 shrink-0 dark:text-slate-400"
+                  >
                     SC{{ si + 1 }}
                   </span>
                   <input v-model="sub.code" placeholder="Código" :class="[inputCls, 'w-24']" />
@@ -101,7 +107,9 @@
                     class="border border-slate-100 rounded-lg p-2.5 bg-slate-50 dark:bg-slate-900/40 space-y-2 dark:border-slate-700"
                   >
                     <div class="flex items-center gap-2">
-                      <span class="text-[11px] font-semibold text-slate-500 shrink-0 dark:text-slate-400">
+                      <span
+                        class="text-[11px] font-semibold text-slate-500 shrink-0 dark:text-slate-400"
+                      >
                         R{{ ri + 1 }}
                       </span>
                       <input v-model="req.code" placeholder="Código" :class="[inputCls, 'w-24']" />
@@ -126,7 +134,9 @@
                         :key="ctrl.clientId"
                         class="flex items-center gap-2"
                       >
-                        <span class="text-[11px] font-semibold text-slate-500 shrink-0 dark:text-slate-400">
+                        <span
+                          class="text-[11px] font-semibold text-slate-500 shrink-0 dark:text-slate-400"
+                        >
                           CT{{ cti + 1 }}
                         </span>
                         <input

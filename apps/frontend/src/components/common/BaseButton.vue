@@ -10,7 +10,8 @@
       variant === 'danger' && 'bg-red-600 text-white hover:bg-red-700 focus:ring-red-500',
       variant === 'success' &&
         'bg-emerald-700 text-white hover:bg-emerald-800 focus:ring-emerald-500',
-      variant === 'warning' && 'bg-amber-500 text-slate-900 hover:bg-amber-600 focus:ring-amber-500',
+      variant === 'warning' &&
+        'bg-amber-500 text-slate-900 hover:bg-amber-600 focus:ring-amber-500',
       variant === 'ghost' &&
         'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 focus:ring-slate-500',
       variant === 'outline' &&

@@ -68,7 +68,10 @@
       <div v-if="loading" class="text-center py-6 text-sm text-slate-500 dark:text-slate-400">
         Cargando controles...
       </div>
-      <div v-else-if="groupedDomains.length === 0" class="text-center py-6 text-sm text-slate-500 dark:text-slate-400">
+      <div
+        v-else-if="groupedDomains.length === 0"
+        class="text-center py-6 text-sm text-slate-500 dark:text-slate-400"
+      >
         No hay controles que coincidan con el filtro.
       </div>
       <div v-for="grp in groupedDomains" :key="grp.domain">

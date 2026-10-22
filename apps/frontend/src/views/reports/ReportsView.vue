@@ -2,10 +2,14 @@
   <div class="space-y-6">
     <div>
       <h1 class="text-2xl font-bold text-slate-900 dark:text-white">Reportes</h1>
-      <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">Generación de reportes ejecutivos y técnicos</p>
+      <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">
+        Generación de reportes ejecutivos y técnicos
+      </p>
     </div>
 
-    <div class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6">
+    <div
+      class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6"
+    >
       <h3 class="text-lg font-semibold text-slate-900 dark:text-white mb-4">Generar Reporte</h3>
       <div class="grid grid-cols-1 xl:grid-cols-2 gap-4 items-end">
         <BaseSelect
@@ -28,9 +32,16 @@
       </div>
     </div>
 
-    <div class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6">
-      <h3 class="text-lg font-semibold text-slate-900 dark:text-white mb-4">Reportes Disponibles</h3>
-      <div v-if="approvedEvaluations.length === 0" class="text-center py-8 text-slate-500 dark:text-slate-400">
+    <div
+      class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6"
+    >
+      <h3 class="text-lg font-semibold text-slate-900 dark:text-white mb-4">
+        Reportes Disponibles
+      </h3>
+      <div
+        v-if="approvedEvaluations.length === 0"
+        class="text-center py-8 text-slate-500 dark:text-slate-400"
+      >
         No hay evaluaciones aprobadas para generar reportes
       </div>
       <div v-else class="space-y-3">

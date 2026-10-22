@@ -53,7 +53,9 @@
               </button>
             </div>
 
-            <div class="flex-1 min-h-0 overflow-y-auto px-6 py-4 text-slate-700 dark:text-slate-200">
+            <div
+              class="flex-1 min-h-0 overflow-y-auto px-6 py-4 text-slate-700 dark:text-slate-200"
+            >
               <slot />
             </div>
 

@@ -45,7 +45,9 @@
       <aside
         class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4 lg:sticky lg:top-20 max-h-[calc(100vh-6rem)] overflow-y-auto"
       >
-        <h2 class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3 dark:text-slate-400">
+        <h2
+          class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3 dark:text-slate-400"
+        >
           Estructura MCU {{ evaluation?.catalogVersion }}
         </h2>
         <nav class="space-y-1">
@@ -102,9 +104,13 @@
 
       <!-- Panel de pregunta -->
       <div class="space-y-4 min-w-0">
-        <div class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-5">
+        <div
+          class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-5"
+        >
           <div class="flex items-center justify-between mb-2">
-            <span class="text-sm font-medium text-slate-700 dark:text-slate-200">Progreso general del plan</span>
+            <span class="text-sm font-medium text-slate-700 dark:text-slate-200"
+              >Progreso general del plan</span
+            >
             <span class="text-lg font-bold text-slate-900 dark:text-white">{{ progressPct }}%</span>
           </div>
           <div class="w-full h-2.5 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
@@ -119,9 +125,13 @@
           </p>
           <div class="flex items-center justify-between gap-3 mt-3">
             <div class="flex items-center gap-1 text-xs min-w-0 overflow-hidden">
-              <span class="text-slate-500 truncate dark:text-slate-400">{{ currentQuestion.func.name }}</span>
+              <span class="text-slate-500 truncate dark:text-slate-400">{{
+                currentQuestion.func.name
+              }}</span>
               <ChevronRightIcon class="w-3 h-3 text-slate-300 shrink-0" />
-              <span class="text-slate-500 truncate dark:text-slate-400">{{ currentQuestion.category.name }}</span>
+              <span class="text-slate-500 truncate dark:text-slate-400">{{
+                currentQuestion.category.name
+              }}</span>
               <ChevronRightIcon class="w-3 h-3 text-slate-300 shrink-0" />
               <span class="text-slate-700 dark:text-slate-200 font-medium truncate">{{
                 currentQuestion.subcategory.name
@@ -133,7 +143,9 @@
           </div>
         </div>
 
-        <div class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6">
+        <div
+          class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6"
+        >
           <div class="flex items-start justify-between gap-3 mb-1">
             <div class="flex items-center gap-2">
               <span
@@ -142,7 +154,9 @@
               >
                 Nivel {{ currentQuestion.control.targetLevel }}
               </span>
-              <span class="text-xs text-slate-500 dark:text-slate-400">{{ currentQuestion.control.code }}</span>
+              <span class="text-xs text-slate-500 dark:text-slate-400">{{
+                currentQuestion.control.code
+              }}</span>
             </div>
             <button
               class="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors"
@@ -193,7 +207,11 @@
             >
               <CheckCircleIcon
                 class="w-6 h-6 shrink-0"
-                :class="currentAnswer === true ? 'text-emerald-700 dark:text-emerald-400' : 'text-slate-300'"
+                :class="
+                  currentAnswer === true
+                    ? 'text-emerald-700 dark:text-emerald-400'
+                    : 'text-slate-300'
+                "
               />
               <span class="font-semibold text-slate-900 dark:text-white">Cumple</span>
             </button>
@@ -210,7 +228,9 @@
             >
               <XCircleIcon
                 class="w-6 h-6 shrink-0"
-                :class="currentAnswer === false ? 'text-red-600 dark:text-red-400' : 'text-slate-300'"
+                :class="
+                  currentAnswer === false ? 'text-red-600 dark:text-red-400' : 'text-slate-300'
+                "
               />
               <span class="font-semibold text-slate-900 dark:text-white">No cumple</span>
             </button>

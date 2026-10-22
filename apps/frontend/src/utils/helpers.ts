@@ -129,8 +129,7 @@ export function generateId(): string {
  */
 export function getFieldError(err: unknown, field: string): string | undefined {
   if (err && typeof err === 'object' && 'response' in err) {
-    const resp = (err as { response?: { data?: { details?: Record<string, string[]> } } })
-      .response;
+    const resp = (err as { response?: { data?: { details?: Record<string, string[]> } } }).response;
     return resp?.data?.details?.[field]?.[0];
   }
   return undefined;

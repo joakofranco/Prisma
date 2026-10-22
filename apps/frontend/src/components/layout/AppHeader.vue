@@ -20,7 +20,9 @@
       <!-- Logo junto a la hamburguesa (en escritorio ya está en el menú lateral). -->
       <div class="flex items-center gap-2 shrink-0 lg:hidden">
         <ShieldCheckIcon class="w-7 h-7 text-blue-600 dark:text-blue-400" />
-        <span class="hidden sm:inline text-lg font-bold tracking-wide text-slate-900 dark:text-white">
+        <span
+          class="hidden sm:inline text-lg font-bold tracking-wide text-slate-900 dark:text-white"
+        >
           PRISMA
         </span>
       </div>
@@ -38,10 +40,16 @@
           :aria-expanded="showUserMenu"
           @click="showUserMenu = !showUserMenu"
         >
-          <div class="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-950 flex items-center justify-center">
-            <span class="text-sm font-medium text-blue-700 dark:text-blue-300">{{ userInitials }}</span>
+          <div
+            class="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-950 flex items-center justify-center"
+          >
+            <span class="text-sm font-medium text-blue-700 dark:text-blue-300">{{
+              userInitials
+            }}</span>
           </div>
-          <span class="text-sm font-medium text-slate-700 dark:text-slate-200 hidden md:block">{{ userName }}</span>
+          <span class="text-sm font-medium text-slate-700 dark:text-slate-200 hidden md:block">{{
+            userName
+          }}</span>
           <ChevronDownIcon class="w-4 h-4 text-slate-500 dark:text-slate-400" />
         </button>
 

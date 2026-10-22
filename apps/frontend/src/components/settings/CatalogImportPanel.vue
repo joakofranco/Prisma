@@ -1,17 +1,29 @@
 <template>
   <div class="space-y-6">
-    <div class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6">
+    <div
+      class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6"
+    >
       <div class="flex items-center justify-between mb-1">
         <div>
-          <h2 class="text-lg font-semibold text-slate-900 dark:text-white">Versiones de catálogo</h2>
+          <h2 class="text-lg font-semibold text-slate-900 dark:text-white">
+            Versiones de catálogo
+          </h2>
           <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">
             Cada versión queda disponible para crear evaluaciones apenas se importa.
           </p>
         </div>
       </div>
 
-      <div v-if="loadingVersions" class="py-6 text-center text-sm text-slate-500 dark:text-slate-400">Cargando...</div>
-      <div v-else-if="versions.length === 0" class="py-6 text-center text-sm text-slate-500 dark:text-slate-400">
+      <div
+        v-if="loadingVersions"
+        class="py-6 text-center text-sm text-slate-500 dark:text-slate-400"
+      >
+        Cargando...
+      </div>
+      <div
+        v-else-if="versions.length === 0"
+        class="py-6 text-center text-sm text-slate-500 dark:text-slate-400"
+      >
         Todavía no hay ninguna versión de catálogo cargada.
       </div>
       <div v-else class="mt-4 divide-y divide-slate-100 dark:divide-slate-700">
@@ -42,8 +54,12 @@
       </div>
     </div>
 
-    <div class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6">
-      <h2 class="text-lg font-semibold text-slate-900 dark:text-white mb-1">Importar nueva versión</h2>
+    <div
+      class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6"
+    >
+      <h2 class="text-lg font-semibold text-slate-900 dark:text-white mb-1">
+        Importar nueva versión
+      </h2>
       <p class="text-sm text-slate-500 dark:text-slate-400 mt-1 mb-5">
         Subí un archivo JSON o CSV de ejemplo, o armá el catálogo a mano abajo. En los tres casos
         revisás y editás el árbol completo antes de guardar. Un mismo Requisito puede pertenecer a
@@ -120,7 +136,9 @@
         <h3 class="text-sm font-semibold text-slate-700 dark:text-slate-200">
           Funciones, categorías, subcategorías, requisitos y controles
         </h3>
-        <span v-if="errors.functions" class="text-xs text-red-600 dark:text-red-400">{{ errors.functions }}</span>
+        <span v-if="errors.functions" class="text-xs text-red-600 dark:text-red-400">{{
+          errors.functions
+        }}</span>
       </div>
 
       <CatalogTreeEditor v-model="functions" />

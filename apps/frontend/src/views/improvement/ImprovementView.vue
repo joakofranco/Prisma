@@ -62,12 +62,18 @@
         />
       </div>
 
-      <div class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+      <div
+        class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden"
+      >
         <div v-if="plans.length === 0" class="p-12 text-center text-slate-500 dark:text-slate-400">
           No hay planes de mejora registrados
         </div>
         <div v-else class="divide-y divide-slate-100 dark:divide-slate-700">
-          <div v-for="plan in plans" :key="plan.id" class="p-4 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
+          <div
+            v-for="plan in plans"
+            :key="plan.id"
+            class="p-4 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+          >
             <div class="flex items-start justify-between gap-4">
               <div class="flex-1">
                 <p class="text-sm font-medium text-slate-900 dark:text-white">
@@ -90,8 +96,12 @@
                   >
                     {{ planStatusLabel(plan.status) }}
                   </span>
-                  <span class="text-xs text-slate-500 dark:text-slate-400">Responsable: {{ plan.responsible }}</span>
-                  <span class="text-xs text-slate-500 dark:text-slate-400">Vence: {{ formatDate(plan.dueDate) }}</span>
+                  <span class="text-xs text-slate-500 dark:text-slate-400"
+                    >Responsable: {{ plan.responsible }}</span
+                  >
+                  <span class="text-xs text-slate-500 dark:text-slate-400"
+                    >Vence: {{ formatDate(plan.dueDate) }}</span
+                  >
                 </div>
               </div>
               <div class="flex gap-1 shrink-0">
@@ -102,7 +112,9 @@
                   size="sm"
                   aria-label="Estado del plan de mejora"
                   class="w-36"
-                  @update:model-value="updatePlanStatus(plan.id, $event as ImprovementPlan['status'])"
+                  @update:model-value="
+                    updatePlanStatus(plan.id, $event as ImprovementPlan['status'])
+                  "
                 />
               </div>
             </div>
@@ -151,7 +163,10 @@
       <div v-if="loadingSuggestions" class="flex items-center justify-center py-12">
         <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
       </div>
-      <div v-else-if="suggestions.length === 0" class="text-center py-8 text-slate-500 dark:text-slate-400">
+      <div
+        v-else-if="suggestions.length === 0"
+        class="text-center py-8 text-slate-500 dark:text-slate-400"
+      >
         <SparklesIcon class="w-8 h-8 mx-auto mb-2 text-slate-300" />
         <p>No hay brechas pendientes para sugerir. Complete la evaluación o revise el catálogo.</p>
       </div>
@@ -164,7 +179,9 @@
           v-for="s in suggestions"
           :key="s.controlId"
           class="border border-slate-200 dark:border-slate-700 rounded-lg p-3"
-          :class="s.selected ? 'bg-white dark:bg-slate-800' : 'bg-slate-50 dark:bg-slate-900 opacity-60'"
+          :class="
+            s.selected ? 'bg-white dark:bg-slate-800' : 'bg-slate-50 dark:bg-slate-900 opacity-60'
+          "
         >
           <div class="flex items-start gap-3">
             <input
@@ -179,7 +196,9 @@
                     s.controlCode
                   }})
                 </span>
-                <span class="text-xs font-medium text-slate-600 dark:text-slate-300"> Nivel {{ s.targetLevel }} </span>
+                <span class="text-xs font-medium text-slate-600 dark:text-slate-300">
+                  Nivel {{ s.targetLevel }}
+                </span>
               </div>
               <BaseTextarea v-model="s.action" :rows="2" />
 
