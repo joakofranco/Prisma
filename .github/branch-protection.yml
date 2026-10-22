@@ -10,10 +10,14 @@
 #
 # Estas reglas se corresponden con lo pedido: los PRs DEBEN ser
 # aprobados antes del merge, y todos los checks CI/CD verdes.
+#
+# IMPORTANTE: un check solo se puede exigir DESPUÉS de haber corrido al menos una vez (si no, el
+# PR queda esperándolo para siempre). Orden: habilitar Actions -> dejar correr un PR -> aplicar.
+# Los nombres de `contexts` deben coincidir EXACTO con el `name:` de cada job en .github/workflows.
 # =====================================================================
 
 # ---------------------------------------------------------------------
-# main — Máxima protección: sólo se toca vía PR desde release/* o hotfix/*
+# main — Máxima protección: sólo se toca vía PR (desde dev, release/* o hotfix/*)
 # ---------------------------------------------------------------------
 main:
   required_status_checks:
@@ -32,16 +36,17 @@ main:
       - "Gitleaks (secretos)"
       - "OWASP Dependency-Check"
       - "Título Conventional Commit"
-  enforce_admins: true                          # NI los admins pueden saltarse las reglas
+  # false: el equipo es de 3 personas y la cuenta dueña del repo (joakofranco) es la única admin;
+  # con true no habría forma de destrabar un merge urgente. Pasar a true cuando haya más gente.
+  enforce_admins: false
   required_pull_request_reviews:
-    required_approving_review_count: 2          # Se piden 2 aprobaciones
+    required_approving_review_count: 1          # Con 3 personas, 2 + last_push_approval bloquea
     dismiss_stale_reviews: true                 # Nuevo push → aprobaciones se invalidan
     require_code_owner_reviews: true            # CODEOWNERS obligatorios
     require_last_push_approval: true            # Última persona que empujó no puede auto-aprobar
-  restrictions:
-    users: []
-    teams: ["prisma-maintainers"]               # Sólo el equipo maintainers puede pushear directo
-    apps: []
+  # Sin `restrictions`: en un repo de cuenta personal GitHub no admite restringir quién pushea
+  # (users/teams/apps solo existen en organizaciones). El gate real es el PR + la aprobación.
+  restrictions: null
   required_linear_history: true                 # Sin merges "octopus" — obliga a rebase o squash
   allow_force_pushes: false
   allow_deletions: false
@@ -77,61 +82,13 @@ dev:
   required_conversation_resolution: true
 
 # ---------------------------------------------------------------------
-# dev/fernando — Rama personal (sólo Fernando pushea)
+# dev/* — Ramas personales (dev/fernando, dev/federico, dev/joaquin)
 # ---------------------------------------------------------------------
-"dev/fernando":
-  required_status_checks:
-    strict: false
-    contexts:
-      - "CI Summary"
-  enforce_admins: false
-  required_pull_request_reviews:
-    required_approving_review_count: 1
-    dismiss_stale_reviews: false
-    require_code_owner_reviews: false
-  restrictions:
-    users: ["fernando"]                         # Sólo Fernando puede pushear directo
-    teams: []
-    apps: []
-  allow_force_pushes: true                      # Permitido en propia rama personal
-  allow_deletions: false
-
-# ---------------------------------------------------------------------
-# dev/federico — Rama personal (sólo Federico pushea)
-# ---------------------------------------------------------------------
-"dev/federico":
-  required_status_checks:
-    strict: false
-    contexts:
-      - "CI Summary"
-  required_pull_request_reviews:
-    required_approving_review_count: 1
-    dismiss_stale_reviews: false
-    require_code_owner_reviews: false
-  restrictions:
-    users: ["federico"]
-    teams: []
-    apps: []
-  allow_force_pushes: true
-  allow_deletions: false
-
-# ---------------------------------------------------------------------
-# dev/joaquin — Rama personal (sólo Joaquín pushea)
-# ---------------------------------------------------------------------
-"dev/joaquin":
-  required_status_checks:
-    strict: false
-    contexts:
-      - "CI Summary"
-  required_pull_request_reviews:
-    required_approving_review_count: 1
-    dismiss_stale_reviews: false
-    require_code_owner_reviews: false
-  restrictions:
-    users: ["joaquin"]
-    teams: []
-    apps: []
-  allow_force_pushes: true
+# En un repo de cuenta personal no se puede restringir quién pushea a cada rama, así que la
+# regla es solo de seguridad: no se borran ni se les hace force-push (se aplica como ruleset,
+# ver scripts/apply-branch-protection.sh). Sin PR obligatorio: se puede pushear directo.
+"dev/*":
+  allow_force_pushes: false
   allow_deletions: false
 
 # ---------------------------------------------------------------------
@@ -145,7 +102,7 @@ dev:
       - "Trivy (FS)"
       - "Gitleaks (secretos)"
   required_pull_request_reviews:
-    required_approving_review_count: 2
+    required_approving_review_count: 1
     dismiss_stale_reviews: true
     require_code_owner_reviews: true
   allow_force_pushes: false
@@ -157,7 +114,7 @@ dev:
       - "CI Summary"
       - "Trivy (FS)"
   required_pull_request_reviews:
-    required_approving_review_count: 2
+    required_approving_review_count: 1
     dismiss_stale_reviews: true
     require_code_owner_reviews: true
   allow_force_pushes: false
