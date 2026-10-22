@@ -12,3 +12,15 @@
 # Seguimiento: migrar a LangChain 1.x en una tarea aparte, con tiempo para probar el pipeline RAG
 # de punta a punta antes de mergear.
 CVE-2026-34070
+
+# CVE-2026-47884 — spring-webmvc: RCE por limitación de ruta indebida en XsltView.
+# CVE-2026-47890 — spring-webmvc/webflux: corrupción de stream en Server-Sent Events con vistas.
+# Instalado: spring-webmvc 6.2.19 (Spring Boot 3.5.16, la última 3.5.x). El fix existe solo en la
+# serie 7.0 (7.0.9), que exige Spring Boot 4: un salto de versión mayor que no cabe en un parche.
+# No usamos XsltView ni vistas con SSE (backend-core es una API REST con respuestas JSON; grep de
+# XsltView / SseEmitter / text/event-stream sin resultados en src/main), así que la superficie de
+# ataque real hoy es nula.
+# Seguimiento: migrar a Spring Boot 4 en una tarea aparte; revisar esta excepción cada mes
+# (próxima revisión: 2026-11-30) o si aparece un 6.2.x con el fix.
+CVE-2026-47884
+CVE-2026-47890
