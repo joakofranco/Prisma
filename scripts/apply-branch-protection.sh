@@ -52,18 +52,21 @@ gh api -X PUT "repos/$REPO/branches/main/protection" \
     "strict": true,
     "contexts": [
       "CI Summary",
-      "SonarQube Analysis",
       "Trivy (FS)",
+      "Trivy (backend-core)",
+      "Trivy (backend-ai)",
+      "Trivy (frontend)",
       "Gitleaks (secretos)",
+      "OWASP Dependency-Check",
       "Título Conventional Commit"
     ]
   },
-  "enforce_admins": true,
+  "enforce_admins": false,
   "required_pull_request_reviews": {
     "dismissal_restrictions": {},
     "dismiss_stale_reviews": true,
     "require_code_owner_reviews": true,
-    "required_approving_review_count": 2,
+    "required_approving_review_count": 1,
     "require_last_push_approval": true
   },
   "restrictions": null,
@@ -77,7 +80,7 @@ gh api -X PUT "repos/$REPO/branches/main/protection" \
 JSON
 
 # ---------------------------------------------------------------------
-# 2) dev — protegida con 1 aprobación
+# 2) dev — protegida con 1 aprobación (los mismos checks que exige yml)
 # ---------------------------------------------------------------------
 echo "🛡  Protegiendo dev..."
 gh api -X PUT "repos/$REPO/branches/dev/protection" \
@@ -88,9 +91,11 @@ gh api -X PUT "repos/$REPO/branches/dev/protection" \
     "strict": true,
     "contexts": [
       "CI Summary",
-      "SonarQube Analysis",
       "Trivy (FS)",
-      "Gitleaks (secretos)"
+      "Gitleaks (secretos)",
+      "Título Conventional Commit",
+      "Descripción del PR",
+      "Labels obligatorios"
     ]
   },
   "enforce_admins": false,
@@ -127,17 +132,7 @@ gh api -X POST "repos/$REPO/rulesets" \
   },
   "rules": [
     { "type": "deletion" },
-    { "type": "non_fast_forward" },
-    {
-      "type": "pull_request",
-      "parameters": {
-        "required_approving_review_count": 1,
-        "dismiss_stale_reviews_on_push": false,
-        "require_code_owner_review": false,
-        "require_last_push_approval": false,
-        "required_review_thread_resolution": true
-      }
-    }
+    { "type": "non_fast_forward" }
   ]
 }
 JSON
@@ -157,7 +152,9 @@ for env in dev staging prod; do
 {
   "wait_timer": 5,
   "reviewers": [
-    { "type": "User", "id": 1 }
+    { "type": "User", "id": 236283669 },
+    { "type": "User", "id": 313622467 },
+    { "type": "User", "id": 132712263 }
   ],
   "deployment_branch_policy": {
     "protected_branches": true,
@@ -171,9 +168,7 @@ done
 echo "✅ Protección de ramas aplicada correctamente."
 echo ""
 echo "📋 Resumen:"
-echo "   • main               → 2 approvals, todos los checks, admins incluidos"
+echo "   • main               → 1 approval (otra persona), todos los checks, PR obligatorio"
 echo "   • dev                → 1 approval, checks core"
-echo "   • dev/fernando       → sólo Fernando puede pushear"
-echo "   • dev/federico       → sólo Federico puede pushear"
-echo "   • dev/joaquin        → sólo Joaquín puede pushear"
+echo "   • dev/*              → sin borrar ni force-push (se puede pushear directo)"
 echo "   • Environments dev/staging/prod configurados"
