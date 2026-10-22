@@ -45,7 +45,14 @@ class UserEmailValidationTest {
 
   @ParameterizedTest
   @ValueSource(
-      strings = {"sin-arroba", "ana@", "@dominio.com", "ana@dominio", "ana@@dominio.com", "a b@c.com"})
+      strings = {
+        "sin-arroba",
+        "ana@",
+        "@dominio.com",
+        "ana@dominio",
+        "ana@@dominio.com",
+        "a b@c.com"
+      })
   void rejectsMalformedEmailsWithSpecificMessage(String email) {
     Set<ConstraintViolation<CreateUserDto>> violations = validate(email);
     assertFalse(violations.isEmpty(), email);

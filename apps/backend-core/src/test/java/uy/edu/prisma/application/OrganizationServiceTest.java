@@ -260,7 +260,9 @@ class OrganizationServiceTest {
     uy.edu.prisma.domain.exception.ConflictException ex =
         assertThrows(
             uy.edu.prisma.domain.exception.ConflictException.class,
-            () -> service.create(new CreateOrganizationDto("Nueva", "21.234.567-0", "TECH", "SMALL", null)));
+            () ->
+                service.create(
+                    new CreateOrganizationDto("Nueva", "21.234.567-0", "TECH", "SMALL", null)));
 
     assertEquals("rut", ex.getField());
     assertTrue(ex.getMessage().contains("Ya existe una organización con el RUT 21.234.567-0"));
@@ -478,7 +480,8 @@ class OrganizationServiceTest {
     User offAuditor = orgUser("oa@t.com", Set.of(UserRole.AUDITOR), false, UUID.randomUUID());
     when(repo.findById(org.getId())).thenReturn(Optional.of(org));
     when(repo.save(org)).thenReturn(org);
-    when(userRepo.findByOrganizationId(org.getId())).thenReturn(List.of(off1, off2, on, offAuditor));
+    when(userRepo.findByOrganizationId(org.getId()))
+        .thenReturn(List.of(off1, off2, on, offAuditor));
 
     OrganizationReactivationDto result = service.enable(org.getId());
 
