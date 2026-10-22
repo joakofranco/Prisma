@@ -10,7 +10,11 @@ export const ADMIN_STORAGE_STATE = path.join(
   '.auth/admin.json',
 );
 
-setup('autenticarse como PRISMA_ADMIN', async ({ page }) => {
+setup('autenticarse como PRISMA_ADMIN', async ({ page }, testInfo) => {
   await loginViaKeycloak(page);
-  await page.context().storageState({ path: ADMIN_STORAGE_STATE });
+  // Cada proyecto de setup puede indicar dónde guardar su sesión (metadata.storageState, ver
+  // playwright.config.ts); sin eso se usa la de Chromium/Firefox.
+  const file =
+    (testInfo.project.metadata.storageState as string | undefined) ?? ADMIN_STORAGE_STATE;
+  await page.context().storageState({ path: file });
 });
