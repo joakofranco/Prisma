@@ -32,7 +32,9 @@ for (const theme of THEMES) {
         .first()
         .waitFor({ state: 'visible', timeout: 10_000 });
       // Confirma que el tema pedido realmente se aplicó (si no, el test "pasaría" sin probar nada).
-      await expect(page.locator('html')).toHaveClass(theme === 'dark' ? /dark/ : /^((?!dark).)*$/);
+      await expect(page.locator('html')).toHaveClass(
+        theme === 'dark' ? /\bdark\b/ : /^((?!\bdark\b).)*$/,
+      );
       await assertNoWcagViolations(page, testInfo);
     });
   }
