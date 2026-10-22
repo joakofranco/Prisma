@@ -690,7 +690,16 @@ public class Dto {
       @Min(0) @Max(4) int currentLevel,
       @Min(0) @Max(4) int targetLevel) {}
 
-  public record RemediationTipsDto(String summary, List<String> tips) {}
+  public record RemediationTipsDto(String summary, List<String> tips) {
+    public RemediationTipsDto {
+      tips = tips == null ? List.of() : List.copyOf(tips);
+    }
+
+    @Override
+    public List<String> tips() {
+      return Collections.unmodifiableList(tips);
+    }
+  }
 
   // ---- Configuración de email (SMTP del realm de Keycloak) ----
   // Sin esta configuración, "¿Olvidaste tu contraseña?" en el login de Keycloak no envía nada
