@@ -8,12 +8,13 @@ aparte (ver docs/mcu-5.0/Kubernetes-Analisis-Viabilidad.md).
 from __future__ import annotations
 
 import chromadb
+from chromadb.api import ClientAPI
 from chromadb.config import Settings as ChromaSettings
 
 from app.core.config import Settings
 
 
-def build_chroma_client(settings: Settings) -> chromadb.ClientAPI:
+def build_chroma_client(settings: Settings) -> ClientAPI:
     return chromadb.PersistentClient(path=settings.chroma_persist_dir, settings=_chroma_settings())
 
 

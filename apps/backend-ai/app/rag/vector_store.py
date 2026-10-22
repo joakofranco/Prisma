@@ -228,7 +228,7 @@ class VectorStore:
 
     def _collection_count(self) -> int:
         client = build_chroma_client(self.settings)
-        return client.get_or_create_collection(self.collection_name).count()
+        return int(client.get_or_create_collection(self.collection_name).count())
 
     def _split(self) -> RecursiveCharacterTextSplitter:
         return loaders.build_splitter(self.settings.rag_chunk_size, self.settings.rag_chunk_overlap)
