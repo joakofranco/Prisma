@@ -7,7 +7,7 @@
 #   - Repo ya creado en GitHub
 #   - `gh auth login` ya ejecutado con permisos de admin del repo
 #
-# También crea las ramas iniciales: dev, dev/fernando, dev/federico, dev/joaquin.
+# También crea la rama dev si no existe.
 #
 # Uso:
 #   ./scripts/apply-branch-protection.sh <owner>/<repo>
@@ -29,7 +29,7 @@ echo "🔒 Aplicando protección de ramas a $REPO..."
 DEFAULT_SHA=$(gh api "repos/$REPO" --jq '.default_branch' \
   | xargs -I{} gh api "repos/$REPO/git/refs/heads/{}" --jq '.object.sha')
 
-for branch in dev dev/fernando dev/federico dev/joaquin; do
+for branch in dev; do
   if gh api "repos/$REPO/branches/$branch" >/dev/null 2>&1; then
     echo "✔  Rama $branch ya existe"
   else
@@ -63,7 +63,6 @@ gh api -X PUT "repos/$REPO/branches/main/protection" \
   },
   "enforce_admins": false,
   "required_pull_request_reviews": {
-    "dismissal_restrictions": {},
     "dismiss_stale_reviews": true,
     "require_code_owner_reviews": true,
     "required_approving_review_count": 1,
@@ -113,32 +112,7 @@ gh api -X PUT "repos/$REPO/branches/dev/protection" \
 JSON
 
 # ---------------------------------------------------------------------
-# 3) Reglas para ramas dev/* (Ruleset — API v2)
-#    (aplican a dev/fernando, dev/federico, dev/joaquin)
-# ---------------------------------------------------------------------
-echo "🛡  Aplicando ruleset a dev/*..."
-gh api -X POST "repos/$REPO/rulesets" \
-  -H "Accept: application/vnd.github+json" \
-  --input - <<'JSON'
-{
-  "name": "dev-personal-branches",
-  "target": "branch",
-  "enforcement": "active",
-  "conditions": {
-    "ref_name": {
-      "include": ["refs/heads/dev/*"],
-      "exclude": []
-    }
-  },
-  "rules": [
-    { "type": "deletion" },
-    { "type": "non_fast_forward" }
-  ]
-}
-JSON
-
-# ---------------------------------------------------------------------
-# 4) Configurar GitHub Environments para deploys
+# 3) Configurar GitHub Environments para deploys
 # ---------------------------------------------------------------------
 for env in dev staging prod; do
   echo "🌐 Configurando environment: $env"
@@ -170,5 +144,4 @@ echo ""
 echo "📋 Resumen:"
 echo "   • main               → 1 approval (otra persona), todos los checks, PR obligatorio"
 echo "   • dev                → 1 approval, checks core"
-echo "   • dev/*              → sin borrar ni force-push (se puede pushear directo)"
 echo "   • Environments dev/staging/prod configurados"
