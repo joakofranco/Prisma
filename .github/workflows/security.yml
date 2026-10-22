@@ -81,6 +81,11 @@ jobs:
           # en Trivy) no da ninguna accion posible hoy y bloquea todo indefinidamente. El scan
           # semanal programado igual las sigue detectando para cuando salga el fix.
           ignore-unfixed: 'true'
+          # pom.xml de backend-core: Trivy resuelve su arbol contra Maven Central y la IP compartida
+          # del runner termina bloqueada ("The repository blocks all subsequent requests from this
+          # IP"), lo que rompe el job sin que haya ninguna vulnerabilidad. Las dependencias Java se
+          # escanean igual en el job "Trivy (backend-core)" (imagen), sin pegarle a Maven Central.
+          skip-files: 'apps/backend-core/pom.xml'
       - name: Generar SARIF (no bloqueante)
         if: always() && vars.ENABLE_CODE_SCANNING == 'true'
         uses: aquasecurity/trivy-action@master
@@ -124,6 +129,13 @@ jobs:
             context: apps/frontend
     steps:
       - uses: actions/checkout@v4
+
+      # La imagen de backend-ai copia knowledge-base/ (carpeta generada, ignorada por git): sin
+      # sincronizarla antes, el `COPY knowledge-base` del Dockerfile falla. Mismo paso que en
+      # build-and-push.yml.
+      - name: Sincronizar knowledge base RAG
+        if: matrix.app == 'backend-ai'
+        run: make sync-knowledge-base
 
       - name: Build imagen para escaneo
         run: |
