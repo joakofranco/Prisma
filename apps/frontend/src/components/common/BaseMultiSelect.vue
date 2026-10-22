@@ -176,9 +176,7 @@
   // Elementos elegidos, en el orden en que se eligieron. Un valor que ya no está entre las opciones
   // se sigue mostrando (con su valor como texto) para que no desaparezca sin que se note.
   const selectedOptions = computed<Option[]>(() =>
-    props.modelValue.map(
-      (v) => props.options.find((o) => o.value === v) ?? { value: v, label: v },
-    ),
+    props.modelValue.map((v) => props.options.find((o) => o.value === v) ?? { value: v, label: v }),
   );
 
   const filteredOptions = computed(() =>

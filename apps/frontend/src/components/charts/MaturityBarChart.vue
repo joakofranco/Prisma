@@ -34,7 +34,11 @@
   }));
 
   const ariaLabel = computed(() =>
-    describeChart('Madurez por función (nivel 0 a 4)', chartData.value.labels, chartData.value.datasets),
+    describeChart(
+      'Madurez por función (nivel 0 a 4)',
+      chartData.value.labels,
+      chartData.value.datasets,
+    ),
   );
 
   const chartOptions = computed(() => {

@@ -218,7 +218,10 @@
 
   async function loadDeletable() {
     deletableIds.value = new Set();
-    if (!authStore.hasAnyRole('PRISMA_ADMIN', 'ORG_RESPONSIBLE') || evaluations.value.length === 0) {
+    if (
+      !authStore.hasAnyRole('PRISMA_ADMIN', 'ORG_RESPONSIBLE') ||
+      evaluations.value.length === 0
+    ) {
       return;
     }
     try {

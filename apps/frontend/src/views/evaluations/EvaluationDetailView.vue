@@ -98,7 +98,9 @@
             <BaseButton :variant="action.variant" @click="onStatusAction(action.status)">
               {{ action.label }}
             </BaseButton>
-            <span class="text-xs text-slate-500 max-w-[220px] dark:text-slate-400">{{ action.hint }}</span>
+            <span class="text-xs text-slate-500 max-w-[220px] dark:text-slate-400">{{
+              action.hint
+            }}</span>
           </div>
         </div>
 
@@ -120,7 +122,9 @@
 
         <div
           class="flex flex-wrap gap-x-6 gap-y-3"
-          :class="statusActions.length > 0 ? 'pt-3 border-t border-slate-100 dark:border-slate-700' : ''"
+          :class="
+            statusActions.length > 0 ? 'pt-3 border-t border-slate-100 dark:border-slate-700' : ''
+          "
         >
           <div v-for="action in flowActions" :key="action.key" class="flex flex-col gap-1.5">
             <BaseButton
@@ -131,7 +135,9 @@
               <component :is="action.icon" class="w-4 h-4" />
               {{ action.label }}
             </BaseButton>
-            <span class="text-xs text-slate-500 max-w-[220px] dark:text-slate-400">{{ action.hint }}</span>
+            <span class="text-xs text-slate-500 max-w-[220px] dark:text-slate-400">{{
+              action.hint
+            }}</span>
           </div>
         </div>
       </div>
@@ -299,7 +305,9 @@
               >
                 <span class="text-sm font-semibold text-slate-800 dark:text-slate-100">
                   {{ group.title }}
-                  <span class="text-slate-500 font-normal dark:text-slate-400">({{ group.total }})</span>
+                  <span class="text-slate-500 font-normal dark:text-slate-400"
+                    >({{ group.total }})</span
+                  >
                 </span>
                 <ChevronDownIcon
                   :class="[
@@ -386,7 +394,11 @@
   import { useRoute, useRouter } from 'vue-router';
   import { useEvaluationsStore } from '@/stores/evaluations';
   import { useAuthStore } from '@/stores/auth';
-  import { catalogService, communityProfilesService, evaluationsService } from '@/services/resources';
+  import {
+    catalogService,
+    communityProfilesService,
+    evaluationsService,
+  } from '@/services/resources';
   import {
     getStatusLabel,
     getStatusBadgeStyle,
@@ -462,7 +474,9 @@
     profileError.value = '';
     selectedProfileId.value = evaluation.value.communityProfileId || '';
     try {
-      const { data } = await communityProfilesService.getAll(evaluation.value.catalogVersion || '5.0');
+      const { data } = await communityProfilesService.getAll(
+        evaluation.value.catalogVersion || '5.0',
+      );
       profileOptions.value = [
         { value: '', label: 'Catálogo completo (todos los controles)' },
         ...data.map((p) => ({ value: p.id, label: `${p.name} (${p.controlCount} controles)` })),
@@ -478,7 +492,10 @@
     savingProfile.value = true;
     profileError.value = '';
     try {
-      const updated = await store.changeProfile(evaluation.value.id, selectedProfileId.value || null);
+      const updated = await store.changeProfile(
+        evaluation.value.id,
+        selectedProfileId.value || null,
+      );
       showProfileModal.value = false;
       notification.success('Perfil actualizado correctamente');
       // El árbol del catálogo viene podado al perfil: hay que volver a pedirlo.

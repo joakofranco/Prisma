@@ -1,8 +1,12 @@
 <template>
-  <div class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6 w-full">
+  <div
+    class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6 w-full"
+  >
     <div class="flex items-start justify-between gap-4 mb-1">
       <div>
-        <h2 class="text-lg font-semibold text-slate-900 dark:text-white">Correo electrónico (SMTP)</h2>
+        <h2 class="text-lg font-semibold text-slate-900 dark:text-white">
+          Correo electrónico (SMTP)
+        </h2>
         <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">
           Servidor que usa Keycloak para enviar el email de "¿Olvidaste tu contraseña?" y demás
           notificaciones de la cuenta.
@@ -12,14 +16,18 @@
         v-if="!loading"
         :class="[
           'shrink-0 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium',
-          settings.configured ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300',
+          settings.configured
+            ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
+            : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300',
         ]"
       >
         {{ settings.configured ? 'Configurado' : 'Sin configurar' }}
       </span>
     </div>
 
-    <div v-if="loading" class="py-10 text-center text-sm text-slate-500 dark:text-slate-400">Cargando...</div>
+    <div v-if="loading" class="py-10 text-center text-sm text-slate-500 dark:text-slate-400">
+      Cargando...
+    </div>
 
     <form v-else class="space-y-4 mt-5" @submit.prevent="handleSubmit">
       <BaseAlert variant="info">
@@ -69,15 +77,27 @@
 
       <div class="flex flex-wrap gap-6 pt-1">
         <label class="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200">
-          <input v-model="form.authEnabled" type="checkbox" class="rounded border-slate-300 dark:border-slate-600" />
+          <input
+            v-model="form.authEnabled"
+            type="checkbox"
+            class="rounded border-slate-300 dark:border-slate-600"
+          />
           Requiere autenticación
         </label>
         <label class="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200">
-          <input v-model="form.starttls" type="checkbox" class="rounded border-slate-300 dark:border-slate-600" />
+          <input
+            v-model="form.starttls"
+            type="checkbox"
+            class="rounded border-slate-300 dark:border-slate-600"
+          />
           STARTTLS
         </label>
         <label class="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200">
-          <input v-model="form.ssl" type="checkbox" class="rounded border-slate-300 dark:border-slate-600" />
+          <input
+            v-model="form.ssl"
+            type="checkbox"
+            class="rounded border-slate-300 dark:border-slate-600"
+          />
           SSL/TLS
         </label>
       </div>

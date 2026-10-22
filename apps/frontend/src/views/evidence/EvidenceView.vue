@@ -10,7 +10,9 @@
       </router-link>
       <div class="flex-1">
         <h1 class="text-2xl font-bold text-slate-900 dark:text-white">Evidencias</h1>
-        <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">Gestión de evidencias documentales de respaldo</p>
+        <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">
+          Gestión de evidencias documentales de respaldo
+        </p>
       </div>
       <BaseButton variant="primary" @click="showUploadModal = true">
         <CloudArrowUpIcon class="w-4 h-4" />
@@ -27,7 +29,9 @@
       class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-12 text-center"
     >
       <DocumentIcon class="w-12 h-12 text-slate-300 mx-auto mb-3" />
-      <p class="text-slate-500 dark:text-slate-400">No hay evidencias cargadas para esta evaluación</p>
+      <p class="text-slate-500 dark:text-slate-400">
+        No hay evidencias cargadas para esta evaluación
+      </p>
     </div>
 
     <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -47,12 +51,17 @@
             <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">
               {{ formatFileSize(ev.fileSize) }} — {{ ev.fileType }}
             </p>
-            <p v-if="ev.description" class="text-xs text-slate-500 mt-1 truncate dark:text-slate-400">
+            <p
+              v-if="ev.description"
+              class="text-xs text-slate-500 mt-1 truncate dark:text-slate-400"
+            >
               {{ ev.description }}
             </p>
           </div>
         </div>
-        <div class="flex items-center justify-between mt-3 pt-3 border-t border-slate-100 dark:border-slate-700">
+        <div
+          class="flex items-center justify-between mt-3 pt-3 border-t border-slate-100 dark:border-slate-700"
+        >
           <span
             v-if="ev.aiIndexed"
             class="inline-flex items-center gap-1 text-xs text-emerald-700 dark:text-emerald-400"
@@ -87,7 +96,9 @@
             </button>
           </div>
         </div>
-        <p class="text-xs text-slate-500 mt-2 dark:text-slate-400">{{ formatDate(ev.uploadedAt) }}</p>
+        <p class="text-xs text-slate-500 mt-2 dark:text-slate-400">
+          {{ formatDate(ev.uploadedAt) }}
+        </p>
       </div>
     </div>
 
@@ -112,7 +123,9 @@
           placeholder="Describa brevemente la evidencia"
         />
         <div>
-          <label class="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">Archivo</label>
+          <label class="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1"
+            >Archivo</label
+          >
           <input
             ref="fileInput"
             type="file"

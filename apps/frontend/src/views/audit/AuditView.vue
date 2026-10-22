@@ -33,7 +33,9 @@
 
     <template v-else>
       <EvaluationLifecycleStepper v-if="evaluation" :status="evaluation.status" />
-      <div class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6">
+      <div
+        class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6"
+      >
         <div class="flex items-center gap-2 mb-1">
           <SparklesIcon class="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
           <h3 class="text-lg font-semibold text-slate-900 dark:text-white">
@@ -62,7 +64,9 @@
             <div class="flex items-center justify-between gap-3">
               <div class="min-w-0">
                 <p class="text-sm font-medium text-slate-900 dark:text-white">{{ c.code }}</p>
-                <p class="text-xs text-slate-500 dark:text-slate-400 truncate">{{ c.description }}</p>
+                <p class="text-xs text-slate-500 dark:text-slate-400 truncate">
+                  {{ c.description }}
+                </p>
               </div>
               <BaseButton
                 variant="secondary"
@@ -74,7 +78,10 @@
             </div>
 
             <div v-if="citationsByControl[c.controlId]" class="mt-3 space-y-2">
-              <p v-if="citationsByControl[c.controlId].length === 0" class="text-xs text-slate-500 dark:text-slate-400">
+              <p
+                v-if="citationsByControl[c.controlId].length === 0"
+                class="text-xs text-slate-500 dark:text-slate-400"
+              >
                 No se encontraron fragmentos relevantes en la evidencia cargada.
               </p>
               <div
@@ -108,7 +115,9 @@
         </div>
       </div>
 
-      <div class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6">
+      <div
+        class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6"
+      >
         <div class="flex items-center justify-between mb-1 gap-3">
           <h3 class="text-lg font-semibold text-slate-900 dark:text-white">Observaciones</h3>
           <BaseButton variant="primary" @click="openCreateModal()">
@@ -127,11 +136,16 @@
           <CheckBadgeIcon class="w-4 h-4 text-indigo-500 shrink-0" />
           <span>
             Auditoría realizada por
-            <span class="font-medium text-slate-700 dark:text-slate-200">{{ auditStampNames.join(', ') }}</span>
+            <span class="font-medium text-slate-700 dark:text-slate-200">{{
+              auditStampNames.join(', ')
+            }}</span>
           </span>
         </div>
 
-        <div v-if="observations.length === 0" class="text-center py-8 text-slate-500 dark:text-slate-400">
+        <div
+          v-if="observations.length === 0"
+          class="text-center py-8 text-slate-500 dark:text-slate-400"
+        >
           No hay observaciones registradas
         </div>
 

@@ -41,7 +41,11 @@
   }));
 
   const ariaLabel = computed(() =>
-    describeChart('Evolución de la madurez global por evaluación', chartData.value.labels, chartData.value.datasets),
+    describeChart(
+      'Evolución de la madurez global por evaluación',
+      chartData.value.labels,
+      chartData.value.datasets,
+    ),
   );
 
   const chartOptions = computed(() => {
