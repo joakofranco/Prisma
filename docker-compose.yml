@@ -13,7 +13,7 @@
 #   observability → prometheus, grafana, loki, promtail, cadvisor, node-exporter
 #   elastic       → elasticsearch, kibana, filebeat (logs de seguridad/BD/apps, aparte de Loki)
 #   quality       → sonarqube, sonar-db
-#   management    → portainer, watchtower, pgadmin
+#   management    → portainer, watchtower, pgadmin, backup-runner, backup-scheduler
 #   proxy         → nginx
 #   full          → todos los anteriores
 # =====================================================================
@@ -770,6 +770,59 @@ services:
     volumes:
       - pgadmin-data:/var/lib/pgadmin
       - ./scripts/db/pgadmin-servers.json:/pgadmin4/servers.json:ro
+    networks: [prisma-net]
+
+  # RNF-13: respaldo diario (Postgres + bucket de evidencias de RustFS) y restauración. Este
+  # contenedor se queda vivo sin hacer nada (sleep infinity) sólo para que Ofelia (ver
+  # backup-scheduler abajo) le ejecute backup.sh por "docker exec" una vez al día -- "make backup"
+  # / "make restore" corren el mismo script a mano. Ver scripts/backup/.
+  backup-runner:
+    build:
+      context: ./scripts/backup
+    container_name: prisma-backup-runner
+    restart: unless-stopped
+    profiles: [management, full]
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      S3_ENDPOINT: http://rustfs:9000
+      S3_BUCKET: ${S3_BUCKET_EVIDENCES}
+      # El AWS CLI (ver scripts/backup/Dockerfile) exige estas variables aunque apunte a RustFS, no
+      # a AWS real -- la región es un valor cualquiera, RustFS la ignora.
+      AWS_ACCESS_KEY_ID: ${RUSTFS_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${RUSTFS_SECRET_KEY}
+      AWS_DEFAULT_REGION: us-east-1
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-30}
+      # Opcional: URL de webhook (Slack/Discord/Teams-compatible) para avisar si el respaldo diario
+      # falla. Si se deja vacía, el fallo sólo queda en el log del contenedor y en el exit code.
+      BACKUP_ALERT_WEBHOOK_URL: ${BACKUP_ALERT_WEBHOOK_URL:-}
+      TZ: ${TZ}
+    volumes:
+      - ./backups:/backups
+    networks: [prisma-net]
+    labels:
+      ofelia.enabled: "true"
+      ofelia.job-exec.daily-backup.schedule: "@daily"
+      ofelia.job-exec.daily-backup.command: "/usr/local/bin/backup.sh"
+
+  # Scheduler de Ofelia: sólo lee las labels "ofelia.*" de los demás contenedores (acá,
+  # backup-runner) y los dispara en el horario indicado -- no corre nada por sí mismo. Necesita el
+  # socket de Docker para poder hacer "docker exec" sobre backup-runner.
+  backup-scheduler:
+    image: mcuadros/ofelia:latest
+    container_name: prisma-backup-scheduler
+    restart: unless-stopped
+    profiles: [management, full]
+    depends_on:
+      - backup-runner
+    command: daemon --docker
+    environment:
+      TZ: ${TZ}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     networks: [prisma-net]
 
   # -------------------------------------------------------------------
