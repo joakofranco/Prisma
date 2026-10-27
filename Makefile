@@ -184,16 +184,17 @@ seed: ## Precargar catálogo MCU 5.0 y datos demo
 	$(DC) exec backend-core java -jar /app/app.jar --seed
 	$(DC) exec backend-ai python -m app.scripts.ingest_mcu_docs
 
-backup: ## Backup de Postgres
+# RNF-13: respaldo diario (Postgres + bucket de evidencias de RustFS) y restauración. "make
+# backup"/"make restore" corren el MISMO script (scripts/backup/backup.sh y restore.sh, dentro del
+# contenedor backup-runner) que Ofelia dispara automáticamente una vez al día -- ver el servicio
+# backup-runner/backup-scheduler en docker-compose.yml (perfil management o full). Antes esto solo
+# respaldaba Postgres, a mano, sin ningún mecanismo diario ni cobertura del bucket de evidencias.
+backup: ## Backup manual inmediato (Postgres + evidencias) -- normalmente corre solo, a diario
 	@mkdir -p backups
-	@STAMP=$$(date +%Y%m%d_%H%M%S); \
-	$(DC) exec -T postgres pg_dump -U $(POSTGRES_USER) $(POSTGRES_DB) | gzip > backups/postgres_$${STAMP}.sql.gz; \
-	echo "✅ Backup en backups/postgres_$${STAMP}.sql.gz"
+	$(DC) exec -T backup-runner /usr/local/bin/backup.sh
 
-restore: ## Restaurar Postgres desde el backup más reciente
-	@LATEST=$$(ls -t backups/postgres_*.sql.gz | head -1); \
-	echo "♻️  Restaurando desde $$LATEST..."; \
-	gunzip -c $$LATEST | $(DC) exec -T postgres psql -U $(POSTGRES_USER) $(POSTGRES_DB)
+restore: ## Restaurar Postgres + evidencias desde el backup más reciente en backups/
+	$(DC) exec -T backup-runner /usr/local/bin/restore.sh
 
 # ---------- IA / OLLAMA ----------
 pull-llm: ## Descargar Llama 3 en Ollama (~4.7 GB, primera vez)
