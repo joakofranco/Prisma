@@ -102,6 +102,9 @@ public class EvidenceService {
                 .findById(controlId)
                 .orElseThrow(() -> new ResourceNotFoundException("Control", controlId))
             : null;
+    // RF-EVI-03: antes de tocar el almacenamiento, se valida que la firma binaria real coincida
+    // con la extensión declarada; se persiste el tipo detectado, no el Content-Type del cliente.
+    String detectedType = EvidenceFileValidator.validate(file);
 
     // Solo para la storage key en el bucket -- no se asigna como @Id de la entidad: Evidence usa
     // @GeneratedValue(strategy = GenerationType.UUID), y si se le asigna manualmente un id antes
@@ -115,10 +118,7 @@ public class EvidenceService {
           PutObjectRequest.builder()
               .bucket(storageProperties.bucket())
               .key(storageKey)
-              .contentType(
-                  file.getContentType() != null
-                      ? file.getContentType()
-                      : "application/octet-stream")
+              .contentType(detectedType)
               .build(),
           RequestBody.fromInputStream(in, file.getSize()));
     } catch (Exception e) {
@@ -131,7 +131,7 @@ public class EvidenceService {
             .control(control)
             .fileName(file.getOriginalFilename() != null ? file.getOriginalFilename() : "evidence")
             .fileSize(file.getSize())
-            .fileType(file.getContentType())
+            .fileType(detectedType)
             .storageKey(storageKey)
             .uploadedBy(currentUser.currentUser().orElse(null))
             .description(description)

@@ -129,6 +129,7 @@
           <input
             ref="fileInput"
             type="file"
+            accept=".pdf,.docx,.txt,.md,.markdown"
             class="w-full text-sm text-slate-600 dark:text-slate-300 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
           />
           <p v-if="uploadErrors.file" class="mt-1 text-xs text-red-600 dark:text-red-400">
