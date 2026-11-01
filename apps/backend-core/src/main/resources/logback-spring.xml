@@ -10,7 +10,9 @@
     <include resource="org/springframework/boot/logging/logback/defaults.xml" />
 
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
-        <encoder>
+        <!-- PatternLayoutEncoder (el default de <encoder> sin class) no soporta <layout>:
+             UnsupportedOperationException al arrancar. LayoutWrappingEncoder sí lo soporta. -->
+        <encoder class="ch.qos.logback.core.encoder.LayoutWrappingEncoder">
             <layout class="uy.edu.prisma.config.MaskingPatternLayout">
                 <pattern>${CONSOLE_LOG_PATTERN}</pattern>
             </layout>
