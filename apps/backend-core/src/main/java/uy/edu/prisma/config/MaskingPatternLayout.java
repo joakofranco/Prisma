@@ -7,9 +7,9 @@ import java.util.regex.Pattern;
 
 /**
  * RNF-10: enmascara contraseñas, tokens y encabezados Authorization/Bearer en cada línea de log
- * antes de escribirla, para que un log.info/debug/error que por error incluya ese dato sensible
- * no lo deje en texto plano -- no depende de que cada punto del código lo evite a mano. Se usa
- * como layout del appender CONSOLE en logback-spring.xml.
+ * antes de escribirla, para que un log.info/debug/error que por error incluya ese dato sensible no
+ * lo deje en texto plano -- no depende de que cada punto del código lo evite a mano. Se usa como
+ * layout del appender CONSOLE en logback-spring.xml.
  */
 public class MaskingPatternLayout extends PatternLayout {
 
@@ -19,7 +19,8 @@ public class MaskingPatternLayout extends PatternLayout {
 
   private static final List<MaskRule> RULES =
       List.of(
-          new MaskRule(Pattern.compile("(?i)(\"password\"\\s*:\\s*\")[^\"]*(\")"), "$1" + MASK + "$2"),
+          new MaskRule(
+              Pattern.compile("(?i)(\"password\"\\s*:\\s*\")[^\"]*(\")"), "$1" + MASK + "$2"),
           new MaskRule(Pattern.compile("(?i)(password=)[^&\\s,}]+"), "$1" + MASK),
           new MaskRule(
               Pattern.compile(
