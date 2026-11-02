@@ -146,6 +146,84 @@ class AuditLogServiceTest {
   }
 
   @Test
+  void exportCsvIncludesHeaderAndMatchingRows() {
+    when(currentUser.isPrismaAdmin()).thenReturn(true);
+    PageRequest pr = PageRequest.of(0, 50_000, Sort.by("createdAt").descending());
+    when(auditRepo.search(isNull(), isNull(), isNull(), any()))
+        .thenReturn(new PageImpl<>(List.of(logEntry), pr, 1));
+    when(userRepo.findAllById(any())).thenReturn(List.of(actor));
+    when(orgRepo.findAllById(any())).thenReturn(List.of(tenant));
+
+    String csv = service.exportCsv(null, null);
+
+    String[] lines = csv.split("\r\n");
+    assertEquals("Fecha,Usuario,Email,Organizacion,Accion,Recurso,IP", lines[0]);
+    assertEquals(2, lines.length);
+    assertTrue(lines[1].contains("Jane Doe"));
+    assertTrue(lines[1].contains("actor@test.com"));
+    assertTrue(lines[1].contains("Acme"));
+    assertTrue(lines[1].contains("CREATE"));
+  }
+
+  @Test
+  void exportCsvScopesToOwnTenantForNonAdmin() {
+    when(currentUser.isPrismaAdmin()).thenReturn(false);
+    when(currentUser.currentTenantId()).thenReturn(tenant.getId());
+    PageRequest pr = PageRequest.of(0, 50_000, Sort.by("createdAt").descending());
+    when(auditRepo.search(eq(tenant.getId()), isNull(), isNull(), any()))
+        .thenReturn(new PageImpl<>(List.of(logEntry), pr, 1));
+    when(userRepo.findAllById(any())).thenReturn(List.of(actor));
+    when(orgRepo.findAllById(any())).thenReturn(List.of(tenant));
+
+    service.exportCsv(null, null);
+
+    verify(auditRepo).search(eq(tenant.getId()), isNull(), isNull(), any());
+  }
+
+  @Test
+  void exportCsvWithoutTenantReturnsOnlyHeader() {
+    when(currentUser.isPrismaAdmin()).thenReturn(false);
+    when(currentUser.currentTenantId()).thenReturn(null);
+
+    String csv = service.exportCsv(null, null);
+
+    assertEquals("Fecha,Usuario,Email,Organizacion,Accion,Recurso,IP\r\n", csv);
+    verifyNoInteractions(auditRepo);
+  }
+
+  @Test
+  void exportCsvQuotesFieldsContainingComma() {
+    when(currentUser.isPrismaAdmin()).thenReturn(true);
+    Organization orgWithComma =
+        Organization.builder().id(UUID.randomUUID()).name("Acme, Inc.").build();
+    User actorWithComma =
+        User.builder()
+            .id(UUID.randomUUID())
+            .email("x@test.com")
+            .firstName("Jane")
+            .lastName("Doe")
+            .build();
+    AuditLog log =
+        AuditLog.builder()
+            .id(UUID.randomUUID())
+            .userId(actorWithComma.getId())
+            .tenantId(orgWithComma.getId())
+            .action("CREATE")
+            .resource("user:" + UUID.randomUUID())
+            .createdAt(OffsetDateTime.now())
+            .build();
+    PageRequest pr = PageRequest.of(0, 50_000, Sort.by("createdAt").descending());
+    when(auditRepo.search(isNull(), isNull(), isNull(), any()))
+        .thenReturn(new PageImpl<>(List.of(log), pr, 1));
+    when(userRepo.findAllById(any())).thenReturn(List.of(actorWithComma));
+    when(orgRepo.findAllById(any())).thenReturn(List.of(orgWithComma));
+
+    String csv = service.exportCsv(null, null);
+
+    assertTrue(csv.contains("\"Acme, Inc.\""));
+  }
+
+  @Test
   void resolvesResourceNameForEachKnownResourceType() {
     when(currentUser.isPrismaAdmin()).thenReturn(true);
 
