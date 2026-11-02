@@ -180,7 +180,10 @@ class EvidenceServiceTest {
     String expectedHash = "e16fa5d9b51928755db85b917f0297babaf22c7a47e97d9212adab56e61ba04e";
     MockMultipartFile file =
         new MockMultipartFile(
-            "file", "reporte.pdf", "application/pdf", "%PDF-1.4".getBytes(StandardCharsets.US_ASCII));
+            "file",
+            "reporte.pdf",
+            "application/pdf",
+            "%PDF-1.4".getBytes(StandardCharsets.US_ASCII));
     when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
     when(s3Client.headBucket(any(HeadBucketRequest.class))).thenReturn(null);
     when(evidenceRepo.save(any(Evidence.class))).thenAnswer(EvidenceServiceTest::simulatePersist);
