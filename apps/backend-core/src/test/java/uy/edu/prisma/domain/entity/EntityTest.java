@@ -431,8 +431,7 @@ class EntityTest {
     OffsetDateTime now = OffsetDateTime.now();
     Evidence all =
         new Evidence(
-            id, null, null, "doc.pdf", 1024L, "application/pdf", "k1", "h1", null, now, "d",
-            false);
+            id, null, null, "doc.pdf", 1024L, "application/pdf", "k1", "h1", null, now, "d", false);
     assertEquals(id, all.getId());
     assertNull(all.getEvaluation());
     assertNull(all.getControl());
