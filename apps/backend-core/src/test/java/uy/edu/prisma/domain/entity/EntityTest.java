@@ -443,7 +443,8 @@ class EntityTest {
     OffsetDateTime now = OffsetDateTime.now();
     Evidence all =
         new Evidence(
-            id, null, null, "doc.pdf", 1024L, "application/pdf", "k1", null, now, "d", false);
+            id, null, null, "doc.pdf", 1024L, "application/pdf", "k1", "h1", null, now, "d",
+            false);
     assertEquals(id, all.getId());
     assertNull(all.getEvaluation());
     assertNull(all.getControl());
@@ -451,6 +452,7 @@ class EntityTest {
     assertEquals(1024L, all.getFileSize());
     assertEquals("application/pdf", all.getFileType());
     assertEquals("k1", all.getStorageKey());
+    assertEquals("h1", all.getFileHash());
     assertNull(all.getUploadedBy());
     assertEquals(now, all.getUploadedAt());
     assertEquals("d", all.getDescription());
