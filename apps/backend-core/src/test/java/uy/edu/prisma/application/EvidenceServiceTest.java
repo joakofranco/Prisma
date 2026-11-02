@@ -175,7 +175,7 @@ class EvidenceServiceTest {
   void uploadComputesSha256HashOfFileContent() throws Exception {
     // SHA-256 de los bytes {1, 2, 3}, calculado independientemente (RF-EVI-05).
     String expectedHash =
-        "039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb0";
+        "039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81";
     MockMultipartFile file =
         new MockMultipartFile("file", "reporte.pdf", "application/pdf", new byte[] {1, 2, 3});
     when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
