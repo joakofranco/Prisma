@@ -482,7 +482,7 @@ public class EvaluationService {
     resp.setCompliant(Boolean.TRUE.equals(dto.compliant()));
     resp.setObservations(dto.observations());
     resp.setRespondedBy(currentUser.currentUser().orElse(null));
-    resp.setRespondedAt(java.time.OffsetDateTime.now());
+    resp.setRespondedAt(OffsetDateTime.now());
 
     EvaluationResponseDto result = toRespDto(respRepo.save(resp));
     auditLog.record(
