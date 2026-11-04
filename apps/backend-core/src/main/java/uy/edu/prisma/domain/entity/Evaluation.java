@@ -75,7 +75,8 @@ public class Evaluation {
 
   // Firma HMAC-SHA256 (hex) de evaluationId+organizationId+approvedBy+approvedAt+globalMaturity,
   // calculada con el secreto de prisma.certification.secret -- permite detectar si estos metadatos
-  // de cierre fueron alterados después de sellados (ver EvaluationService.computeCertificationSeal).
+  // de cierre fueron alterados después de sellados (ver
+  // EvaluationService.computeCertificationSeal).
   @Column(name = "certification_seal", length = 64)
   private String certificationSeal;
 
