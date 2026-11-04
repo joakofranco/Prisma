@@ -152,7 +152,7 @@ class EvidenceServiceTest {
   void uploadPersistsEvidenceAndFile() throws Exception {
     UUID evalId = eval.getId();
     MockMultipartFile file =
-        new MockMultipartFile("file", "reporte.pdf", "application/pdf", new byte[] {1, 2, 3});
+        new MockMultipartFile("file", "reporte.pdf", "application/pdf", "%PDF-".getBytes());
     when(evaluationRepo.findById(evalId)).thenReturn(Optional.of(eval));
     when(s3Client.headBucket(any(HeadBucketRequest.class))).thenReturn(null);
     when(currentUser.currentUser()).thenReturn(Optional.empty());
@@ -162,7 +162,7 @@ class EvidenceServiceTest {
 
     assertNotNull(result.id());
     assertEquals("reporte.pdf", result.fileName());
-    assertEquals(3L, result.fileSize());
+    assertEquals(5L, result.fileSize());
     verify(s3Client, times(1)).putObject(any(PutObjectRequest.class), any(RequestBody.class));
     ArgumentCaptor<Evidence> captor = ArgumentCaptor.forClass(Evidence.class);
     // Un solo save(): el flag aiIndexed se fija sobre la misma instancia administrada que
@@ -230,6 +230,48 @@ class EvidenceServiceTest {
     ArgumentCaptor<Evidence> captor = ArgumentCaptor.forClass(Evidence.class);
     verify(evidenceRepo, times(1)).save(captor.capture());
     assertFalse(captor.getValue().isAiIndexed());
+  }
+
+  @Test
+  void uploadRejectsFileWhoseMagicBytesDoNotMatchExtension() {
+    // Ejecutable de Windows (MZ) renombrado a .pdf
+    MockMultipartFile file =
+        new MockMultipartFile(
+            "file", "malware.pdf", "application/pdf", new byte[] {0x4D, 0x5A, 0x00, 0x01});
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+
+    assertThrows(
+        uy.edu.prisma.domain.exception.InvalidRequestException.class,
+        () -> service.upload(eval.getId(), null, null, file));
+    verify(s3Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));
+    verify(evidenceRepo, never()).save(any());
+  }
+
+  @Test
+  void uploadRejectsDisallowedExtension() {
+    MockMultipartFile file =
+        new MockMultipartFile("file", "script.exe", null, new byte[] {0x4D, 0x5A});
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+
+    assertThrows(
+        uy.edu.prisma.domain.exception.InvalidRequestException.class,
+        () -> service.upload(eval.getId(), null, null, file));
+    verify(s3Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));
+  }
+
+  @Test
+  void uploadStoresDetectedTypeInsteadOfDeclaredContentType() throws Exception {
+    MockMultipartFile file =
+        new MockMultipartFile("file", "reporte.pdf", "text/html", "%PDF-1.7".getBytes());
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(s3Client.headBucket(any(HeadBucketRequest.class))).thenReturn(null);
+    when(evidenceRepo.save(any(Evidence.class))).thenAnswer(EvidenceServiceTest::simulatePersist);
+
+    service.upload(eval.getId(), null, null, file);
+
+    ArgumentCaptor<Evidence> captor = ArgumentCaptor.forClass(Evidence.class);
+    verify(evidenceRepo, times(1)).save(captor.capture());
+    assertEquals("application/pdf", captor.getValue().getFileType());
   }
 
   @Test
