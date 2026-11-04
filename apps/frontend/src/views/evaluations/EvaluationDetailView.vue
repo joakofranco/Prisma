@@ -90,8 +90,12 @@
         <div class="text-sm text-emerald-800 dark:text-emerald-200">
           <p class="font-semibold">Evaluación aprobada y sellada</p>
           <p class="text-emerald-700 dark:text-emerald-300">
-            <span v-if="evaluation.approvedByName">Certificada por {{ evaluation.approvedByName }}</span>
-            <span v-if="evaluation.approvedAt"> el {{ formatDateTime(evaluation.approvedAt) }}</span>
+            <span v-if="evaluation.approvedByName"
+              >Certificada por {{ evaluation.approvedByName }}</span
+            >
+            <span v-if="evaluation.approvedAt">
+              el {{ formatDateTime(evaluation.approvedAt) }}</span
+            >
           </p>
           <p class="font-mono text-xs text-emerald-600 dark:text-emerald-400 mt-1 break-all">
             Sello: {{ evaluation.certificationSeal }}
