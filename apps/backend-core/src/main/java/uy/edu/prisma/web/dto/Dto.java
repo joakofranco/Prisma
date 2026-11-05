@@ -775,6 +775,24 @@ public class Dto {
       String userAgent,
       OffsetDateTime createdAt) {}
 
+  // ---- Evaluation audit cycles (RF-AUD-10) ----
+  // Historial de transiciones de estado de UNA evaluación puntual, agrupado por "ciclo" de
+  // auditoría -- ver AuditLogService.getEvaluationAuditTrail. A diferencia de AuditLogDto (bitácora
+  // global, solo para PRISMA_ADMIN/ORG_RESPONSIBLE), esto lo puede consultar cualquiera con acceso
+  // a la organización de la evaluación, en particular el AUDITOR.
+  public record EvaluationAuditCycleEventDto(
+      UUID id,
+      String action,
+      // Estado al que pasó la evaluación en este evento; null para eventos que no son de cambio
+      // de estado (p.ej. "CERTIFY").
+      String status,
+      UUID performedBy,
+      String performedByName,
+      OffsetDateTime occurredAt,
+      // 0 = autoevaluación inicial, antes del primer envío a auditoría. Se incrementa cada vez que
+      // la evaluación vuelve a READY_FOR_AUDIT -- un reenvío tras ser devuelta es un ciclo nuevo.
+      int cycleNumber) {}
+
   // ---- API error ----
   public record ApiErrorDto(String message, String code, Map<String, List<String>> details) {
     public ApiErrorDto {

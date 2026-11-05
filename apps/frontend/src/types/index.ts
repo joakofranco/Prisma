@@ -63,6 +63,23 @@ export interface AuditLog {
   createdAt: string;
 }
 
+// RF-AUD-10: historial de ciclos de auditoría de UNA evaluación puntual (envíos y devoluciones),
+// a diferencia de AuditLog (bitácora global, solo para PRISMA_ADMIN/ORG_RESPONSIBLE) -- este lo
+// puede consultar cualquiera con acceso a la organización de la evaluación, en particular AUDITOR.
+export interface EvaluationAuditCycleEvent {
+  id: string;
+  action: string;
+  /** Estado al que pasó la evaluación en este evento; null para eventos que no son de cambio de
+   * estado (p.ej. "CERTIFY"). */
+  status: string | null;
+  performedBy?: string | null;
+  performedByName?: string | null;
+  occurredAt: string;
+  /** 0 = autoevaluación inicial, antes del primer envío a auditoría. Se incrementa cada vez que
+   * la evaluación vuelve a READY_FOR_AUDIT -- un reenvío tras ser devuelta es un ciclo nuevo. */
+  cycleNumber: number;
+}
+
 /** Nivel dentro de un Requisito del catálogo real MCU 5.0 (1 = más básico, 4 = más avanzado).
  * La madurez de una Subcategoría se alcanza de forma acumulativa: nivel N cuando TODOS sus
  * controles de nivel <= N están marcados como cumplidos (ver EvaluationService en el backend). */
