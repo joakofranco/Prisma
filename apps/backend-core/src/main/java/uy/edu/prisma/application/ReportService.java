@@ -20,8 +20,10 @@ import java.io.ByteArrayOutputStream;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import org.apache.poi.ss.usermodel.BorderStyle;
 import org.apache.poi.ss.usermodel.CellStyle;
@@ -36,10 +38,15 @@ import org.apache.poi.xssf.usermodel.XSSFFont;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import uy.edu.prisma.domain.entity.AuditObservation;
 import uy.edu.prisma.domain.entity.Evaluation;
+import uy.edu.prisma.domain.entity.Evidence;
 import uy.edu.prisma.domain.entity.MaturityResult;
+import uy.edu.prisma.domain.exception.ConflictException;
 import uy.edu.prisma.domain.exception.ResourceNotFoundException;
+import uy.edu.prisma.domain.repository.AuditObservationRepository;
 import uy.edu.prisma.domain.repository.EvaluationRepository;
+import uy.edu.prisma.domain.repository.EvidenceRepository;
 import uy.edu.prisma.domain.repository.MaturityResultRepository;
 
 /**
@@ -66,14 +73,20 @@ public class ReportService {
 
   private final EvaluationRepository evalRepo;
   private final MaturityResultRepository matRepo;
+  private final AuditObservationRepository obsRepo;
+  private final EvidenceRepository evidenceRepo;
   private final CurrentUserService currentUser;
 
   public ReportService(
       EvaluationRepository evalRepo,
       MaturityResultRepository matRepo,
+      AuditObservationRepository obsRepo,
+      EvidenceRepository evidenceRepo,
       CurrentUserService currentUser) {
     this.evalRepo = evalRepo;
     this.matRepo = matRepo;
+    this.obsRepo = obsRepo;
+    this.evidenceRepo = evidenceRepo;
     this.currentUser = currentUser;
   }
 
@@ -587,6 +600,266 @@ public class ReportService {
     }
     style.setFont(font);
     return style;
+  }
+
+  // =====================================================================================
+  // Informe preliminar (RF-AUD-11): hallazgos de auditoría antes de aprobar -- estado de los
+  // controles revisados, observaciones del auditor y subcategorías con brecha sin evidencia.
+  // =====================================================================================
+
+  public byte[] generatePreliminaryPdf(UUID evaluationId) {
+    Evaluation eval = loadForAudit(evaluationId);
+    List<MaturityResult> results = results(evaluationId);
+    Summary summary = summarize(results);
+    List<AuditObservation> observations = obsRepo.findByEvaluationIdOrderByCreatedAtDesc(evaluationId);
+    List<MaturityResult> missingEvidence = missingEvidence(evaluationId, results);
+
+    try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+      Document document = new Document(PageSize.A4, 36, 36, 0, 54);
+      PdfWriter writer = PdfWriter.getInstance(document, out);
+      writer.setPageEvent(new FooterEvent());
+      document.open();
+
+      addPdfBanner(document);
+      addPdfInfoBox(document, eval);
+      addPdfKpiRow(document, eval, summary);
+      addPdfObservations(document, observations);
+      addPdfMissingEvidence(document, missingEvidence);
+      addPdfResultsTable(document, results);
+
+      document.close();
+      return out.toByteArray();
+    } catch (Exception e) {
+      throw new RuntimeException("No se pudo generar el informe preliminar en PDF", e);
+    }
+  }
+
+  public byte[] generatePreliminaryExcel(UUID evaluationId) {
+    Evaluation eval = loadForAudit(evaluationId);
+    List<MaturityResult> results = results(evaluationId);
+    Summary summary = summarize(results);
+    List<AuditObservation> observations = obsRepo.findByEvaluationIdOrderByCreatedAtDesc(evaluationId);
+    List<MaturityResult> missingEvidence = missingEvidence(evaluationId, results);
+
+    try (XSSFWorkbook workbook = new XSSFWorkbook();
+        ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+      var props = workbook.getProperties().getCoreProperties();
+      props.setTitle("Informe Preliminar de Auditoría PRISMA - " + eval.getName());
+      props.setCreator("PRISMA");
+
+      addSummarySheet(workbook, eval, summary);
+      addObservationsSheet(workbook, observations);
+      addMissingEvidenceSheet(workbook, missingEvidence);
+      addDetailSheet(workbook, results);
+
+      workbook.write(out);
+      return out.toByteArray();
+    } catch (Exception e) {
+      throw new RuntimeException("No se pudo generar el informe preliminar en Excel", e);
+    }
+  }
+
+  /** Igual que {@link #load(UUID)}, pero exige que la evaluación esté "En Auditoría". */
+  private Evaluation loadForAudit(UUID evaluationId) {
+    Evaluation eval = load(evaluationId);
+    if (eval.getStatus() != Evaluation.Status.IN_AUDIT) {
+      throw new ConflictException(
+          "El informe preliminar sólo puede exportarse con la evaluación en estado 'En"
+              + " Auditoría' (estado actual: "
+              + statusLabel(eval.getStatus())
+              + ")");
+    }
+    return eval;
+  }
+
+  /**
+   * Subcategorías con brecha (gap > 0) que no tienen ninguna evidencia cargada: ni evidencia
+   * general (sin control asociado) ni evidencia de un control que pertenezca a esa subcategoría
+   * (ver CatalogControl.effectiveSubcategories).
+   */
+  private List<MaturityResult> missingEvidence(UUID evaluationId, List<MaturityResult> results) {
+    List<Evidence> evidences = evidenceRepo.findByEvaluationIdOrderByUploadedAtDesc(evaluationId);
+    if (evidences.stream().anyMatch(e -> e.getControl() == null)) {
+      // Hay evidencia general (no atada a un control puntual): no podemos afirmar que falte
+      // evidencia en ninguna subcategoría puntual.
+      return List.of();
+    }
+    Set<UUID> subcategoriesWithEvidence = new HashSet<>();
+    for (Evidence e : evidences) {
+      if (e.getControl() != null) {
+        e.getControl().effectiveSubcategories().forEach(sc -> subcategoriesWithEvidence.add(sc.getId()));
+      }
+    }
+    return results.stream()
+        .filter(r -> r.getGap() > 0)
+        .filter(r -> !subcategoriesWithEvidence.contains(r.getSubcategoryId()))
+        .toList();
+  }
+
+  private void addPdfObservations(Document document, List<AuditObservation> observations)
+      throws DocumentException {
+    Paragraph heading =
+        new Paragraph(
+            "Observaciones de Auditoría",
+            FontFactory.getFont(FontFactory.HELVETICA_BOLD, 12, SLATE_900));
+    heading.setSpacingAfter(6);
+    document.add(heading);
+
+    if (observations.isEmpty()) {
+      Paragraph empty =
+          new Paragraph(
+              "Sin observaciones registradas.", FontFactory.getFont(FontFactory.HELVETICA, 9, SLATE_500));
+      empty.setSpacingAfter(16);
+      document.add(empty);
+      return;
+    }
+
+    PdfPTable table = new PdfPTable(4);
+    table.setWidthPercentage(100);
+    table.setWidths(new float[] {1.2f, 3.6f, 1.2f, 1f});
+    table.setSpacingAfter(16);
+    addTableHeader(table, "Tipo", "Descripción", "Estado", "Fecha");
+    boolean shaded = false;
+    for (AuditObservation o : observations) {
+      Color bg = shaded ? SLATE_50 : Color.WHITE;
+      addBodyCell(table, observationTypeLabel(o.getType()), bg, Element.ALIGN_LEFT, SLATE_900);
+      addBodyCell(table, o.getDescription(), bg, Element.ALIGN_LEFT, SLATE_900);
+      addBodyCell(
+          table,
+          observationStatusLabel(o.getStatus()),
+          bg,
+          Element.ALIGN_CENTER,
+          o.getStatus() == AuditObservation.ObservationStatus.OPEN ? DANGER : SLATE_900);
+      addBodyCell(table, o.getCreatedAt().format(DATE_FMT), bg, Element.ALIGN_CENTER, SLATE_500);
+      shaded = !shaded;
+    }
+    document.add(table);
+  }
+
+  private void addPdfMissingEvidence(Document document, List<MaturityResult> missingEvidence)
+      throws DocumentException {
+    Paragraph heading =
+        new Paragraph(
+            "Evidencias Faltantes", FontFactory.getFont(FontFactory.HELVETICA_BOLD, 12, SLATE_900));
+    heading.setSpacingAfter(6);
+    document.add(heading);
+
+    if (missingEvidence.isEmpty()) {
+      Paragraph empty =
+          new Paragraph(
+              "No se detectaron subcategorías con brecha sin evidencia asociada.",
+              FontFactory.getFont(FontFactory.HELVETICA, 9, SLATE_500));
+      empty.setSpacingAfter(16);
+      document.add(empty);
+      return;
+    }
+
+    PdfPTable table = new PdfPTable(4);
+    table.setWidthPercentage(100);
+    table.setWidths(new float[] {3.4f, 1f, 1f, 1f});
+    table.setSpacingAfter(16);
+    addTableHeader(table, "Subcategoría", "Actual", "Objetivo", "Brecha");
+    boolean shaded = false;
+    for (MaturityResult r : missingEvidence) {
+      Color bg = shaded ? SLATE_50 : Color.WHITE;
+      addBodyCell(
+          table,
+          r.getFunctionName() + " › " + r.getSubcategoryName(),
+          bg,
+          Element.ALIGN_LEFT,
+          SLATE_900);
+      addLevelCell(table, r.getCurrentLevel(), bg);
+      addBodyCell(table, String.valueOf(r.getTargetLevel()), bg, Element.ALIGN_CENTER, SLATE_900);
+      addBodyCell(table, String.valueOf(r.getGap()), bg, Element.ALIGN_CENTER, DANGER);
+      shaded = !shaded;
+    }
+    document.add(table);
+  }
+
+  private void addObservationsSheet(XSSFWorkbook workbook, List<AuditObservation> observations) {
+    Sheet sheet = workbook.createSheet("Observaciones");
+    XSSFCellStyle headerStyle =
+        xlStyle(workbook, BRAND, Color.WHITE, true, 10, HorizontalAlignment.CENTER);
+    Row header = sheet.createRow(0);
+    String[] cols = {"Tipo", "Descripción", "Estado", "Fecha"};
+    for (int i = 0; i < cols.length; i++) {
+      setCell(header, i, cols[i], headerStyle);
+    }
+    boolean shaded = false;
+    int rowIdx = 1;
+    for (AuditObservation o : observations) {
+      Row row = sheet.createRow(rowIdx++);
+      Color bg = shaded ? SLATE_50 : Color.WHITE;
+      XSSFCellStyle textStyle = xlStyle(workbook, bg, SLATE_900, false, 10, HorizontalAlignment.LEFT);
+      setCell(row, 0, observationTypeLabel(o.getType()), textStyle);
+      setCell(row, 1, o.getDescription(), textStyle);
+      setCell(row, 2, observationStatusLabel(o.getStatus()), textStyle);
+      setCell(row, 3, o.getCreatedAt().format(DATE_FMT), textStyle);
+      shaded = !shaded;
+    }
+    for (int i = 0; i < cols.length; i++) {
+      sheet.autoSizeColumn(i);
+      sheet.setColumnWidth(i, Math.min(sheet.getColumnWidth(i) + 512, 42 * 256));
+    }
+  }
+
+  private void addMissingEvidenceSheet(XSSFWorkbook workbook, List<MaturityResult> missingEvidence) {
+    Sheet sheet = workbook.createSheet("Evidencias Faltantes");
+    XSSFCellStyle headerStyle =
+        xlStyle(workbook, BRAND, Color.WHITE, true, 10, HorizontalAlignment.CENTER);
+    Row header = sheet.createRow(0);
+    String[] cols = {"Subcategoría", "Actual", "Objetivo", "Brecha"};
+    for (int i = 0; i < cols.length; i++) {
+      setCell(header, i, cols[i], headerStyle);
+    }
+    boolean shaded = false;
+    int rowIdx = 1;
+    for (MaturityResult r : missingEvidence) {
+      Row row = sheet.createRow(rowIdx++);
+      Color bg = shaded ? SLATE_50 : Color.WHITE;
+      setCell(
+          row,
+          0,
+          r.getFunctionName() + " › " + r.getSubcategoryName(),
+          xlStyle(workbook, bg, SLATE_900, false, 10, HorizontalAlignment.LEFT));
+      setCell(
+          row,
+          1,
+          r.getCurrentLevel(),
+          xlStyle(workbook, bg, SLATE_900, false, 10, HorizontalAlignment.CENTER));
+      setCell(
+          row,
+          2,
+          r.getTargetLevel(),
+          xlStyle(workbook, bg, SLATE_900, false, 10, HorizontalAlignment.CENTER));
+      setCell(row, 3, r.getGap(), xlStyle(workbook, bg, DANGER, true, 10, HorizontalAlignment.CENTER));
+      shaded = !shaded;
+    }
+    for (int i = 0; i < cols.length; i++) {
+      sheet.autoSizeColumn(i);
+      sheet.setColumnWidth(i, Math.min(sheet.getColumnWidth(i) + 512, 42 * 256));
+    }
+  }
+
+  private static final Map<AuditObservation.ObservationType, String> OBSERVATION_TYPE_LABELS =
+      Map.of(
+          AuditObservation.ObservationType.OBSERVATION, "Observación",
+          AuditObservation.ObservationType.NON_CONFORMITY, "No Conformidad",
+          AuditObservation.ObservationType.RECOMMENDATION, "Recomendación");
+
+  private static String observationTypeLabel(AuditObservation.ObservationType type) {
+    return OBSERVATION_TYPE_LABELS.getOrDefault(type, type.name());
+  }
+
+  private static final Map<AuditObservation.ObservationStatus, String> OBSERVATION_STATUS_LABELS =
+      Map.of(
+          AuditObservation.ObservationStatus.OPEN, "Abierta",
+          AuditObservation.ObservationStatus.IN_PROGRESS, "En Progreso",
+          AuditObservation.ObservationStatus.RESOLVED, "Resuelta",
+          AuditObservation.ObservationStatus.CLOSED, "Cerrada");
+
+  private static String observationStatusLabel(AuditObservation.ObservationStatus status) {
+    return OBSERVATION_STATUS_LABELS.getOrDefault(status, status.name());
   }
 
   // =====================================================================================
