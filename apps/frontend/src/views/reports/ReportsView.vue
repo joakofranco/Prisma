@@ -33,6 +33,53 @@
     </div>
 
     <div
+      v-if="inAuditEvaluations.length > 0"
+      class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6"
+    >
+      <h3 class="text-lg font-semibold text-slate-900 dark:text-white mb-1">
+        Informe Preliminar de Auditoría
+      </h3>
+      <p class="text-sm text-slate-500 dark:text-slate-400 mb-4">
+        Hallazgos, observaciones y evidencias faltantes de evaluaciones en auditoría, antes de
+        aprobar.
+      </p>
+      <div class="space-y-3">
+        <div
+          v-for="eval_ in inAuditEvaluations"
+          :key="eval_.id"
+          class="flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-900 rounded-lg"
+        >
+          <div>
+            <p class="text-sm font-medium text-slate-900 dark:text-white">
+              {{ eval_.name }}
+            </p>
+            <p class="text-xs text-slate-500 dark:text-slate-400">
+              {{ eval_.organizationName }} — {{ formatDate(eval_.createdAt) }}
+            </p>
+          </div>
+          <div class="flex gap-2">
+            <BaseButton
+              variant="ghost"
+              size="sm"
+              :loading="generatingPreliminaryPdf === eval_.id"
+              @click="generatePreliminaryPDF(eval_.id)"
+            >
+              <ArrowDownTrayIcon class="w-4 h-4" /> PDF
+            </BaseButton>
+            <BaseButton
+              variant="ghost"
+              size="sm"
+              :loading="generatingPreliminaryExcel === eval_.id"
+              @click="generatePreliminaryExcel(eval_.id)"
+            >
+              <DocumentTextIcon class="w-4 h-4" /> Excel
+            </BaseButton>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div
       class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6"
     >
       <h3 class="text-lg font-semibold text-slate-900 dark:text-white mb-4">
@@ -99,9 +146,12 @@
   const notification = useNotification();
 
   const evaluations = ref<Evaluation[]>([]);
+  const inAuditEvaluations = ref<Evaluation[]>([]);
   const selectedEvaluation = ref('');
   const generatingPdf = ref(false);
   const generatingExcel = ref(false);
+  const generatingPreliminaryPdf = ref<string | null>(null);
+  const generatingPreliminaryExcel = ref<string | null>(null);
 
   const approvedEvaluations = computed(() =>
     evaluations.value.filter((e) => e.status === 'APPROVED'),
@@ -154,6 +204,44 @@
     }
   }
 
+  async function generatePreliminaryPDF(evaluationId: string) {
+    generatingPreliminaryPdf.value = evaluationId;
+    try {
+      const { data } = await reportsService.generatePreliminaryPDF(evaluationId);
+      const url = window.URL.createObjectURL(new Blob([data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `informe-preliminar-${evaluationId}.pdf`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      notification.success('Informe preliminar PDF descargado');
+    } catch {
+      notification.error('Error al generar el informe preliminar PDF');
+    } finally {
+      generatingPreliminaryPdf.value = null;
+    }
+  }
+
+  async function generatePreliminaryExcel(evaluationId: string) {
+    generatingPreliminaryExcel.value = evaluationId;
+    try {
+      const { data } = await reportsService.generatePreliminaryExcel(evaluationId);
+      const url = window.URL.createObjectURL(new Blob([data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `informe-preliminar-${evaluationId}.xlsx`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      notification.success('Informe preliminar Excel descargado');
+    } catch {
+      notification.error('Error al generar el informe preliminar Excel');
+    } finally {
+      generatingPreliminaryExcel.value = null;
+    }
+  }
+
   onMounted(async () => {
     try {
       const { data } = await evaluationsService.getAll({
@@ -162,6 +250,16 @@
         status: 'APPROVED',
       });
       evaluations.value = data.data;
+    } catch (err) {
+      console.error(err);
+    }
+    try {
+      const { data } = await evaluationsService.getAll({
+        page: 1,
+        pageSize: 100,
+        status: 'IN_AUDIT',
+      });
+      inAuditEvaluations.value = data.data;
     } catch (err) {
       console.error(err);
     }
