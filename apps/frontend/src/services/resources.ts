@@ -4,6 +4,7 @@ import type {
   Organization,
   Evaluation,
   EvaluationResponse,
+  EvaluationAuditCycleEvent,
   Evidence,
   EvidenceCitation,
   AuditObservation,
@@ -102,6 +103,10 @@ export const evaluationsService = {
   },
   calculateMaturity(evaluationId: string) {
     return apiClient.post(`/evaluations/${evaluationId}/calculate`);
+  },
+  // RF-AUD-10: ciclos de auditoría (envíos/devoluciones) de esta evaluación puntual.
+  getAuditTrail(evaluationId: string) {
+    return apiClient.get<EvaluationAuditCycleEvent[]>(`/evaluations/${evaluationId}/audit-trail`);
   },
 };
 
