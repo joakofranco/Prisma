@@ -39,6 +39,9 @@ public class Evidence {
   @Column(name = "storage_key", nullable = false, length = 500)
   private String storageKey;
 
+  @Column(name = "file_hash", length = 64)
+  private String fileHash;
+
   @ManyToOne(fetch = FetchType.LAZY)
   @JoinColumn(name = "uploaded_by")
   private User uploadedBy;

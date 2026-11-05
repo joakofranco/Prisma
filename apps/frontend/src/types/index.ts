@@ -225,6 +225,8 @@ export interface Evidence {
   fileName: string;
   fileSize: number;
   fileType: string;
+  /** Hash SHA-256 del contenido del archivo, calculado por el backend al subirlo (RF-EVI-05). */
+  fileHash?: string;
   uploadedBy: string;
   uploadedAt: string;
   description?: string;

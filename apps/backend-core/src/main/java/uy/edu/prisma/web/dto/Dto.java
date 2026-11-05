@@ -597,6 +597,7 @@ public class Dto {
       String fileName,
       Long fileSize,
       String fileType,
+      String fileHash,
       String description,
       UUID uploadedBy,
       OffsetDateTime uploadedAt,
