@@ -267,4 +267,7 @@ export const emailSettingsService = {
   update(data: UpdateEmailSettings) {
     return apiClient.put<EmailSettings>('/admin/email-settings', data);
   },
+  test(recipientEmail: string) {
+    return apiClient.post<void>('/admin/email-settings/test', { recipientEmail });
+  },
 };

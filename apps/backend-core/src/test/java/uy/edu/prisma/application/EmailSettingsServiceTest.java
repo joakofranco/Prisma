@@ -153,4 +153,23 @@ class EmailSettingsServiceTest {
 
     verify(auditLog, times(1)).record(eq("UPDATE"), eq("email-settings"), anyString());
   }
+
+  @Test
+  void testConnectionRejectsWhenNotConfigured() {
+    when(keycloakAdmin.getSmtpConfig()).thenReturn(Map.of());
+
+    assertThrows(InvalidRequestException.class, () -> service.testConnection("a@b.com"));
+    verify(keycloakAdmin, never()).testSmtpConnection(any(), anyString());
+  }
+
+  @Test
+  void testConnectionSendsStoredConfigAndRecordsAuditLog() {
+    Map<String, String> stored = Map.of("host", "smtp.example.com", "from", "no-reply@prisma.local");
+    when(keycloakAdmin.getSmtpConfig()).thenReturn(stored);
+
+    service.testConnection("admin@prisma.local");
+
+    verify(keycloakAdmin, times(1)).testSmtpConnection(stored, "admin@prisma.local");
+    verify(auditLog, times(1)).record(eq("TEST"), eq("email-settings"), anyString());
+  }
 }

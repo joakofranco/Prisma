@@ -313,6 +313,37 @@ public class KeycloakAdminClient {
   }
 
   /**
+   * Envía un correo de prueba con la configuración SMTP dada (la misma que devuelve {@link
+   * #getSmtpConfig()}, incluido el password enmascarado "**********" si no se cambió -- Keycloak
+   * resuelve ese valor al password real ya persistido, igual que hace al guardar la config, así
+   * que no hace falta pedirle al admin que lo reingrese sólo para probar). Lanza {@link
+   * InvalidRequestException} con el detalle de Keycloak si el envío falla (credenciales
+   * inválidas, host inalcanzable, etc.) -- a diferencia del resto de los métodos de esta clase,
+   * acá SÍ conviene traducir el error de Keycloak en vez de dejarlo propagar tal cual, porque
+   * quien llama necesita mostrárselo al admin para que corrija la configuración.
+   */
+  public void testSmtpConnection(Map<String, String> smtpServer, String testRecipientEmail) {
+    try {
+      restClient
+          .post()
+          .uri(
+              "/admin/realms/{realm}/testSMTPConnection?user={user}",
+              properties.realm(),
+              testRecipientEmail)
+          .header("Authorization", "Bearer " + adminToken())
+          .contentType(MediaType.APPLICATION_JSON)
+          .body(smtpServer)
+          .retrieve()
+          .toBodilessEntity();
+    } catch (HttpClientErrorException e) {
+      throw new InvalidRequestException(
+          "No se pudo enviar el correo de prueba: verificá la configuración SMTP (host, puerto,"
+              + " credenciales). Detalle de Keycloak: "
+              + e.getStatusCode());
+    }
+  }
+
+  /**
    * Intentos de login fallidos desde {@code sinceEpochMillisExclusive} (exclusivo), más recientes
    * primero según Keycloak. Requiere {@code eventsEnabled=true} en el realm (ver realm-prisma.json)
    * -- si no, Keycloak simplemente no guarda estos eventos y esto siempre devuelve vacío, no falla.

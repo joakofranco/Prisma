@@ -736,6 +736,14 @@ public class Dto {
       boolean starttls,
       boolean ssl) {}
 
+  // Envía un correo de prueba con la configuración SMTP YA GUARDADA (no permite probar valores
+  // sin guardar) para que el admin pueda verificar que el servidor realmente puede enviar antes
+  // de confiar en "¿Olvidaste tu contraseña?" en producción.
+  public record TestEmailSettingsDto(
+      @NotBlank(message = "El email de destino es obligatorio")
+          @Email(message = "Email inválido")
+          String recipientEmail) {}
+
   // ---- Audit log (bitácora de acciones del sistema, distinta de AuditObservation/"Auditoría"
   // MCU) ----
   public record AuditLogDto(
