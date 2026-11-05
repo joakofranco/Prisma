@@ -622,6 +622,7 @@ public class Dto {
       UUID id,
       UUID evaluationId,
       UUID controlId,
+      UUID subcategoryId,
       String type,
       String description,
       String status,
@@ -630,7 +631,7 @@ public class Dto {
       // Nombre del auditor que la registró -- es la "estampa" de quién trabajó esta auditoría:
       // null si createdBy es null (dato histórico) o no se pudo resolver.
       String createdByName) {
-    // Compat: firma previa sin createdByName (usada en tests existentes).
+    // Compat: firma previa sin subcategoryId ni createdByName (usada en tests existentes).
     public AuditObservationDto(
         UUID id,
         UUID evaluationId,
@@ -640,19 +641,20 @@ public class Dto {
         String status,
         UUID createdBy,
         OffsetDateTime createdAt) {
-      this(id, evaluationId, controlId, type, description, status, createdBy, createdAt, null);
+      this(id, evaluationId, controlId, null, type, description, status, createdBy, createdAt, null);
     }
   }
 
   public record CreateAuditObservationDto(
       UUID evaluationId,
       UUID controlId,
+      UUID subcategoryId,
       String type,
       @NotBlank(message = "La descripción es obligatoria") String description,
       String status) {}
 
   public record UpdateAuditObservationDto(
-      UUID controlId, String type, String description, String status) {}
+      UUID controlId, UUID subcategoryId, String type, String description, String status) {}
 
   // ---- Audit control verdicts (dictamen) ----
   // verdict: VALIDATED | NOT_VALIDATED | NEEDS_MORE_EVIDENCE.

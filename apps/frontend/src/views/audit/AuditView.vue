@@ -283,6 +283,12 @@
                   <span :class="['text-xs px-2 py-0.5 rounded-full', obsStatusClass(obs.status)]">{{
                     obsStatusLabel(obs.status)
                   }}</span>
+                  <span
+                    v-if="obs.subcategoryId && subcategoryById.get(obs.subcategoryId)"
+                    class="text-xs px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300"
+                  >
+                    {{ subcategoryById.get(obs.subcategoryId)!.code }}
+                  </span>
                 </div>
                 <p class="text-sm text-slate-700 dark:text-slate-200">
                   {{ obs.description }}
@@ -319,6 +325,12 @@
     <BaseModal v-model="showCreateModal" title="Nueva Observación" size="lg">
       <form class="space-y-4" @submit.prevent="handleCreateObservation">
         <BaseSelect v-model="newObs.type" label="Tipo" :options="obsTypeOptions" required />
+        <BaseSelect
+          v-if="subcategoryOptions.length > 1"
+          v-model="newObs.subcategoryId"
+          label="Subcategoría"
+          :options="subcategoryOptions"
+        />
         <BaseTextarea
           v-model="newObs.description"
           label="Descripción"
@@ -404,7 +416,23 @@
     type: 'OBSERVATION' as AuditObservation['type'],
     description: '',
     controlId: undefined as string | undefined,
+    subcategoryId: undefined as string | undefined,
   });
+
+  // RF-AUD-05: además de por control, el auditor puede atar una observación a una subcategoría
+  // del catálogo -- lista plana armada a partir del mismo catálogo que ya se trae para resolver
+  // los controles con evidencia (ver loadControlsWithEvidence).
+  const subcategories = ref<{ id: string; code: string; name: string }[]>([]);
+  const subcategoryById = computed(
+    () => new Map(subcategories.value.map((s) => [s.id, s])),
+  );
+  const subcategoryOptions = computed(() => [
+    { value: '', label: 'Sin subcategoría' },
+    ...subcategories.value.map((s) => ({
+      value: s.id,
+      label: s.code ? `${s.code} — ${s.name}` : s.name,
+    })),
+  ]);
 
   // ---------------- Asistente de IA — citas de evidencia por control ----------------
 
@@ -439,9 +467,15 @@
       const { data } = await catalogService.getByVersion(evaluationData.catalogVersion);
       const catalog = data as MaturityCatalog;
       const controlById = new Map<string, { code: string; description: string }>();
+      const flatSubcategories: { id: string; code: string; name: string }[] = [];
       for (const fn of catalog.functions ?? []) {
         for (const category of fn.categories ?? []) {
           for (const subcategory of category.subcategories ?? []) {
+            flatSubcategories.push({
+              id: subcategory.id,
+              code: subcategory.code ?? '',
+              name: subcategory.name,
+            });
             for (const requirement of subcategory.requirements ?? []) {
               for (const control of requirement.controls ?? []) {
                 controlById.set(control.id, {
@@ -453,6 +487,7 @@
           }
         }
       }
+      subcategories.value = flatSubcategories;
 
       controlsWithEvidence.value = controlIds
         .filter((id) => controlById.has(id))
@@ -494,6 +529,7 @@
   function openObservationForCitation(control: ControlWithEvidence, citation: EvidenceCitation) {
     newObs.type = 'OBSERVATION';
     newObs.controlId = control.controlId;
+    newObs.subcategoryId = undefined;
     newObs.description =
       `Revisión de evidencia para ${control.code} — "${citation.fileName ?? 'evidencia'}"` +
       `${citation.location ? ` (${citation.location})` : ''}: ${citation.snippet}`;
@@ -503,6 +539,7 @@
   function openCreateModal() {
     newObs.type = 'OBSERVATION';
     newObs.controlId = undefined;
+    newObs.subcategoryId = undefined;
     newObs.description = '';
     showCreateModal.value = true;
   }
@@ -581,6 +618,7 @@
       await auditService.createObservation({
         evaluationId,
         controlId: newObs.controlId,
+        subcategoryId: newObs.subcategoryId || undefined,
         type: newObs.type,
         description: newObs.description,
       });
@@ -588,6 +626,7 @@
       showCreateModal.value = false;
       newObs.type = 'OBSERVATION';
       newObs.controlId = undefined;
+      newObs.subcategoryId = undefined;
       newObs.description = '';
       await fetchObservations();
     } catch {

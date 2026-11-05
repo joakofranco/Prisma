@@ -258,6 +258,8 @@ export interface AuditObservation {
   id: string;
   evaluationId: string;
   controlId?: string;
+  /** Subcategoría del catálogo a la que está atada la observación (RF-AUD-05), si corresponde. */
+  subcategoryId?: string;
   type: 'OBSERVATION' | 'NON_CONFORMITY' | 'RECOMMENDATION';
   description: string;
   status: 'OPEN' | 'IN_PROGRESS' | 'RESOLVED' | 'CLOSED';

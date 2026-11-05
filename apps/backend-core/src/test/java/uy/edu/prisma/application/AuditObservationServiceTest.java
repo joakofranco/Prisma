@@ -16,6 +16,7 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import uy.edu.prisma.domain.entity.AuditObservation;
 import uy.edu.prisma.domain.entity.CatalogControl;
+import uy.edu.prisma.domain.entity.CatalogSubcategory;
 import uy.edu.prisma.domain.entity.Evaluation;
 import uy.edu.prisma.domain.entity.Organization;
 import uy.edu.prisma.domain.entity.User;
@@ -23,6 +24,7 @@ import uy.edu.prisma.domain.exception.InvalidRequestException;
 import uy.edu.prisma.domain.exception.ResourceNotFoundException;
 import uy.edu.prisma.domain.repository.AuditObservationRepository;
 import uy.edu.prisma.domain.repository.CatalogControlRepository;
+import uy.edu.prisma.domain.repository.CatalogSubcategoryRepository;
 import uy.edu.prisma.domain.repository.EvaluationRepository;
 import uy.edu.prisma.web.dto.Dto.AuditObservationDto;
 import uy.edu.prisma.web.dto.Dto.CreateAuditObservationDto;
@@ -35,6 +37,7 @@ class AuditObservationServiceTest {
   @Mock private AuditObservationRepository repo;
   @Mock private EvaluationRepository evaluationRepo;
   @Mock private CatalogControlRepository controlRepo;
+  @Mock private CatalogSubcategoryRepository subcategoryRepo;
   @Mock private CurrentUserService currentUser;
 
   private AuditObservationService service;
@@ -43,7 +46,8 @@ class AuditObservationServiceTest {
   @BeforeEach
   void setUp() {
     when(currentUser.isGlobalRole()).thenReturn(true);
-    service = new AuditObservationService(repo, evaluationRepo, controlRepo, currentUser);
+    service =
+        new AuditObservationService(repo, evaluationRepo, controlRepo, subcategoryRepo, currentUser);
     eval =
         Evaluation.builder()
             .id(UUID.randomUUID())
@@ -99,7 +103,7 @@ class AuditObservationServiceTest {
     when(repo.save(any(AuditObservation.class))).thenAnswer(inv -> inv.getArgument(0));
 
     CreateAuditObservationDto dto =
-        new CreateAuditObservationDto(eval.getId(), null, null, "detalle", null);
+        new CreateAuditObservationDto(eval.getId(), null, null, null, "detalle", null);
     AuditObservationDto result = service.create(dto);
 
     assertEquals(eval.getId(), result.evaluationId());
@@ -116,7 +120,7 @@ class AuditObservationServiceTest {
     when(repo.save(any(AuditObservation.class))).thenAnswer(inv -> inv.getArgument(0));
 
     CreateAuditObservationDto dto =
-        new CreateAuditObservationDto(eval.getId(), null, "NON_CONFORMITY", "x", "CLOSED");
+        new CreateAuditObservationDto(eval.getId(), null, null, "NON_CONFORMITY", "x", "CLOSED");
     AuditObservationDto result = service.create(dto);
 
     assertEquals("NON_CONFORMITY", result.type());
@@ -133,10 +137,40 @@ class AuditObservationServiceTest {
     when(repo.save(any(AuditObservation.class))).thenAnswer(inv -> inv.getArgument(0));
 
     CreateAuditObservationDto dto =
-        new CreateAuditObservationDto(eval.getId(), control.getId(), null, "detalle", null);
+        new CreateAuditObservationDto(eval.getId(), control.getId(), null, null, "detalle", null);
     AuditObservationDto result = service.create(dto);
 
     assertEquals(control.getId(), result.controlId());
+  }
+
+  @Test
+  void createSetsTheSubcategoryWhenProvided() {
+    // RF-AUD-05: además de por control, el auditor puede registrar una observación atada a una
+    // subcategoría del catálogo.
+    CatalogSubcategory subcategory = CatalogSubcategory.builder().id(UUID.randomUUID()).build();
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(subcategoryRepo.findById(subcategory.getId())).thenReturn(Optional.of(subcategory));
+    when(currentUser.currentUser()).thenReturn(Optional.empty());
+    when(repo.save(any(AuditObservation.class))).thenAnswer(inv -> inv.getArgument(0));
+
+    CreateAuditObservationDto dto =
+        new CreateAuditObservationDto(
+            eval.getId(), null, subcategory.getId(), null, "detalle", null);
+    AuditObservationDto result = service.create(dto);
+
+    assertEquals(subcategory.getId(), result.subcategoryId());
+  }
+
+  @Test
+  void createThrowsWhenSubcategoryIdDoesNotExist() {
+    UUID subcategoryId = UUID.randomUUID();
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(subcategoryRepo.findById(subcategoryId)).thenReturn(Optional.empty());
+
+    CreateAuditObservationDto dto =
+        new CreateAuditObservationDto(eval.getId(), null, subcategoryId, null, "detalle", null);
+
+    assertThrows(ResourceNotFoundException.class, () -> service.create(dto));
   }
 
   @Test
@@ -146,7 +180,7 @@ class AuditObservationServiceTest {
     when(controlRepo.findById(controlId)).thenReturn(Optional.empty());
 
     CreateAuditObservationDto dto =
-        new CreateAuditObservationDto(eval.getId(), controlId, null, "detalle", null);
+        new CreateAuditObservationDto(eval.getId(), controlId, null, null, "detalle", null);
 
     assertThrows(ResourceNotFoundException.class, () -> service.create(dto));
   }
@@ -156,7 +190,7 @@ class AuditObservationServiceTest {
     when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.empty());
 
     CreateAuditObservationDto dto =
-        new CreateAuditObservationDto(eval.getId(), null, null, "x", null);
+        new CreateAuditObservationDto(eval.getId(), null, null, null, "x", null);
 
     assertThrows(ResourceNotFoundException.class, () -> service.create(dto));
   }
@@ -166,7 +200,7 @@ class AuditObservationServiceTest {
     when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
 
     CreateAuditObservationDto dto =
-        new CreateAuditObservationDto(eval.getId(), null, "BOGUS", "x", null);
+        new CreateAuditObservationDto(eval.getId(), null, null, "BOGUS", "x", null);
 
     assertThrows(InvalidRequestException.class, () -> service.create(dto));
   }
@@ -183,7 +217,7 @@ class AuditObservationServiceTest {
     when(repo.save(any(AuditObservation.class))).thenAnswer(inv -> inv.getArgument(0));
 
     UpdateAuditObservationDto dto =
-        new UpdateAuditObservationDto(null, "RECOMMENDATION", "nueva", "RESOLVED");
+        new UpdateAuditObservationDto(null, null, "RECOMMENDATION", "nueva", "RESOLVED");
     AuditObservationDto result = service.update(obs.getId(), dto);
 
     assertEquals("nueva", result.description());
@@ -205,10 +239,30 @@ class AuditObservationServiceTest {
     when(repo.save(any(AuditObservation.class))).thenAnswer(inv -> inv.getArgument(0));
 
     UpdateAuditObservationDto dto =
-        new UpdateAuditObservationDto(control.getId(), null, null, null);
+        new UpdateAuditObservationDto(control.getId(), null, null, null, null);
     AuditObservationDto result = service.update(obs.getId(), dto);
 
     assertEquals(control.getId(), result.controlId());
+  }
+
+  @Test
+  void updateSetsTheSubcategoryWhenProvided() {
+    AuditObservation obs =
+        AuditObservation.builder()
+            .id(UUID.randomUUID())
+            .evaluation(eval)
+            .description("old")
+            .build();
+    CatalogSubcategory subcategory = CatalogSubcategory.builder().id(UUID.randomUUID()).build();
+    when(repo.findById(obs.getId())).thenReturn(Optional.of(obs));
+    when(subcategoryRepo.findById(subcategory.getId())).thenReturn(Optional.of(subcategory));
+    when(repo.save(any(AuditObservation.class))).thenAnswer(inv -> inv.getArgument(0));
+
+    UpdateAuditObservationDto dto =
+        new UpdateAuditObservationDto(null, subcategory.getId(), null, null, null);
+    AuditObservationDto result = service.update(obs.getId(), dto);
+
+    assertEquals(subcategory.getId(), result.subcategoryId());
   }
 
   @Test
@@ -216,7 +270,7 @@ class AuditObservationServiceTest {
     UUID id = UUID.randomUUID();
     when(repo.findById(id)).thenReturn(Optional.empty());
 
-    UpdateAuditObservationDto dto = new UpdateAuditObservationDto(null, "x", "y", "z");
+    UpdateAuditObservationDto dto = new UpdateAuditObservationDto(null, null, "x", "y", "z");
 
     assertThrows(ResourceNotFoundException.class, () -> service.update(id, dto));
   }
@@ -227,7 +281,7 @@ class AuditObservationServiceTest {
         AuditObservation.builder().id(UUID.randomUUID()).evaluation(eval).description("d").build();
     when(repo.findById(obs.getId())).thenReturn(Optional.of(obs));
 
-    UpdateAuditObservationDto dto = new UpdateAuditObservationDto(null, null, null, "NOPE");
+    UpdateAuditObservationDto dto = new UpdateAuditObservationDto(null, null, null, null, "NOPE");
 
     assertThrows(InvalidRequestException.class, () -> service.update(obs.getId(), dto));
   }
