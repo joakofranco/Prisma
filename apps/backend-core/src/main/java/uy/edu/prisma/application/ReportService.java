@@ -611,7 +611,8 @@ public class ReportService {
     Evaluation eval = loadForAudit(evaluationId);
     List<MaturityResult> results = results(evaluationId);
     Summary summary = summarize(results);
-    List<AuditObservation> observations = obsRepo.findByEvaluationIdOrderByCreatedAtDesc(evaluationId);
+    List<AuditObservation> observations =
+        obsRepo.findByEvaluationIdOrderByCreatedAtDesc(evaluationId);
     List<MaturityResult> missingEvidence = missingEvidence(evaluationId, results);
 
     try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
@@ -638,7 +639,8 @@ public class ReportService {
     Evaluation eval = loadForAudit(evaluationId);
     List<MaturityResult> results = results(evaluationId);
     Summary summary = summarize(results);
-    List<AuditObservation> observations = obsRepo.findByEvaluationIdOrderByCreatedAtDesc(evaluationId);
+    List<AuditObservation> observations =
+        obsRepo.findByEvaluationIdOrderByCreatedAtDesc(evaluationId);
     List<MaturityResult> missingEvidence = missingEvidence(evaluationId, results);
 
     try (XSSFWorkbook workbook = new XSSFWorkbook();
@@ -687,7 +689,9 @@ public class ReportService {
     Set<UUID> subcategoriesWithEvidence = new HashSet<>();
     for (Evidence e : evidences) {
       if (e.getControl() != null) {
-        e.getControl().effectiveSubcategories().forEach(sc -> subcategoriesWithEvidence.add(sc.getId()));
+        e.getControl()
+            .effectiveSubcategories()
+            .forEach(sc -> subcategoriesWithEvidence.add(sc.getId()));
       }
     }
     return results.stream()
@@ -708,7 +712,8 @@ public class ReportService {
     if (observations.isEmpty()) {
       Paragraph empty =
           new Paragraph(
-              "Sin observaciones registradas.", FontFactory.getFont(FontFactory.HELVETICA, 9, SLATE_500));
+              "Sin observaciones registradas.",
+              FontFactory.getFont(FontFactory.HELVETICA, 9, SLATE_500));
       empty.setSpacingAfter(16);
       document.add(empty);
       return;
@@ -790,7 +795,8 @@ public class ReportService {
     for (AuditObservation o : observations) {
       Row row = sheet.createRow(rowIdx++);
       Color bg = shaded ? SLATE_50 : Color.WHITE;
-      XSSFCellStyle textStyle = xlStyle(workbook, bg, SLATE_900, false, 10, HorizontalAlignment.LEFT);
+      XSSFCellStyle textStyle =
+          xlStyle(workbook, bg, SLATE_900, false, 10, HorizontalAlignment.LEFT);
       setCell(row, 0, observationTypeLabel(o.getType()), textStyle);
       setCell(row, 1, o.getDescription(), textStyle);
       setCell(row, 2, observationStatusLabel(o.getStatus()), textStyle);
@@ -803,7 +809,8 @@ public class ReportService {
     }
   }
 
-  private void addMissingEvidenceSheet(XSSFWorkbook workbook, List<MaturityResult> missingEvidence) {
+  private void addMissingEvidenceSheet(
+      XSSFWorkbook workbook, List<MaturityResult> missingEvidence) {
     Sheet sheet = workbook.createSheet("Evidencias Faltantes");
     XSSFCellStyle headerStyle =
         xlStyle(workbook, BRAND, Color.WHITE, true, 10, HorizontalAlignment.CENTER);
@@ -832,7 +839,8 @@ public class ReportService {
           2,
           r.getTargetLevel(),
           xlStyle(workbook, bg, SLATE_900, false, 10, HorizontalAlignment.CENTER));
-      setCell(row, 3, r.getGap(), xlStyle(workbook, bg, DANGER, true, 10, HorizontalAlignment.CENTER));
+      setCell(
+          row, 3, r.getGap(), xlStyle(workbook, bg, DANGER, true, 10, HorizontalAlignment.CENTER));
       shaded = !shaded;
     }
     for (int i = 0; i < cols.length; i++) {
