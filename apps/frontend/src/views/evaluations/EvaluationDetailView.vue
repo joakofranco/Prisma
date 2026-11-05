@@ -80,6 +80,25 @@
     <template v-else-if="evaluation">
       <EvaluationLifecycleStepper :status="evaluation.status" />
 
+      <!-- RF-AUD-09: registro de certificación -- solo existe una vez aprobada (sellada), nunca se
+      recalcula ni se puede editar desde acá. -->
+      <div
+        v-if="evaluation.status === 'APPROVED' && evaluation.certificationSeal"
+        class="bg-emerald-50 dark:bg-emerald-950 border border-emerald-200 dark:border-emerald-800 rounded-xl p-4 flex items-start gap-3"
+      >
+        <ShieldCheckIcon class="w-6 h-6 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+        <div class="text-sm text-emerald-800 dark:text-emerald-200">
+          <p class="font-semibold">Evaluación aprobada y sellada</p>
+          <p class="text-emerald-700 dark:text-emerald-300">
+            <span v-if="evaluation.approvedByName">Certificada por {{ evaluation.approvedByName }}</span>
+            <span v-if="evaluation.approvedAt"> el {{ formatDateTime(evaluation.approvedAt) }}</span>
+          </p>
+          <p class="font-mono text-xs text-emerald-600 dark:text-emerald-400 mt-1 break-all">
+            Sello: {{ evaluation.certificationSeal }}
+          </p>
+        </div>
+      </div>
+
       <div
         class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6 space-y-4"
       >
@@ -405,6 +424,7 @@
     getMaturityColor,
     getMaturityTextStyle,
     getErrorMessage,
+    formatDateTime,
   } from '@/utils/helpers';
   import StatsCard from '@/components/common/StatsCard.vue';
   import BaseButton from '@/components/common/BaseButton.vue';

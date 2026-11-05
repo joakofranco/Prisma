@@ -64,6 +64,21 @@ public class Evaluation {
   @Builder.Default
   private OffsetDateTime updatedAt = OffsetDateTime.now();
 
+  // RF-AUD-09: se completan los tres juntos al aprobar (ver EvaluationService.updateStatus) y
+  // nunca se vuelven a tocar después -- es el sello de certificación del cierre de la auditoría.
+  @ManyToOne(fetch = FetchType.LAZY)
+  @JoinColumn(name = "approved_by")
+  private User approvedBy;
+
+  @Column(name = "approved_at")
+  private OffsetDateTime approvedAt;
+
+  // Firma HMAC-SHA256 (hex) de evaluationId+organizationId+approvedBy+approvedAt+globalMaturity,
+  // calculada con el secreto de prisma.certification.secret -- permite detectar si estos metadatos
+  // de cierre fueron alterados después de sellados (ver EvaluationService.computeCertificationSeal).
+  @Column(name = "certification_seal", length = 64)
+  private String certificationSeal;
+
   @PreUpdate
   protected void onUpdate() {
     this.updatedAt = OffsetDateTime.now();

@@ -462,6 +462,13 @@ public class Dto {
       UUID createdBy,
       OffsetDateTime createdAt,
       OffsetDateTime updatedAt,
+      // RF-AUD-09: metadatos del sello de certificación, completados solo al aprobar (APPROVED) --
+      // ver EvaluationService.sealApproval. Todos null si la evaluación nunca fue aprobada.
+      UUID approvedBy,
+      OffsetDateTime approvedAt,
+      String certificationSeal,
+      // Nombre de quien aprobó/selló la evaluación (null si approvedBy es null).
+      String approvedByName,
       // Nombre de quien la creó/evaluó (null si createdBy es null -- p.ej. datos históricos de
       // antes de que se empezara a registrar). Se resuelve acá para que la grilla de evaluaciones
       // del admin no necesite un lookup aparte por fila.
@@ -476,7 +483,8 @@ public class Dto {
           assignedAuditorNames == null ? List.of() : List.copyOf(assignedAuditorNames);
     }
 
-    // Compat: firma previa sin createdByName ni assignedAuditorNames (usada en tests existentes).
+    // Compat: firma previa sin los campos del sello de certificación, createdByName ni
+    // assignedAuditorNames (usada en tests existentes).
     public EvaluationDto(
         UUID id,
         String name,
@@ -503,6 +511,10 @@ public class Dto {
           createdBy,
           createdAt,
           updatedAt,
+          null,
+          null,
+          null,
+          null,
           null,
           List.of());
     }

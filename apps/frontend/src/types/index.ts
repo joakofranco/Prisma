@@ -150,6 +150,12 @@ export interface Evaluation {
   assignedAuditorNames?: string[];
   createdAt: string;
   updatedAt: string;
+  // RF-AUD-09: sello de certificación, completado solo una vez que status === 'APPROVED'.
+  approvedBy?: string | null;
+  approvedAt?: string | null;
+  /** Firma HMAC-SHA256 (hex) de los metadatos de cierre -- ver EvaluationService.sealApproval. */
+  certificationSeal?: string | null;
+  approvedByName?: string | null;
 }
 
 /** Subconjunto curado de controles del catálogo para un sector/comunidad (p.ej. "PYME"). */
