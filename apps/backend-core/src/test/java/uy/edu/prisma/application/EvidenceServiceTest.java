@@ -172,6 +172,24 @@ class EvidenceServiceTest {
   }
 
   @Test
+  void uploadComputesSha256HashOfFileContent() throws Exception {
+    // SHA-256 de los bytes {1, 2, 3}, calculado independientemente (RF-EVI-05).
+    String expectedHash =
+        "039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb0";
+    MockMultipartFile file =
+        new MockMultipartFile("file", "reporte.pdf", "application/pdf", new byte[] {1, 2, 3});
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(s3Client.headBucket(any(HeadBucketRequest.class))).thenReturn(null);
+    when(evidenceRepo.save(any(Evidence.class))).thenAnswer(EvidenceServiceTest::simulatePersist);
+
+    service.upload(eval.getId(), null, null, file);
+
+    ArgumentCaptor<Evidence> captor = ArgumentCaptor.forClass(Evidence.class);
+    verify(evidenceRepo, times(1)).save(captor.capture());
+    assertEquals(expectedHash, captor.getValue().getFileHash());
+  }
+
+  @Test
   void uploadCreatesBucketWhenMissing() throws Exception {
     MockMultipartFile file = new MockMultipartFile("file", "f.txt", "text/plain", new byte[] {9});
     when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
