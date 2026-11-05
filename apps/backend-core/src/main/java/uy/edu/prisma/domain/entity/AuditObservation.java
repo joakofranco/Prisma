@@ -39,6 +39,10 @@ public class AuditObservation {
   @JoinColumn(name = "control_id")
   private CatalogControl control;
 
+  @ManyToOne(fetch = FetchType.LAZY)
+  @JoinColumn(name = "subcategory_id")
+  private CatalogSubcategory subcategory;
+
   @Enumerated(EnumType.STRING)
   @Column(nullable = false, length = 30)
   @Builder.Default

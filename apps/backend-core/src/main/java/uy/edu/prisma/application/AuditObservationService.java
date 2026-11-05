@@ -8,12 +8,14 @@ import uy.edu.prisma.domain.entity.AuditObservation;
 import uy.edu.prisma.domain.entity.AuditObservation.ObservationStatus;
 import uy.edu.prisma.domain.entity.AuditObservation.ObservationType;
 import uy.edu.prisma.domain.entity.CatalogControl;
+import uy.edu.prisma.domain.entity.CatalogSubcategory;
 import uy.edu.prisma.domain.entity.Evaluation;
 import uy.edu.prisma.domain.entity.User;
 import uy.edu.prisma.domain.exception.InvalidRequestException;
 import uy.edu.prisma.domain.exception.ResourceNotFoundException;
 import uy.edu.prisma.domain.repository.AuditObservationRepository;
 import uy.edu.prisma.domain.repository.CatalogControlRepository;
+import uy.edu.prisma.domain.repository.CatalogSubcategoryRepository;
 import uy.edu.prisma.domain.repository.EvaluationRepository;
 import uy.edu.prisma.web.dto.Dto.AuditObservationDto;
 import uy.edu.prisma.web.dto.Dto.CreateAuditObservationDto;
@@ -26,16 +28,19 @@ public class AuditObservationService {
   private final AuditObservationRepository repo;
   private final EvaluationRepository evaluationRepo;
   private final CatalogControlRepository controlRepo;
+  private final CatalogSubcategoryRepository subcategoryRepo;
   private final CurrentUserService currentUser;
 
   public AuditObservationService(
       AuditObservationRepository repo,
       EvaluationRepository evaluationRepo,
       CatalogControlRepository controlRepo,
+      CatalogSubcategoryRepository subcategoryRepo,
       CurrentUserService currentUser) {
     this.repo = repo;
     this.evaluationRepo = evaluationRepo;
     this.controlRepo = controlRepo;
+    this.subcategoryRepo = subcategoryRepo;
     this.currentUser = currentUser;
   }
 
@@ -61,6 +66,7 @@ public class AuditObservationService {
         AuditObservation.builder()
             .evaluation(eval)
             .control(resolveControl(dto.controlId()))
+            .subcategory(resolveSubcategory(dto.subcategoryId()))
             .type(parseType(dto.type()))
             .description(dto.description())
             .status(
@@ -79,6 +85,9 @@ public class AuditObservationService {
     currentUser.assertOrganizationAccess(obs.getEvaluation().getOrganization().getId());
     if (dto.controlId() != null) {
       obs.setControl(resolveControl(dto.controlId()));
+    }
+    if (dto.subcategoryId() != null) {
+      obs.setSubcategory(resolveSubcategory(dto.subcategoryId()));
     }
     if (dto.type() != null && !dto.type().isBlank()) {
       obs.setType(parseType(dto.type()));
@@ -102,6 +111,17 @@ public class AuditObservationService {
     return controlRepo
         .findById(controlId)
         .orElseThrow(() -> new ResourceNotFoundException("Control", controlId));
+  }
+
+  // dto.subcategoryId() es opcional, igual que controlId: una observación puede ser general, estar
+  // atada a un control puntual, a una subcategoría, o a ambos a la vez (RF-AUD-05).
+  private CatalogSubcategory resolveSubcategory(UUID subcategoryId) {
+    if (subcategoryId == null) {
+      return null;
+    }
+    return subcategoryRepo
+        .findById(subcategoryId)
+        .orElseThrow(() -> new ResourceNotFoundException("Subcategoría", subcategoryId));
   }
 
   private ObservationType parseType(String type) {
@@ -129,6 +149,7 @@ public class AuditObservationService {
         o.getId(),
         o.getEvaluation().getId(),
         o.getControl() != null ? o.getControl().getId() : null,
+        o.getSubcategory() != null ? o.getSubcategory().getId() : null,
         o.getType().name(),
         o.getDescription(),
         o.getStatus().name(),
