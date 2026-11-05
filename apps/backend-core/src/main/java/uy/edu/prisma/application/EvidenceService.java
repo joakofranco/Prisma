@@ -244,6 +244,7 @@ public class EvidenceService {
     Evidence evidence =
         evidenceRepo.findById(id).orElseThrow(() -> new ResourceNotFoundException("Evidencia", id));
     currentUser.assertOrganizationAccess(evidence.getEvaluation().getOrganization().getId());
+    assertCanDelete(evidence);
     assertSelfAssessmentEditable(evidence.getEvaluation(), "eliminar evidencia");
     try {
       s3Client.deleteObject(
@@ -307,6 +308,27 @@ public class EvidenceService {
     } catch (NoSuchAlgorithmException e) {
       // SHA-256 es parte de todo JDK conforme (JLS/JCA); esto nunca debería ocurrir en runtime.
       throw new IllegalStateException("SHA-256 no disponible en esta JVM", e);
+    }
+  }
+
+  // RF-EVI-08: solo puede borrar una evidencia quien la subió o el responsable de la
+  // organización (PRISMA_ADMIN y el evaluador general quedan afuera de esta restricción porque ya
+  // tienen acceso irrestricto a todas las organizaciones vía hasAllOrganizationsAccess -- ver
+  // CurrentUserService). assertOrganizationAccess ya corrió antes y descarta cualquier otra
+  // organización.
+  private void assertCanDelete(Evidence evidence) {
+    if (currentUser.hasAllOrganizationsAccess()) {
+      return;
+    }
+    boolean isResponsible = currentUser.hasRole(UserRole.ORG_RESPONSIBLE);
+    UUID currentUserId = currentUser.currentUserId();
+    boolean isUploader =
+        currentUserId != null
+            && evidence.getUploadedBy() != null
+            && currentUserId.equals(evidence.getUploadedBy().getId());
+    if (!isResponsible && !isUploader) {
+      throw new AccessDeniedException(
+          "Solo quien subió la evidencia o el responsable de la organización puede eliminarla");
     }
   }
 

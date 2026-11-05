@@ -41,8 +41,11 @@ public class EvidenceController {
     return ResponseEntity.ok(service.upload(evaluationId, controlId, description, file));
   }
 
+  // RF-EVI-08: la restriccion fina (solo quien la subio o el responsable de la organizacion,
+  // salvo PRISMA_ADMIN) vive en EvidenceService.delete -- este @PreAuthorize solo descarta roles
+  // que nunca pueden borrar evidencia (p.ej. AUDITOR, VIEWER).
   @DeleteMapping("/{id}")
-  @PreAuthorize("hasAnyRole('PRISMA_ADMIN','INTERNAL_EVALUATOR')")
+  @PreAuthorize("hasAnyRole('PRISMA_ADMIN','INTERNAL_EVALUATOR','ORG_RESPONSIBLE')")
   public ResponseEntity<Void> delete(@PathVariable UUID id) {
     service.delete(id);
     return ResponseEntity.noContent().build();

@@ -21,6 +21,7 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.mock.web.MockMultipartFile;
 import software.amazon.awssdk.core.ResponseInputStream;
+import org.springframework.security.access.AccessDeniedException;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.http.AbortableInputStream;
 import software.amazon.awssdk.services.s3.S3Client;
@@ -39,6 +40,7 @@ import uy.edu.prisma.domain.entity.CatalogControl;
 import uy.edu.prisma.domain.entity.Evaluation;
 import uy.edu.prisma.domain.entity.Evidence;
 import uy.edu.prisma.domain.entity.Organization;
+import uy.edu.prisma.domain.entity.User;
 import uy.edu.prisma.domain.entity.UserRole;
 import uy.edu.prisma.domain.exception.ResourceNotFoundException;
 import uy.edu.prisma.domain.repository.CatalogControlRepository;
@@ -73,6 +75,9 @@ class EvidenceServiceTest {
   void setUp() {
     when(currentUser.isGlobalRole()).thenReturn(true);
     when(currentUser.hasRole(UserRole.PRISMA_ADMIN)).thenReturn(true);
+    // Admin-bypass por defecto para no tener que stubear la autorización fina de delete()
+    // (ver assertCanDelete) en cada test que no la ejercita específicamente.
+    when(currentUser.hasAllOrganizationsAccess()).thenReturn(true);
     service =
         new EvidenceService(
             evidenceRepo,
@@ -396,6 +401,48 @@ class EvidenceServiceTest {
     verify(s3Client, times(1)).deleteObject(any(DeleteObjectRequest.class));
     verify(aiClient, times(1)).deleteEvidence(eval.getOrganization().getId(), evidence.getId());
     verify(evidenceRepo, times(1)).delete(evidence);
+  }
+
+  @Test
+  void deleteAllowedForOrgResponsible() throws Exception {
+    // Rol ORG_RESPONSIBLE de la organización, pero no es quien subió la evidencia (RF-EVI-08).
+    when(currentUser.hasAllOrganizationsAccess()).thenReturn(false);
+    when(currentUser.hasRole(UserRole.ORG_RESPONSIBLE)).thenReturn(true);
+    when(evidenceRepo.findById(evidence.getId())).thenReturn(Optional.of(evidence));
+
+    service.delete(evidence.getId());
+
+    verify(evidenceRepo, times(1)).delete(evidence);
+  }
+
+  @Test
+  void deleteAllowedForUploader() throws Exception {
+    // No es ORG_RESPONSIBLE ni tiene acceso global, pero subió la evidencia (RF-EVI-08).
+    User uploader = User.builder().id(UUID.randomUUID()).build();
+    evidence.setUploadedBy(uploader);
+    when(currentUser.hasAllOrganizationsAccess()).thenReturn(false);
+    when(currentUser.hasRole(UserRole.ORG_RESPONSIBLE)).thenReturn(false);
+    when(currentUser.currentUserId()).thenReturn(uploader.getId());
+    when(evidenceRepo.findById(evidence.getId())).thenReturn(Optional.of(evidence));
+
+    service.delete(evidence.getId());
+
+    verify(evidenceRepo, times(1)).delete(evidence);
+  }
+
+  @Test
+  void deleteRejectedForUnrelatedUser() throws Exception {
+    // Ni ORG_RESPONSIBLE, ni acceso global, ni quien subió la evidencia: debe rechazarse
+    // (RF-EVI-08 -- solo el responsable de organización o el usuario creador pueden borrar).
+    evidence.setUploadedBy(User.builder().id(UUID.randomUUID()).build());
+    when(currentUser.hasAllOrganizationsAccess()).thenReturn(false);
+    when(currentUser.hasRole(UserRole.ORG_RESPONSIBLE)).thenReturn(false);
+    when(currentUser.currentUserId()).thenReturn(UUID.randomUUID());
+    when(evidenceRepo.findById(evidence.getId())).thenReturn(Optional.of(evidence));
+
+    assertThrows(AccessDeniedException.class, () -> service.delete(evidence.getId()));
+    verify(evidenceRepo, never()).delete(any());
+    verify(s3Client, never()).deleteObject(any(DeleteObjectRequest.class));
   }
 
   @Test
