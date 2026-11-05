@@ -18,6 +18,7 @@ import uy.edu.prisma.domain.exception.InvalidRequestException;
 import uy.edu.prisma.domain.exception.ResourceNotFoundException;
 import uy.edu.prisma.domain.repository.*;
 import uy.edu.prisma.web.dto.Dto.CreateEvaluationDto;
+import uy.edu.prisma.web.dto.Dto.EvaluationAuditCycleEventDto;
 import uy.edu.prisma.web.dto.Dto.EvaluationDto;
 import uy.edu.prisma.web.dto.Dto.EvaluationResponseDto;
 import uy.edu.prisma.web.dto.Dto.MaturityResultDto;
@@ -489,6 +490,14 @@ public class EvaluationService {
         "evaluation:" + evaluationId,
         "{\"controlId\":\"" + dto.controlId() + "\",\"compliant\":" + resp.getCompliant() + "}");
     return result;
+  }
+
+  // RF-AUD-10: historial de ciclos de auditoría de esta evaluación puntual -- delega en
+  // AuditLogService, que ya resuelve el aislamiento multi-tenant/organización y la numeración de
+  // ciclos (ver el comentario en AuditLogService.getEvaluationAuditTrail).
+  @Transactional(readOnly = true)
+  public List<EvaluationAuditCycleEventDto> getAuditTrail(UUID evaluationId) {
+    return auditLog.getEvaluationAuditTrail(evaluationId);
   }
 
   // ---- Maturity Calculation ----
