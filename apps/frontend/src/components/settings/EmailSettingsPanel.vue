@@ -32,8 +32,8 @@
     <form v-else class="space-y-4 mt-5" @submit.prevent="handleSubmit">
       <BaseAlert variant="info">
         Para probar la configuración sin cerrar sesión, usá el botón "Enviar correo de prueba" de
-        abajo. También podés probarla cerrando sesión y haciendo clic en "¿Olvidaste tu
-        contraseña?" en la pantalla de login.
+        abajo. También podés probarla cerrando sesión y haciendo clic en "¿Olvidaste tu contraseña?"
+        en la pantalla de login.
       </BaseAlert>
 
       <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
