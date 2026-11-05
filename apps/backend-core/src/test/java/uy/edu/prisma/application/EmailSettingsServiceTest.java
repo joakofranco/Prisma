@@ -164,7 +164,8 @@ class EmailSettingsServiceTest {
 
   @Test
   void testConnectionSendsStoredConfigAndRecordsAuditLog() {
-    Map<String, String> stored = Map.of("host", "smtp.example.com", "from", "no-reply@prisma.local");
+    Map<String, String> stored =
+        Map.of("host", "smtp.example.com", "from", "no-reply@prisma.local");
     when(keycloakAdmin.getSmtpConfig()).thenReturn(stored);
 
     service.testConnection("admin@prisma.local");
