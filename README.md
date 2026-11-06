@@ -396,7 +396,7 @@ make test-ai            # Solo tests del backend-ai (pytest)
 make lint               # ESLint + Checkstyle/Spotless + Ruff/Black
 make format             # Auto-formateo (Prettier + Spotless + Black/Ruff)
 make pull-llm           # Descarga Llama 3 + el modelo de embeddings en Ollama
-make backup / restore   # Backup y restauración de Postgres
+make backup / restore   # Backup y restauración diarios de Postgres + evidencias (RNF-13)
 make sonar               # Corre el scanner de SonarQube local contra el contenedor propio
 make security-scan       # Trivy local (filesystem)
 make certs / certs-force # Genera/regenera el certificado TLS local de nginx
