@@ -257,6 +257,12 @@ export const reportsService = {
   generateExcel(evaluationId: string) {
     return apiClient.get(`/reports/${evaluationId}/excel`, { responseType: 'blob' });
   },
+  generatePreliminaryPDF(evaluationId: string) {
+    return apiClient.get(`/reports/${evaluationId}/preliminary/pdf`, { responseType: 'blob' });
+  },
+  generatePreliminaryExcel(evaluationId: string) {
+    return apiClient.get(`/reports/${evaluationId}/preliminary/excel`, { responseType: 'blob' });
+  },
 };
 
 export const dashboardService = {
