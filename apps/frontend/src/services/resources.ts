@@ -5,6 +5,7 @@ import type {
   Evaluation,
   EvaluationResponse,
   EvaluationAuditCycleEvent,
+  SubcategoryComment,
   Evidence,
   EvidenceCitation,
   AuditObservation,
@@ -97,6 +98,15 @@ export const evaluationsService = {
   },
   saveResponse(evaluationId: string, data: Partial<EvaluationResponse>) {
     return apiClient.post<EvaluationResponse>(`/evaluations/${evaluationId}/responses`, data);
+  },
+  getSubcategoryComments(evaluationId: string) {
+    return apiClient.get<SubcategoryComment[]>(`/evaluations/${evaluationId}/subcategory-comments`);
+  },
+  saveSubcategoryComment(evaluationId: string, subcategoryId: string, comment: string) {
+    return apiClient.put<SubcategoryComment>(
+      `/evaluations/${evaluationId}/subcategory-comments/${subcategoryId}`,
+      { comment },
+    );
   },
   getResults(evaluationId: string) {
     return apiClient.get<MaturityResult[]>(`/evaluations/${evaluationId}/results`);

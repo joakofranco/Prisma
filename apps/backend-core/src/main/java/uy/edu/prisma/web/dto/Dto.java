@@ -550,6 +550,12 @@ public class Dto {
 
   public record SaveResponseDto(UUID controlId, Boolean compliant, String observations) {}
 
+  // Comentario por subcategoria de una evaluacion (RF-EVA-06). Un comentario vacio lo elimina.
+  public record SubcategoryCommentDto(
+      UUID subcategoryId, String comment, UUID updatedBy, OffsetDateTime updatedAt) {}
+
+  public record SaveSubcategoryCommentDto(@Size(max = 5000) String comment) {}
+
   // ---- Maturity Result ----
   public record MaturityResultDto(
       UUID functionId,

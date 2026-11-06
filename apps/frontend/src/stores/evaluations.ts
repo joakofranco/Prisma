@@ -1,6 +1,11 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
-import type { Evaluation, EvaluationResponse, MaturityResult } from '@/types';
+import type {
+  Evaluation,
+  EvaluationResponse,
+  MaturityResult,
+  SubcategoryComment,
+} from '@/types';
 import { evaluationsService } from '@/services/resources';
 
 export const useEvaluationsStore = defineStore('evaluations', () => {
@@ -79,6 +84,24 @@ export const useEvaluationsStore = defineStore('evaluations', () => {
     return data;
   }
 
+  async function fetchSubcategoryComments(evaluationId: string): Promise<SubcategoryComment[]> {
+    const { data } = await evaluationsService.getSubcategoryComments(evaluationId);
+    return data;
+  }
+
+  async function saveSubcategoryComment(
+    evaluationId: string,
+    subcategoryId: string,
+    comment: string,
+  ): Promise<SubcategoryComment> {
+    const { data } = await evaluationsService.saveSubcategoryComment(
+      evaluationId,
+      subcategoryId,
+      comment,
+    );
+    return data;
+  }
+
   async function saveResponse(evaluationId: string, responseData: Partial<EvaluationResponse>) {
     const { data } = await evaluationsService.saveResponse(evaluationId, responseData);
     const index = responses.value.findIndex((r) => r.controlId === responseData.controlId);
@@ -122,6 +145,8 @@ export const useEvaluationsStore = defineStore('evaluations', () => {
     changeProfile,
     fetchResponses,
     saveResponse,
+    fetchSubcategoryComments,
+    saveSubcategoryComment,
     fetchResults,
     calculateMaturity,
     deleteEvaluation,

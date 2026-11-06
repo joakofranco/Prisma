@@ -254,6 +254,18 @@
           </div>
         </div>
 
+        <div
+          class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6"
+          data-testid="subcategory-comment"
+        >
+          <BaseTextarea
+            v-model="currentSubcategoryComment"
+            :label="`Comentario de la subcategoría: ${currentQuestion.subcategory.name}`"
+            placeholder="Comentario general sobre esta subcategoría (opcional)"
+            :rows="3"
+          />
+        </div>
+
         <div class="flex items-center justify-between gap-3">
           <BaseButton variant="outline" :disabled="isFirst" @click="goPrev"> Anterior </BaseButton>
           <BaseButton variant="primary" :loading="saving" @click="isLast ? finish() : goNext()">
@@ -411,6 +423,16 @@
     return r?.answered ? r.compliant : null;
   });
   const isFlagged = computed(() => flaggedControls.value.has(currentQuestion.value?.control.id));
+  // Comentario por subcategoria (RF-EVA-06). `savedSubcategoryComments` es lo que ya esta en el
+  // backend: solo se envian los que cambiaron al guardar el progreso.
+  const subcategoryComments = reactive<Record<string, string>>({});
+  const savedSubcategoryComments = reactive<Record<string, string>>({});
+  const currentSubcategoryComment = computed({
+    get: () => subcategoryComments[currentQuestion.value?.subcategory.id] || '',
+    set: (value: string) => {
+      subcategoryComments[currentQuestion.value.subcategory.id] = value;
+    },
+  });
 
   const currentObservations = computed({
     get: () => responseMap[currentQuestion.value?.control.id]?.observations || '',
@@ -585,6 +607,11 @@
           observations: data.observations,
         });
       }
+      for (const [subcategoryId, comment] of Object.entries(subcategoryComments)) {
+        if (comment === (savedSubcategoryComments[subcategoryId] ?? '')) continue;
+        await store.saveSubcategoryComment(evaluationId, subcategoryId, comment);
+        savedSubcategoryComments[subcategoryId] = comment;
+      }
       return true;
     } catch (err) {
       notification.error(getErrorMessage(err, 'Error al guardar las respuestas'));
@@ -614,11 +641,17 @@
 
   onMounted(async () => {
     try {
-      const [ev, responsesData] = await Promise.all([
+      const [ev, responsesData, commentsData] = await Promise.all([
         store.fetchEvaluation(evaluationId),
         store.fetchResponses(evaluationId),
+        store.fetchSubcategoryComments(evaluationId),
       ]);
       evaluation.value = ev;
+
+      commentsData.forEach((c) => {
+        subcategoryComments[c.subcategoryId] = c.comment || '';
+        savedSubcategoryComments[c.subcategoryId] = c.comment || '';
+      });
 
       responsesData.forEach((r) => {
         responseMap[r.controlId] = {

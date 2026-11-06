@@ -193,6 +193,14 @@ export interface CommunityProfile {
   createdAt: string;
 }
 
+/** Comentario del evaluador sobre una subcategoría completa (RF-EVA-06). */
+export interface SubcategoryComment {
+  subcategoryId: string;
+  comment: string | null;
+  updatedBy: string | null;
+  updatedAt: string | null;
+}
+
 export interface EvaluationResponse {
   id: string;
   evaluationId: string;
