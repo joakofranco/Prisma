@@ -178,6 +178,42 @@ public class KeycloakAdminClient {
     setPassword(keycloakId, newPassword, false);
   }
 
+  /**
+   * Borra TODAS las credenciales OTP (MFA) del usuario en Keycloak y devuelve cuántas borró. Es lo
+   * que hace un PRISMA_ADMIN cuando le restablece la contraseña a quien perdió el acceso a su
+   * autenticador (PRI-365): así no hace falta entrar a la consola de Keycloak. A diferencia de
+   * {@link #deleteUser}, NO es best-effort: si falla, quien lo pidió tiene que enterarse (si no, el
+   * usuario seguiría pidiendo un código que ya no puede generar).
+   */
+  public int removeOtpCredentials(UUID keycloakId) {
+    CredentialSummary[] credentials =
+        restClient
+            .get()
+            .uri("/admin/realms/{realm}/users/{id}/credentials", properties.realm(), keycloakId)
+            .header("Authorization", "Bearer " + adminToken())
+            .retrieve()
+            .body(CredentialSummary[].class);
+    int removed = 0;
+    for (CredentialSummary credential :
+        credentials != null ? credentials : new CredentialSummary[0]) {
+      if (!"otp".equals(credential.type())) {
+        continue;
+      }
+      restClient
+          .delete()
+          .uri(
+              "/admin/realms/{realm}/users/{id}/credentials/{credentialId}",
+              properties.realm(),
+              keycloakId,
+              credential.id())
+          .header("Authorization", "Bearer " + adminToken())
+          .retrieve()
+          .toBodilessEntity();
+      removed++;
+    }
+    return removed;
+  }
+
   private void setPassword(UUID keycloakId, String newPassword, boolean temporary) {
     CredentialRepresentation credential =
         new CredentialRepresentation("password", newPassword, temporary);
@@ -313,6 +349,37 @@ public class KeycloakAdminClient {
   }
 
   /**
+   * Envía un correo de prueba con la configuración SMTP dada (la misma que devuelve {@link
+   * #getSmtpConfig()}, incluido el password enmascarado "**********" si no se cambió -- Keycloak
+   * resuelve ese valor al password real ya persistido, igual que hace al guardar la config, así que
+   * no hace falta pedirle al admin que lo reingrese sólo para probar). Lanza {@link
+   * InvalidRequestException} con el detalle de Keycloak si el envío falla (credenciales inválidas,
+   * host inalcanzable, etc.) -- a diferencia del resto de los métodos de esta clase, acá SÍ
+   * conviene traducir el error de Keycloak en vez de dejarlo propagar tal cual, porque quien llama
+   * necesita mostrárselo al admin para que corrija la configuración.
+   */
+  public void testSmtpConnection(Map<String, String> smtpServer, String testRecipientEmail) {
+    try {
+      restClient
+          .post()
+          .uri(
+              "/admin/realms/{realm}/testSMTPConnection?user={user}",
+              properties.realm(),
+              testRecipientEmail)
+          .header("Authorization", "Bearer " + adminToken())
+          .contentType(MediaType.APPLICATION_JSON)
+          .body(smtpServer)
+          .retrieve()
+          .toBodilessEntity();
+    } catch (HttpClientErrorException e) {
+      throw new InvalidRequestException(
+          "No se pudo enviar el correo de prueba: verificá la configuración SMTP (host, puerto,"
+              + " credenciales). Detalle de Keycloak: "
+              + e.getStatusCode());
+    }
+  }
+
+  /**
    * Intentos de login fallidos desde {@code sinceEpochMillisExclusive} (exclusivo), más recientes
    * primero según Keycloak. Requiere {@code eventsEnabled=true} en el realm (ver realm-prisma.json)
    * -- si no, Keycloak simplemente no guarda estos eventos y esto siempre devuelve vacío, no falla.
@@ -394,6 +461,12 @@ public class KeycloakAdminClient {
       @JsonProperty("expires_in") long expiresIn) {}
 
   private record CredentialRepresentation(String type, String value, boolean temporary) {}
+
+  /**
+   * Credencial tal como la lista Keycloak (solo interesan el id y el tipo: «password», «otp»...).
+   */
+  @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+  private record CredentialSummary(String id, String type) {}
 
   private record UserRepresentation(
       String username,

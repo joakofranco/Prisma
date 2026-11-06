@@ -30,6 +30,7 @@ class EvaluationServiceTest {
 
   @Mock private EvaluationRepository evalRepo;
   @Mock private EvaluationResponseRepository respRepo;
+  @Mock private EvaluationSubcategoryCommentRepository subcatCommentRepo;
   @Mock private MaturityResultRepository matRepo;
   @Mock private OrganizationRepository orgRepo;
   @Mock private CatalogControlRepository controlRepo;
@@ -60,6 +61,7 @@ class EvaluationServiceTest {
         new EvaluationService(
             evalRepo,
             respRepo,
+            subcatCommentRepo,
             matRepo,
             orgRepo,
             controlRepo,
@@ -810,6 +812,113 @@ class EvaluationServiceTest {
 
     assertEquals(true, result.compliant());
     assertNull(result.observations());
+  }
+
+  @Test
+  void saveSubcategoryCommentCreatesNew() {
+    CatalogSubcategory sub = CatalogSubcategory.builder().id(UUID.randomUUID()).build();
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(subcategoryRepo.findById(sub.getId())).thenReturn(Optional.of(sub));
+    when(subcatCommentRepo.findByEvaluationIdAndSubcategoryId(eval.getId(), sub.getId()))
+        .thenReturn(Optional.empty());
+    when(subcatCommentRepo.save(any(EvaluationSubcategoryComment.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+
+    SubcategoryCommentDto result =
+        service.saveSubcategoryComment(
+            eval.getId(), sub.getId(), new SaveSubcategoryCommentDto("  nota  "));
+
+    assertEquals("nota", result.comment());
+    assertEquals(sub.getId(), result.subcategoryId());
+    verify(subcatCommentRepo, times(1)).save(any(EvaluationSubcategoryComment.class));
+  }
+
+  @Test
+  void saveSubcategoryCommentUpdatesExisting() {
+    CatalogSubcategory sub = CatalogSubcategory.builder().id(UUID.randomUUID()).build();
+    EvaluationSubcategoryComment existing =
+        EvaluationSubcategoryComment.builder()
+            .id(UUID.randomUUID())
+            .evaluation(eval)
+            .subcategory(sub)
+            .comment("viejo")
+            .build();
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(subcategoryRepo.findById(sub.getId())).thenReturn(Optional.of(sub));
+    when(subcatCommentRepo.findByEvaluationIdAndSubcategoryId(eval.getId(), sub.getId()))
+        .thenReturn(Optional.of(existing));
+    when(subcatCommentRepo.save(any(EvaluationSubcategoryComment.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+
+    SubcategoryCommentDto result =
+        service.saveSubcategoryComment(
+            eval.getId(), sub.getId(), new SaveSubcategoryCommentDto("nuevo"));
+
+    assertEquals("nuevo", result.comment());
+    assertEquals("nuevo", existing.getComment());
+  }
+
+  @Test
+  void saveSubcategoryCommentBlankDeletesExisting() {
+    CatalogSubcategory sub = CatalogSubcategory.builder().id(UUID.randomUUID()).build();
+    EvaluationSubcategoryComment existing =
+        EvaluationSubcategoryComment.builder().id(UUID.randomUUID()).comment("viejo").build();
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(subcategoryRepo.findById(sub.getId())).thenReturn(Optional.of(sub));
+    when(subcatCommentRepo.findByEvaluationIdAndSubcategoryId(eval.getId(), sub.getId()))
+        .thenReturn(Optional.of(existing));
+
+    SubcategoryCommentDto result =
+        service.saveSubcategoryComment(
+            eval.getId(), sub.getId(), new SaveSubcategoryCommentDto("   "));
+
+    assertNull(result.comment());
+    verify(subcatCommentRepo).delete(existing);
+    verify(subcatCommentRepo, never()).save(any());
+  }
+
+  @Test
+  void saveSubcategoryCommentRejectedWhenEvaluationNotEditable() {
+    eval.setStatus(Evaluation.Status.APPROVED);
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+
+    UUID subId = UUID.randomUUID();
+    SaveSubcategoryCommentDto dto = new SaveSubcategoryCommentDto("x");
+    assertThrows(
+        RuntimeException.class, () -> service.saveSubcategoryComment(eval.getId(), subId, dto));
+    verify(subcatCommentRepo, never()).save(any());
+  }
+
+  @Test
+  void saveSubcategoryCommentRejectedWhenOrganizationAccessDenied() {
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    doThrow(new RuntimeException("403")).when(currentUser).assertOrganizationAccess(any());
+
+    UUID subId = UUID.randomUUID();
+    SaveSubcategoryCommentDto dto = new SaveSubcategoryCommentDto("x");
+    assertThrows(
+        RuntimeException.class, () -> service.saveSubcategoryComment(eval.getId(), subId, dto));
+    verify(subcatCommentRepo, never()).save(any());
+  }
+
+  @Test
+  void getSubcategoryCommentsReturnsSavedOnes() {
+    CatalogSubcategory sub = CatalogSubcategory.builder().id(UUID.randomUUID()).build();
+    EvaluationSubcategoryComment c =
+        EvaluationSubcategoryComment.builder()
+            .id(UUID.randomUUID())
+            .evaluation(eval)
+            .subcategory(sub)
+            .comment("hola")
+            .build();
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(subcatCommentRepo.findByEvaluationId(eval.getId())).thenReturn(List.of(c));
+
+    List<SubcategoryCommentDto> result = service.getSubcategoryComments(eval.getId());
+
+    assertEquals(1, result.size());
+    assertEquals("hola", result.get(0).comment());
+    assertEquals(sub.getId(), result.get(0).subcategoryId());
   }
 
   @Test

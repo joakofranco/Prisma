@@ -14,6 +14,8 @@ import uy.edu.prisma.web.dto.Dto.EvaluationResponseDto;
 import uy.edu.prisma.web.dto.Dto.MaturityResultDto;
 import uy.edu.prisma.web.dto.Dto.PaginatedDto;
 import uy.edu.prisma.web.dto.Dto.SaveResponseDto;
+import uy.edu.prisma.web.dto.Dto.SaveSubcategoryCommentDto;
+import uy.edu.prisma.web.dto.Dto.SubcategoryCommentDto;
 
 @RestController
 @RequestMapping("/api/evaluations")
@@ -102,6 +104,21 @@ public class EvaluationController {
   public ResponseEntity<EvaluationResponseDto> saveResponse(
       @PathVariable UUID id, @Valid @RequestBody SaveResponseDto dto) {
     return ResponseEntity.ok(service.saveResponse(id, dto));
+  }
+
+  // ---- Subcategory comments ----
+  @GetMapping("/{id}/subcategory-comments")
+  public ResponseEntity<List<SubcategoryCommentDto>> getSubcategoryComments(@PathVariable UUID id) {
+    return ResponseEntity.ok(service.getSubcategoryComments(id));
+  }
+
+  @PutMapping("/{id}/subcategory-comments/{subcategoryId}")
+  @PreAuthorize("hasAnyRole('PRISMA_ADMIN','INTERNAL_EVALUATOR','ORG_RESPONSIBLE')")
+  public ResponseEntity<SubcategoryCommentDto> saveSubcategoryComment(
+      @PathVariable UUID id,
+      @PathVariable UUID subcategoryId,
+      @Valid @RequestBody SaveSubcategoryCommentDto dto) {
+    return ResponseEntity.ok(service.saveSubcategoryComment(id, subcategoryId, dto));
   }
 
   // ---- Results ----

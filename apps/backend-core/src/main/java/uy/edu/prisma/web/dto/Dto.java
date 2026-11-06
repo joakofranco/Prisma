@@ -550,6 +550,12 @@ public class Dto {
 
   public record SaveResponseDto(UUID controlId, Boolean compliant, String observations) {}
 
+  // Comentario por subcategoria de una evaluacion (RF-EVA-06). Un comentario vacio lo elimina.
+  public record SubcategoryCommentDto(
+      UUID subcategoryId, String comment, UUID updatedBy, OffsetDateTime updatedAt) {}
+
+  public record SaveSubcategoryCommentDto(@Size(max = 5000) String comment) {}
+
   // ---- Maturity Result ----
   public record MaturityResultDto(
       UUID functionId,
@@ -601,12 +607,9 @@ public class Dto {
       String description,
       UUID uploadedBy,
       OffsetDateTime uploadedAt,
-      String url,
       boolean aiIndexed) {}
 
   public record UploadEvidenceResponseDto(UUID id, String fileName, Long fileSize) {}
-
-  public record DownloadUrlDto(String url) {}
 
   // ---- Evidence RAG (citas para el auditor) ----
   // Recuperación pura: ningún campo acá representa un veredicto. location es "Página N"
@@ -650,6 +653,18 @@ public class Dto {
 
   public record UpdateAuditObservationDto(
       UUID controlId, String type, String description, String status) {}
+
+  // ---- Audit control verdicts (dictamen) ----
+  // verdict: VALIDATED | NOT_VALIDATED | NEEDS_MORE_EVIDENCE.
+  public record ControlVerdictDto(
+      UUID controlId, String verdict, UUID setBy, String setByName, OffsetDateTime updatedAt) {}
+
+  public record SetControlVerdictDto(
+      @NotBlank(message = "El dictamen es obligatorio") String verdict) {}
+
+  // ---- Marca "para revisar" por control (PRI-352) ----
+  public record ControlFlagDto(
+      UUID controlId, UUID flaggedBy, String flaggedByName, OffsetDateTime flaggedAt) {}
 
   // ---- Improvement Plans ----
   public record ImprovementPlanDto(
@@ -748,6 +763,13 @@ public class Dto {
       String password,
       boolean starttls,
       boolean ssl) {}
+
+  // Envía un correo de prueba con la configuración SMTP YA GUARDADA (no permite probar valores
+  // sin guardar) para que el admin pueda verificar que el servidor realmente puede enviar antes
+  // de confiar en "¿Olvidaste tu contraseña?" en producción.
+  public record TestEmailSettingsDto(
+      @NotBlank(message = "El email de destino es obligatorio") @Email(message = "Email inválido")
+          String recipientEmail) {}
 
   // ---- Audit log (bitácora de acciones del sistema, distinta de AuditObservation/"Auditoría"
   // MCU) ----
