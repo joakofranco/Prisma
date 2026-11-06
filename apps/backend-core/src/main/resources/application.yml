@@ -46,6 +46,12 @@ server:
   compression:
     enabled: true
   forward-headers-strategy: framework
+  # Tras rechazar una petición demasiado grande, Tomcat intenta descartar el resto del cuerpo hasta
+  # este máximo (2 MB por defecto); si lo supera corta la conexión sin responder y el cliente puede
+  # ver un error de red en lugar del 413 con su mensaje (RF-EVI-04). 64 MB cubre todo lo que deja
+  # pasar el Nginx (client_max_body_size 55m) sin leer de más de peticiones que ya se rechazaron.
+  tomcat:
+    max-swallow-size: 64MB
   error:
     include-message: always
     include-stacktrace: never
@@ -99,6 +105,16 @@ prisma:
     access-key: ${S3_ACCESS_KEY:rustfsadmin}
     secret-key: ${S3_SECRET_KEY:rustfsadmin}
     bucket:     ${S3_BUCKET:prisma-evidences}
+  evidence:
+    # RF-EVI-02: extensiones permitidas, separadas por coma y sin punto. Cada una tiene que existir
+    # en el catálogo de EvidenceFileValidator (pdf, zip, docx, txt, md, markdown, png, jpg, jpeg):
+    # una extensión desconocida hace fallar el arranque. No se admite SVG (puede llevar scripts).
+    allowed-extensions: ${EVIDENCE_ALLOWED_EXTENSIONS:pdf,zip,docx,txt,md,markdown,png,jpg,jpeg}
+    # RF-EVI-04: tamaño máximo por evidencia. Rige en Spring (límite multipart, ver EvidenceConfig),
+    # en EvidenceService y en lo que valida la pantalla. Los Nginx (infra/nginx/nginx.conf y
+    # apps/frontend/nginx.conf) tienen que dejar pasar un poco más (55m) para que el rechazo lo dé
+    # la aplicación con su mensaje: si se sube este valor por encima, subir también esos.
+    max-size: ${EVIDENCE_MAX_SIZE:50MB}
   security:
     argon2:
       iterations:  ${ARGON2_ITERATIONS:3}

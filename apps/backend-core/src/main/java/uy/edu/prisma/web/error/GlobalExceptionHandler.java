@@ -15,9 +15,12 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import uy.edu.prisma.application.OrganizationMessages;
+import uy.edu.prisma.config.EvidenceConfig.EvidenceProperties;
 import uy.edu.prisma.domain.exception.ConflictException;
 import uy.edu.prisma.domain.exception.InvalidRequestException;
+import uy.edu.prisma.domain.exception.PayloadTooLargeException;
 import uy.edu.prisma.domain.exception.ResourceNotFoundException;
 import uy.edu.prisma.web.dto.Dto.ApiErrorDto;
 
@@ -26,6 +29,12 @@ import uy.edu.prisma.web.dto.Dto.ApiErrorDto;
 public class GlobalExceptionHandler {
 
   private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
+  private final EvidenceProperties evidenceProperties;
+
+  public GlobalExceptionHandler(EvidenceProperties evidenceProperties) {
+    this.evidenceProperties = evidenceProperties;
+  }
 
   @ExceptionHandler(ResourceNotFoundException.class)
   public ResponseEntity<ApiErrorDto> handleNotFound(ResourceNotFoundException ex) {
@@ -42,6 +51,24 @@ public class GlobalExceptionHandler {
   @ExceptionHandler(InvalidRequestException.class)
   public ResponseEntity<ApiErrorDto> handleInvalidRequest(InvalidRequestException ex) {
     return build(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", ex.getMessage(), null);
+  }
+
+  @ExceptionHandler(PayloadTooLargeException.class)
+  public ResponseEntity<ApiErrorDto> handlePayloadTooLarge(PayloadTooLargeException ex) {
+    return build(HttpStatus.PAYLOAD_TOO_LARGE, "PAYLOAD_TOO_LARGE", ex.getMessage(), null);
+  }
+
+  // Spring corta la petición multipart antes de llegar al controlador si supera el límite de
+  // EvidenceConfig. Sin este manejador caía en handleGeneric: un 500 «Error inesperado» que
+  // ocultaba el motivo real (RF-EVI-04). Hoy la única subida multipart es la de evidencias.
+  @ExceptionHandler(MaxUploadSizeExceededException.class)
+  public ResponseEntity<ApiErrorDto> handleMaxUploadSize(MaxUploadSizeExceededException ex) {
+    return build(
+        HttpStatus.PAYLOAD_TOO_LARGE,
+        "PAYLOAD_TOO_LARGE",
+        "El archivo supera el tamaño máximo permitido de "
+            + evidenceProperties.maxSizeDescription(),
+        null);
   }
 
   @ExceptionHandler(MethodArgumentNotValidException.class)
@@ -109,6 +136,7 @@ public class GlobalExceptionHandler {
           HttpStatus.FORBIDDEN, "Prohibido",
           HttpStatus.NOT_FOUND, "No encontrado",
           HttpStatus.CONFLICT, "Conflicto",
+          HttpStatus.PAYLOAD_TOO_LARGE, "Archivo demasiado grande",
           HttpStatus.INTERNAL_SERVER_ERROR, "Error interno del servidor");
 
   private ResponseEntity<ApiErrorDto> build(
