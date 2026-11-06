@@ -13,10 +13,14 @@
   "permanentLockout": false,
   "maxFailureWaitSeconds": 900,
   "minimumQuickLoginWaitSeconds": 60,
-  "waitIncrementSeconds": 60,
+  "waitIncrementSeconds": 900,
   "quickLoginCheckMilliSeconds": 1000,
-  "maxDeltaTimeSeconds": 43200,
-  "failureFactor": 5,
+  "maxDeltaTimeSeconds": 900,
+  "failureFactor": 10,
+  "actionTokenGeneratedByUserLifespan": 1800,
+  "attributes": {
+    "actionTokenGeneratedByUserLifespan.reset-credentials": "1800"
+  },
   "eventsEnabled": true,
   "eventsExpiration": 2592000,
   "accessTokenLifespan": 900,
