@@ -69,7 +69,8 @@ class EvaluationServiceTest {
             profileRepo,
             userRepo,
             currentUser,
-            auditLog);
+            auditLog,
+            "test-certification-secret");
 
     org = Organization.builder().id(UUID.randomUUID()).name("Acme").rut("N1").build();
     eval =
@@ -449,6 +450,44 @@ class EvaluationServiceTest {
     EvaluationDto result = service.updateStatus(eval.getId(), "IN_AUDIT");
 
     assertEquals("IN_AUDIT", result.status());
+  }
+
+  @Test
+  void updateStatusSealsCertificationWhenApproved() {
+    // RF-AUD-09: al pasar a APPROVED, se registran quién aprobó, cuándo, y una firma del sello --
+    // nunca antes de esa transición.
+    User auditor =
+        User.builder().id(UUID.randomUUID()).firstName("Ana").lastName("Auditora").build();
+    eval.setStatus(Evaluation.Status.IN_AUDIT);
+    when(currentUser.isPrismaAdmin()).thenReturn(false);
+    when(currentUser.hasAllOrganizationsAccess()).thenReturn(false);
+    when(currentUser.isAuditor()).thenReturn(true);
+    when(currentUser.currentUser()).thenReturn(Optional.of(auditor));
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(evalRepo.save(any(Evaluation.class))).thenAnswer(inv -> inv.getArgument(0));
+
+    EvaluationDto result = service.updateStatus(eval.getId(), "APPROVED");
+
+    assertEquals("APPROVED", result.status());
+    assertEquals(auditor.getId(), result.approvedBy());
+    assertEquals("Ana Auditora", result.approvedByName());
+    assertNotNull(result.approvedAt());
+    assertNotNull(result.certificationSeal());
+    assertEquals(64, result.certificationSeal().length());
+    verify(auditLog).record(eq("CERTIFY"), eq("evaluation:" + eval.getId()), anyString());
+  }
+
+  @Test
+  void updateStatusDoesNotSealWhenNotApproving() {
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(evalRepo.save(any(Evaluation.class))).thenAnswer(inv -> inv.getArgument(0));
+
+    EvaluationDto result = service.updateStatus(eval.getId(), "IN_PROGRESS");
+
+    assertNull(result.approvedBy());
+    assertNull(result.approvedAt());
+    assertNull(result.certificationSeal());
+    verify(auditLog, never()).record(eq("CERTIFY"), any(), any());
   }
 
   @Test

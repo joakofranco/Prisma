@@ -52,6 +52,13 @@
               {{ formatFileSize(ev.fileSize) }} — {{ ev.fileType }}
             </p>
             <p
+              v-if="ev.fileHash"
+              class="text-xs text-slate-400 mt-1 font-mono truncate dark:text-slate-500"
+              :title="`SHA-256: ${ev.fileHash}`"
+            >
+              SHA-256: {{ ev.fileHash.slice(0, 16) }}…
+            </p>
+            <p
               v-if="ev.description"
               class="text-xs text-slate-500 mt-1 truncate dark:text-slate-400"
             >

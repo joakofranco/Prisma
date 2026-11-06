@@ -1,7 +1,10 @@
 package uy.edu.prisma.application;
 
-import java.io.InputStream;
+import java.io.IOException;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
 import org.slf4j.Logger;
@@ -113,14 +116,23 @@ public class EvidenceService {
     // StaleObjectStateException porque Hibernate trata la fila (inexistente) como "detached".
     String storageKey = "evidence/" + UUID.randomUUID();
     ensureBucket();
-    try (InputStream in = file.getInputStream()) {
+    byte[] content;
+    try {
+      content = file.getBytes();
+    } catch (IOException e) {
+      throw new RuntimeException("No se pudo leer el archivo de evidencia", e);
+    }
+    // RF-EVI-05: hash SHA-256 del contenido real recibido, no de metadata declarada por el
+    // cliente, para poder detectar alteraciones posteriores del archivo en el almacenamiento.
+    String fileHash = sha256Hex(content);
+    try {
       s3Client.putObject(
           PutObjectRequest.builder()
               .bucket(storageProperties.bucket())
               .key(storageKey)
               .contentType(detectedType)
               .build(),
-          RequestBody.fromInputStream(in, file.getSize()));
+          RequestBody.fromBytes(content));
     } catch (Exception e) {
       throw new RuntimeException("No se pudo guardar el archivo de evidencia", e);
     }
@@ -133,6 +145,7 @@ public class EvidenceService {
             .fileSize(file.getSize())
             .fileType(detectedType)
             .storageKey(storageKey)
+            .fileHash(fileHash)
             .uploadedBy(currentUser.currentUser().orElse(null))
             .description(description)
             .build();
@@ -253,6 +266,16 @@ public class EvidenceService {
     }
   }
 
+  private static String sha256Hex(byte[] content) {
+    try {
+      MessageDigest digest = MessageDigest.getInstance("SHA-256");
+      return HexFormat.of().formatHex(digest.digest(content));
+    } catch (NoSuchAlgorithmException e) {
+      // SHA-256 es parte de todo JDK conforme (JLS/JCA); esto nunca debería ocurrir en runtime.
+      throw new IllegalStateException("SHA-256 no disponible en esta JVM", e);
+    }
+  }
+
   private void ensureBucket() {
     try {
       try {
@@ -307,6 +330,7 @@ public class EvidenceService {
         e.getFileName(),
         e.getFileSize(),
         e.getFileType(),
+        e.getFileHash(),
         e.getDescription(),
         e.getUploadedBy() != null ? e.getUploadedBy().getId() : null,
         e.getUploadedAt(),

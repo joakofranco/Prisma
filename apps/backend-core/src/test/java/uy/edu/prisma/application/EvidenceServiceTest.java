@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -169,6 +170,29 @@ class EvidenceServiceTest {
     // devuelve este save(), sin volver a llamar a save() (ver comentario en EvidenceService).
     verify(evidenceRepo, times(1)).save(captor.capture());
     assertTrue(captor.getValue().getStorageKey().startsWith("evidence/"));
+  }
+
+  @Test
+  void uploadComputesSha256HashOfFileContent() throws Exception {
+    // Bytes con magic bytes reales de PDF ("%PDF-1.4"): con RF-EVI-03 (validacion de magic bytes)
+    // ya integrado, un contenido arbitrario como {1, 2, 3} queda rechazado antes de llegar a
+    // calcular el hash. SHA-256 de "%PDF-1.4", calculado independientemente (RF-EVI-05).
+    String expectedHash = "e16fa5d9b51928755db85b917f0297babaf22c7a47e97d9212adab56e61ba04e";
+    MockMultipartFile file =
+        new MockMultipartFile(
+            "file",
+            "reporte.pdf",
+            "application/pdf",
+            "%PDF-1.4".getBytes(StandardCharsets.US_ASCII));
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(s3Client.headBucket(any(HeadBucketRequest.class))).thenReturn(null);
+    when(evidenceRepo.save(any(Evidence.class))).thenAnswer(EvidenceServiceTest::simulatePersist);
+
+    service.upload(eval.getId(), null, null, file);
+
+    ArgumentCaptor<Evidence> captor = ArgumentCaptor.forClass(Evidence.class);
+    verify(evidenceRepo, times(1)).save(captor.capture());
+    assertEquals(expectedHash, captor.getValue().getFileHash());
   }
 
   @Test
