@@ -541,7 +541,7 @@ public class EvaluationService {
     entity.setSubcategory(subcategory);
     entity.setComment(text);
     entity.setUpdatedBy(currentUser.currentUser().orElse(null));
-    entity.setUpdatedAt(java.time.OffsetDateTime.now());
+    entity.setUpdatedAt(OffsetDateTime.now());
     SubcategoryCommentDto result = toSubcatCommentDto(subcatCommentRepo.save(entity));
     auditLog.record(
         "SAVE_SUBCATEGORY_COMMENT",
