@@ -654,6 +654,14 @@ public class Dto {
   public record UpdateAuditObservationDto(
       UUID controlId, String type, String description, String status) {}
 
+  // ---- Audit control verdicts (dictamen) ----
+  // verdict: VALIDATED | NOT_VALIDATED | NEEDS_MORE_EVIDENCE.
+  public record ControlVerdictDto(
+      UUID controlId, String verdict, UUID setBy, String setByName, OffsetDateTime updatedAt) {}
+
+  public record SetControlVerdictDto(
+      @NotBlank(message = "El dictamen es obligatorio") String verdict) {}
+
   // ---- Improvement Plans ----
   public record ImprovementPlanDto(
       UUID id,

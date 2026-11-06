@@ -267,6 +267,17 @@ export interface AuditObservation {
   createdByName?: string | null;
 }
 
+/** Dictamen del auditor sobre un control (RF-AUD-06). */
+export type AuditVerdict = 'VALIDATED' | 'NOT_VALIDATED' | 'NEEDS_MORE_EVIDENCE';
+
+export interface ControlVerdict {
+  controlId: string;
+  verdict: AuditVerdict;
+  setBy: string | null;
+  setByName: string | null;
+  updatedAt: string | null;
+}
+
 export interface ImprovementPlan {
   id: string;
   evaluationId: string;

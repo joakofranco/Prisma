@@ -6,6 +6,8 @@ import type {
   EvaluationResponse,
   EvaluationAuditCycleEvent,
   SubcategoryComment,
+  ControlVerdict,
+  AuditVerdict,
   Evidence,
   EvidenceCitation,
   AuditObservation,
@@ -220,6 +222,14 @@ export const auditService = {
   },
   updateObservation(id: string, data: Partial<AuditObservation>) {
     return apiClient.put<AuditObservation>(`/audit/observations/${id}`, data);
+  },
+  getVerdicts(evaluationId: string) {
+    return apiClient.get<ControlVerdict[]>(`/audit/verdicts/${evaluationId}`);
+  },
+  setVerdict(evaluationId: string, controlId: string, verdict: AuditVerdict) {
+    return apiClient.put<ControlVerdict>(`/audit/verdicts/${evaluationId}/controls/${controlId}`, {
+      verdict,
+    });
   },
 };
 

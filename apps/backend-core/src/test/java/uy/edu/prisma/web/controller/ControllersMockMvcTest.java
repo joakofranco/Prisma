@@ -34,6 +34,7 @@ class ControllersMockMvcTest {
   @Mock private UserService userService;
   @Mock private EvidenceService evidenceService;
   @Mock private AuditObservationService auditObservationService;
+  @Mock private AuditVerdictService auditVerdictService;
   @Mock private ImprovementPlanService improvementPlanService;
   @Mock private ReportService reportService;
   @Mock private EmailSettingsService emailSettingsService;
@@ -47,6 +48,7 @@ class ControllersMockMvcTest {
   private MockMvc users;
   private MockMvc evidence;
   private MockMvc audit;
+  private MockMvc verdicts;
   private MockMvc improvement;
   private MockMvc reports;
   private MockMvc emailSettings;
@@ -68,6 +70,8 @@ class ControllersMockMvcTest {
     audit =
         MockMvcBuilders.standaloneSetup(new AuditObservationController(auditObservationService))
             .build();
+    verdicts =
+        MockMvcBuilders.standaloneSetup(new AuditVerdictController(auditVerdictService)).build();
     improvement =
         MockMvcBuilders.standaloneSetup(new ImprovementPlanController(improvementPlanService))
             .build();
@@ -604,6 +608,45 @@ class ControllersMockMvcTest {
 
     assertNotNull(annotation);
     assertEquals("hasAnyRole('PRISMA_ADMIN','ORG_RESPONSIBLE','AUDITOR')", annotation.value());
+  }
+
+  @Test
+  void verdictListAndSet() throws Exception {
+    UUID evalId = UUID.randomUUID();
+    UUID controlId = UUID.randomUUID();
+    when(auditVerdictService.listByEvaluation(evalId)).thenReturn(List.of());
+    when(auditVerdictService.set(evalId, controlId, "VALIDATED"))
+        .thenReturn(new ControlVerdictDto(controlId, "VALIDATED", null, null, null));
+
+    verdicts.perform(get("/api/audit/verdicts/{id}", evalId)).andExpect(status().isOk());
+    verdicts
+        .perform(
+            put("/api/audit/verdicts/{e}/controls/{c}", evalId, controlId)
+                .contentType("application/json")
+                .content("{\"verdict\":\"VALIDATED\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.verdict").value("VALIDATED"));
+    verdicts
+        .perform(
+            put("/api/audit/verdicts/{e}/controls/{c}", evalId, controlId)
+                .contentType("application/json")
+                .content("{\"verdict\":\"\"}"))
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
+  void verdictEndpointsAreRestrictedToAdminAndAuditor() throws Exception {
+    for (String name : List.of("list", "set")) {
+      var method =
+          java.util.Arrays.stream(AuditVerdictController.class.getMethods())
+              .filter(m -> m.getName().equals(name))
+              .findFirst()
+              .orElseThrow();
+      var annotation =
+          method.getAnnotation(org.springframework.security.access.prepost.PreAuthorize.class);
+      assertNotNull(annotation, name);
+      assertEquals("hasAnyRole('PRISMA_ADMIN','AUDITOR')", annotation.value());
+    }
   }
 
   @Test

@@ -116,6 +116,98 @@
 
       <div
         class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6"
+        data-testid="verdict-section"
+      >
+        <h3 class="text-lg font-semibold text-slate-900 dark:text-white mb-1">
+          Dictamen por control
+        </h3>
+        <p class="text-sm text-slate-500 dark:text-slate-400 mb-4">
+          Marque cada control como Validado, No validado o Requiere más evidencia. Es el resultado
+          de la revisión del control; las observaciones siguen siendo el registro de hallazgos.
+          <span v-if="!canSetVerdict" class="block mt-1 text-amber-700 dark:text-amber-400">
+            El dictamen se puede registrar solo mientras la evaluación está en auditoría.
+          </span>
+        </p>
+
+        <div class="flex flex-wrap gap-2 mb-4 text-xs" data-testid="verdict-summary">
+          <span class="px-2 py-1 rounded-full bg-emerald-100 text-emerald-700"
+            >Validados: {{ verdictCounts.VALIDATED }}</span
+          >
+          <span class="px-2 py-1 rounded-full bg-red-100 text-red-700"
+            >No validados: {{ verdictCounts.NOT_VALIDATED }}</span
+          >
+          <span class="px-2 py-1 rounded-full bg-amber-100 text-amber-700"
+            >Requieren más evidencia: {{ verdictCounts.NEEDS_MORE_EVIDENCE }}</span
+          >
+          <span class="px-2 py-1 rounded-full bg-slate-100 text-slate-600"
+            >Sin dictamen: {{ verdictCounts.NONE }}</span
+          >
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+          <input
+            v-model="verdictSearch"
+            type="text"
+            placeholder="Buscar por código o descripción"
+            aria-label="Buscar control"
+            class="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-500 text-sm bg-white dark:bg-slate-700 text-slate-900 dark:text-white"
+          />
+          <select
+            v-model="verdictFilter"
+            aria-label="Filtrar por dictamen"
+            class="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-500 text-sm bg-white dark:bg-slate-700 text-slate-900 dark:text-white"
+          >
+            <option v-for="o in verdictFilterOptions" :key="o.value" :value="o.value">
+              {{ o.label }}
+            </option>
+          </select>
+        </div>
+
+        <div
+          v-if="filteredVerdictControls.length === 0"
+          class="text-center py-6 text-slate-500 dark:text-slate-400 text-sm"
+        >
+          No hay controles que coincidan.
+        </div>
+        <div v-else class="space-y-2">
+          <div
+            v-for="c in visibleVerdictControls"
+            :key="c.id"
+            class="flex items-center justify-between gap-3 border border-slate-200 dark:border-slate-700 rounded-lg p-3"
+            data-testid="verdict-row"
+          >
+            <div class="min-w-0">
+              <p class="text-sm font-medium text-slate-900 dark:text-white">{{ c.code }}</p>
+              <p class="text-xs text-slate-500 dark:text-slate-400 truncate">
+                {{ c.description }}
+              </p>
+            </div>
+            <select
+              :value="verdicts[c.id] ?? ''"
+              :disabled="!canSetVerdict || savingVerdictId === c.id"
+              :aria-label="`Dictamen de ${c.code}`"
+              class="shrink-0 px-2 py-1.5 rounded-lg border border-slate-300 dark:border-slate-500 text-sm bg-white dark:bg-slate-700 text-slate-900 dark:text-white disabled:opacity-60"
+              @change="setVerdict(c.id, ($event.target as HTMLSelectElement).value)"
+            >
+              <option value="" disabled>Sin dictamen</option>
+              <option v-for="o in VERDICT_OPTIONS" :key="o.value" :value="o.value">
+                {{ o.label }}
+              </option>
+            </select>
+          </div>
+          <button
+            v-if="visibleVerdictControls.length < filteredVerdictControls.length"
+            class="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
+            @click="verdictLimit += 25"
+          >
+            Mostrar más ({{ filteredVerdictControls.length - visibleVerdictControls.length }}
+            restantes)
+          </button>
+        </div>
+      </div>
+
+      <div
+        class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6"
       >
         <div class="flex items-center justify-between mb-1 gap-3">
           <h3 class="text-lg font-semibold text-slate-900 dark:text-white">Observaciones</h3>
@@ -235,6 +327,14 @@
   import BaseTextarea from '@/components/common/BaseTextarea.vue';
   import { useAuthStore } from '@/stores/auth';
   import { getErrorMessage } from '@/utils/helpers';
+  import {
+    VERDICT_OPTIONS,
+    VERDICT_LABELS,
+    flattenControls,
+    filterControls,
+    countByVerdict,
+    type VerdictControl,
+  } from '@/utils/auditVerdicts';
   import EvaluationLifecycleStepper from '@/components/evaluations/EvaluationLifecycleStepper.vue';
   import {
     ArrowLeftIcon,
@@ -248,6 +348,7 @@
   import type {
     AuditObservation,
     Evaluation,
+    AuditVerdict,
     Evidence,
     EvidenceCitation,
     MaturityCatalog,
@@ -478,8 +579,67 @@
     }
   }
 
+  // ---------------- Dictamen por control (RF-AUD-06) ----------------
+
+  const verdictControls = ref<VerdictControl[]>([]);
+  const verdicts = reactive<Record<string, AuditVerdict>>({});
+  const verdictSearch = ref('');
+  const verdictFilter = ref<'ALL' | 'NONE' | AuditVerdict>('ALL');
+  const verdictLimit = ref(25);
+  const savingVerdictId = ref<string | null>(null);
+
+  const verdictFilterOptions = [
+    { value: 'ALL', label: 'Todos los controles' },
+    { value: 'NONE', label: 'Sin dictamen' },
+    ...Object.entries(VERDICT_LABELS).map(([value, label]) => ({ value, label })),
+  ];
+
+  // El backend solo acepta el dictamen con la evaluación en auditoría.
+  const canSetVerdict = computed(() => evaluation.value?.status === 'IN_AUDIT');
+  const verdictCounts = computed(() => countByVerdict(verdictControls.value, verdicts));
+  const filteredVerdictControls = computed(() =>
+    filterControls(verdictControls.value, verdicts, verdictSearch.value, verdictFilter.value),
+  );
+  const visibleVerdictControls = computed(() =>
+    filteredVerdictControls.value.slice(0, verdictLimit.value),
+  );
+
+  async function loadVerdicts() {
+    try {
+      const { data: evaluationData } = await evaluationsService.getById(evaluationId);
+      evaluation.value = evaluationData;
+      const [{ data: catalog }, { data: saved }] = await Promise.all([
+        catalogService.getByVersion(
+          evaluationData.catalogVersion,
+          evaluationData.communityProfileId,
+        ),
+        auditService.getVerdicts(evaluationId),
+      ]);
+      verdictControls.value = flattenControls(catalog as MaturityCatalog);
+      for (const v of saved) verdicts[v.controlId] = v.verdict;
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  async function setVerdict(controlId: string, value: string) {
+    const previous = verdicts[controlId];
+    verdicts[controlId] = value as AuditVerdict;
+    savingVerdictId.value = controlId;
+    try {
+      await auditService.setVerdict(evaluationId, controlId, value as AuditVerdict);
+    } catch (err) {
+      if (previous) verdicts[controlId] = previous;
+      else delete verdicts[controlId];
+      notification.error(getErrorMessage(err, 'No se pudo guardar el dictamen'));
+    } finally {
+      savingVerdictId.value = null;
+    }
+  }
+
   onMounted(() => {
     fetchObservations();
     loadControlsWithEvidence();
+    loadVerdicts();
   });
 </script>
