@@ -47,7 +47,8 @@ class AuditObservationServiceTest {
   void setUp() {
     when(currentUser.isGlobalRole()).thenReturn(true);
     service =
-        new AuditObservationService(repo, evaluationRepo, controlRepo, subcategoryRepo, currentUser);
+        new AuditObservationService(
+            repo, evaluationRepo, controlRepo, subcategoryRepo, currentUser);
     eval =
         Evaluation.builder()
             .id(UUID.randomUUID())
