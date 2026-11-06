@@ -94,6 +94,14 @@
           </span>
           <div class="flex gap-1">
             <button
+              v-if="canDownload && previewKind(ev.fileType)"
+              class="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 hover:text-blue-600 dark:hover:text-blue-300 dark:text-slate-400"
+              title="Ver evidencia"
+              @click="openPreview(ev)"
+            >
+              <EyeIcon class="w-4 h-4" />
+            </button>
+            <button
               v-if="canDownload"
               class="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 hover:text-blue-600 dark:hover:text-blue-300 dark:text-slate-400"
               title="Descargar evidencia"
@@ -115,6 +123,43 @@
         </p>
       </div>
     </div>
+
+    <BaseModal v-model="previewOpen" :title="previewEvidence?.fileName ?? 'Vista previa'" size="xl">
+      <div class="flex items-center justify-center min-h-[60vh]">
+        <div
+          v-if="previewLoading"
+          class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"
+          role="status"
+          aria-label="Cargando vista previa"
+        />
+        <p v-else-if="previewError" class="text-sm text-red-600 dark:text-red-400" role="alert">
+          {{ previewError }}
+        </p>
+        <iframe
+          v-else-if="previewUrl && previewType === 'pdf'"
+          :src="previewUrl"
+          :title="`Vista previa de ${previewEvidence?.fileName}`"
+          class="w-full h-[75vh] rounded-lg border border-slate-200 dark:border-slate-700"
+        />
+        <img
+          v-else-if="previewUrl && previewType === 'image'"
+          :src="previewUrl"
+          :alt="`Vista previa de ${previewEvidence?.fileName}`"
+          class="max-w-full max-h-[75vh] object-contain"
+        />
+      </div>
+      <template #footer>
+        <BaseButton
+          v-if="previewEvidence"
+          variant="secondary"
+          @click="downloadEvidence(previewEvidence)"
+        >
+          <ArrowDownTrayIcon class="w-4 h-4" />
+          Descargar
+        </BaseButton>
+        <BaseButton variant="primary" @click="previewOpen = false"> Cerrar </BaseButton>
+      </template>
+    </BaseModal>
 
     <BaseModal v-model="showUploadModal" title="Subir Evidencia" size="lg">
       <form class="space-y-4" @submit.prevent="handleUpload">
@@ -183,11 +228,13 @@
   import BaseModal from '@/components/common/BaseModal.vue';
   import BaseSelect from '@/components/common/BaseSelect.vue';
   import BaseTextarea from '@/components/common/BaseTextarea.vue';
+  import { previewKind, type PreviewKind } from '@/utils/evidencePreview';
   import {
     ArrowLeftIcon,
     CloudArrowUpIcon,
     DocumentIcon,
     ArrowDownTrayIcon,
+    EyeIcon,
     TrashIcon,
     SparklesIcon,
   } from '@heroicons/vue/24/outline';
@@ -398,6 +445,58 @@
       notification.error(getErrorMessage(err, 'No se pudo descargar la evidencia'));
     }
   }
+
+  // Vista previa (RF-EVI-11): PDF e imágenes, con el mismo endpoint y los mismos roles que la
+  // descarga. El archivo se pide como blob (con el JWT) y se muestra desde una URL de objeto, que se
+  // libera al cerrar el modal y al cambiar de evidencia para no dejar archivos en memoria.
+  const previewOpen = ref(false);
+  const previewEvidence = ref<Evidence | null>(null);
+  const previewType = ref<PreviewKind | null>(null);
+  const previewUrl = ref('');
+  const previewLoading = ref(false);
+  const previewError = ref('');
+
+  function releasePreviewUrl() {
+    if (previewUrl.value) {
+      URL.revokeObjectURL(previewUrl.value);
+      previewUrl.value = '';
+    }
+  }
+
+  async function openPreview(ev: Evidence) {
+    const kind = previewKind(ev.fileType);
+    if (!kind) return;
+    releasePreviewUrl();
+    previewEvidence.value = ev;
+    previewType.value = kind;
+    previewError.value = '';
+    previewLoading.value = true;
+    previewOpen.value = true;
+    try {
+      const { data } = await evidenceService.download(ev.id);
+      // Se fija el tipo conocido (el que validó el backend): el visor no depende de la cabecera.
+      const url = URL.createObjectURL(new Blob([data], { type: ev.fileType }));
+      // Si se cerró el modal, o se abrió otra evidencia, mientras bajaba: no queda nada que mostrar.
+      if (!previewOpen.value || previewEvidence.value?.id !== ev.id) {
+        URL.revokeObjectURL(url);
+        return;
+      }
+      previewUrl.value = url;
+    } catch (err) {
+      previewError.value = getErrorMessage(err, 'No se pudo cargar la vista previa');
+    } finally {
+      previewLoading.value = false;
+    }
+  }
+
+  watch(previewOpen, (open) => {
+    if (!open) {
+      releasePreviewUrl();
+      previewEvidence.value = null;
+      previewError.value = '';
+    }
+  });
+  onBeforeUnmount(releasePreviewUrl);
 
   function confirmDeleteEvidence(ev: Evidence) {
     if (confirm(`¿Eliminar la evidencia "${ev.fileName}"?`)) {

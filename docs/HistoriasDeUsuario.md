@@ -343,6 +343,13 @@ y roles habilitados en [`docs/API.md`](API.md).
 > Como `ORG_RESPONSIBLE`/`INTERNAL_EVALUATOR`, quiero subir un archivo de evidencia documental
 > para respaldar un control, para que quede disponible durante la auditoría.
 
+- **Formatos y tamaño (RF-EVI-02, RF-EVI-04):** la lista de extensiones es configurable
+  (`EVIDENCE_ALLOWED_EXTENSIONS`; por defecto `pdf`, `zip`, `docx`, `txt`, `md`, `markdown`, `png`,
+  `jpg`, `jpeg`; no se admite SVG) y el tamaño máximo es de 50 MB (`EVIDENCE_MAX_SIZE`). La pantalla
+  los lee de `GET /api/evidence/allowed-formats` y avisa antes de enviar, con la extensión primero.
+  ZIP e imágenes se guardan pero no se indexan en `backend-ai`.
+- **Vista previa (RF-EVI-11):** los PDF y las imágenes PNG/JPEG se pueden ver sin descargarlas,
+  con el botón «Ver» (mismos roles que la descarga). DOCX, TXT, MD y ZIP solo se descargan.
 - **Implementado en:** `POST /api/evidence`, `EvidenceView.vue`.
 
 ### HU-EVI-02 — Indexación automática por IA
