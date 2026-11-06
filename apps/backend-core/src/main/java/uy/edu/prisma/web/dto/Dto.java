@@ -641,7 +641,8 @@ public class Dto {
         String status,
         UUID createdBy,
         OffsetDateTime createdAt) {
-      this(id, evaluationId, controlId, null, type, description, status, createdBy, createdAt, null);
+      this(
+          id, evaluationId, controlId, null, type, description, status, createdBy, createdAt, null);
     }
   }
 
