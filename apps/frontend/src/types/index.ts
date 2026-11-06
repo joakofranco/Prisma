@@ -238,7 +238,6 @@ export interface Evidence {
   uploadedBy: string;
   uploadedAt: string;
   description?: string;
-  url?: string;
   /** true si el asistente de IA pudo extraer e indexar el contenido para búsqueda de citas. */
   aiIndexed: boolean;
 }

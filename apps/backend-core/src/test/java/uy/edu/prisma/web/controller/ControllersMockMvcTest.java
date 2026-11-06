@@ -1,5 +1,6 @@
 package uy.edu.prisma.web.controller;
 
+import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -575,14 +576,34 @@ class ControllersMockMvcTest {
   }
 
   @Test
-  void evidenceDownload() throws Exception {
+  void evidenceDownloadStreamsTheFile() throws Exception {
     UUID id = UUID.randomUUID();
-    when(evidenceService.generateDownloadUrl(id)).thenReturn(new DownloadUrlDto("http://signed"));
+    when(evidenceService.download(id))
+        .thenReturn(
+            new EvidenceService.EvidenceFile(
+                "acta.pdf",
+                "application/pdf",
+                3L,
+                new java.io.ByteArrayInputStream(new byte[] {1, 2, 3})));
 
     evidence
         .perform(get("/api/evidence/{id}/download", id))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.url").value("http://signed"));
+        .andExpect(
+            header()
+                .string("Content-Disposition", org.hamcrest.Matchers.containsString("acta.pdf")))
+        .andExpect(content().contentType("application/pdf"))
+        .andExpect(content().bytes(new byte[] {1, 2, 3}));
+  }
+
+  @Test
+  void evidenceDownloadIsRestrictedToAdminOrgResponsibleAndAuditor() throws Exception {
+    var method = EvidenceController.class.getMethod("download", UUID.class);
+    var annotation =
+        method.getAnnotation(org.springframework.security.access.prepost.PreAuthorize.class);
+
+    assertNotNull(annotation);
+    assertEquals("hasAnyRole('PRISMA_ADMIN','ORG_RESPONSIBLE','AUDITOR')", annotation.value());
   }
 
   @Test
@@ -597,7 +618,6 @@ class ControllersMockMvcTest {
                 "doc.pdf",
                 10L,
                 "application/pdf",
-                null,
                 null,
                 null,
                 null,

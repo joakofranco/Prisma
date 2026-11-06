@@ -93,14 +93,13 @@
                   <p class="text-xs font-medium text-slate-700 dark:text-slate-200 truncate">
                     {{ cit.fileName }} <span v-if="cit.location">· {{ cit.location }}</span>
                   </p>
-                  <a
-                    v-if="documentUrl(cit)"
-                    :href="documentUrl(cit) || undefined"
-                    target="_blank"
+                  <button
+                    v-if="canViewDocument"
                     class="text-xs text-blue-600 hover:underline shrink-0 dark:text-blue-400"
+                    @click="openDocument(cit)"
                   >
                     Ver documento
-                  </a>
+                  </button>
                 </div>
                 <p class="text-xs text-slate-600 dark:text-slate-300 mt-1">{{ cit.snippet }}</p>
                 <button
@@ -234,6 +233,8 @@
   import BaseModal from '@/components/common/BaseModal.vue';
   import BaseSelect from '@/components/common/BaseSelect.vue';
   import BaseTextarea from '@/components/common/BaseTextarea.vue';
+  import { useAuthStore } from '@/stores/auth';
+  import { getErrorMessage } from '@/utils/helpers';
   import EvaluationLifecycleStepper from '@/components/evaluations/EvaluationLifecycleStepper.vue';
   import {
     ArrowLeftIcon,
@@ -254,6 +255,7 @@
 
   const route = useRoute();
   const notification = useNotification();
+  const authStore = useAuthStore();
 
   const evaluationId = route.params.evaluationId as string;
   const loading = ref(true);
@@ -345,11 +347,20 @@
     }
   }
 
-  function documentUrl(citation: EvidenceCitation): string | null {
-    const evidence = evidences.value.find((e) => e.id === citation.evidenceId);
-    if (!evidence?.url) return null;
-    const pageMatch = citation.location?.match(/Página (\d+)/);
-    return pageMatch ? `${evidence.url}#page=${pageMatch[1]}` : evidence.url;
+  // Pueden bajar archivos PRISMA_ADMIN, ORG_RESPONSIBLE y AUDITOR (PRI-286): para el resto el botón no
+  // aparece y se trabaja con el fragmento citado.
+  const canViewDocument = authStore.hasAnyRole('PRISMA_ADMIN', 'ORG_RESPONSIBLE', 'AUDITOR');
+
+  async function openDocument(citation: EvidenceCitation) {
+    if (!citation.evidenceId) return;
+    try {
+      const { data } = await evidenceService.download(citation.evidenceId);
+      const pageMatch = citation.location?.match(/Página (\d+)/);
+      const url = URL.createObjectURL(data);
+      window.open(pageMatch ? `${url}#page=${pageMatch[1]}` : url, '_blank');
+    } catch (err) {
+      notification.error(getErrorMessage(err, 'No se pudo abrir el documento'));
+    }
   }
 
   function openObservationForCitation(control: ControlWithEvidence, citation: EvidenceCitation) {

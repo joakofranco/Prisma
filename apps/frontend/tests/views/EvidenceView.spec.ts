@@ -10,9 +10,15 @@ const evidenceService = vi.hoisted(() => ({
 const evaluationsService = vi.hoisted(() => ({ getById: vi.fn(), getResponses: vi.fn() }));
 const catalogService = vi.hoisted(() => ({ getByVersion: vi.fn() }));
 const notification = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
+const authState = vi.hoisted(() => ({ roles: ['PRISMA_ADMIN'] as string[] }));
 
 vi.mock('@/services/resources', () => ({ evidenceService, evaluationsService, catalogService }));
 vi.mock('@/composables/useUtils', () => ({ useNotification: () => notification }));
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: () => ({
+    hasAnyRole: (...r: string[]) => r.some((x) => authState.roles.includes(x)),
+  }),
+}));
 vi.mock('vue-router', () => ({ useRoute: () => ({ params: { evaluationId: 'eval-1' } }) }));
 
 import EvidenceView from '@/views/evidence/EvidenceView.vue';
@@ -43,6 +49,7 @@ describe('EvidenceView: carga de evidencia sin control (RF-EVI-01)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     document.body.innerHTML = '';
+    authState.roles = ['PRISMA_ADMIN'];
     evidenceService.getByEvaluation.mockResolvedValue({ data: [] });
     evidenceService.upload.mockResolvedValue({ data: {} });
     evaluationsService.getById.mockResolvedValue({ data: { catalogVersion: '5.0' } });
@@ -63,3 +70,59 @@ describe('EvidenceView: carga de evidencia sin control (RF-EVI-01)', () => {
   });
 });
 
+describe('EvidenceView: descarga autenticada (PRI-286)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    document.body.innerHTML = '';
+    evidenceService.getByEvaluation.mockResolvedValue({
+      data: [
+        {
+          id: 'ev-1',
+          evaluationId: 'eval-1',
+          fileName: 'acta.pdf',
+          fileSize: 1,
+          fileType: 'application/pdf',
+          uploadedBy: 'u',
+          uploadedAt: '2026-11-05T00:00:00Z',
+          aiIndexed: true,
+        },
+      ],
+    });
+    evaluationsService.getById.mockResolvedValue({ data: { catalogVersion: '5.0' } });
+    evaluationsService.getResponses.mockResolvedValue({ data: [] });
+    catalogService.getByVersion.mockResolvedValue({ data: { functions: [] } });
+  });
+
+  it('descarga por la API (con JWT) y no abre ningún enlace directo', async () => {
+    authState.roles = ['ORG_RESPONSIBLE'];
+    evidenceService.download = vi.fn().mockResolvedValue({ data: new Blob(['x']) });
+    URL.createObjectURL = vi.fn(() => 'blob:x');
+    URL.revokeObjectURL = vi.fn();
+    const open = vi.spyOn(window, 'open');
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+
+    const wrapper = mount(EvidenceView, { global: { stubs: { RouterLink: true } } });
+    await flushPromises();
+    await wrapper.find('button[title="Descargar evidencia"]').trigger('click');
+    await flushPromises();
+
+    expect(evidenceService.download).toHaveBeenCalledWith('ev-1');
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it('muestra el botón de descarga al auditor', async () => {
+    authState.roles = ['AUDITOR'];
+    const wrapper = mount(EvidenceView, { global: { stubs: { RouterLink: true } } });
+    await flushPromises();
+
+    expect(wrapper.find('button[title="Descargar evidencia"]').exists()).toBe(true);
+  });
+
+  it('no muestra el botón de descarga a roles sin permiso', async () => {
+    authState.roles = ['INTERNAL_EVALUATOR'];
+    const wrapper = mount(EvidenceView, { global: { stubs: { RouterLink: true } } });
+    await flushPromises();
+
+    expect(wrapper.find('button[title="Descargar evidencia"]').exists()).toBe(false);
+  });
+});

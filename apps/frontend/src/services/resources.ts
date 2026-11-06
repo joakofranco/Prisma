@@ -195,8 +195,9 @@ export const evidenceService = {
   delete(id: string) {
     return apiClient.delete(`/evidence/${id}`);
   },
-  getSignedUrl(id: string) {
-    return apiClient.get<{ url: string }>(`/evidence/${id}/download`);
+  /** Descarga el archivo: el backend lo sirve con el JWT en cada petición (PRI-286). */
+  download(id: string) {
+    return apiClient.get<Blob>(`/evidence/${id}/download`, { responseType: 'blob' });
   },
   /** Reintenta indexar la evidencia en el asistente de IA (p.ej. si falló al subirla). */
   reindex(id: string) {

@@ -20,10 +20,14 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.mock.web.MockMultipartFile;
+import software.amazon.awssdk.core.ResponseInputStream;
 import software.amazon.awssdk.core.sync.RequestBody;
+import software.amazon.awssdk.http.AbortableInputStream;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
+import software.amazon.awssdk.services.s3.model.GetObjectRequest;
+import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 import software.amazon.awssdk.services.s3.model.HeadBucketRequest;
 import software.amazon.awssdk.services.s3.model.NoSuchBucketException;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
@@ -35,12 +39,12 @@ import uy.edu.prisma.domain.entity.CatalogControl;
 import uy.edu.prisma.domain.entity.Evaluation;
 import uy.edu.prisma.domain.entity.Evidence;
 import uy.edu.prisma.domain.entity.Organization;
+import uy.edu.prisma.domain.entity.UserRole;
 import uy.edu.prisma.domain.exception.ResourceNotFoundException;
 import uy.edu.prisma.domain.repository.CatalogControlRepository;
 import uy.edu.prisma.domain.repository.EvaluationRepository;
 import uy.edu.prisma.domain.repository.EvidenceRepository;
 import uy.edu.prisma.infrastructure.AiEvidenceClient;
-import uy.edu.prisma.web.dto.Dto.DownloadUrlDto;
 import uy.edu.prisma.web.dto.Dto.EvidenceCitationDto;
 import uy.edu.prisma.web.dto.Dto.EvidenceDto;
 import uy.edu.prisma.web.dto.Dto.UploadEvidenceResponseDto;
@@ -54,7 +58,6 @@ class EvidenceServiceTest {
   @Mock private CatalogControlRepository controlRepo;
   @Mock private S3Client s3Client;
   @Mock private S3Presigner internalPresigner;
-  @Mock private S3Presigner publicPresigner;
   @Mock private CurrentUserService currentUser;
   @Mock private AiEvidenceClient aiClient;
 
@@ -69,6 +72,7 @@ class EvidenceServiceTest {
   @BeforeEach
   void setUp() {
     when(currentUser.isGlobalRole()).thenReturn(true);
+    when(currentUser.hasRole(UserRole.PRISMA_ADMIN)).thenReturn(true);
     service =
         new EvidenceService(
             evidenceRepo,
@@ -76,7 +80,6 @@ class EvidenceServiceTest {
             controlRepo,
             s3Client,
             internalPresigner,
-            publicPresigner,
             properties,
             currentUser,
             aiClient);
@@ -116,15 +119,10 @@ class EvidenceServiceTest {
   }
 
   @Test
-  void listByEvaluationReturnsDtosWithUrls() throws Exception {
-    String url = "http://localhost:9000/prisma-evidences/evidence/x?X-Amz-Signature=abc";
+  void listByEvaluationReturnsDtosWithoutDownloadLinks() {
     when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
     when(evidenceRepo.findByEvaluationIdOrderByUploadedAtDesc(eval.getId()))
         .thenReturn(List.of(evidence));
-    // El link que ve el frontend se firma con el cliente PÚBLICO (ver comentario en
-    // EvidenceService.publicPresignedUrl), no con el interno.
-    when(publicPresigner.presignGetObject(any(GetObjectPresignRequest.class)))
-        .thenAnswer(inv -> signed(url));
 
     List<EvidenceDto> result = service.listByEvaluation(eval.getId());
 
@@ -133,20 +131,9 @@ class EvidenceServiceTest {
     assertEquals(evidence.getId(), dto.id());
     assertEquals("doc.pdf", dto.fileName());
     assertEquals("d", dto.description());
-    assertEquals(url, dto.url());
-  }
-
-  @Test
-  void listReturnsNullUrlWhenPresignFails() throws Exception {
-    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
-    when(evidenceRepo.findByEvaluationIdOrderByUploadedAtDesc(eval.getId()))
-        .thenReturn(List.of(evidence));
-    when(publicPresigner.presignGetObject(any(GetObjectPresignRequest.class)))
-        .thenThrow(new RuntimeException("storage down"));
-
-    List<EvidenceDto> result = service.listByEvaluation(eval.getId());
-
-    assertNull(result.get(0).url());
+    // El listado nunca firma enlaces: el archivo solo sale por download().
+    verify(s3Client, never()).getObject(any(GetObjectRequest.class));
+    verify(internalPresigner, never()).presignGetObject(any(GetObjectPresignRequest.class));
   }
 
   @Test
@@ -443,15 +430,72 @@ class EvidenceServiceTest {
     assertThrows(ResourceNotFoundException.class, () -> service.delete(id));
   }
 
+  private void stubObject(byte[] bytes) {
+    GetObjectResponse response =
+        GetObjectResponse.builder().contentLength((long) bytes.length).build();
+    when(s3Client.getObject(any(GetObjectRequest.class)))
+        .thenReturn(
+            new ResponseInputStream<>(
+                response, AbortableInputStream.create(new java.io.ByteArrayInputStream(bytes))));
+  }
+
   @Test
-  void generateDownloadUrlReturnsUrl() throws Exception {
+  void downloadStreamsFileForAdmin() throws Exception {
     when(evidenceRepo.findById(evidence.getId())).thenReturn(Optional.of(evidence));
-    when(publicPresigner.presignGetObject(any(GetObjectPresignRequest.class)))
-        .thenAnswer(inv -> signed("http://signed/url"));
+    stubObject(new byte[] {1, 2, 3});
 
-    DownloadUrlDto dto = service.generateDownloadUrl(evidence.getId());
+    EvidenceService.EvidenceFile file = service.download(evidence.getId());
 
-    assertEquals("http://signed/url", dto.url());
+    assertEquals("doc.pdf", file.fileName());
+    assertEquals("application/pdf", file.contentType());
+    assertEquals(3L, file.size());
+    assertArrayEquals(new byte[] {1, 2, 3}, file.content().readAllBytes());
+    ArgumentCaptor<GetObjectRequest> captor = ArgumentCaptor.forClass(GetObjectRequest.class);
+    verify(s3Client).getObject(captor.capture());
+    assertEquals(evidence.getStorageKey(), captor.getValue().key());
+  }
+
+  @Test
+  void downloadAllowedForOrgResponsible() {
+    when(currentUser.hasRole(UserRole.PRISMA_ADMIN)).thenReturn(false);
+    when(currentUser.hasRole(UserRole.ORG_RESPONSIBLE)).thenReturn(true);
+    when(evidenceRepo.findById(evidence.getId())).thenReturn(Optional.of(evidence));
+    stubObject(new byte[] {1});
+
+    assertEquals("doc.pdf", service.download(evidence.getId()).fileName());
+  }
+
+  @Test
+  void downloadAllowedForAuditor() {
+    when(currentUser.hasRole(UserRole.PRISMA_ADMIN)).thenReturn(false);
+    when(currentUser.hasRole(UserRole.ORG_RESPONSIBLE)).thenReturn(false);
+    when(currentUser.hasRole(UserRole.AUDITOR)).thenReturn(true);
+    when(evidenceRepo.findById(evidence.getId())).thenReturn(Optional.of(evidence));
+    stubObject(new byte[] {1});
+
+    assertEquals("doc.pdf", service.download(evidence.getId()).fileName());
+  }
+
+  @Test
+  void downloadDeniedForOtherRolesWithoutTouchingStorage() {
+    when(currentUser.hasRole(UserRole.PRISMA_ADMIN)).thenReturn(false);
+    when(currentUser.hasRole(UserRole.ORG_RESPONSIBLE)).thenReturn(false);
+    when(currentUser.hasRole(UserRole.AUDITOR)).thenReturn(false);
+    when(evidenceRepo.findById(evidence.getId())).thenReturn(Optional.of(evidence));
+
+    assertThrows(
+        org.springframework.security.access.AccessDeniedException.class,
+        () -> service.download(evidence.getId()));
+    verify(s3Client, never()).getObject(any(GetObjectRequest.class));
+  }
+
+  @Test
+  void downloadDeniedWhenOrganizationAccessFails() {
+    when(evidenceRepo.findById(evidence.getId())).thenReturn(Optional.of(evidence));
+    doThrow(new RuntimeException("403")).when(currentUser).assertOrganizationAccess(any());
+
+    assertThrows(RuntimeException.class, () -> service.download(evidence.getId()));
+    verify(s3Client, never()).getObject(any(GetObjectRequest.class));
   }
 
   @Test
@@ -471,14 +515,13 @@ class EvidenceServiceTest {
 
     verify(aiClient, times(1))
         .ingest(any(), any(), any(), isNull(), any(), eq("http://rustfs:9000/internal-signed"));
-    verify(publicPresigner, never()).presignGetObject(any(GetObjectPresignRequest.class));
   }
 
   @Test
-  void generateDownloadUrlThrowsWhenMissing() {
+  void downloadThrowsWhenMissing() {
     UUID id = UUID.randomUUID();
     when(evidenceRepo.findById(id)).thenReturn(Optional.empty());
 
-    assertThrows(ResourceNotFoundException.class, () -> service.generateDownloadUrl(id));
+    assertThrows(ResourceNotFoundException.class, () -> service.download(id));
   }
 }

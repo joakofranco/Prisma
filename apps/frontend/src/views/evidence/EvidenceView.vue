@@ -87,7 +87,7 @@
           </button>
           <div class="flex gap-1">
             <button
-              v-if="ev.url"
+              v-if="canDownload"
               class="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 hover:text-blue-600 dark:hover:text-blue-300 dark:text-slate-400"
               title="Descargar evidencia"
               @click="downloadEvidence(ev)"
@@ -159,6 +159,8 @@
   import { evidenceService, evaluationsService, catalogService } from '@/services/resources';
   import { formatDate, formatFileSize, getErrorMessage } from '@/utils/helpers';
   import { useNotification } from '@/composables/useUtils';
+  import { useAuthStore } from '@/stores/auth';
+  import { saveBlob } from '@/utils/files';
   import BaseButton from '@/components/common/BaseButton.vue';
   import BaseModal from '@/components/common/BaseModal.vue';
   import BaseSelect from '@/components/common/BaseSelect.vue';
@@ -175,6 +177,7 @@
 
   const route = useRoute();
   const notification = useNotification();
+  const authStore = useAuthStore();
 
   const evaluationId = route.params.evaluationId as string;
   const loading = ref(true);
@@ -298,8 +301,17 @@
     }
   }
 
-  function downloadEvidence(ev: Evidence) {
-    if (ev.url) window.open(ev.url, '_blank');
+  // Descargan PRISMA_ADMIN, ORG_RESPONSIBLE y AUDITOR (el backend lo exige igual). El archivo se pide con
+  // el JWT y se guarda desde un blob: no hay un enlace directo al almacenamiento.
+  const canDownload = authStore.hasAnyRole('PRISMA_ADMIN', 'ORG_RESPONSIBLE', 'AUDITOR');
+
+  async function downloadEvidence(ev: Evidence) {
+    try {
+      const { data } = await evidenceService.download(ev.id);
+      saveBlob(data, ev.fileName);
+    } catch (err) {
+      notification.error(getErrorMessage(err, 'No se pudo descargar la evidencia'));
+    }
   }
 
   function confirmDeleteEvidence(ev: Evidence) {

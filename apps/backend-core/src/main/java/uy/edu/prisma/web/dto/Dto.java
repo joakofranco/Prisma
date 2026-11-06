@@ -607,12 +607,9 @@ public class Dto {
       String description,
       UUID uploadedBy,
       OffsetDateTime uploadedAt,
-      String url,
       boolean aiIndexed) {}
 
   public record UploadEvidenceResponseDto(UUID id, String fileName, Long fileSize) {}
-
-  public record DownloadUrlDto(String url) {}
 
   // ---- Evidence RAG (citas para el auditor) ----
   // Recuperación pura: ningún campo acá representa un veredicto. location es "Página N"
