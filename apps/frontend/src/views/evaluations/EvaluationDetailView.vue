@@ -286,6 +286,21 @@
             <div
               v-if="results.length > 0 && resultsTab === 'desglose'"
               class="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400"
+              data-testid="function-filter"
+            >
+              <span aria-hidden="true">Función</span>
+              <BaseSelect
+                v-model="functionFilter"
+                :options="functionFilterOptions"
+                :searchable="false"
+                size="sm"
+                aria-label="Filtrar por función"
+                class="w-56"
+              />
+            </div>
+            <div
+              v-if="results.length > 0 && resultsTab === 'desglose'"
+              class="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400"
             >
               <span aria-hidden="true">Mostrar por página</span>
               <BaseSelect
@@ -472,7 +487,7 @@
 </template>
 
 <script setup lang="ts">
-  import { ref, computed, onMounted } from 'vue';
+  import { ref, computed, watch, onMounted } from 'vue';
   import { storeToRefs } from 'pinia';
   import { useRoute, useRouter } from 'vue-router';
   import { useEvaluationsStore } from '@/stores/evaluations';
@@ -496,6 +511,7 @@
   import ConfirmDialog from '@/components/common/ConfirmDialog.vue';
   import BaseSelect from '@/components/common/BaseSelect.vue';
   import { useNotification } from '@/composables/useUtils';
+  import { ALL_FUNCTIONS, functionOptions, filterByFunction } from '@/utils/resultFilters';
   import MaturityRadarChart from '@/components/charts/MaturityRadarChart.vue';
   import MaturitySummaryTables from '@/components/evaluations/MaturitySummaryTables.vue';
   import EvaluationLifecycleStepper from '@/components/evaluations/EvaluationLifecycleStepper.vue';
@@ -719,6 +735,23 @@
   // subcategorías del catálogo real. Empiezan todas COLAPSADAS (Set vacío = nada expandido); el
   // usuario expande la(s) que le interesan.
   const groupBy = ref<'function' | 'level'>('function');
+  // Filtro por función (RF-VIZ-05): deja visibles solo las subcategorías de la función elegida.
+  // Es del lado del cliente, así que la tabla se actualiza al instante y sin recargar la página.
+  const functionFilter = ref<string>(ALL_FUNCTIONS);
+  const functionFilterOptions = computed(() => functionOptions(results.value));
+  const filteredResults = computed(() => filterByFunction(results.value, functionFilter.value));
+
+  // Si la función elegida ya no está (p. ej. tras recalcular la madurez), se vuelve a «Todas».
+  watch(results, (all) => {
+    if (functionFilter.value && !all.some((r) => r.functionId === functionFilter.value)) {
+      functionFilter.value = ALL_FUNCTIONS;
+    }
+  });
+  // Al elegir una función se abre su sección: llegar a una sección colapsada tras filtrar sería
+  // un clic de más.
+  watch(functionFilter, (id) => {
+    if (id) expandedGroups.value = new Set(expandedGroups.value).add(`function-${id}`);
+  });
   const expandedGroups = ref<Set<string>>(new Set());
 
   function toggleGroup(key: string) {
@@ -754,7 +787,7 @@
       // Ascendente (0 primero): las subcategorías con mayor brecha quedan arriba, coherente con
       // como ImprovementPlanService prioriza los niveles mas bajos como mas urgentes.
       const byLevel = new Map<number, MaturityResult[]>();
-      for (const r of results.value) {
+      for (const r of filteredResults.value) {
         const arr = byLevel.get(r.currentLevel) ?? [];
         arr.push(r);
         byLevel.set(r.currentLevel, arr);
@@ -770,7 +803,7 @@
 
     const order: string[] = [];
     const byFunction = new Map<string, ResultGroup>();
-    for (const r of results.value) {
+    for (const r of filteredResults.value) {
       let group = byFunction.get(r.functionId);
       if (!group) {
         group = { key: `function-${r.functionId}`, title: r.functionName, items: [] };
