@@ -2,6 +2,7 @@
   "realm": "prisma",
   "displayName": "PRISMA",
   "enabled": true,
+  "emailTheme": "prisma",
   "sslRequired": "external",
   "registrationAllowed": false,
   "loginWithEmailAllowed": true,
