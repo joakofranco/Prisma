@@ -145,6 +145,7 @@ public class UserService {
     user.setPasswordHash(passwordHasher.hash(dto.password()));
     assertOrganizationsActive(user.getOrganizations());
     validateOrganizationsForRoles(user);
+    assertRoleSegregation(user.getRoles());
 
     User saved = userRepo.save(user);
     // Se provisiona en Keycloak DESPUÉS del insert local: si esto lanza, la anotación
@@ -229,6 +230,7 @@ public class UserService {
       user.setOrganizations(requested);
     }
     validateOrganizationsForRoles(user);
+    assertRoleSegregation(user.getRoles());
     boolean passwordProvided = dto.password() != null && !dto.password().isBlank();
     if (passwordProvided) {
       user.setPasswordHash(passwordHasher.hash(dto.password()));
@@ -426,6 +428,18 @@ public class UserService {
     if (roles.contains(UserRole.AUDITOR) && count == 0) {
       throw new InvalidRequestException(
           "El auditor debe tener asignada al menos una organización para auditar");
+    }
+  }
+
+  // RF-USR-04: segregación de funciones -- un mismo usuario no puede ser a la vez quien ejecuta la
+  // autoevaluación (INTERNAL_EVALUATOR) y quien la audita de forma independiente (AUDITOR). El
+  // modelo de roles es global al usuario (no por evaluación), así que la regla se aplica a nivel
+  // de usuario: ninguna combinación de alta/edición puede dejarlo con ambos roles a la vez.
+  private void assertRoleSegregation(Set<UserRole> roles) {
+    if (roles.contains(UserRole.AUDITOR) && roles.contains(UserRole.INTERNAL_EVALUATOR)) {
+      throw new ConflictException(
+          "Un usuario no puede tener simultáneamente el rol de auditor y el de evaluador interno"
+              + " (segregación de funciones)");
     }
   }
 }

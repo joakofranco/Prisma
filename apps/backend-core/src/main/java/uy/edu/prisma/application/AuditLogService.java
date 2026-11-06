@@ -7,6 +7,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -20,12 +22,14 @@ import uy.edu.prisma.domain.entity.CatalogVersion;
 import uy.edu.prisma.domain.entity.Evaluation;
 import uy.edu.prisma.domain.entity.Organization;
 import uy.edu.prisma.domain.entity.User;
+import uy.edu.prisma.domain.exception.ResourceNotFoundException;
 import uy.edu.prisma.domain.repository.AuditLogRepository;
 import uy.edu.prisma.domain.repository.CatalogVersionRepository;
 import uy.edu.prisma.domain.repository.EvaluationRepository;
 import uy.edu.prisma.domain.repository.OrganizationRepository;
 import uy.edu.prisma.domain.repository.UserRepository;
 import uy.edu.prisma.web.dto.Dto.AuditLogDto;
+import uy.edu.prisma.web.dto.Dto.EvaluationAuditCycleEventDto;
 import uy.edu.prisma.web.dto.Dto.PaginatedDto;
 
 /** Registro de auditoría (append-only) de las acciones sensibles. */
@@ -145,6 +149,65 @@ public class AuditLogService {
     }
 
     return new PaginatedDto<>(dtos, result.getTotalElements(), page, pageSize);
+  }
+
+  private static final Pattern STATUS_PAYLOAD_PATTERN = Pattern.compile("\"status\":\"(\\w+)\"");
+
+  /**
+   * RF-AUD-10: historial completo de ciclos de auditoría de UNA evaluación puntual -- todas sus
+   * transiciones de estado (y el "CERTIFY" si llegó a aprobarse), en orden cronológico, agrupadas
+   * por ciclo (cada reenvío a auditoría tras una devolución cuenta como un ciclo nuevo). A
+   * diferencia de {@link #list}, que es la bitácora global (solo PRISMA_ADMIN/ORG_RESPONSIBLE),
+   * esto lo puede consultar cualquiera con acceso a la organización de la evaluación -- en
+   * particular el AUDITOR, que es quien más necesita reconstruir cuántas idas y vueltas tuvo esta
+   * auditoría puntual (antes no tenía forma de verlo: AuditLogController exige esos dos roles).
+   */
+  @Transactional(readOnly = true)
+  public List<EvaluationAuditCycleEventDto> getEvaluationAuditTrail(UUID evaluationId) {
+    Evaluation eval =
+        evaluationRepo
+            .findById(evaluationId)
+            .orElseThrow(() -> new ResourceNotFoundException("Evaluación", evaluationId));
+    currentUser.assertOrganizationAccess(eval.getOrganization().getId());
+
+    List<AuditLog> logs =
+        auditRepo.findByResourceAndActionInOrderByCreatedAtAsc(
+            "evaluation:" + evaluationId, List.of("UPDATE_STATUS", "CERTIFY"));
+    Set<UUID> userIds =
+        logs.stream().map(AuditLog::getUserId).filter(Objects::nonNull).collect(Collectors.toSet());
+    Map<UUID, User> usersById =
+        userIds.isEmpty()
+            ? Map.of()
+            : userRepo.findAllById(userIds).stream().collect(Collectors.toMap(User::getId, u -> u));
+
+    List<EvaluationAuditCycleEventDto> result = new ArrayList<>(logs.size());
+    int cycle = 0;
+    for (AuditLog log : logs) {
+      String status =
+          "UPDATE_STATUS".equals(log.getAction()) ? extractStatus(log.getPayload()) : null;
+      if ("READY_FOR_AUDIT".equals(status)) {
+        cycle++;
+      }
+      User actor = log.getUserId() != null ? usersById.get(log.getUserId()) : null;
+      result.add(
+          new EvaluationAuditCycleEventDto(
+              log.getId(),
+              log.getAction(),
+              status,
+              log.getUserId(),
+              actor != null ? (actor.getFirstName() + " " + actor.getLastName()).trim() : null,
+              log.getCreatedAt(),
+              cycle));
+    }
+    return result;
+  }
+
+  // El payload de UPDATE_STATUS siempre es exactamente {"status":"X"} (ver
+  // EvaluationService.updateStatus) -- no amerita traer una dependencia de parseo JSON para esto.
+  private static String extractStatus(String payload) {
+    if (payload == null) return null;
+    Matcher m = STATUS_PAYLOAD_PATTERN.matcher(payload);
+    return m.find() ? m.group(1) : null;
   }
 
   private AuditLogDto toDto(

@@ -43,6 +43,22 @@ location /ai/ {
     proxy_read_timeout 300s;         # RAG puede tardar
 }
 
+# ---- Keycloak (SSO) -- login (RNF-07: 5 intentos por minuto por IP) ----
+# Location regex ("location ~"): nginx siempre la prioriza por sobre el prefijo "location /auth/"
+# de abajo cuando ambas matchean, sin importar el orden en que estén escritas acá -- matchea sólo
+# el POST donde Keycloak procesa usuario/contraseña del formulario de login, no el resto de
+# /auth/ (token exchange, refresh, logout, etc.), que sí deben poder repetirse más seguido sin
+# que esto los corte.
+location ~ ^/auth/realms/[^/]+/login-actions/authenticate {
+    limit_req zone=auth_login burst=2 nodelay;
+    proxy_pass         http://keycloak_svc;
+    proxy_set_header   Host              $http_host;
+    proxy_set_header   X-Real-IP         $remote_addr;
+    proxy_set_header   X-Forwarded-For   $remote_addr;
+    proxy_set_header   X-Forwarded-Proto $scheme;
+    proxy_set_header   X-Forwarded-Host  $http_host;
+}
+
 # ---- Keycloak (SSO) ----
 location /auth/ {
     # SIN barra final en el destino: a diferencia de /api y /ai, acá se preserva el prefijo

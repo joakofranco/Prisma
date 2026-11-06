@@ -1,7 +1,12 @@
 package uy.edu.prisma.application;
 
+import java.nio.charset.StandardCharsets;
+import java.time.OffsetDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -13,6 +18,7 @@ import uy.edu.prisma.domain.exception.InvalidRequestException;
 import uy.edu.prisma.domain.exception.ResourceNotFoundException;
 import uy.edu.prisma.domain.repository.*;
 import uy.edu.prisma.web.dto.Dto.CreateEvaluationDto;
+import uy.edu.prisma.web.dto.Dto.EvaluationAuditCycleEventDto;
 import uy.edu.prisma.web.dto.Dto.EvaluationDto;
 import uy.edu.prisma.web.dto.Dto.EvaluationResponseDto;
 import uy.edu.prisma.web.dto.Dto.MaturityResultDto;
@@ -35,6 +41,7 @@ public class EvaluationService {
   private final UserRepository userRepo;
   private final CurrentUserService currentUser;
   private final AuditLogService auditLog;
+  private final String certificationSecret;
 
   public EvaluationService(
       EvaluationRepository evalRepo,
@@ -48,7 +55,8 @@ public class EvaluationService {
       CommunityProfileRepository profileRepo,
       UserRepository userRepo,
       CurrentUserService currentUser,
-      AuditLogService auditLog) {
+      AuditLogService auditLog,
+      @Value("${prisma.certification.secret}") String certificationSecret) {
     this.evalRepo = evalRepo;
     this.respRepo = respRepo;
     this.matRepo = matRepo;
@@ -61,6 +69,7 @@ public class EvaluationService {
     this.userRepo = userRepo;
     this.currentUser = currentUser;
     this.auditLog = auditLog;
+    this.certificationSecret = certificationSecret;
   }
 
   // PRISMA_ADMIN y el evaluador general (INTERNAL_EVALUATOR sin organizaciones) listan sin
@@ -275,12 +284,63 @@ public class EvaluationService {
     }
     assertRoleCanTransitionTo(target);
     eval.setStatus(target);
+    if (target == Evaluation.Status.APPROVED) {
+      sealApproval(eval);
+    }
     EvaluationDto result =
         toDto(
             evalRepo.save(eval),
             auditorNamesByOrganization(Set.of(eval.getOrganization().getId())));
     auditLog.record("UPDATE_STATUS", "evaluation:" + id, "{\"status\":\"" + status + "\"}");
+    if (target == Evaluation.Status.APPROVED) {
+      auditLog.record(
+          "CERTIFY",
+          "evaluation:" + id,
+          "{\"approvedBy\":\""
+              + (eval.getApprovedBy() != null ? eval.getApprovedBy().getId() : null)
+              + "\",\"approvedAt\":\""
+              + eval.getApprovedAt()
+              + "\",\"certificationSeal\":\""
+              + eval.getCertificationSeal()
+              + "\"}");
+    }
     return result;
+  }
+
+  // RF-AUD-09: al aprobar, se sella la evaluación con quién la aprobó, cuándo, y una firma HMAC de
+  // esos metadatos (más organización, evaluación y madurez global) -- sirve para detectar
+  // alteraciones posteriores de este registro de certificación. Se llama una única vez por
+  // evaluación: IN_AUDIT -> APPROVED es la única transición que entra a este estado (ver
+  // ALLOWED_TRANSITIONS), así que approvedBy/approvedAt/certificationSeal nunca se recalculan.
+  private void sealApproval(Evaluation eval) {
+    User approver = currentUser.currentUser().orElse(null);
+    OffsetDateTime approvedAt = OffsetDateTime.now();
+    eval.setApprovedBy(approver);
+    eval.setApprovedAt(approvedAt);
+    eval.setCertificationSeal(computeCertificationSeal(eval, approver, approvedAt));
+  }
+
+  private String computeCertificationSeal(
+      Evaluation eval, User approver, OffsetDateTime approvedAt) {
+    String payload =
+        eval.getId()
+            + "|"
+            + eval.getOrganization().getId()
+            + "|"
+            + (approver != null ? approver.getId() : "null")
+            + "|"
+            + approvedAt
+            + "|"
+            + eval.getGlobalMaturity();
+    try {
+      Mac mac = Mac.getInstance("HmacSHA256");
+      mac.init(
+          new SecretKeySpec(certificationSecret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+      return HexFormat.of().formatHex(mac.doFinal(payload.getBytes(StandardCharsets.UTF_8)));
+    } catch (java.security.GeneralSecurityException e) {
+      // HmacSHA256 es parte de todo JDK conforme (JCA); esto nunca debería ocurrir en runtime.
+      throw new IllegalStateException("No se pudo generar el sello de certificación", e);
+    }
   }
 
   // Quién puede disparar cada transición: del lado de autoevaluación (DRAFT/IN_PROGRESS/RETURNED)
@@ -422,7 +482,7 @@ public class EvaluationService {
     resp.setCompliant(Boolean.TRUE.equals(dto.compliant()));
     resp.setObservations(dto.observations());
     resp.setRespondedBy(currentUser.currentUser().orElse(null));
-    resp.setRespondedAt(java.time.OffsetDateTime.now());
+    resp.setRespondedAt(OffsetDateTime.now());
 
     EvaluationResponseDto result = toRespDto(respRepo.save(resp));
     auditLog.record(
@@ -430,6 +490,14 @@ public class EvaluationService {
         "evaluation:" + evaluationId,
         "{\"controlId\":\"" + dto.controlId() + "\",\"compliant\":" + resp.getCompliant() + "}");
     return result;
+  }
+
+  // RF-AUD-10: historial de ciclos de auditoría de esta evaluación puntual -- delega en
+  // AuditLogService, que ya resuelve el aislamiento multi-tenant/organización y la numeración de
+  // ciclos (ver el comentario en AuditLogService.getEvaluationAuditTrail).
+  @Transactional(readOnly = true)
+  public List<EvaluationAuditCycleEventDto> getAuditTrail(UUID evaluationId) {
+    return auditLog.getEvaluationAuditTrail(evaluationId);
   }
 
   // ---- Maturity Calculation ----
@@ -576,6 +644,7 @@ public class EvaluationService {
 
   private EvaluationDto toDto(Evaluation e, Map<UUID, List<String>> auditorsByOrg) {
     User creator = e.getCreatedBy();
+    User approver = e.getApprovedBy();
     return new EvaluationDto(
         e.getId(),
         e.getName(),
@@ -589,6 +658,10 @@ public class EvaluationService {
         creator != null ? creator.getId() : null,
         e.getCreatedAt(),
         e.getUpdatedAt(),
+        approver != null ? approver.getId() : null,
+        e.getApprovedAt(),
+        e.getCertificationSeal(),
+        approver != null ? (approver.getFirstName() + " " + approver.getLastName()).trim() : null,
         creator != null ? (creator.getFirstName() + " " + creator.getLastName()).trim() : null,
         auditorsByOrg.getOrDefault(e.getOrganization().getId(), List.of()));
   }
