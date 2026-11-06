@@ -147,7 +147,9 @@ importar el rol que normalmente le correspondería.
 |---|---|---|---|
 | GET | `/{evaluationId}` | `PRISMA_ADMIN`, `AUDITOR` | **no** visible para `ORG_RESPONSIBLE`/`INTERNAL_EVALUATOR` — es la herramienta de trabajo del auditor |
 | POST | `/` | `PRISMA_ADMIN`, `AUDITOR` | `{evaluationId, controlId?, type, description, status?}` — `type` ∈ `OBSERVATION`/`NON_CONFORMITY`/`RECOMMENDATION`, `status` ∈ `OPEN`/`IN_PROGRESS`/`RESOLVED`/`CLOSED` (default `OPEN`) |
-| PUT | `/{id}` | `PRISMA_ADMIN`, `AUDITOR` | actualización parcial (sólo los campos presentes) |
+| PUT | `/{id}` | `PRISMA_ADMIN`, `AUDITOR` | actualización parcial (sólo los campos presentes); una `description` vacía responde `400` |
+
+Regla de estado: crear (`POST`) y modificar (`PUT`, incluido el cambio de `status`) solo se puede **mientras la evaluación está en `IN_AUDIT`**; en cualquier otro estado responde `409` con el estado actual en el mensaje (igual que el dictamen por control). Escribir es solo del administrador y el auditor: la organización las lee, nunca las edita.
 
 ## Plan de mejora — `/api/improvement`
 
@@ -162,8 +164,12 @@ importar el rol que normalmente le correspondería.
 
 | Método | Path | Rol | Notas |
 |---|---|---|---|
-| GET | `/{id}/pdf` | cualquiera autenticado | `Content-Type: application/pdf` |
-| GET | `/{id}/excel` | cualquiera autenticado | `Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` |
+| GET | `/{id}/pdf` | `PRISMA_ADMIN`, `ORG_RESPONSIBLE` | reporte final; `Content-Type: application/pdf`. **Solo con la evaluación `APPROVED`**: en cualquier otro estado responde 409 |
+| GET | `/{id}/excel` | `PRISMA_ADMIN`, `ORG_RESPONSIBLE` | reporte final; `Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`. Solo con la evaluación `APPROVED` (409 si no) |
+| GET | `/{id}/executive/pdf` | `PRISMA_ADMIN`, `ORG_RESPONSIBLE` | **reporte ejecutivo gerencial** (RF-REP-01), aparte del reporte final: 1 a 2 páginas con organización y evaluación, perfil comunitario, madurez global, radar por función, las 5 mayores brechas y las 5 acciones principales del plan de mejora (por prioridad y fecha límite; «Sin acciones registradas» si no hay). Solo con la evaluación `APPROVED` (409 si no). El auditor no lo descarga |
+| GET | `/{id}/preliminary/pdf`, `/{id}/preliminary/excel` | `PRISMA_ADMIN`, `AUDITOR` | informe preliminar de auditoría. Solo con la evaluación `IN_AUDIT` (409 si no) |
+
+Regla de estado: el informe **preliminar** vale solo en `IN_AUDIT`; el reporte **final** y el **ejecutivo**, solo en `APPROVED`.
 
 ## Dashboard — `/api/dashboard`
 

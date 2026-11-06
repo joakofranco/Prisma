@@ -21,6 +21,7 @@ import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Comparator;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -43,6 +44,7 @@ import uy.edu.prisma.domain.entity.AuditControlVerdict;
 import uy.edu.prisma.domain.entity.AuditObservation;
 import uy.edu.prisma.domain.entity.Evaluation;
 import uy.edu.prisma.domain.entity.Evidence;
+import uy.edu.prisma.domain.entity.ImprovementPlan;
 import uy.edu.prisma.domain.entity.MaturityResult;
 import uy.edu.prisma.domain.entity.User;
 import uy.edu.prisma.domain.exception.ConflictException;
@@ -51,6 +53,7 @@ import uy.edu.prisma.domain.repository.AuditControlVerdictRepository;
 import uy.edu.prisma.domain.repository.AuditObservationRepository;
 import uy.edu.prisma.domain.repository.EvaluationRepository;
 import uy.edu.prisma.domain.repository.EvidenceRepository;
+import uy.edu.prisma.domain.repository.ImprovementPlanRepository;
 import uy.edu.prisma.domain.repository.MaturityResultRepository;
 
 /**
@@ -65,6 +68,9 @@ public class ReportService {
 
   private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm");
   private static final int TOP_GAPS = 5;
+  private static final int TOP_ACTIONS = 5;
+  // Una acción muy larga no puede romper el límite de dos páginas del reporte ejecutivo.
+  private static final int MAX_ACTION_CHARS = 240;
 
   // Paleta compartida PDF/Excel, igual a MATURITY_LEVELS del frontend.
   private static final Color BRAND = new Color(30, 64, 175); // blue-800
@@ -81,6 +87,7 @@ public class ReportService {
   private final EvidenceRepository evidenceRepo;
   private final CurrentUserService currentUser;
   private final AuditControlVerdictRepository verdictRepo;
+  private final ImprovementPlanRepository planRepo;
 
   public ReportService(
       EvaluationRepository evalRepo,
@@ -88,13 +95,15 @@ public class ReportService {
       AuditObservationRepository obsRepo,
       EvidenceRepository evidenceRepo,
       CurrentUserService currentUser,
-      AuditControlVerdictRepository verdictRepo) {
+      AuditControlVerdictRepository verdictRepo,
+      ImprovementPlanRepository planRepo) {
     this.evalRepo = evalRepo;
     this.matRepo = matRepo;
     this.obsRepo = obsRepo;
     this.evidenceRepo = evidenceRepo;
     this.currentUser = currentUser;
     this.verdictRepo = verdictRepo;
+    this.planRepo = planRepo;
   }
 
   // =====================================================================================
@@ -102,7 +111,7 @@ public class ReportService {
   // =====================================================================================
 
   public byte[] generatePdf(UUID evaluationId) {
-    Evaluation eval = load(evaluationId);
+    Evaluation eval = loadApproved(evaluationId);
     List<MaturityResult> results = results(evaluationId);
     Summary summary = summarize(results);
     List<String> auditors = auditorNames(evaluationId);
@@ -131,6 +140,11 @@ public class ReportService {
   }
 
   private void addPdfBanner(Document document) throws DocumentException {
+    addPdfBanner(
+        document, "Reporte de Madurez en Ciberseguridad — Marco de Ciberseguridad AGESIC MCU 5.0");
+  }
+
+  private void addPdfBanner(Document document, String subtitleText) throws DocumentException {
     PdfPTable banner = new PdfPTable(1);
     banner.setWidthPercentage(100);
     PdfPCell cell = new PdfPCell();
@@ -142,9 +156,7 @@ public class ReportService {
         new Paragraph("PRISMA", FontFactory.getFont(FontFactory.HELVETICA_BOLD, 22, Color.WHITE));
     title.setSpacingAfter(2);
     Paragraph subtitle =
-        new Paragraph(
-            "Reporte de Madurez en Ciberseguridad — Marco de Ciberseguridad AGESIC MCU 5.0",
-            FontFactory.getFont(FontFactory.HELVETICA, 10, BRAND_LIGHT));
+        new Paragraph(subtitleText, FontFactory.getFont(FontFactory.HELVETICA, 10, BRAND_LIGHT));
     cell.addElement(title);
     cell.addElement(subtitle);
     banner.addCell(cell);
@@ -432,7 +444,7 @@ public class ReportService {
   // =====================================================================================
 
   public byte[] generateExcel(UUID evaluationId) {
-    Evaluation eval = load(evaluationId);
+    Evaluation eval = loadApproved(evaluationId);
     List<MaturityResult> results = results(evaluationId);
     Summary summary = summarize(results);
     List<String> auditors = auditorNames(evaluationId);
@@ -687,6 +699,251 @@ public class ReportService {
   // controles revisados, observaciones del auditor y subcategorías con brecha sin evidencia.
   // =====================================================================================
 
+  // =====================================================================================
+  // Reporte ejecutivo (RF-REP-01)
+  // =====================================================================================
+
+  /**
+   * Reporte ejecutivo gerencial: una o dos páginas con la identidad de la evaluación, el perfil
+   * comunitario, la madurez global, el radar por función, las cinco mayores brechas y las cinco
+   * acciones principales del plan de mejora. Es un reporte aparte del PDF de madurez, y solo existe
+   * para evaluaciones aprobadas.
+   */
+  public byte[] generateExecutivePdf(UUID evaluationId) {
+    Evaluation eval = loadApproved(evaluationId);
+    List<MaturityResult> results = results(evaluationId);
+    Summary summary = summarize(results);
+    List<String> auditors = auditorNames(evaluationId);
+    List<ImprovementPlan> actions = topActions(evaluationId);
+
+    try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+      Document document = new Document(PageSize.A4, 36, 36, 54, 54);
+      PdfWriter writer = PdfWriter.getInstance(document, out);
+      writer.setPageEvent(new PageEvent(eval, auditors));
+      document.open();
+
+      addPdfBanner(
+          document, "Reporte Ejecutivo de Madurez en Ciberseguridad — Marco AGESIC MCU 5.0");
+      addExecutiveInfoBox(document, eval, auditors);
+      addPdfKpiRow(document, eval, summary);
+      addFunctionMaturity(document, writer, results);
+      if (!summary.topGaps().isEmpty()) {
+        addPdfTopGaps(document, summary.topGaps());
+      }
+      addExecutiveActions(document, actions);
+
+      document.close();
+      return out.toByteArray();
+    } catch (Exception e) {
+      throw new RuntimeException("No se pudo generar el reporte ejecutivo en PDF", e);
+    }
+  }
+
+  private void addExecutiveInfoBox(Document document, Evaluation eval, List<String> auditors)
+      throws DocumentException {
+    PdfPTable info = new PdfPTable(4);
+    info.setWidthPercentage(100);
+    info.setWidths(new float[] {1.1f, 2f, 1.1f, 2f});
+    info.setSpacingBefore(14);
+    info.setSpacingAfter(14);
+
+    addInfoCell(info, "ORGANIZACIÓN", eval.getOrganization().getName());
+    addInfoCell(info, "EVALUACIÓN", eval.getName());
+    addInfoCell(
+        info,
+        "PERFIL COMUNITARIO",
+        eval.getCommunityProfile() != null
+            ? eval.getCommunityProfile().getName()
+            : "Sin perfil (catálogo completo)");
+    addInfoCell(info, "CATÁLOGO", "MCU " + eval.getCatalogVersion());
+    addInfoCell(info, "ESTADO", statusLabel(eval.getStatus()));
+    addInfoCell(info, "ACTUALIZADA", eval.getUpdatedAt().format(DATE_FMT));
+    addInfoCell(info, "GENERADO", OffsetDateTime.now().format(DATE_FMT));
+    // El auditor solo se muestra si la evaluación ya tiene uno (ver auditorNames). Sin él, la
+    // última fila quedaría con una celda de menos y iText la completaría con una caja con borde.
+    if (!auditors.isEmpty()) {
+      addInfoCell(info, "AUDITOR", String.join(", ", auditors));
+    } else {
+      PdfPCell blank = new PdfPCell();
+      blank.setBorder(Rectangle.NO_BORDER);
+      info.addCell(blank);
+    }
+    info.completeRow();
+    document.add(info);
+  }
+
+  /** Nivel actual y objetivo medios de cada función, en el orden en que aparecen los resultados. */
+  private static List<RadarChart.Axis> functionAxes(List<MaturityResult> results) {
+    Map<String, List<MaturityResult>> byFunction = new LinkedHashMap<>();
+    for (MaturityResult r : results) {
+      byFunction
+          .computeIfAbsent(
+              r.getFunctionName() != null ? r.getFunctionName() : "Sin función",
+              k -> new java.util.ArrayList<>())
+          .add(r);
+    }
+    List<RadarChart.Axis> axes = new java.util.ArrayList<>();
+    byFunction.forEach(
+        (name, items) ->
+            axes.add(
+                new RadarChart.Axis(
+                    name,
+                    items.stream().mapToInt(MaturityResult::getCurrentLevel).average().orElse(0),
+                    items.stream().mapToInt(MaturityResult::getTargetLevel).average().orElse(0))));
+    return axes;
+  }
+
+  private void addFunctionMaturity(
+      Document document, PdfWriter writer, List<MaturityResult> results)
+      throws DocumentException, java.io.IOException {
+    Paragraph heading =
+        new Paragraph(
+            "Madurez por Función", FontFactory.getFont(FontFactory.HELVETICA_BOLD, 12, SLATE_900));
+    heading.setSpacingAfter(6);
+    document.add(heading);
+
+    List<RadarChart.Axis> axes = functionAxes(results);
+    if (axes.isEmpty()) {
+      document.add(
+          new Paragraph(
+              "Sin resultados de madurez para graficar.",
+              FontFactory.getFont(FontFactory.HELVETICA, 9, SLATE_500)));
+      return;
+    }
+    if (axes.size() < 3) {
+      // Con una o dos funciones un radar no tiene forma: se muestran los valores en una tabla.
+      PdfPTable table = new PdfPTable(3);
+      table.setWidthPercentage(100);
+      table.setWidths(new float[] {3f, 1f, 1f});
+      table.setSpacingAfter(16);
+      addTableHeader(table, "Función", "Actual", "Objetivo");
+      for (RadarChart.Axis axis : axes) {
+        addBodyCell(table, axis.label(), Color.WHITE, Element.ALIGN_LEFT, SLATE_900);
+        addBodyCell(
+            table,
+            String.format("%.1f", axis.current()),
+            Color.WHITE,
+            Element.ALIGN_CENTER,
+            SLATE_900);
+        addBodyCell(
+            table,
+            String.format("%.1f", axis.target()),
+            Color.WHITE,
+            Element.ALIGN_CENTER,
+            SLATE_900);
+      }
+      document.add(table);
+      return;
+    }
+    var radar = RadarChart.render(writer, axes, document.right() - document.left(), 215);
+    radar.setSpacingAfter(12);
+    document.add(radar);
+  }
+
+  /** Las cinco acciones principales del plan: por prioridad (alta primero) y fecha límite. */
+  private List<ImprovementPlan> topActions(UUID evaluationId) {
+    return planRepo.findByEvaluationIdOrderByCreatedAtDesc(evaluationId).stream()
+        .sorted(
+            Comparator.comparing(ImprovementPlan::getPriority, Comparator.reverseOrder())
+                .thenComparing(
+                    ImprovementPlan::getDueDate, Comparator.nullsLast(Comparator.naturalOrder()))
+                .thenComparing(ImprovementPlan::getCreatedAt))
+        .limit(TOP_ACTIONS)
+        .toList();
+  }
+
+  private void addExecutiveActions(Document document, List<ImprovementPlan> actions)
+      throws DocumentException {
+    // El título va como primera fila de la tabla y la tabla se mantiene junta: así el título no
+    // queda solo al pie de una página con su tabla en la siguiente.
+    PdfPTable table = new PdfPTable(5);
+    table.setWidthPercentage(100);
+    table.setWidths(new float[] {0.9f, 4f, 1.5f, 1.2f, 1.3f});
+    table.setSpacingAfter(8);
+    table.setKeepTogether(true);
+    PdfPCell title =
+        new PdfPCell(
+            new Phrase(
+                "Acciones Principales del Plan de Mejora",
+                FontFactory.getFont(FontFactory.HELVETICA_BOLD, 12, SLATE_900)));
+    title.setColspan(5);
+    title.setBorder(Rectangle.NO_BORDER);
+    title.setPaddingLeft(0);
+    title.setPaddingBottom(6);
+    table.addCell(title);
+
+    if (actions.isEmpty()) {
+      // La sección no se omite: quien lee el reporte tiene que ver que no hay plan, no suponerlo.
+      PdfPCell none =
+          new PdfPCell(
+              new Phrase(
+                  "Sin acciones registradas.",
+                  FontFactory.getFont(FontFactory.HELVETICA, 9, SLATE_500)));
+      none.setColspan(5);
+      none.setBorder(Rectangle.NO_BORDER);
+      none.setPaddingLeft(0);
+      table.addCell(none);
+      document.add(table);
+      return;
+    }
+    addTableHeader(table, "Prioridad", "Acción", "Responsable", "Fecha límite", "Estado");
+    table.setHeaderRows(2);
+    boolean shaded = false;
+    for (ImprovementPlan plan : actions) {
+      Color bg = shaded ? SLATE_50 : Color.WHITE;
+      addBodyCell(table, priorityLabel(plan.getPriority()), bg, Element.ALIGN_CENTER, SLATE_900);
+      addBodyCell(table, limit(plan.getAction()), bg, Element.ALIGN_LEFT, SLATE_900);
+      addBodyCell(
+          table,
+          plan.getResponsible() != null && !plan.getResponsible().isBlank()
+              ? plan.getResponsible()
+              : "—",
+          bg,
+          Element.ALIGN_LEFT,
+          SLATE_900);
+      addBodyCell(
+          table,
+          plan.getDueDate() != null ? plan.getDueDate().format(DATE_ONLY) : "—",
+          bg,
+          Element.ALIGN_CENTER,
+          SLATE_900);
+      addBodyCell(
+          table,
+          planStatusLabel(plan.getStatus()),
+          bg,
+          Element.ALIGN_CENTER,
+          plan.getStatus() == ImprovementPlan.PlanStatus.OVERDUE ? DANGER : SLATE_900);
+      shaded = !shaded;
+    }
+    document.add(table);
+  }
+
+  private static final DateTimeFormatter DATE_ONLY = DateTimeFormatter.ofPattern("dd/MM/yyyy");
+
+  private static String limit(String text) {
+    if (text == null) {
+      return "";
+    }
+    return text.length() <= MAX_ACTION_CHARS ? text : text.substring(0, MAX_ACTION_CHARS - 1) + "…";
+  }
+
+  private static String priorityLabel(ImprovementPlan.Priority priority) {
+    return switch (priority) {
+      case HIGH -> "Alta";
+      case MEDIUM -> "Media";
+      case LOW -> "Baja";
+    };
+  }
+
+  private static String planStatusLabel(ImprovementPlan.PlanStatus status) {
+    return switch (status) {
+      case PENDING -> "Pendiente";
+      case IN_PROGRESS -> "En Progreso";
+      case COMPLETED -> "Completada";
+      case OVERDUE -> "Vencida";
+    };
+  }
+
   public byte[] generatePreliminaryPdf(UUID evaluationId) {
     Evaluation eval = loadForAudit(evaluationId);
     List<MaturityResult> results = results(evaluationId);
@@ -747,6 +1004,24 @@ public class ReportService {
     } catch (Exception e) {
       throw new RuntimeException("No se pudo generar el informe preliminar en Excel", e);
     }
+  }
+
+  /**
+   * Igual que {@link #load(UUID)}, pero exige que la evaluación esté «Aprobada»: el reporte final y
+   * el ejecutivo solo valen para una evaluación ya aprobada (el preliminar, en cambio, solo en
+   * auditoría, ver {@link #loadForAudit(UUID)}). La pantalla de reportes ya solo ofrece las
+   * aprobadas, pero el endpoint se puede llamar directo con el id de cualquier evaluación.
+   */
+  private Evaluation loadApproved(UUID evaluationId) {
+    Evaluation eval = load(evaluationId);
+    if (eval.getStatus() != Evaluation.Status.APPROVED) {
+      throw new ConflictException(
+          "El reporte final y el ejecutivo sólo pueden exportarse con la evaluación en estado"
+              + " 'Aprobada' (estado actual: "
+              + statusLabel(eval.getStatus())
+              + ")");
+    }
+    return eval;
   }
 
   /** Igual que {@link #load(UUID)}, pero exige que la evaluación esté "En Auditoría". */

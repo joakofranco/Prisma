@@ -516,6 +516,16 @@ y roles habilitados en [`docs/API.md`](API.md).
 
 - **Implementado en:** `GET /api/reports/{evaluationId}/pdf`, `ReportsView.vue`.
 
+### HU-REP-03 — Reporte ejecutivo gerencial
+> Como `ORG_RESPONSIBLE` o `PRISMA_ADMIN`, quiero un reporte de una o dos páginas con lo esencial de una
+> evaluación aprobada (perfil comunitario, madurez global, radar por función, mayores brechas y
+> acciones principales del plan de mejora), para presentarlo a la gerencia sin el detalle completo.
+
+- Es un reporte nuevo, separado del reporte final. El final y el ejecutivo solo existen con la
+  evaluación aprobada (`APPROVED`); el informe preliminar, solo en auditoría (`IN_AUDIT`).
+- **Implementado en:** `GET /api/reports/{evaluationId}/executive/pdf`,
+  `ReportService.generateExecutivePdf`, `RadarChart`, botón «Reporte ejecutivo» en `ReportsView.vue`.
+
 ### HU-REP-02 — Descargar reporte en Excel
 > Como usuario con acceso a una evaluación aprobada, quiero descargar un reporte Excel con el
 > detalle control por control, para procesarlo o auditarlo con otras herramientas.
