@@ -32,6 +32,15 @@
         class="w-64"
         @update:model-value="refresh"
       />
+      <button
+        type="button"
+        :disabled="exporting"
+        class="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-500 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-600 disabled:opacity-50"
+        @click="exportCsv"
+      >
+        <ArrowDownTrayIcon class="w-4 h-4" />
+        {{ exporting ? 'Exportando...' : 'Exportar CSV' }}
+      </button>
     </div>
 
     <DataTable
@@ -92,15 +101,19 @@
   import { storeToRefs } from 'pinia';
   import { useAuditLogsStore } from '@/stores/auditLogs';
   import { useAuthStore } from '@/stores/auth';
+  import { useNotification } from '@/composables/useUtils';
   import { formatDateTime } from '@/utils/helpers';
   import { AUDIT_ACTION_LABELS, AUDIT_RESOURCE_TYPE_LABELS } from '@/utils/constants';
+  import { auditLogsService } from '@/services/resources';
   import DataTable from '@/components/common/DataTable.vue';
   import BaseSelect from '@/components/common/BaseSelect.vue';
-  import { MagnifyingGlassIcon } from '@heroicons/vue/24/outline';
+  import { MagnifyingGlassIcon, ArrowDownTrayIcon } from '@heroicons/vue/24/outline';
   import type { AuditLog } from '@/types';
 
   const store = useAuditLogsStore();
   const authStore = useAuthStore();
+  const notification = useNotification();
+  const exporting = ref(false);
 
   // El backend ya acota la consulta al tenant del usuario para todo rol que no sea PRISMA_ADMIN
   // (ver AuditLogService.list) -- esto sólo decide si mostramos la columna "Organización" (no
@@ -192,6 +205,28 @@
   function debouncedSearch() {
     clearTimeout(searchTimeout);
     searchTimeout = setTimeout(refresh, 300);
+  }
+
+  async function exportCsv() {
+    exporting.value = true;
+    try {
+      const { data } = await auditLogsService.exportCsv({
+        search: searchTerm.value || undefined,
+        action: actionFilter.value || undefined,
+      });
+      const url = window.URL.createObjectURL(new Blob([data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', 'bitacora.csv');
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      notification.success('Bitácora exportada a CSV');
+    } catch {
+      notification.error('Error al exportar la bitácora');
+    } finally {
+      exporting.value = false;
+    }
   }
 
   function handlePageChange(page: number) {

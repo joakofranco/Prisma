@@ -191,6 +191,51 @@ nginx; headers de seguridad presentes en el frontend (CSP, `X-Frame-Options`,
 `X-Content-Type-Options`); los errores de `backend-core` no filtran stack traces; CORS no refleja
 orígenes arbitrarios.
 
+## Cifrado en reposo (RNF-08)
+
+**Qué cifra la aplicación hoy:** las contraseñas de usuario no se guardan en texto plano ni
+cifradas de forma reversible -- se guardan como hash Argon2id (`PasswordHasher`,
+`users.password_hash`), que es la práctica correcta para contraseñas (un hash de un solo sentido
+es preferible a un cifrado reversible, incluso si la clave de cifrado se filtrara). Revisamos el
+resto de las entidades de `backend-core` y no encontramos ninguna otra columna con datos sensibles
+en texto plano: la configuración SMTP (incluida su contraseña) no se persiste en la base de PRISMA,
+se guarda directamente en Keycloak (`EmailSettingsService` delega en `KeycloakAdminClient`); las
+credenciales reales de los usuarios tampoco viven en esta base, Keycloak es el único *identity
+provider*. Por eso no se agregó cifrado de columnas vía `pgcrypto` u otro mecanismo: no hay ningún
+dato en texto plano en Postgres que lo necesite hoy. Si en el futuro se agrega una columna
+genuinamente sensible (un token de API de terceros, por ejemplo), ese es el momento de evaluar
+`pgcrypto` para esa columna puntual.
+
+**Qué queda fuera del alcance del código de la app -- responsabilidad del operador del host:**
+el cifrado "en reposo" en el sentido de at-rest encryption de disco (que protege los datos si
+alguien roba el disco físico o una copia del volumen) no se puede activar desde dentro de un
+contenedor Docker: Postgres y RustFS escriben a los volúmenes `prisma-postgres-data` y
+`prisma-rustfs-data`, que son carpetas del sistema de archivos del host. Cifrarlos es una decisión
+de infraestructura, no de la aplicación. Para el target de producción real de este proyecto
+(servidor Linux con Docker Engine, ver [`Ambientes-Despliegue.md`](Ambientes-Despliegue.md)), la
+recomendación es:
+
+1. Cifrar la partición/disco donde vive el `docker volume` de Postgres y RustFS con LUKS
+   (`dm-crypt`), *antes* de desplegar: `cryptsetup luksFormat /dev/sdX && cryptsetup luksOpen
+   /dev/sdX prisma_data && mkfs.ext4 /dev/mapper/prisma_data`, montarlo en el punto donde Docker
+   guarda sus volúmenes (o usar `docker volume create --opt device=/dev/mapper/prisma_data`), y
+   agregar la entrada correspondiente a `/etc/crypttab` con la clave en un dispositivo o gestor de
+   secretos aparte del propio disco (si la clave vive en el mismo disco sin cifrar, el cifrado no
+   protege contra el robo físico del equipo completo).
+2. Si el servidor es una VM de un proveedor cloud en lugar de hardware propio, usar en su lugar el
+   cifrado de disco nativo del proveedor (todos los principales lo ofrecen por defecto o con un
+   flag al crear el volumen) en vez de LUKS manual -- es equivalente en protección y evita
+   gestionar la clave vos mismo.
+
+**RustFS y cifrado server-side (SSE):** RustFS expone una API compatible con S3, protocolo que sí
+define SSE-S3/SSE-C, pero no encontramos en este repo (ni en la imagen `rustfs/rustfs:1.0.3` que
+ya se usa) evidencia de que la implementación de RustFS soporte SSE -- no hay variables de entorno
+ni documentación propia al respecto. No se agregó ninguna configuración de SSE para no declarar
+algo que no está verificado: si RustFS lo soporta en una versión más nueva, es preferible
+confirmarlo contra la documentación oficial del proyecto antes de activarlo, en vez de asumirlo. La
+mitigación real disponible hoy es el cifrado de volumen del punto anterior, que cubre tanto a
+Postgres como a RustFS por igual.
+
 ## Cumplimiento MCU 5.0
 
 PRISMA implementa los controles necesarios para ser AUDITADA por sí misma:

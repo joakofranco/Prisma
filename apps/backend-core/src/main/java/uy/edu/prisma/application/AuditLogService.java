@@ -79,7 +79,63 @@ public class AuditLogService {
     Page<AuditLog> result =
         auditRepo.search(tenantId, blankToNull(action), blankToNull(search), pageable);
 
-    List<AuditLog> content = result.getContent();
+    return new PaginatedDto<>(
+        toDtos(result.getContent()), result.getTotalElements(), page, pageSize);
+  }
+
+  // Tope de filas de un export CSV: evita cargar en memoria una bitácora de años sin paginar. Para
+  // "auditorías externas" (RF-TRZ-05) 50.000 filas ya es un volumen enorme -- quien necesite más
+  // puede acotar el filtro de búsqueda/acción.
+  private static final int EXPORT_MAX_ROWS = 50_000;
+
+  /**
+   * RF-TRZ-05: exporta a CSV la bitácora que matchea el mismo filtro de búsqueda/acción que {@link
+   * #list}, sin paginar (hasta {@link #EXPORT_MAX_ROWS}), para que un auditor pueda llevarse el set
+   * de datos filtrado a una herramienta externa.
+   */
+  @Transactional(readOnly = true)
+  public String exportCsv(String search, String action) {
+    UUID tenantId = null;
+    if (!currentUser.isPrismaAdmin()) {
+      tenantId = currentUser.currentTenantId();
+      if (tenantId == null) {
+        return CSV_HEADER;
+      }
+    }
+    PageRequest pageable = PageRequest.of(0, EXPORT_MAX_ROWS, Sort.by("createdAt").descending());
+    Page<AuditLog> result =
+        auditRepo.search(tenantId, blankToNull(action), blankToNull(search), pageable);
+
+    StringBuilder csv = new StringBuilder(CSV_HEADER);
+    for (AuditLogDto dto : toDtos(result.getContent())) {
+      csv.append(
+          String.join(
+              ",",
+              csvField(dto.createdAt() != null ? dto.createdAt().toString() : ""),
+              csvField(dto.userFullName() != null ? dto.userFullName() : ""),
+              csvField(dto.userEmail() != null ? dto.userEmail() : ""),
+              csvField(dto.tenantName() != null ? dto.tenantName() : ""),
+              csvField(dto.action()),
+              csvField(dto.resourceName() != null ? dto.resourceName() : dto.resource()),
+              csvField(dto.ipAddress() != null ? dto.ipAddress() : "")));
+      csv.append("\r\n");
+    }
+    return csv.toString();
+  }
+
+  private static final String CSV_HEADER = "Fecha,Usuario,Email,Organizacion,Accion,Recurso,IP\r\n";
+
+  // RFC 4180: un campo que contenga coma, comilla o salto de linea va entre comillas, con las
+  // comillas internas duplicadas. El resto de los campos de esta bitacora no necesitan quoting,
+  // pero nombres/recursos arbitrarios si pueden traer una coma.
+  private static String csvField(String value) {
+    if (value.contains(",") || value.contains("\"") || value.contains("\n")) {
+      return "\"" + value.replace("\"", "\"\"") + "\"";
+    }
+    return value;
+  }
+
+  private List<AuditLogDto> toDtos(List<AuditLog> content) {
     List<ResourceRef> resourceRefs =
         content.stream().map(log -> parseResource(log.getResource())).toList();
 
@@ -147,8 +203,7 @@ public class AuditLogService {
               evaluationsById,
               catalogVersionsById));
     }
-
-    return new PaginatedDto<>(dtos, result.getTotalElements(), page, pageSize);
+    return dtos;
   }
 
   private static final Pattern STATUS_PAYLOAD_PATTERN = Pattern.compile("\"status\":\"(\\w+)\"");
