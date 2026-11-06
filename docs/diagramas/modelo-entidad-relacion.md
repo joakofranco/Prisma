@@ -204,6 +204,7 @@ erDiagram
     varchar_10 priority
     varchar_20 status
     date due_date
+    text comments "nullable"
     timestamptz created_at
   }
 

@@ -305,6 +305,8 @@ export interface ImprovementPlan {
   priority: 'HIGH' | 'MEDIUM' | 'LOW';
   status: 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'OVERDUE';
   dueDate: string;
+  /** Comentarios libres del ítem (RF-PLN-02), hasta 2000 caracteres. */
+  comments?: string | null;
   createdAt: string;
 }
 

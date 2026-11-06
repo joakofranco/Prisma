@@ -52,7 +52,7 @@ public class ImprovementPlanController {
   @PutMapping("/{id}")
   @PreAuthorize("hasAnyRole('PRISMA_ADMIN','ORG_RESPONSIBLE')")
   public ResponseEntity<ImprovementPlanDto> update(
-      @PathVariable UUID id, @RequestBody UpdateImprovementPlanDto dto) {
+      @PathVariable UUID id, @Valid @RequestBody UpdateImprovementPlanDto dto) {
     return ResponseEntity.ok(service.update(id, dto));
   }
 }

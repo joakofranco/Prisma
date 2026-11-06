@@ -111,6 +111,7 @@ public class ImprovementPlanService {
             .priority(parsePriority(dto.priority()))
             .status(PlanStatus.PENDING)
             .dueDate(parseDueDate(dto.dueDate()))
+            .comments(normalizeComments(dto.comments()))
             .build();
     return toDto(repo.save(plan));
   }
@@ -133,6 +134,10 @@ public class ImprovementPlanService {
     }
     if (dto.dueDate() != null && !dto.dueDate().isBlank()) {
       plan.setDueDate(parseDueDate(dto.dueDate()));
+    }
+    // Comentarios: null = sin cambios; una cadena vacía (o en blanco) borra el comentario.
+    if (dto.comments() != null) {
+      plan.setComments(normalizeComments(dto.comments()));
     }
     return toDto(repo.save(plan));
   }
@@ -281,6 +286,14 @@ public class ImprovementPlanService {
     }
   }
 
+  /** Sin espacios de más y {@code null} si quedó vacío: un comentario en blanco no se guarda. */
+  private static String normalizeComments(String comments) {
+    if (comments == null || comments.isBlank()) {
+      return null;
+    }
+    return comments.strip();
+  }
+
   private ImprovementPlanDto toDto(ImprovementPlan p) {
     Long dueInDays = null;
     if (p.getDueDate() != null) {
@@ -296,6 +309,7 @@ public class ImprovementPlanService {
         p.getStatus().name(),
         p.getDueDate() != null ? p.getDueDate().toString() : null,
         dueInDays,
+        p.getComments(),
         p.getCreatedAt());
   }
 }
