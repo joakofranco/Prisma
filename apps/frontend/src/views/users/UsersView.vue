@@ -106,6 +106,16 @@
           <CheckCircleIcon v-else class="w-4 h-4" />
         </button>
         <button
+          v-if="isPlatformAdmin && (row as User).canLogin"
+          class="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+          title="Desbloquear cuenta"
+          aria-label="Desbloquear cuenta"
+          data-testid="unlock-user"
+          @click="confirmUnlock(row as User)"
+        >
+          <LockOpenIcon class="w-4 h-4" />
+        </button>
+        <button
           class="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
           title="Editar usuario"
           @click="editUser(row)"
@@ -332,6 +342,7 @@
     PencilIcon,
     TrashIcon,
     NoSymbolIcon,
+    LockOpenIcon,
     CheckCircleIcon,
     ClipboardDocumentIcon,
     ArrowPathIcon,
@@ -597,6 +608,30 @@
       );
     } catch (err) {
       notification.error(getErrorMessage(err, `Error al ${verb} el usuario`));
+    }
+  }
+
+  // RF-AUTH-08: Keycloak bloquea la cuenta tras 10 intentos fallidos seguidos en 15 minutos. El
+  // administrador global puede levantar el bloqueo sin esperar. No se consulta el estado de cada fila
+  // (sería una llamada a Keycloak por usuario): el botón está siempre y el backend dice si la cuenta
+  // estaba bloqueada.
+  async function confirmUnlock(user: User) {
+    if (
+      !confirm(
+        `¿Desbloquear la cuenta de ${user.firstName} ${user.lastName}? Podrá volver a iniciar sesión de inmediato.`,
+      )
+    ) {
+      return;
+    }
+    try {
+      const { data } = await usersService.unlock(user.id);
+      if (data.wasLocked) {
+        notification.success(`Cuenta de ${user.firstName} ${user.lastName} desbloqueada`);
+      } else {
+        notification.warning(`La cuenta de ${user.firstName} ${user.lastName} no estaba bloqueada`);
+      }
+    } catch (err) {
+      notification.error(getErrorMessage(err, 'No se pudo desbloquear la cuenta'));
     }
   }
 

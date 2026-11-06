@@ -78,6 +78,11 @@ public class Dto {
   public record OrganizationReactivationDto(OrganizationDto organization, int disabledUsers) {}
 
   // ---- User ----
+  /**
+   * Resultado de desbloquear una cuenta: {@code wasLocked} es false si no había nada que limpiar.
+   */
+  public record UnlockUserResultDto(boolean wasLocked) {}
+
   public record UserDto(
       UUID id,
       String email,

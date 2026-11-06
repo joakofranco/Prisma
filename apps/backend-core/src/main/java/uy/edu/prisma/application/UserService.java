@@ -306,6 +306,29 @@ public class UserService {
     }
   }
 
+  /**
+   * Desbloquea la cuenta de un usuario que Keycloak bloqueó por demasiados intentos fallidos
+   * (PRI-233, RF-AUTH-08). Solo el administrador global (lo exige el controlador). Es idempotente:
+   * si la cuenta no estaba bloqueada no cambia nada y lo dice.
+   *
+   * @return {@code true} si había intentos fallidos o un bloqueo que se limpiaron
+   */
+  public boolean unlock(UUID id) {
+    User user =
+        userRepo.findById(id).orElseThrow(() -> new ResourceNotFoundException("Usuario", id));
+    if (user.getKeycloakId() == null) {
+      throw new InvalidRequestException(
+          "El usuario no tiene una cuenta de acceso todavía: no hay nada que desbloquear");
+    }
+    var status = keycloakAdmin.loginFailureStatus(user.getKeycloakId());
+    boolean wasLocked = status.disabled() || status.numFailures() > 0;
+    if (wasLocked) {
+      keycloakAdmin.clearLoginFailures(user.getKeycloakId());
+    }
+    auditLog.record("UNLOCK_USER", "user:" + id, "{\"wasLocked\":" + wasLocked + "}");
+    return wasLocked;
+  }
+
   // Id fija del usuario semilla (ver V4__seed_admin_user.sql) -- es el administrador global del
   // sistema, no un PRISMA_ADMIN cualquiera: sin esta cuenta no queda nadie que pueda dar de alta
   // organizaciones ni el resto de los usuarios desde cero, así que no se permite borrarla sin

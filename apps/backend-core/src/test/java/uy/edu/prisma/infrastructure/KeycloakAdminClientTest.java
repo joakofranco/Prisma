@@ -257,6 +257,74 @@ class KeycloakAdminClientTest {
     server.verify();
   }
 
+  // ---- PRI-233: bloqueo de cuenta por intentos fallidos ----
+
+  private String bruteForceUrl(UUID keycloakId) {
+    return BASE_URL + "/admin/realms/prisma/attack-detection/brute-force/users/" + keycloakId;
+  }
+
+  @Test
+  void loginFailureStatusReadsTheLockAndTheFailureCount() {
+    UUID keycloakId = UUID.randomUUID();
+    expectAdminToken();
+    server
+        .expect(requestTo(bruteForceUrl(keycloakId)))
+        .andExpect(method(HttpMethod.GET))
+        .andRespond(
+            withSuccess(
+                "{\"numFailures\":10,\"disabled\":true,\"lastIPFailure\":\"10.0.0.1\","
+                    + "\"lastFailure\":1793999000000,\"extra\":\"ignorado\"}",
+                MediaType.APPLICATION_JSON));
+
+    var status = client.loginFailureStatus(keycloakId);
+
+    assertTrue(status.disabled());
+    assertEquals(10, status.numFailures());
+    server.verify();
+  }
+
+  @Test
+  void loginFailureStatusOfAUserWithoutFailuresIsNotLocked() {
+    UUID keycloakId = UUID.randomUUID();
+    expectAdminToken();
+    server
+        .expect(requestTo(bruteForceUrl(keycloakId)))
+        .andRespond(
+            withSuccess(
+                "{\"numFailures\":0,\"disabled\":false,\"lastFailure\":0}",
+                MediaType.APPLICATION_JSON));
+
+    var status = client.loginFailureStatus(keycloakId);
+
+    assertFalse(status.disabled());
+    assertEquals(0, status.numFailures());
+  }
+
+  @Test
+  void clearLoginFailuresDeletesTheBruteForceRecordOfThatUserOnly() {
+    UUID keycloakId = UUID.randomUUID();
+    expectAdminToken();
+    server
+        .expect(requestTo(bruteForceUrl(keycloakId)))
+        .andExpect(method(HttpMethod.DELETE))
+        .andExpect(header("Authorization", "Bearer tok"))
+        .andRespond(withStatus(HttpStatus.NO_CONTENT));
+
+    assertDoesNotThrow(() -> client.clearLoginFailures(keycloakId));
+    server.verify();
+  }
+
+  @Test
+  void unlockErrorsFromKeycloakArePropagated() {
+    UUID keycloakId = UUID.randomUUID();
+    expectAdminToken();
+    server
+        .expect(requestTo(bruteForceUrl(keycloakId)))
+        .andRespond(withStatus(HttpStatus.FORBIDDEN));
+
+    assertThrows(Exception.class, () -> client.clearLoginFailures(keycloakId));
+  }
+
   @Test
   void removeOtpCredentialsReturnsZeroWhenTheUserHasNoOtp() {
     UUID keycloakId = UUID.randomUUID();

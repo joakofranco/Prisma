@@ -46,6 +46,10 @@ export const usersService = {
   delete(id: string) {
     return apiClient.delete(`/users/${id}`);
   },
+  /** Desbloquea la cuenta bloqueada por intentos fallidos de login (solo PRISMA_ADMIN, RF-AUTH-08). */
+  unlock(id: string) {
+    return apiClient.post<{ wasLocked: boolean }>(`/users/${id}/unlock`);
+  },
 };
 
 export const organizationsService = {

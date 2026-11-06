@@ -25,6 +25,7 @@ import uy.edu.prisma.domain.entity.User;
 import uy.edu.prisma.domain.entity.UserRole;
 import uy.edu.prisma.domain.exception.ConflictException;
 import uy.edu.prisma.domain.exception.InvalidRequestException;
+import uy.edu.prisma.domain.exception.ResourceNotFoundException;
 import uy.edu.prisma.domain.repository.OrganizationRepository;
 import uy.edu.prisma.domain.repository.UserRepository;
 import uy.edu.prisma.infrastructure.KeycloakAdminClient;
@@ -417,6 +418,86 @@ class UserServiceTest {
 
     verify(keycloakAdmin, times(1)).setPermanentPassword(keycloakId, "NuevaClave1!");
     verify(keycloakAdmin, never()).resetPassword(any(), any());
+  }
+
+  // ---- PRI-233: el administrador desbloquea una cuenta ----
+
+  @Test
+  void unlockClearsTheFailuresOfALockedAccountAndAuditsIt() {
+    UUID keycloakId = UUID.randomUUID();
+    user.setKeycloakId(keycloakId);
+    when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
+    when(keycloakAdmin.loginFailureStatus(keycloakId))
+        .thenReturn(new KeycloakAdminClient.LoginFailureStatus(true, 10));
+
+    assertTrue(service.unlock(user.getId()));
+
+    verify(keycloakAdmin).clearLoginFailures(keycloakId);
+    verify(auditLog)
+        .record(eq("UNLOCK_USER"), eq("user:" + user.getId()), contains("\"wasLocked\":true"));
+  }
+
+  @Test
+  void unlockAlsoClearsAnAccountWithFailuresThatIsNotLockedYet() {
+    UUID keycloakId = UUID.randomUUID();
+    user.setKeycloakId(keycloakId);
+    when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
+    when(keycloakAdmin.loginFailureStatus(keycloakId))
+        .thenReturn(new KeycloakAdminClient.LoginFailureStatus(false, 4));
+
+    assertTrue(service.unlock(user.getId()));
+
+    verify(keycloakAdmin).clearLoginFailures(keycloakId);
+  }
+
+  @Test
+  void unlockOfAnAccountThatWasNotLockedChangesNothingAndSaysSo() {
+    UUID keycloakId = UUID.randomUUID();
+    user.setKeycloakId(keycloakId);
+    when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
+    when(keycloakAdmin.loginFailureStatus(keycloakId))
+        .thenReturn(new KeycloakAdminClient.LoginFailureStatus(false, 0));
+
+    assertFalse(service.unlock(user.getId()));
+
+    verify(keycloakAdmin, never()).clearLoginFailures(any());
+    verify(auditLog)
+        .record(eq("UNLOCK_USER"), eq("user:" + user.getId()), contains("\"wasLocked\":false"));
+  }
+
+  @Test
+  void unlockOfAUserWithoutKeycloakAccountIsRejected() {
+    user.setKeycloakId(null);
+    when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
+
+    assertThrows(InvalidRequestException.class, () -> service.unlock(user.getId()));
+
+    verify(keycloakAdmin, never()).loginFailureStatus(any());
+    verify(auditLog, never()).record(eq("UNLOCK_USER"), any(), any());
+  }
+
+  @Test
+  void unlockOfAMissingUserIsNotFound() {
+    UUID id = UUID.randomUUID();
+    when(userRepo.findById(id)).thenReturn(Optional.empty());
+
+    assertThrows(ResourceNotFoundException.class, () -> service.unlock(id));
+  }
+
+  @Test
+  void unlockDoesNotHideKeycloakErrors() {
+    UUID keycloakId = UUID.randomUUID();
+    user.setKeycloakId(keycloakId);
+    when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
+    when(keycloakAdmin.loginFailureStatus(keycloakId))
+        .thenReturn(new KeycloakAdminClient.LoginFailureStatus(true, 10));
+    doThrow(new RuntimeException("Keycloak caído"))
+        .when(keycloakAdmin)
+        .clearLoginFailures(keycloakId);
+
+    assertThrows(RuntimeException.class, () -> service.unlock(user.getId()));
+
+    verify(auditLog, never()).record(eq("UNLOCK_USER"), any(), any());
   }
 
   // ---- PRI-365: el admin que restablece una contraseña le quita el MFA al usuario ----

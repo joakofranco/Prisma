@@ -356,6 +356,31 @@ que no está sujeto a esta política.
 
 **Para apagar la MFA por rol** (p. ej. un ambiente de demo): `make mfa-disable`.
 
+## Bloqueo de cuenta por intentos fallidos (RF-AUTH-08)
+
+Keycloak bloquea la cuenta tras **10 intentos fallidos consecutivos en 15 minutos** y la mantiene
+bloqueada **15 minutos** (espera fija, sin crecimiento). Parámetros del realm `prisma`:
+
+| Parámetro | Valor | Significado |
+|---|---|---|
+| `failureFactor` | 10 | intentos fallidos que bloquean |
+| `maxDeltaTimeSeconds` | 900 | ventana en que se cuentan |
+| `waitIncrementSeconds` = `maxFailureWaitSeconds` | 900 | bloqueo de 15 min, siempre igual |
+| `minimumQuickLoginWaitSeconds` / `quickLoginCheckMilliSeconds` | 60 / 1000 | sin cambios: dos fallos con menos de 1 s de diferencia bloquean 60 s antes de llegar a los 10 |
+
+Están en `infra/keycloak/realm-prisma.json` (entornos nuevos) y se aplican en los existentes con
+`make auth-policy`; `make auth-policy-status` los compara con lo esperado.
+
+**Desbloquear a un usuario** sin esperar los 15 minutos: el `PRISMA_ADMIN` abre **Usuarios** y usa el
+botón con el candado abierto («Desbloquear cuenta») de la fila. Queda registrado como
+`UNLOCK_USER` en la bitácora. Si la cuenta no estaba bloqueada, la pantalla lo avisa y no cambia
+nada. Solo el administrador global puede hacerlo (no el `ORG_RESPONSIBLE`).
+
+**Al probar el bloqueo, ojo con el límite de NGINX** (sección siguiente): deja pasar 5 intentos de login
+por minuto por IP (`burst=2`), y los que NGINX rechaza no llegan a Keycloak, así que no cuentan para el
+bloqueo. Para llegar a 10 hay que espaciar los intentos (unos 12 segundos entre ellos después de los
+tres primeros), o probar contra Keycloak directo (puerto 8180). No hay que cambiar el límite de NGINX.
+
 ## Rate limiting de login (RNF-07)
 
 NGINX limita a **5 intentos de login por minuto por IP** (zona `auth_login`, ver
