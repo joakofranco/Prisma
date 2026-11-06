@@ -4,7 +4,7 @@
   uy.edu.prisma.config.MaskingPatternLayout), que enmascara contraseñas, tokens y encabezados
   Authorization/Bearer antes de escribirlas. Los niveles (root, uy.edu.prisma, etc.) siguen
   pisados en runtime por "logging.level.*" de application.yml, igual que con el logback.xml por
-  defecto de Spring Boot -- los valores de abajo son sólo el default si esa propiedad no está.
+  defecto de Spring Boot: los valores de abajo son sólo el default si esa propiedad no está.
 -->
 <configuration>
     <include resource="org/springframework/boot/logging/logback/defaults.xml" />
