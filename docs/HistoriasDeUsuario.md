@@ -497,6 +497,12 @@ y roles habilitados en [`docs/API.md`](API.md).
 > o vencidas, y cambiar el estado de cada una.
 
 - Las acciones vencidas se recalculan al listar (no es un campo estático).
+- **Avance por prioridad (RF-PLN-06):** un bloque «Avance de remediación» muestra el porcentaje
+  de acciones completadas, global y por prioridad (Alta, Media, Baja). Se calcula en el frontend con
+  la lista de planes y se actualiza al crear, editar o completar una acción. Una prioridad sin
+  acciones dice «Sin acciones».
+- **Comentarios (RF-PLN-02):** cada acción puede llevar comentarios libres (hasta 2000 caracteres),
+  que se escriben al crearla y se editan o borran después.
 - **Implementado en:** `ImprovementPlanService.listByEvaluation` (marca overdue),
   `ImprovementView.vue`.
 

@@ -62,6 +62,49 @@
         />
       </div>
 
+      <section
+        class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-5"
+        aria-labelledby="remediation-progress-title"
+      >
+        <h2
+          id="remediation-progress-title"
+          class="text-base font-semibold text-slate-900 dark:text-white"
+        >
+          Avance de remediación
+        </h2>
+        <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">
+          Porcentaje de acciones completadas. Las pendientes, en progreso y vencidas cuentan como
+          abiertas.
+        </p>
+        <p
+          v-if="plans.length === 0"
+          class="mt-4 text-sm text-slate-500 dark:text-slate-400"
+          data-test="progress-empty"
+        >
+          Sin acciones registradas: el avance aparece cuando se cree la primera.
+        </p>
+        <div v-else class="mt-4 space-y-4">
+          <ProgressBar
+            label="Avance total"
+            :value="progress.overall.percent"
+            :detail="progressDetail(progress.overall)"
+            bar-class="bg-blue-600 dark:bg-blue-500"
+            data-test="progress-overall"
+          />
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <ProgressBar
+              v-for="row in priorityRows"
+              :key="row.key"
+              :label="`Prioridad ${row.label}`"
+              :value="progress[row.key].percent"
+              :detail="progressDetail(progress[row.key])"
+              :bar-class="row.barClass"
+              :data-test="`progress-${row.key}`"
+            />
+          </div>
+        </div>
+      </section>
+
       <div
         class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden"
       >
@@ -270,6 +313,8 @@
   import { formatDate, getErrorMessage } from '@/utils/helpers';
   import { useNotification } from '@/composables/useUtils';
   import StatsCard from '@/components/common/StatsCard.vue';
+  import ProgressBar from '@/components/common/ProgressBar.vue';
+  import { planProgress, type Progress } from '@/utils/planProgress';
   import BaseButton from '@/components/common/BaseButton.vue';
   import BaseModal from '@/components/common/BaseModal.vue';
   import BaseInput from '@/components/common/BaseInput.vue';
@@ -356,6 +401,19 @@
     { value: 'MEDIUM', label: 'Media' },
     { value: 'LOW', label: 'Baja' },
   ];
+
+  // Avance de remediación (RF-PLN-06): se recalcula solo cuando cambia la lista de planes, así que se
+  // actualiza al crear, editar o completar una acción sin recargar la página.
+  const progress = computed(() => planProgress(plans.value));
+  const priorityRows = [
+    { key: 'HIGH', label: 'Alta', barClass: 'bg-red-600 dark:bg-red-500' },
+    { key: 'MEDIUM', label: 'Media', barClass: 'bg-amber-600 dark:bg-amber-500' },
+    { key: 'LOW', label: 'Baja', barClass: 'bg-emerald-600 dark:bg-emerald-500' },
+  ] as const;
+
+  function progressDetail(p: Progress) {
+    return p.total === 0 ? '' : `${p.closed} de ${p.total} cerradas`;
+  }
 
   function plansByStatus(status: string) {
     return plans.value.filter((p) => p.status === status).length;
