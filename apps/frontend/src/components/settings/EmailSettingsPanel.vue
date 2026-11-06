@@ -30,9 +30,18 @@
     </div>
 
     <form v-else class="space-y-4 mt-5" @submit.prevent="handleSubmit">
+      <!-- Sin SMTP, el «¿Olvidaste tu contraseña?» del login no avisa de nada: Keycloak responde que
+           enviará un correo, pero no sale ninguno y el error queda solo en los logs de Keycloak. -->
+      <BaseAlert v-if="!settings.configured" variant="warning" data-testid="smtp-missing-warning">
+        <strong>No hay un servidor de correo configurado.</strong> Mientras tanto, el enlace
+        «¿Olvidaste tu contraseña?» del login <strong>no envía ningún correo</strong>: el usuario ve
+        el aviso de que se envió, pero nunca le llega. Configurá el servidor SMTP para habilitar la
+        recuperación de contraseña.
+      </BaseAlert>
       <BaseAlert variant="info">
-        Para probar la configuración: cerrá sesión y hacé clic en "¿Olvidaste tu contraseña?" en la
-        pantalla de login, con tu propio email.
+        Para probar la configuración sin cerrar sesión, usá el botón "Enviar correo de prueba" de
+        abajo. También podés probarla cerrando sesión y haciendo clic en "¿Olvidaste tu contraseña?"
+        en la pantalla de login.
       </BaseAlert>
 
       <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -129,6 +138,41 @@
         </BaseButton>
       </div>
     </form>
+
+    <div
+      v-if="!loading"
+      class="mt-6 pt-5 border-t border-slate-200 dark:border-slate-700 space-y-3"
+    >
+      <h3 class="text-sm font-semibold text-slate-900 dark:text-white">Enviar correo de prueba</h3>
+      <p class="text-xs text-slate-500 dark:text-slate-400">
+        Usa la configuración SMTP ya guardada (no la del formulario de arriba sin guardar) para
+        enviar un correo de prueba a la dirección indicada.
+      </p>
+      <div class="flex flex-col sm:flex-row gap-3 sm:items-end">
+        <div class="flex-1">
+          <BaseInput
+            id="smtp-test-email"
+            v-model="testEmail"
+            label="Email de destino"
+            type="email"
+            placeholder="vos@miorganizacion.com"
+            :error="testError"
+          />
+        </div>
+        <BaseButton
+          type="button"
+          variant="secondary"
+          :loading="testing"
+          :disabled="!settings.configured"
+          @click="handleTest"
+        >
+          Enviar correo de prueba
+        </BaseButton>
+      </div>
+      <p v-if="!settings.configured" class="text-xs text-slate-500 dark:text-slate-400">
+        Guardá primero una configuración para poder probarla.
+      </p>
+    </div>
   </div>
 </template>
 
@@ -136,6 +180,7 @@
   import { onMounted, reactive, ref } from 'vue';
   import { emailSettingsService } from '@/services/resources';
   import { useNotificationStore } from '@/stores/notification';
+  import { useAuthStore } from '@/stores/auth';
   import { getErrorMessage } from '@/utils/helpers';
   import BaseInput from '@/components/common/BaseInput.vue';
   import BaseButton from '@/components/common/BaseButton.vue';
@@ -143,6 +188,7 @@
   import type { EmailSettings } from '@/types';
 
   const notification = useNotificationStore();
+  const auth = useAuthStore();
 
   const loading = ref(true);
   const saving = ref(false);
@@ -171,6 +217,10 @@
   });
 
   const errors = reactive({ host: '', port: '', from: '', username: '', password: '' });
+
+  const testing = ref(false);
+  const testError = ref('');
+  const testEmail = ref(auth.user?.email || '');
 
   function applySettings(data: EmailSettings) {
     settings.value = data;
@@ -244,6 +294,23 @@
       notification.error(getErrorMessage(err, 'No se pudo guardar la configuración de email'));
     } finally {
       saving.value = false;
+    }
+  }
+
+  async function handleTest() {
+    testError.value = '';
+    if (!testEmail.value.trim()) {
+      testError.value = 'Ingresá un email de destino';
+      return;
+    }
+    testing.value = true;
+    try {
+      await emailSettingsService.test(testEmail.value.trim());
+      notification.success(`Correo de prueba enviado a ${testEmail.value.trim()}`);
+    } catch (err) {
+      notification.error(getErrorMessage(err, 'No se pudo enviar el correo de prueba'));
+    } finally {
+      testing.value = false;
     }
   }
 </script>

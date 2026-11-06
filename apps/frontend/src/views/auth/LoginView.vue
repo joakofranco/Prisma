@@ -23,6 +23,16 @@
           inicio de sesión segura.
         </p>
 
+        <div
+          v-if="passwordChanged"
+          class="bg-emerald-500/20 border border-emerald-500/30 rounded-lg p-3 mb-5"
+          data-testid="password-changed-notice"
+        >
+          <p class="text-emerald-700 dark:text-emerald-300 text-sm">
+            Tu contraseña se actualizó correctamente. Iniciá sesión con tu nueva contraseña.
+          </p>
+        </div>
+
         <div v-if="error" class="bg-red-500/20 border border-red-500/30 rounded-lg p-3 mb-5">
           <p class="text-red-300 text-sm">
             {{ error }}
@@ -74,9 +84,19 @@
   import { ref } from 'vue';
   import { useAuthStore } from '@/stores/auth';
   import { getErrorMessage } from '@/utils/helpers';
+  import { PASSWORD_CHANGED_KEY } from '@/utils/constants';
   import { ShieldCheckIcon } from '@heroicons/vue/24/solid';
 
   const authStore = useAuthStore();
+
+  // Viene de AccountView: se cambió la contraseña y se cerró la sesión. Se lee una sola vez.
+  const passwordChanged = ref(false);
+  try {
+    passwordChanged.value = sessionStorage.getItem(PASSWORD_CHANGED_KEY) === '1';
+    sessionStorage.removeItem(PASSWORD_CHANGED_KEY);
+  } catch {
+    // sin sessionStorage simplemente no se muestra el aviso
+  }
 
   const loading = ref(false);
   const error = ref('');

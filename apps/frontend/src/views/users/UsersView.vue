@@ -162,20 +162,68 @@
             required
           />
           <div>
+            <!-- Alta: la contraseña se genera sola y se muestra en claro para poder copiarla antes
+                 de crear el usuario. Edición: campo oculto, sin generador (la clave que se fija
+                 ahí queda permanente, a diferencia de la del alta, que es temporal). -->
             <BaseInput
               v-model="form.password"
-              label="Contraseña"
-              type="password"
+              :label="editingUser ? 'Contraseña' : 'Contraseña temporal'"
+              :type="editingUser ? 'password' : 'text'"
               placeholder="••••••••"
               :error="errors.password"
               :required="!editingUser"
             />
+            <div v-if="!editingUser" class="mt-2 flex flex-wrap items-center gap-2">
+              <BaseButton
+                variant="secondary"
+                type="button"
+                data-testid="copy-password"
+                @click="copyPassword"
+              >
+                <ClipboardDocumentIcon class="w-4 h-4" /> Copiar
+              </BaseButton>
+              <BaseButton
+                variant="outline"
+                type="button"
+                data-testid="regenerate-password"
+                @click="form.password = generatePassword()"
+              >
+                <ArrowPathIcon class="w-4 h-4" /> Generar otra
+              </BaseButton>
+            </div>
             <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">
               {{
                 editingUser
                   ? 'Dejar en blanco para no cambiarla. Fijar una acá es lo que le habilita el acceso a un usuario que todavía no puede iniciar sesión.'
-                  : 'Sin esto el usuario no va a poder iniciar sesión.'
+                  : 'Es temporal: el usuario deberá cambiarla en su primer inicio de sesión. Copiela y compártasela antes de crear el usuario; después no se vuelve a mostrar.'
               }}
+            </p>
+            <!-- PRI-365: al cambiar la contraseña de otro usuario, el backend (solo para PRISMA_ADMIN)
+                 le quita el MFA registrado. Se avisa ANTES de guardar. -->
+            <BaseAlert
+              v-if="willRemoveMfa"
+              variant="warning"
+              class="mt-2"
+              data-testid="mfa-removal-warning"
+            >
+              <strong
+                >Vas a cambiar la contraseña de este usuario y se le va a quitar el MFA.</strong
+              >
+              Si tenía un autenticador registrado, deja de valer: en su próximo inicio de sesión
+              tendrá que registrar uno nuevo (si la MFA es obligatoria para su rol) y entrar con la
+              contraseña que le pases. Usalo cuando haya perdido el acceso a su autenticador. Si
+              solo olvidó la contraseña, que use «¿Olvidaste tu contraseña?» en el login: no
+              necesita que se la restablezcas.
+            </BaseAlert>
+            <p
+              v-if="!editingUser && mfaRoleSelected"
+              class="mt-1 text-xs text-amber-700 dark:text-amber-400"
+              data-testid="mfa-first-login-hint"
+            >
+              Este rol requiere MFA: si la MFA obligatoria está activa, en ese mismo primer inicio
+              de sesión también se le pedirá registrar la aplicación autenticadora, además de
+              cambiar la contraseña. Son dos pasos distintos; el MFA no se vuelve a pedir al cambiar
+              la contraseña más adelante.
             </p>
           </div>
         </div>
@@ -264,6 +312,7 @@
   import { useUsersStore } from '@/stores/users';
   import { useOrganizationsStore } from '@/stores/organizations';
   import { useAuthStore } from '@/stores/auth';
+  import { generatePassword } from '@/utils/password';
   import { usersService } from '@/services/resources';
   import { useNotification } from '@/composables/useUtils';
   import { ROLE_LABELS } from '@/utils/constants';
@@ -274,6 +323,7 @@
   import BaseMultiSelect from '@/components/common/BaseMultiSelect.vue';
   import DataTable from '@/components/common/DataTable.vue';
   import BaseButton from '@/components/common/BaseButton.vue';
+  import BaseAlert from '@/components/common/BaseAlert.vue';
   import BaseModal from '@/components/common/BaseModal.vue';
   import BaseInput from '@/components/common/BaseInput.vue';
   import {
@@ -283,6 +333,8 @@
     TrashIcon,
     NoSymbolIcon,
     CheckCircleIcon,
+    ClipboardDocumentIcon,
+    ArrowPathIcon,
   } from '@heroicons/vue/24/outline';
   import type { User, UserRole } from '@/types';
 
@@ -335,6 +387,18 @@
   const isEditingOwnAccount = computed(
     () => !!editingUser.value && editingUser.value.id === authStore.user?.id,
   );
+  // Roles para los que `make mfa-enable` exige MFA (ver scripts/keycloak/enable-mfa.sh).
+  const MFA_ROLES = ['PRISMA_ADMIN', 'ORG_RESPONSIBLE'];
+  // Solo un PRISMA_ADMIN que edita a OTRO usuario y le fija una contraseña: es el caso en que el
+  // backend le quita el MFA (ver UserService.removeMfaIfAdminResetsPassword).
+  const willRemoveMfa = computed(
+    () =>
+      !!editingUser.value &&
+      isPlatformAdmin.value &&
+      !isEditingOwnAccount.value &&
+      form.password.trim().length > 0,
+  );
+  const mfaRoleSelected = computed(() => form.roles.some((r) => MFA_ROLES.includes(r)));
 
   const errors = reactive({
     firstName: '',
@@ -468,7 +532,20 @@
       // preseleccionamos ya que el campo queda deshabilitado para ese rol.
       form.organizationIds = [orgOptions.value[0].value];
     }
+    form.password = generatePassword();
     showCreateModal.value = true;
+  }
+
+  // Copia la contraseña generada al portapapeles. Si el navegador no lo permite (contexto no
+  // seguro, permiso denegado), no se falla en silencio: se avisa y se la deja seleccionable para
+  // copiarla a mano.
+  async function copyPassword() {
+    try {
+      await navigator.clipboard.writeText(form.password);
+      notification.success('Contraseña copiada al portapapeles');
+    } catch {
+      notification.warning('No se pudo copiar automáticamente: selecciónela y cópiela a mano');
+    }
   }
 
   let searchTimeout: ReturnType<typeof setTimeout>;
@@ -592,8 +669,13 @@
       if (form.password) payload.password = form.password;
 
       if (editingUser.value) {
+        const removesMfa = willRemoveMfa.value;
         await store.updateUser(editingUser.value.id, payload);
-        notification.success('Usuario actualizado correctamente');
+        notification.success(
+          removesMfa
+            ? 'Usuario actualizado. Se cambió su contraseña y se le quitó el MFA (si tenía uno).'
+            : 'Usuario actualizado correctamente',
+        );
       } else {
         await store.createUser(payload);
         notification.success('Usuario creado correctamente');
@@ -634,6 +716,7 @@
     if (newOrgId) {
       form.organizationIds = [newOrgId];
       form.roles = ['ORG_RESPONSIBLE'];
+      form.password = generatePassword();
       guidedNewOrgName.value =
         (route.query.newOrgName as string) ||
         orgOptions.value.find((o) => o.value === newOrgId)?.label ||

@@ -1,13 +1,17 @@
 package uy.edu.prisma.web.controller;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.UUID;
+import org.springframework.core.io.InputStreamResource;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import uy.edu.prisma.application.EvidenceService;
-import uy.edu.prisma.web.dto.Dto.DownloadUrlDto;
 import uy.edu.prisma.web.dto.Dto.EvidenceCitationDto;
 import uy.edu.prisma.web.dto.Dto.EvidenceDto;
 import uy.edu.prisma.web.dto.Dto.UploadEvidenceResponseDto;
@@ -44,9 +48,24 @@ public class EvidenceController {
     return ResponseEntity.noContent().build();
   }
 
+  // Bajan archivos el Responsable de Organización, el Administrador y el Auditor (que revisa la
+  // evidencia citada). Los reportes (PRI-313) mantienen su propia regla, sin Auditor. El backend
+  // sirve el archivo (con JWT en cada descarga) en
+  // lugar de entregar un enlace pre-firmado de RustFS.
   @GetMapping("/{id}/download")
-  public ResponseEntity<DownloadUrlDto> download(@PathVariable UUID id) {
-    return ResponseEntity.ok(service.generateDownloadUrl(id));
+  @PreAuthorize("hasAnyRole('PRISMA_ADMIN','ORG_RESPONSIBLE','AUDITOR')")
+  public ResponseEntity<InputStreamResource> download(@PathVariable UUID id) {
+    EvidenceService.EvidenceFile file = service.download(id);
+    return ResponseEntity.ok()
+        .header(
+            HttpHeaders.CONTENT_DISPOSITION,
+            ContentDisposition.attachment()
+                .filename(file.fileName(), StandardCharsets.UTF_8)
+                .build()
+                .toString())
+        .contentType(MediaType.parseMediaType(file.contentType()))
+        .contentLength(file.size())
+        .body(new InputStreamResource(file.content()));
   }
 
   /** Reintenta indexar una evidencia en el asistente RAG (p.ej. si falló al subirla). */

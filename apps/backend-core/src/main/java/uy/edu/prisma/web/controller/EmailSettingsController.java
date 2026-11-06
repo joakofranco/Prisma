@@ -6,6 +6,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import uy.edu.prisma.application.EmailSettingsService;
 import uy.edu.prisma.web.dto.Dto.EmailSettingsDto;
+import uy.edu.prisma.web.dto.Dto.TestEmailSettingsDto;
 import uy.edu.prisma.web.dto.Dto.UpdateEmailSettingsDto;
 
 /**
@@ -33,5 +34,11 @@ public class EmailSettingsController {
   public ResponseEntity<EmailSettingsDto> update(@Valid @RequestBody UpdateEmailSettingsDto dto) {
     service.update(dto);
     return ResponseEntity.ok(service.get());
+  }
+
+  @PostMapping("/test")
+  public ResponseEntity<Void> test(@Valid @RequestBody TestEmailSettingsDto dto) {
+    service.testConnection(dto.recipientEmail());
+    return ResponseEntity.noContent().build();
   }
 }

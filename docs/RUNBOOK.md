@@ -356,6 +356,23 @@ que no está sujeto a esta política.
 
 **Para apagar la MFA por rol** (p. ej. un ambiente de demo): `make mfa-disable`.
 
+## Rate limiting de login (RNF-07)
+
+NGINX limita a **5 intentos de login por minuto por IP** (zona `auth_login`, ver
+`infra/nginx/nginx.conf` y `infra/nginx/conf.d/prisma-locations.inc`), aplicado solo al endpoint
+donde Keycloak procesa usuario/contraseña del formulario de login
+(`/auth/realms/*/login-actions/authenticate`) — no al endpoint de token
+(`protocol/openid-connect/token`), que también usa el refresh silencioso de sesión del frontend y
+no debe verse afectado. Esto es independiente de la protección de fuerza bruta de Keycloak
+(`failureFactor`/`waitIncrementSeconds` en `infra/keycloak/realm-prisma.json`), que es por
+cuenta/usuario tras varios fallos; este límite de NGINX es por IP, sin importar a qué usuario se
+le esté probando la contraseña.
+
+**Síntoma si se excede:** NGINX corta con `503` los intentos de más allá del quinto en el minuto
+desde la misma IP. Para levantarlo antes de que expire la ventana, hay que reiniciar el contenedor
+de NGINX (`docker compose restart nginx`) — la zona de rate limiting vive en memoria compartida y
+se reinicia junto con el proceso.
+
 ## Backup y recuperación (RNF-13)
 
 ```bash

@@ -251,6 +251,55 @@ class UserServiceTest {
     verify(keycloakAdmin, never()).assignRealmRoles(any(), any());
   }
 
+  // RF-USR-04: segregación de funciones -- un usuario no puede ser auditor y evaluador interno
+  // a la vez (ni al crearse, ni al editarse para sumar el rol que le falta).
+  @Test
+  void createThrowsWhenAuditorAndInternalEvaluatorAssignedTogether() {
+    when(userRepo.existsByEmail("dual@test.com")).thenReturn(false);
+    when(orgRepo.findById(tenant.getId())).thenReturn(Optional.of(tenant));
+    when(orgRepo.findAllById(Set.of(tenant.getId()))).thenReturn(List.of(tenant));
+
+    CreateUserDto dto =
+        new CreateUserDto(
+            "dual@test.com",
+            "N",
+            "L",
+            tenant.getId(),
+            Set.of("AUDITOR", "INTERNAL_EVALUATOR"),
+            Set.of(tenant.getId()),
+            "Secreto123!");
+
+    assertThrows(ConflictException.class, () -> service.create(dto));
+    verify(userRepo, never()).save(any());
+    verify(keycloakAdmin, never()).createUser(any(), any(), any(), any(), any());
+  }
+
+  @Test
+  void updateThrowsWhenAddingAuditorRoleToExistingInternalEvaluator() {
+    user.setRoles(new java.util.HashSet<>(Set.of(UserRole.INTERNAL_EVALUATOR)));
+    when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
+
+    CreateUserDto dto =
+        new CreateUserDto(
+            "u@test.com", "Jane", "Doe", null, Set.of("INTERNAL_EVALUATOR", "AUDITOR"), null);
+
+    assertThrows(ConflictException.class, () -> service.update(user.getId(), dto));
+    verify(keycloakAdmin, never()).assignRealmRoles(any(), any());
+  }
+
+  @Test
+  void updateAllowsChangingBetweenAuditorAndInternalEvaluatorSeparately() {
+    user.setRoles(new java.util.HashSet<>(Set.of(UserRole.AUDITOR)));
+    when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
+
+    CreateUserDto dto =
+        new CreateUserDto("u@test.com", "Jane", "Doe", null, Set.of("INTERNAL_EVALUATOR"), null);
+
+    UserDto result = service.update(user.getId(), dto);
+
+    assertEquals(Set.of("INTERNAL_EVALUATOR"), result.roles());
+  }
+
   @Test
   void createWithoutTenantPersistsUser() {
     when(userRepo.existsByEmail("solo@test.com")).thenReturn(false);
@@ -368,6 +417,93 @@ class UserServiceTest {
 
     verify(keycloakAdmin, times(1)).setPermanentPassword(keycloakId, "NuevaClave1!");
     verify(keycloakAdmin, never()).resetPassword(any(), any());
+  }
+
+  // ---- PRI-365: el admin que restablece una contraseña le quita el MFA al usuario ----
+
+  private CreateUserDto passwordChange() {
+    return new CreateUserDto("u@test.com", "Jane", "Doe", null, null, "NuevaClave1!");
+  }
+
+  @Test
+  void adminResettingAnotherUsersPasswordRemovesTheirMfaAndAuditsIt() {
+    UUID keycloakId = UUID.randomUUID();
+    user.setKeycloakId(keycloakId);
+    when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
+    when(keycloakAdmin.removeOtpCredentials(keycloakId)).thenReturn(2);
+
+    service.update(user.getId(), passwordChange());
+
+    var order = inOrder(keycloakAdmin);
+    order.verify(keycloakAdmin).setPermanentPassword(keycloakId, "NuevaClave1!");
+    order.verify(keycloakAdmin).removeOtpCredentials(keycloakId);
+    verify(auditLog)
+        .record(eq("REMOVE_MFA"), eq("user:" + user.getId()), contains("\"removedCredentials\":2"));
+  }
+
+  @Test
+  void noMfaAuditWhenTheUserHadNoMfa() {
+    UUID keycloakId = UUID.randomUUID();
+    user.setKeycloakId(keycloakId);
+    when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
+    when(keycloakAdmin.removeOtpCredentials(keycloakId)).thenReturn(0);
+
+    service.update(user.getId(), passwordChange());
+
+    verify(keycloakAdmin).removeOtpCredentials(keycloakId);
+    verify(auditLog, never()).record(eq("REMOVE_MFA"), any(), any());
+  }
+
+  @Test
+  void mfaIsNotRemovedWhenThePasswordIsNotChanged() {
+    UUID keycloakId = UUID.randomUUID();
+    user.setKeycloakId(keycloakId);
+    when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
+
+    service.update(user.getId(), new CreateUserDto("u@test.com", "Jane", "Doe", null, null, null));
+
+    verify(keycloakAdmin, never()).removeOtpCredentials(any());
+  }
+
+  @Test
+  void orgResponsibleResettingAPasswordDoesNotTouchTheMfa() {
+    UUID keycloakId = UUID.randomUUID();
+    user.setKeycloakId(keycloakId);
+    user.setOrganizations(Set.of(tenant));
+    when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
+    when(currentUser.isPrismaAdmin()).thenReturn(false);
+    when(currentUser.currentTenantId()).thenReturn(tenant.getId());
+    when(currentUser.organizationIds()).thenReturn(Set.of(tenant.getId()));
+
+    service.update(user.getId(), passwordChange());
+
+    verify(keycloakAdmin).setPermanentPassword(keycloakId, "NuevaClave1!");
+    verify(keycloakAdmin, never()).removeOtpCredentials(any());
+  }
+
+  @Test
+  void adminEditingTheirOwnAccountKeepsTheirMfa() {
+    UUID keycloakId = UUID.randomUUID();
+    user.setKeycloakId(keycloakId);
+    when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
+    when(currentUser.currentUser()).thenReturn(Optional.of(user));
+
+    service.update(user.getId(), passwordChange());
+
+    verify(keycloakAdmin).setPermanentPassword(keycloakId, "NuevaClave1!");
+    verify(keycloakAdmin, never()).removeOtpCredentials(any());
+  }
+
+  @Test
+  void keycloakFailureRemovingMfaPropagatesSoTheAdminKnows() {
+    UUID keycloakId = UUID.randomUUID();
+    user.setKeycloakId(keycloakId);
+    when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
+    when(keycloakAdmin.removeOtpCredentials(keycloakId))
+        .thenThrow(new IllegalStateException("keycloak caído"));
+
+    assertThrows(IllegalStateException.class, () -> service.update(user.getId(), passwordChange()));
+    verify(auditLog, never()).record(eq("REMOVE_MFA"), any(), any());
   }
 
   @Test

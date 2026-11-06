@@ -121,7 +121,12 @@
       icon: AdjustmentsHorizontalIcon,
       roles: ['PRISMA_ADMIN'],
     },
-    { to: '/reports', label: 'Reportes', icon: ChartBarIcon, roles: [] },
+    {
+      to: '/reports',
+      label: 'Reportes',
+      icon: ChartBarIcon,
+      roles: ['PRISMA_ADMIN', 'ORG_RESPONSIBLE'],
+    },
     {
       to: '/activity',
       label: 'Actividad del Sistema',

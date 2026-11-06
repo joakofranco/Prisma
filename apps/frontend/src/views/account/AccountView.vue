@@ -120,7 +120,7 @@
   import { useNotificationStore } from '@/stores/notification';
   import { getErrorMessage } from '@/utils/helpers';
   import { changePasswordSchema, personNameSchema } from '@/utils/validators';
-  import { ROLE_LABELS } from '@/utils/constants';
+  import { PASSWORD_CHANGED_KEY, ROLE_LABELS } from '@/utils/constants';
   import BaseInput from '@/components/common/BaseInput.vue';
   import BaseButton from '@/components/common/BaseButton.vue';
 
@@ -207,10 +207,19 @@
         currentPassword: form.currentPassword,
         newPassword: form.newPassword,
       });
-      notification.success('Contraseña actualizada correctamente');
       form.currentPassword = '';
       form.newPassword = '';
       form.confirmPassword = '';
+      // Tras cambiar la contraseña se cierra la sesión y se vuelve al login para entrar con las
+      // credenciales nuevas (PRI-363). El aviso lo muestra la pantalla de login: un toast de acá
+      // se perdería con la recarga de página que provoca el logout de Keycloak.
+      try {
+        sessionStorage.setItem(PASSWORD_CHANGED_KEY, '1');
+      } catch {
+        // sin sessionStorage solo se pierde el aviso; el logout igual se hace
+      }
+      await authStore.logout();
+      return;
     } catch (err) {
       notification.error(getErrorMessage(err, 'No se pudo cambiar la contraseña'));
     } finally {

@@ -145,6 +145,7 @@ public class UserService {
     user.setPasswordHash(passwordHasher.hash(dto.password()));
     assertOrganizationsActive(user.getOrganizations());
     validateOrganizationsForRoles(user);
+    assertRoleSegregation(user.getRoles());
 
     User saved = userRepo.save(user);
     // Se provisiona en Keycloak DESPUÉS del insert local: si esto lanza, la anotación
@@ -229,6 +230,7 @@ public class UserService {
       user.setOrganizations(requested);
     }
     validateOrganizationsForRoles(user);
+    assertRoleSegregation(user.getRoles());
     boolean passwordProvided = dto.password() != null && !dto.password().isBlank();
     if (passwordProvided) {
       user.setPasswordHash(passwordHasher.hash(dto.password()));
@@ -251,6 +253,7 @@ public class UserService {
         // fijó) esto se ve exactamente como "no funciona", porque esa clave nunca llega a ser la
         // que de verdad habilita el acceso.
         keycloakAdmin.setPermanentPassword(user.getKeycloakId(), dto.password());
+        removeMfaIfAdminResetsPassword(user);
       }
     } else if (passwordProvided) {
       // Auto-sanación: usuarios creados antes de este fix (o cuya creación en Keycloak falló en
@@ -273,6 +276,34 @@ public class UserService {
     UserDto result = toDto(user);
     auditLog.record("UPDATE", "user:" + id, null);
     return result;
+  }
+
+  /**
+   * PRI-365: cuando un PRISMA_ADMIN restablece la contraseña de OTRO usuario, se le quita el MFA
+   * registrado, para que quien perdió el acceso a su autenticador no dependa de que alguien entre a
+   * la consola de Keycloak (recuperar la contraseña por correo ahora exige el OTP actual, así que
+   * no puede resolverlo solo). Con la MFA obligatoria activa, en su próximo inicio de sesión
+   * Keycloak le exige registrar uno nuevo.
+   *
+   * <p>Solo PRISMA_ADMIN: un ORG_RESPONSIBLE que restablece una clave NO toca el MFA. Y no aplica a
+   * la propia cuenta del administrador (se quedaría sin MFA por editarse a sí mismo; para eso está
+   * «Mi cuenta»). Si Keycloak falla, la excepción se propaga: la contraseña ya cambió pero el admin
+   * se entera de que el MFA no se pudo quitar y puede reintentar.
+   */
+  private void removeMfaIfAdminResetsPassword(User user) {
+    if (!currentUser.isPrismaAdmin()) {
+      return;
+    }
+    boolean isOwnAccount =
+        currentUser.currentUser().map(u -> u.getId().equals(user.getId())).orElse(false);
+    if (isOwnAccount) {
+      return;
+    }
+    int removed = keycloakAdmin.removeOtpCredentials(user.getKeycloakId());
+    if (removed > 0) {
+      auditLog.record(
+          "REMOVE_MFA", "user:" + user.getId(), "{\"removedCredentials\":" + removed + "}");
+    }
   }
 
   // Id fija del usuario semilla (ver V4__seed_admin_user.sql) -- es el administrador global del
@@ -426,6 +457,18 @@ public class UserService {
     if (roles.contains(UserRole.AUDITOR) && count == 0) {
       throw new InvalidRequestException(
           "El auditor debe tener asignada al menos una organización para auditar");
+    }
+  }
+
+  // RF-USR-04: segregación de funciones -- un mismo usuario no puede ser a la vez quien ejecuta la
+  // autoevaluación (INTERNAL_EVALUATOR) y quien la audita de forma independiente (AUDITOR). El
+  // modelo de roles es global al usuario (no por evaluación), así que la regla se aplica a nivel
+  // de usuario: ninguna combinación de alta/edición puede dejarlo con ambos roles a la vez.
+  private void assertRoleSegregation(Set<UserRole> roles) {
+    if (roles.contains(UserRole.AUDITOR) && roles.contains(UserRole.INTERNAL_EVALUATOR)) {
+      throw new ConflictException(
+          "Un usuario no puede tener simultáneamente el rol de auditor y el de evaluador interno"
+              + " (segregación de funciones)");
     }
   }
 }

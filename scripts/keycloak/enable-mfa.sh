@@ -14,11 +14,19 @@
 #      "prisma-backend": backend-core valida la contraseña actual con direct grant
 #      (KeycloakAdminClient.verifyPassword) y no puede enviar el código OTP.
 #   4. otpPolicyLookAheadWindow=1 (tolerancia de reloj de +-30 s).
+#   5. "¿Olvidaste tu contraseña?" (flujo "reset credentials"), PRI-365: si el usuario ya tiene
+#      OTP, Keycloak le pide el código ACTUAL antes de dejarle fijar la contraseña nueva, y
+#      NO le hace registrar un autenticador nuevo (por defecto lo hacía y dejaba dos OTP).
+#      Quien tiene el email pero no el autenticador no puede recuperar la cuenta por su cuenta:
+#      un administrador le quita el MFA desde Prisma (ver UserService / KeycloakAdminClient).
+#      Se hace sobre una COPIA del flujo ("reset-con-otp"), porque Keycloak no deja editar el de
+#      fábrica, y también se aplica sola, sin activar la MFA obligatoria, con --require-otp-on-reset.
 #
 # Uso:
-#   scripts/keycloak/enable-mfa.sh            # activa (o repara) la MFA
-#   scripts/keycloak/enable-mfa.sh --status   # muestra el estado actual
-#   scripts/keycloak/enable-mfa.sh --disable  # vuelve al flujo "browser" original
+#   scripts/keycloak/enable-mfa.sh                      # activa (o repara) la MFA
+#   scripts/keycloak/enable-mfa.sh --status             # muestra el estado actual
+#   scripts/keycloak/enable-mfa.sh --disable            # vuelve al flujo "browser" original
+#   scripts/keycloak/enable-mfa.sh --require-otp-on-reset  # solo el punto 5 (--disable no lo revierte)
 #
 # Requisitos: contenedor de Keycloak levantado (docker compose --profile security
 # up -d keycloak) y KEYCLOAK_ADMIN / KEYCLOAK_ADMIN_PASSWORD en .env o en el entorno.
@@ -43,6 +51,10 @@ CONDITIONAL_2FA_FLOW="${MFA_BROWSER_FLOW} Browser - Conditional 2FA"
 DIRECT_GRANT_FLOW="direct grant"
 NO_OTP_DIRECT_GRANT_FLOW="direct-grant-sin-otp"
 BACKEND_CLIENT="prisma-backend"
+RESET_FLOW="reset credentials"
+RESET_CUSTOM_FLOW="reset-con-otp"
+RESET_OTP_CHECK_SUBFLOW="$RESET_CUSTOM_FLOW OTP actual"
+RESET_OTP_RESET_SUBFLOW="$RESET_CUSTOM_FLOW Reset - Conditional OTP"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 if [ -f "$ROOT_DIR/.env" ]; then
@@ -98,7 +110,7 @@ set_config() {  # executionId alias json-config
 add_conditional_subflow() {  # parentFlowAlias subflowAlias priority
   kcadm create "authentication/flows/$(enc "$1")/executions/flow" -r "$REALM" \
     -s "alias=$2" -s type=basic-flow -s provider=registration-page-form \
-    -s "description=MFA obligatorio por rol" >/dev/null
+    -s "description=${4:-MFA obligatorio por rol}" >/dev/null
   local info; info="$(exec_info "$1" "$2")"
   set_priority "$1" "${info%%,*}" CONDITIONAL "$3"
 }
@@ -109,6 +121,46 @@ add_conditional_subflow() {  # parentFlowAlias subflowAlias priority
 set_priority() {  # flowAlias executionId REQUIREMENT priority
   kcadm update "authentication/flows/$(enc "$1")/executions" -r "$REALM" \
     -b "{\"id\":\"$2\",\"requirement\":\"$3\",\"priority\":$4}"
+}
+
+# ---- ¿Olvidaste tu contraseña? con MFA (PRI-365) ---------------------------------
+# Flujo resultante: elegir usuario -> email con el enlace -> [si tiene OTP: código OTP actual]
+# -> contraseña nueva. "Reset OTP" (que registraba un autenticador nuevo sin borrar el viejo)
+# queda deshabilitado. Idempotente.
+require_otp_on_reset() {
+  # 1) Copia del flujo de fábrica (Keycloak no deja agregarle sub-flujos al original)
+  if [ -z "$(flow_id "$RESET_CUSTOM_FLOW")" ]; then
+    kcadm create "authentication/flows/$(enc "$RESET_FLOW")/copy" -r "$REALM" -s "newName=$RESET_CUSTOM_FLOW" >/dev/null
+    log "flujo '$RESET_CUSTOM_FLOW' creado (copia de '$RESET_FLOW')"
+  else
+    log "flujo '$RESET_CUSTOM_FLOW' ya existe"
+  fi
+
+  # 2) Sub-flujo condicional entre "Send Reset Email" (prioridad 20) y "Reset Password" (30):
+  #    solo si el usuario tiene OTP, se le pide el código actual.
+  local info; info="$(exec_info "$RESET_CUSTOM_FLOW" "$RESET_OTP_CHECK_SUBFLOW")"
+  if [ -z "$info" ]; then
+    add_conditional_subflow "$RESET_CUSTOM_FLOW" "$RESET_OTP_CHECK_SUBFLOW" 25 "OTP actual antes de cambiar la contrasena"
+    local c o
+    c="$(add_execution "$RESET_OTP_CHECK_SUBFLOW" conditional-user-configured)"
+    set_requirement "$RESET_OTP_CHECK_SUBFLOW" "$c" REQUIRED
+    o="$(add_execution "$RESET_OTP_CHECK_SUBFLOW" auth-otp-form)"
+    set_requirement "$RESET_OTP_CHECK_SUBFLOW" "$o" REQUIRED
+    log "sub-flujo '$RESET_OTP_CHECK_SUBFLOW' creado (pide el OTP actual si el usuario tiene uno)"
+  else
+    log "sub-flujo '$RESET_OTP_CHECK_SUBFLOW' ya existe"
+  fi
+
+  # 3) "Reset OTP" fuera: recuperar la contraseña no registra (ni deja duplicado) un OTP
+  info="$(exec_info "$RESET_CUSTOM_FLOW" "$RESET_OTP_RESET_SUBFLOW")"
+  if [ -n "$info" ] && [ "${info##*,}" != "DISABLED" ]; then
+    set_requirement "$RESET_CUSTOM_FLOW" "${info%%,*}" DISABLED
+    log "'Reset OTP' deshabilitado en '$RESET_CUSTOM_FLOW'"
+  fi
+
+  # 4) Vincularlo como flujo de recuperación del realm
+  kcadm update "realms/$REALM" -s "resetCredentialsFlow=$RESET_CUSTOM_FLOW"
+  log "flujo de recuperar contraseña del realm = '$RESET_CUSTOM_FLOW'"
 }
 
 # ---- activar ---------------------------------------------------------------
@@ -180,6 +232,9 @@ enable_mfa() {
     -s "authenticationFlowBindingOverrides={\"direct_grant\":\"$(flow_id "$NO_OTP_DIRECT_GRANT_FLOW")\"}"
   log "cliente '$BACKEND_CLIENT': direct grant sin OTP (solo ese cliente)"
 
+  # 4) Recuperar la contraseña pide el OTP actual y no obliga a regenerar el MFA
+  require_otp_on_reset
+
   echo "✅ MFA activa. Los usuarios con rol $MFA_ROLES deberán registrar TOTP en su próximo login."
 }
 
@@ -209,6 +264,12 @@ status() {
   else
     log "direct grant de $BACKEND_CLIENT : flujo del realm (con OTP condicional)"
   fi
+  local rf; rf="$(kcadm get "realms/$REALM" --fields resetCredentialsFlow --format csv --noquotes)"
+  if [ "$rf" = "$RESET_CUSTOM_FLOW" ]; then
+    log "recuperar contraseña : pide el OTP actual si tiene uno y no lo regenera ('$rf')"
+  else
+    log "recuperar contraseña : flujo de fábrica, regenera el MFA (correr --require-otp-on-reset)"
+  fi
   local role u id has_otp
   for role in $MFA_ROLES; do
     echo "  Rol $role:"
@@ -224,5 +285,6 @@ case "${1:-}" in
   ""|--enable)  enable_mfa ;;
   --status)     status ;;
   --disable)    disable_mfa ;;
-  *) echo "Uso: $0 [--enable|--status|--disable]" >&2; exit 2 ;;
+  --require-otp-on-reset) echo "▶ Recuperar contraseña pidiendo el OTP actual (realm $REALM)"; require_otp_on_reset ;;
+  *) echo "Uso: $0 [--enable|--status|--disable|--require-otp-on-reset]" >&2; exit 2 ;;
 esac
