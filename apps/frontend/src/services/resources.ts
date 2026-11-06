@@ -11,6 +11,7 @@ import type {
   AuditVerdict,
   Evidence,
   EvidenceCitation,
+  EvidenceRules,
   AuditObservation,
   AuditLog,
   ImprovementPlan,
@@ -195,6 +196,10 @@ export const communityProfilesService = {
 };
 
 export const evidenceService = {
+  /** Reglas de carga vigentes: extensiones permitidas, sin punto (RF-EVI-02). */
+  getAllowedFormats() {
+    return apiClient.get<EvidenceRules>('/evidence/allowed-formats');
+  },
   getByEvaluation(evaluationId: string) {
     return apiClient.get<Evidence[]>(`/evidence/evaluation/${evaluationId}`);
   },

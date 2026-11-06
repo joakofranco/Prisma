@@ -2,7 +2,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
 
 const evidenceService = vi.hoisted(() => ({
+  getAllowedFormats: vi.fn(),
   getByEvaluation: vi.fn(),
+  download: vi.fn(),
   upload: vi.fn(),
   reindex: vi.fn(),
   delete: vi.fn(),
@@ -23,7 +25,10 @@ vi.mock('vue-router', () => ({ useRoute: () => ({ params: { evaluationId: 'eval-
 
 import EvidenceView from '@/views/evidence/EvidenceView.vue';
 
-async function openUploadWithFile() {
+const MB = 1024 * 1024;
+const FORMATS = { data: { allowedExtensions: ['pdf', 'zip', 'png'], maxSizeBytes: 50 * MB } };
+
+async function openUploadWithFile(fileName = 'acta.pdf', sizeBytes = 1) {
   const wrapper = mount(EvidenceView, {
     attachTo: document.body,
     global: { stubs: { RouterLink: true } },
@@ -34,9 +39,11 @@ async function openUploadWithFile() {
   await flushPromises();
 
   const input = document.body.querySelector<HTMLInputElement>('input[type="file"]')!;
-  const file = new File(['x'], 'acta.pdf', { type: 'application/pdf' });
+  const file = new File(['x'], fileName, { type: 'application/octet-stream' });
+  // No se crea un buffer real de decenas de MB: alcanza con que `size` diga el peso.
+  Object.defineProperty(file, 'size', { value: sizeBytes });
   Object.defineProperty(input, 'files', { value: [file], configurable: true });
-  return wrapper;
+  return { wrapper, input };
 }
 
 function confirmButton() {
@@ -50,6 +57,7 @@ describe('EvidenceView: carga de evidencia sin control (RF-EVI-01)', () => {
     vi.clearAllMocks();
     document.body.innerHTML = '';
     authState.roles = ['PRISMA_ADMIN'];
+    evidenceService.getAllowedFormats.mockResolvedValue(FORMATS);
     evidenceService.getByEvaluation.mockResolvedValue({ data: [] });
     evidenceService.upload.mockResolvedValue({ data: {} });
     evaluationsService.getById.mockResolvedValue({ data: { catalogVersion: '5.0' } });
@@ -74,6 +82,7 @@ describe('EvidenceView: descarga autenticada (PRI-286)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     document.body.innerHTML = '';
+    evidenceService.getAllowedFormats.mockResolvedValue(FORMATS);
     evidenceService.getByEvaluation.mockResolvedValue({
       data: [
         {

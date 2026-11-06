@@ -609,6 +609,13 @@ public class Dto {
       OffsetDateTime uploadedAt,
       boolean aiIndexed) {}
 
+  /** Reglas de carga de evidencias: extensiones permitidas, sin punto, y tamaño máximo en bytes. */
+  public record EvidenceRulesDto(List<String> allowedExtensions, long maxSizeBytes) {
+    public EvidenceRulesDto {
+      allowedExtensions = List.copyOf(allowedExtensions);
+    }
+  }
+
   public record UploadEvidenceResponseDto(UUID id, String fileName, Long fileSize) {}
 
   // ---- Evidence RAG (citas para el auditor) ----

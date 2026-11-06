@@ -14,6 +14,7 @@ import org.springframework.web.multipart.MultipartFile;
 import uy.edu.prisma.application.EvidenceService;
 import uy.edu.prisma.web.dto.Dto.EvidenceCitationDto;
 import uy.edu.prisma.web.dto.Dto.EvidenceDto;
+import uy.edu.prisma.web.dto.Dto.EvidenceRulesDto;
 import uy.edu.prisma.web.dto.Dto.UploadEvidenceResponseDto;
 
 @RestController
@@ -24,6 +25,16 @@ public class EvidenceController {
 
   public EvidenceController(EvidenceService service) {
     this.service = service;
+  }
+
+  /**
+   * Reglas de carga vigentes (formatos y tamaño máximo), para que la pantalla las use antes de
+   * enviar.
+   */
+  @GetMapping("/allowed-formats")
+  public ResponseEntity<EvidenceRulesDto> allowedFormats() {
+    return ResponseEntity.ok(
+        new EvidenceRulesDto(service.allowedExtensions(), service.maxSizeBytes()));
   }
 
   @GetMapping("/evaluation/{evaluationId}")

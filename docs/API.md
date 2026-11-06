@@ -133,11 +133,12 @@ importar el rol que normalmente le correspondería.
 
 | Método | Path | Rol | Notas |
 |---|---|---|---|
-| GET | `/evaluation/{evaluationId}` | cualquiera autenticado | incluye `url` firmada (900s) de cada archivo |
-| POST | `/` (multipart) | `PRISMA_ADMIN`, `INTERNAL_EVALUATOR`, `ORG_RESPONSIBLE` | form-data `evaluationId`, `controlId?`, `description?`, `file`; **rechaza con 400 si la evaluación no es editable** (mismo criterio que las respuestas) |
+| GET | `/allowed-formats` | cualquiera autenticado | reglas de carga vigentes: `{ allowedExtensions: ["pdf", "zip", ...], maxSizeBytes }`, con las extensiones sin punto. Salen de `prisma.evidence.allowed-extensions` y `prisma.evidence.max-size` (variables `EVIDENCE_ALLOWED_EXTENSIONS` y `EVIDENCE_MAX_SIZE`); la pantalla la usa para el selector y para avisar antes de enviar |
+| GET | `/evaluation/{evaluationId}` | cualquiera autenticado | lista las evidencias; no entrega enlaces de descarga |
+| POST | `/` (multipart) | `PRISMA_ADMIN`, `INTERNAL_EVALUATOR`, `ORG_RESPONSIBLE` | form-data `evaluationId`, `controlId?`, `description?`, `file`; **rechaza con 400 si la evaluación no es editable** (mismo criterio que las respuestas) y si la extensión no está en la lista permitida (por defecto `pdf`, `zip`, `docx`, `txt`, `md`, `markdown`, `png`, `jpg`, `jpeg`) o la firma real del archivo no coincide con ella. El mensaje lista las extensiones vigentes. No se admite SVG. **Tamaño máximo por archivo: 50 MB (configurable); si lo supera responde 413 con `El archivo supera el tamaño máximo permitido de 50 MB`** (también cuando lo corta el límite multipart de Spring, antes de llegar al controlador; los Nginx dejan pasar hasta 55 MB para que el rechazo lo dé la aplicación). Los ZIP se revisan solo por los nombres de sus entradas (se rechazan rutas que salen del directorio). **ZIP e imágenes se guardan pero no se mandan a `backend-ai`** (`aiIndexed=false`) |
 | DELETE | `/{id}` | `PRISMA_ADMIN`, `INTERNAL_EVALUATOR` | mismo bloqueo por estado |
-| GET | `/{id}/download` | cualquiera autenticado | URL firmada nueva (no la reusa de la lista) |
-| POST | `/{id}/index` | `PRISMA_ADMIN`, `INTERNAL_EVALUATOR`, `ORG_RESPONSIBLE` | reintenta la indexación RAG; mismo bloqueo por estado |
+| GET | `/{id}/download` | `PRISMA_ADMIN`, `ORG_RESPONSIBLE`, `AUDITOR` | sirve el archivo por streaming con el JWT, la organización y el rol validados en cada descarga |
+| POST | `/{id}/index` | `PRISMA_ADMIN`, `INTERNAL_EVALUATOR`, `ORG_RESPONSIBLE` | reintenta la indexación RAG; mismo bloqueo por estado; no hace nada con ZIP e imágenes |
 | GET | `/evaluation/{evaluationId}/control/{controlId}/citations` | cualquiera autenticado | fragmentos relevantes de la evidencia YA cargada para ese control, vía `backend-ai` |
 
 ## Auditoría — `/api/audit/observations`

@@ -57,6 +57,7 @@ public class EvidenceService {
   private final StorageProperties storageProperties;
   private final CurrentUserService currentUser;
   private final AiEvidenceClient aiClient;
+  private final EvidenceFileValidator fileValidator;
 
   public EvidenceService(
       EvidenceRepository evidenceRepo,
@@ -66,7 +67,8 @@ public class EvidenceService {
       @Qualifier("internalPresigner") S3Presigner internalPresigner,
       StorageProperties storageProperties,
       CurrentUserService currentUser,
-      AiEvidenceClient aiClient) {
+      AiEvidenceClient aiClient,
+      EvidenceFileValidator fileValidator) {
     this.evidenceRepo = evidenceRepo;
     this.evaluationRepo = evaluationRepo;
     this.controlRepo = controlRepo;
@@ -75,6 +77,7 @@ public class EvidenceService {
     this.storageProperties = storageProperties;
     this.currentUser = currentUser;
     this.aiClient = aiClient;
+    this.fileValidator = fileValidator;
   }
 
   @Transactional(readOnly = true)
@@ -89,6 +92,16 @@ public class EvidenceService {
     return evidenceRepo.findByEvaluationIdOrderByUploadedAtDesc(evaluationId).stream()
         .map(this::toDto)
         .toList();
+  }
+
+  /** Extensiones de archivo que acepta la carga de evidencias (RF-EVI-02), sin punto. */
+  public List<String> allowedExtensions() {
+    return fileValidator.allowedExtensions();
+  }
+
+  /** Tamaño máximo de una evidencia, en bytes (RF-EVI-04). */
+  public long maxSizeBytes() {
+    return fileValidator.maxSizeBytes();
   }
 
   /** Roles que pueden descargar evidencias: PRISMA_ADMIN, ORG_RESPONSIBLE y AUDITOR (PRI-286). */
@@ -115,9 +128,12 @@ public class EvidenceService {
                 .findById(controlId)
                 .orElseThrow(() -> new ResourceNotFoundException("Control", controlId))
             : null;
+    // RF-EVI-04: el tamaño se mira primero, antes de leer el contenido (un ZIP grande tarda en
+    // recorrerse) y antes de tocar el almacenamiento.
+    fileValidator.assertWithinSizeLimit(file);
     // RF-EVI-03: antes de tocar el almacenamiento, se valida que la firma binaria real coincida
     // con la extensión declarada; se persiste el tipo detectado, no el Content-Type del cliente.
-    String detectedType = EvidenceFileValidator.validate(file);
+    String detectedType = fileValidator.validate(file);
 
     // Solo para la storage key en el bucket -- no se asigna como @Id de la entidad: Evidence usa
     // @GeneratedValue(strategy = GenerationType.UUID), y si se le asigna manualmente un id antes
@@ -166,7 +182,8 @@ public class EvidenceService {
     // por el EntityManager de esta transacción (Evidence no tiene @Version), así que un segundo
     // merge() sobre el mismo id revienta con StaleObjectStateException. El dirty-checking de JPA
     // ya persiste este cambio al hacer commit.
-    saved.setAiIndexed(indexInAi(saved));
+    // ZIP e imágenes no se indexan (backend-ai no los lee): quedan con aiIndexed=false a propósito.
+    saved.setAiIndexed(EvidenceFileValidator.isIndexable(detectedType) && indexInAi(saved));
 
     return new UploadEvidenceResponseDto(saved.getId(), saved.getFileName(), saved.getFileSize());
   }
@@ -179,6 +196,10 @@ public class EvidenceService {
     assertSelfAssessmentEditable(evidence.getEvaluation(), "reindexar evidencia");
     // `evidence` ya está administrada (viene de findById en esta misma transacción): alcanza con
     // mutarla, sin volver a llamar a save() -- ver comentario en upload().
+    // Un formato que backend-ai no indexa (ZIP, imágenes) no tiene nada que reintentar.
+    if (!EvidenceFileValidator.isIndexable(evidence.getFileType())) {
+      return toDto(evidence);
+    }
     evidence.setAiIndexed(indexInAi(evidence));
     return toDto(evidence);
   }

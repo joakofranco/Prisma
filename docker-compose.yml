@@ -181,6 +181,8 @@ services:
       S3_ACCESS_KEY: ${RUSTFS_ACCESS_KEY}
       S3_SECRET_KEY: ${RUSTFS_SECRET_KEY}
       S3_BUCKET: ${S3_BUCKET_EVIDENCES}
+      EVIDENCE_ALLOWED_EXTENSIONS: ${EVIDENCE_ALLOWED_EXTENSIONS:-pdf,zip,docx,txt,md,markdown,png,jpg,jpeg}
+      EVIDENCE_MAX_SIZE: ${EVIDENCE_MAX_SIZE:-50MB}
       AI_SERVICE_URL: http://backend-ai:8000
       AI_INTERNAL_API_KEY: ${AI_INTERNAL_API_KEY}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:8080,http://localhost:5173,https://localhost,https://prisma.local}
@@ -793,6 +795,8 @@ services:
       PGPASSWORD: ${POSTGRES_PASSWORD}
       S3_ENDPOINT: http://rustfs:9000
       S3_BUCKET: ${S3_BUCKET_EVIDENCES}
+      EVIDENCE_ALLOWED_EXTENSIONS: ${EVIDENCE_ALLOWED_EXTENSIONS:-pdf,zip,docx,txt,md,markdown,png,jpg,jpeg}
+      EVIDENCE_MAX_SIZE: ${EVIDENCE_MAX_SIZE:-50MB}
       # El AWS CLI (ver scripts/backup/Dockerfile) exige estas variables aunque apunte a RustFS, no
       # a AWS real -- la región es un valor cualquiera, RustFS la ignora.
       AWS_ACCESS_KEY_ID: ${RUSTFS_ACCESS_KEY}

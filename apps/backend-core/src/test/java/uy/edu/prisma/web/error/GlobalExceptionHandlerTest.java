@@ -4,6 +4,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 import jakarta.validation.Valid;
+import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -12,10 +13,14 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.util.unit.DataSize;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import uy.edu.prisma.config.EvidenceConfig.EvidenceProperties;
 import uy.edu.prisma.domain.exception.ConflictException;
 import uy.edu.prisma.domain.exception.InvalidRequestException;
+import uy.edu.prisma.domain.exception.PayloadTooLargeException;
 import uy.edu.prisma.domain.exception.ResourceNotFoundException;
 import uy.edu.prisma.web.dto.Dto.CreateOrganizationDto;
 
@@ -27,7 +32,9 @@ class GlobalExceptionHandlerTest {
   void setUp() {
     mockMvc =
         MockMvcBuilders.standaloneSetup(new FixtureController())
-            .setControllerAdvice(new GlobalExceptionHandler())
+            .setControllerAdvice(
+                new GlobalExceptionHandler(
+                    new EvidenceProperties(List.of("pdf"), DataSize.ofMegabytes(50))))
             .build();
   }
 
@@ -45,6 +52,25 @@ class GlobalExceptionHandlerTest {
         .perform(get("/conflict"))
         .andExpect(status().isConflict())
         .andExpect(jsonPath("$.message").value("dup"));
+  }
+
+  @Test
+  void payloadTooLargeMapsTo413WithItsMessage() throws Exception {
+    mockMvc
+        .perform(get("/too-large"))
+        .andExpect(status().isPayloadTooLarge())
+        .andExpect(jsonPath("$.code").value("PAYLOAD_TOO_LARGE"))
+        .andExpect(jsonPath("$.message").value("demasiado"));
+  }
+
+  @Test
+  void multipartLimitExceededMapsTo413WithTheConfiguredLimit() throws Exception {
+    mockMvc
+        .perform(get("/multipart-too-large"))
+        .andExpect(status().isPayloadTooLarge())
+        .andExpect(jsonPath("$.code").value("PAYLOAD_TOO_LARGE"))
+        .andExpect(
+            jsonPath("$.message").value("El archivo supera el tamaño máximo permitido de 50 MB"));
   }
 
   @Test
@@ -157,6 +183,16 @@ class GlobalExceptionHandlerTest {
           "could not execute statement",
           new RuntimeException(
               "ERROR: duplicate key value violates unique constraint \"organizations_rut_key\""));
+    }
+
+    @GetMapping("/too-large")
+    public String tooLarge() {
+      throw new PayloadTooLargeException("demasiado");
+    }
+
+    @GetMapping("/multipart-too-large")
+    public String multipartTooLarge() {
+      throw new MaxUploadSizeExceededException(52_428_800L);
     }
 
     @GetMapping("/invalid")

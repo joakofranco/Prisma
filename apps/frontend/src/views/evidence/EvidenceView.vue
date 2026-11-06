@@ -77,7 +77,7 @@
             <SparklesIcon class="w-3.5 h-3.5" /> Indexado
           </span>
           <button
-            v-else
+            v-else-if="isAiAnalyzable(ev.fileType)"
             class="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-blue-600 disabled:opacity-50 dark:hover:text-blue-300 dark:text-slate-400"
             :disabled="reindexingId === ev.id"
             @click="reindexEvidence(ev)"
@@ -85,6 +85,13 @@
             <SparklesIcon class="w-3.5 h-3.5" />
             {{ reindexingId === ev.id ? 'Analizando…' : 'Analizar con IA' }}
           </button>
+          <span
+            v-else
+            class="text-xs text-slate-400 dark:text-slate-500"
+            title="El asistente de IA solo lee PDF, DOCX, TXT y Markdown"
+          >
+            Sin análisis de IA
+          </span>
           <div class="flex gap-1">
             <button
               v-if="canDownload"
@@ -135,9 +142,13 @@
           <input
             ref="fileInput"
             type="file"
-            accept=".pdf,.docx,.txt,.md,.markdown"
+            :accept="acceptAttr"
             class="w-full text-sm text-slate-600 dark:text-slate-300 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+            @change="validateSelectedFile"
           />
+          <p v-if="rulesHint" class="mt-1 text-xs text-slate-500 dark:text-slate-400">
+            {{ rulesHint }}
+          </p>
           <p v-if="uploadErrors.file" class="mt-1 text-xs text-red-600 dark:text-red-400">
             {{ uploadErrors.file }}
           </p>
@@ -154,13 +165,20 @@
 </template>
 
 <script setup lang="ts">
-  import { ref, reactive, onMounted } from 'vue';
+  import { ref, reactive, computed, watch, onBeforeUnmount, onMounted } from 'vue';
   import { useRoute } from 'vue-router';
   import { evidenceService, evaluationsService, catalogService } from '@/services/resources';
   import { formatDate, formatFileSize, getErrorMessage } from '@/utils/helpers';
   import { useNotification } from '@/composables/useUtils';
   import { useAuthStore } from '@/stores/auth';
   import { saveBlob } from '@/utils/files';
+  import {
+    acceptAttribute,
+    isAiAnalyzable,
+    isAllowedExtension,
+    tooLargeMessage,
+    unsupportedFormatMessage,
+  } from '@/utils/evidenceFormats';
   import BaseButton from '@/components/common/BaseButton.vue';
   import BaseModal from '@/components/common/BaseModal.vue';
   import BaseSelect from '@/components/common/BaseSelect.vue';
@@ -197,6 +215,57 @@
   });
 
   const controlOptions = ref<{ value: string; label: string }[]>([]);
+
+  // Formatos permitidos, tal como los define el backend. Si no se pudieron cargar queda vacía: no se
+  // restringe el selector ni se verifica antes de enviar, y decide el servidor.
+  const allowedExtensions = ref<string[]>([]);
+  const maxSizeBytes = ref(0);
+  const acceptAttr = computed(() =>
+    allowedExtensions.value.length > 0 ? acceptAttribute(allowedExtensions.value) : undefined,
+  );
+
+  const rulesHint = computed(() => {
+    const parts: string[] = [];
+    if (allowedExtensions.value.length > 0) {
+      parts.push(`Formatos aceptados: ${allowedExtensions.value.map((e) => `.${e}`).join(', ')}`);
+    }
+    if (maxSizeBytes.value > 0) {
+      parts.push(`Tamaño máximo: ${formatFileSize(maxSizeBytes.value)}`);
+    }
+    return parts.join('. ');
+  });
+
+  async function fetchAllowedFormats() {
+    try {
+      const { data } = await evidenceService.getAllowedFormats();
+      allowedExtensions.value = data.allowedExtensions ?? [];
+      maxSizeBytes.value = data.maxSizeBytes ?? 0;
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  // Verifica la extensión apenas se elige el archivo y otra vez al enviar: el filtro `accept` se
+  // puede saltear con «todos los archivos», y así un archivo no permitido no viaja al servidor.
+  // La extensión se mira antes que el tamaño: un .exe de cualquier peso tiene que decir que el tipo
+  // no está permitido (PRI-355), no que es demasiado grande.
+  function formatError(file: File | undefined): string {
+    if (!file) return '';
+    if (
+      allowedExtensions.value.length > 0 &&
+      !isAllowedExtension(file.name, allowedExtensions.value)
+    ) {
+      return unsupportedFormatMessage(allowedExtensions.value);
+    }
+    if (maxSizeBytes.value > 0 && file.size > maxSizeBytes.value) {
+      return tooLargeMessage(maxSizeBytes.value);
+    }
+    return '';
+  }
+
+  function validateSelectedFile() {
+    uploadErrors.file = formatError(fileInput.value?.files?.[0]);
+  }
 
   async function fetchEvidences() {
     loading.value = true;
@@ -272,10 +341,26 @@
     }
   }
 
+  // Un 413 que corta Nginx (por encima de su límite) llega sin el JSON del backend: sin esto el
+  // usuario vería «Error al subir la evidencia» sin saber que el problema es el tamaño.
+  function uploadErrorMessage(err: unknown): string {
+    const response = (err as { response?: { status?: number; data?: { message?: string } } })
+      ?.response;
+    if (response?.status === 413 && !response.data?.message && maxSizeBytes.value > 0) {
+      return tooLargeMessage(maxSizeBytes.value);
+    }
+    return getErrorMessage(err, 'Error al subir la evidencia');
+  }
+
   async function handleUpload() {
     uploadErrors.file = '';
     if (!fileInput.value?.files?.[0]) {
       uploadErrors.file = 'Seleccione un archivo';
+      return;
+    }
+    const formatProblem = formatError(fileInput.value.files[0]);
+    if (formatProblem) {
+      uploadErrors.file = formatProblem;
       return;
     }
 
@@ -295,7 +380,7 @@
       uploadForm.description = '';
       await fetchEvidences();
     } catch (err) {
-      notification.error(getErrorMessage(err, 'Error al subir la evidencia'));
+      notification.error(uploadErrorMessage(err));
     } finally {
       uploading.value = false;
     }
@@ -331,6 +416,7 @@
   }
 
   onMounted(() => {
+    fetchAllowedFormats();
     fetchEvidences();
     fetchControlOptions();
   });

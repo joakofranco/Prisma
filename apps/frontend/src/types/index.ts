@@ -226,6 +226,14 @@ export interface MaturityResult {
   gap: number;
 }
 
+/** Reglas de carga de evidencias que define el backend (RF-EVI-02). */
+export interface EvidenceRules {
+  /** Extensiones permitidas, en minúscula y sin punto. */
+  allowedExtensions: string[];
+  /** Tamaño máximo de una evidencia, en bytes (RF-EVI-04). */
+  maxSizeBytes: number;
+}
+
 export interface Evidence {
   id: string;
   evaluationId: string;

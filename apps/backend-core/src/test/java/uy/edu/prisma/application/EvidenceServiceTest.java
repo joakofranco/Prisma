@@ -4,12 +4,15 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
+import java.io.ByteArrayOutputStream;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -21,6 +24,7 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.util.unit.DataSize;
 import software.amazon.awssdk.core.ResponseInputStream;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.http.AbortableInputStream;
@@ -42,6 +46,7 @@ import uy.edu.prisma.domain.entity.Evidence;
 import uy.edu.prisma.domain.entity.Organization;
 import uy.edu.prisma.domain.entity.User;
 import uy.edu.prisma.domain.entity.UserRole;
+import uy.edu.prisma.domain.exception.PayloadTooLargeException;
 import uy.edu.prisma.domain.exception.ResourceNotFoundException;
 import uy.edu.prisma.domain.repository.CatalogControlRepository;
 import uy.edu.prisma.domain.repository.EvaluationRepository;
@@ -87,7 +92,8 @@ class EvidenceServiceTest {
             internalPresigner,
             properties,
             currentUser,
-            aiClient);
+            aiClient,
+            EvidenceFileValidatorTest.validatorFor(EvidenceFileValidatorTest.DEFAULT_FORMATS));
     eval =
         Evaluation.builder()
             .id(UUID.randomUUID())
@@ -351,6 +357,139 @@ class EvidenceServiceTest {
 
     assertTrue(dto.aiIndexed());
     verify(aiClient, times(1)).ingest(any(), any(), any(), any(), any(), any());
+  }
+
+  // ---- PRI-281: ZIP e imágenes se guardan pero no se mandan a backend-ai ----
+
+  private static byte[] zipBytes() throws Exception {
+    ByteArrayOutputStream out = new ByteArrayOutputStream();
+    try (ZipOutputStream zip = new ZipOutputStream(out)) {
+      zip.putNextEntry(new ZipEntry("acta.pdf"));
+      zip.write("contenido".getBytes(StandardCharsets.UTF_8));
+      zip.closeEntry();
+    }
+    return out.toByteArray();
+  }
+
+  @Test
+  void uploadZipIsStoredButNotSentToAi() throws Exception {
+    MockMultipartFile file =
+        new MockMultipartFile("file", "respaldo.zip", "application/zip", zipBytes());
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(s3Client.headBucket(any(HeadBucketRequest.class))).thenReturn(null);
+    when(currentUser.currentUser()).thenReturn(Optional.empty());
+    when(evidenceRepo.save(any(Evidence.class))).thenAnswer(EvidenceServiceTest::simulatePersist);
+
+    service.upload(eval.getId(), null, null, file);
+
+    verify(s3Client, times(1)).putObject(any(PutObjectRequest.class), any(RequestBody.class));
+    verify(aiClient, never()).ingest(any(), any(), any(), any(), any(), any());
+    ArgumentCaptor<Evidence> captor = ArgumentCaptor.forClass(Evidence.class);
+    verify(evidenceRepo).save(captor.capture());
+    assertEquals("application/zip", captor.getValue().getFileType());
+    assertFalse(captor.getValue().isAiIndexed());
+  }
+
+  @Test
+  void uploadImageIsStoredWithItsRealTypeAndNotSentToAi() throws Exception {
+    byte[] png = {(byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0};
+    MockMultipartFile file = new MockMultipartFile("file", "foto.png", "image/jpeg", png);
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(s3Client.headBucket(any(HeadBucketRequest.class))).thenReturn(null);
+    when(currentUser.currentUser()).thenReturn(Optional.empty());
+    when(evidenceRepo.save(any(Evidence.class))).thenAnswer(EvidenceServiceTest::simulatePersist);
+
+    service.upload(eval.getId(), null, null, file);
+
+    verify(aiClient, never()).ingest(any(), any(), any(), any(), any(), any());
+    ArgumentCaptor<Evidence> captor = ArgumentCaptor.forClass(Evidence.class);
+    verify(evidenceRepo).save(captor.capture());
+    // Se guarda el tipo detectado por la firma, no el Content-Type que declaró el cliente.
+    assertEquals("image/png", captor.getValue().getFileType());
+  }
+
+  @Test
+  void uploadExecutableRenamedToPngNeverReachesStorage() {
+    MockMultipartFile file =
+        new MockMultipartFile("file", "virus.png", "image/png", new byte[] {0x4D, 0x5A, 0, 0});
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+
+    assertThrows(
+        uy.edu.prisma.domain.exception.InvalidRequestException.class,
+        () -> service.upload(eval.getId(), null, null, file));
+
+    verify(s3Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));
+    verify(evidenceRepo, never()).save(any(Evidence.class));
+  }
+
+  @Test
+  void reindexSkipsFormatsThatBackendAiDoesNotRead() {
+    evidence.setFileType("application/zip");
+    when(evidenceRepo.findById(evidence.getId())).thenReturn(Optional.of(evidence));
+
+    EvidenceDto dto = service.reindex(evidence.getId());
+
+    assertFalse(dto.aiIndexed());
+    verify(aiClient, never()).ingest(any(), any(), any(), any(), any(), any());
+  }
+
+  // ---- PRI-283: tamaño máximo ----
+
+  private EvidenceService serviceWithMaxSize(DataSize maxSize) {
+    return new EvidenceService(
+        evidenceRepo,
+        evaluationRepo,
+        controlRepo,
+        s3Client,
+        internalPresigner,
+        properties,
+        currentUser,
+        aiClient,
+        EvidenceFileValidatorTest.validatorWithMaxSize(maxSize));
+  }
+
+  @Test
+  void uploadAtTheSizeLimitIsAccepted() throws Exception {
+    byte[] pdf = new byte[16];
+    System.arraycopy("%PDF-".getBytes(StandardCharsets.US_ASCII), 0, pdf, 0, 5);
+    MockMultipartFile file = new MockMultipartFile("file", "justo.pdf", "application/pdf", pdf);
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(s3Client.headBucket(any(HeadBucketRequest.class))).thenReturn(null);
+    when(currentUser.currentUser()).thenReturn(Optional.empty());
+    when(evidenceRepo.save(any(Evidence.class))).thenAnswer(EvidenceServiceTest::simulatePersist);
+
+    serviceWithMaxSize(DataSize.ofBytes(16)).upload(eval.getId(), null, null, file);
+
+    verify(s3Client, times(1)).putObject(any(PutObjectRequest.class), any(RequestBody.class));
+  }
+
+  @Test
+  void uploadOneByteOverTheLimitIsRejectedBeforeTouchingStorage() {
+    byte[] pdf = new byte[17];
+    System.arraycopy("%PDF-".getBytes(StandardCharsets.US_ASCII), 0, pdf, 0, 5);
+    MockMultipartFile file = new MockMultipartFile("file", "grande.pdf", "application/pdf", pdf);
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+
+    PayloadTooLargeException error =
+        assertThrows(
+            PayloadTooLargeException.class,
+            () -> serviceWithMaxSize(DataSize.ofBytes(16)).upload(eval.getId(), null, null, file));
+
+    assertEquals("El archivo supera el tamaño máximo permitido de 16 bytes", error.getMessage());
+    verify(s3Client, never()).headBucket(any(HeadBucketRequest.class));
+    verify(s3Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));
+    verify(evidenceRepo, never()).save(any(Evidence.class));
+  }
+
+  @Test
+  void theSizeLimitComesFromTheValidator() {
+    assertEquals(50L * 1024 * 1024, service.maxSizeBytes());
+    assertEquals(5L * 1024 * 1024, serviceWithMaxSize(DataSize.ofMegabytes(5)).maxSizeBytes());
+  }
+
+  @Test
+  void allowedExtensionsComeFromTheValidator() {
+    assertEquals(EvidenceFileValidatorTest.DEFAULT_FORMATS, service.allowedExtensions());
   }
 
   @Test
