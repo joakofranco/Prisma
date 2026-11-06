@@ -373,19 +373,37 @@ desde la misma IP. Para levantarlo antes de que expire la ventana, hay que reini
 de NGINX (`docker compose restart nginx`) — la zona de rate limiting vive en memoria compartida y
 se reinicia junto con el proceso.
 
-## Backup y recuperación
+## Backup y recuperación (RNF-13)
 
 ```bash
-make backup    # pg_dump comprimido a backups/postgres_<timestamp>.sql.gz
-make restore   # restaura desde el backup MÁS RECIENTE en backups/
+make backup    # corrida manual inmediata: pg_dump + espejo del bucket de evidencias a backups/
+make restore   # restaura Postgres + evidencias desde el backup MÁS RECIENTE en backups/
 ```
 
-> **Importante — cobertura real del backup:** pese a lo que dice el comentario del target en el
-> `Makefile` ("Backup de Postgres"), **`make backup` solo respalda Postgres.** Los
-> archivos de evidencia en RustFS (bucket `prisma-evidences`) no tienen ningún backup automatizado
-> hoy — sólo viven en el volumen `prisma-evidences-data`. Si se necesita recuperación real ante
-> desastre, hay que agregar `mc mirror` (o equivalente) contra el bucket como parte de la rutina de
-> backup, o al menos documentar el volumen Docker como la única copia existente.
+El respaldo corre automáticamente **una vez al día** (Ofelia, servicio `backup-scheduler`, perfil
+`management` o `full`) ejecutando `scripts/backup/backup.sh` dentro del contenedor
+`backup-runner` — el mismo script que corren los `make` de arriba a mano. Cada corrida genera, en
+`./backups/`:
+
+- `postgres_<timestamp>.sql.gz` — dump completo de Postgres.
+- `evidences_<timestamp>/` — espejo completo del bucket `prisma-evidences` de RustFS (vía `aws s3
+  sync` contra el endpoint de RustFS, el mismo protocolo S3 que ya usa `backend-core` para
+  subir/bajar evidencia).
+
+Cada corrida verifica la integridad del dump de Postgres (`gzip -t` + que no haya quedado vacío)
+antes de darlo por bueno; si falla esa verificación, si el dump queda corrupto, o si no se pudo
+espejar el bucket de evidencias, el script termina con exit code distinto de cero y, si está
+configurada `BACKUP_ALERT_WEBHOOK_URL` (ver `.env.example`), notifica el fallo por webhook
+(Slack/Discord/Teams-compatible).
+
+Los backups con más de `BACKUP_RETENTION_DAYS` días (30 por defecto, ver `.env.example`) se borran
+al final de cada corrida. `make restore` toma siempre el dump de Postgres y el espejo de
+evidencias más recientes; para restaurar un punto en el tiempo específico, correr
+`scripts/backup/restore.sh` a mano dentro del contenedor apuntando al timestamp deseado.
+
+> Antes de esto, `make backup` solo respaldaba Postgres (sin ningún mecanismo diario, solo a
+> mano) y el bucket de evidencias no tenía backup en absoluto — ver el historial de este archivo
+> si hace falta el contexto completo de esa brecha.
 
 ## Rotación de secretos (JWT/DB)
 
@@ -401,7 +419,7 @@ make restore   # restaura desde el backup MÁS RECIENTE en backups/
 
 - Disponibilidad: 99.5%
 - Latencia p95 API: < 500 ms
-- Backup Postgres: diario, retención 30 días (recordatorio: no cubre RustFS, ver arriba)
+- Backup Postgres + evidencias (RustFS): diario, retención 30 días (ver arriba)
 
 ## Referencias
 
