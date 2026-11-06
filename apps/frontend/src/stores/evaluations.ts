@@ -1,6 +1,12 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
-import type { Evaluation, EvaluationResponse, MaturityResult } from '@/types';
+import type {
+  Evaluation,
+  EvaluationResponse,
+  MaturityResult,
+  SubcategoryComment,
+  ControlFlag,
+} from '@/types';
 import { evaluationsService } from '@/services/resources';
 
 export const useEvaluationsStore = defineStore('evaluations', () => {
@@ -79,6 +85,33 @@ export const useEvaluationsStore = defineStore('evaluations', () => {
     return data;
   }
 
+  async function fetchFlags(evaluationId: string): Promise<ControlFlag[]> {
+    const { data } = await evaluationsService.getFlags(evaluationId);
+    return data;
+  }
+
+  async function setFlag(evaluationId: string, controlId: string, flagged: boolean) {
+    await evaluationsService.setFlag(evaluationId, controlId, flagged);
+  }
+
+  async function fetchSubcategoryComments(evaluationId: string): Promise<SubcategoryComment[]> {
+    const { data } = await evaluationsService.getSubcategoryComments(evaluationId);
+    return data;
+  }
+
+  async function saveSubcategoryComment(
+    evaluationId: string,
+    subcategoryId: string,
+    comment: string,
+  ): Promise<SubcategoryComment> {
+    const { data } = await evaluationsService.saveSubcategoryComment(
+      evaluationId,
+      subcategoryId,
+      comment,
+    );
+    return data;
+  }
+
   async function saveResponse(evaluationId: string, responseData: Partial<EvaluationResponse>) {
     const { data } = await evaluationsService.saveResponse(evaluationId, responseData);
     const index = responses.value.findIndex((r) => r.controlId === responseData.controlId);
@@ -122,6 +155,10 @@ export const useEvaluationsStore = defineStore('evaluations', () => {
     changeProfile,
     fetchResponses,
     saveResponse,
+    fetchSubcategoryComments,
+    fetchFlags,
+    setFlag,
+    saveSubcategoryComment,
     fetchResults,
     calculateMaturity,
     deleteEvaluation,

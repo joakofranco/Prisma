@@ -193,6 +193,14 @@ export interface CommunityProfile {
   createdAt: string;
 }
 
+/** Comentario del evaluador sobre una subcategoría completa (RF-EVA-06). */
+export interface SubcategoryComment {
+  subcategoryId: string;
+  comment: string | null;
+  updatedBy: string | null;
+  updatedAt: string | null;
+}
+
 export interface EvaluationResponse {
   id: string;
   evaluationId: string;
@@ -230,7 +238,6 @@ export interface Evidence {
   uploadedBy: string;
   uploadedAt: string;
   description?: string;
-  url?: string;
   /** true si el asistente de IA pudo extraer e indexar el contenido para búsqueda de citas. */
   aiIndexed: boolean;
 }
@@ -258,6 +265,25 @@ export interface AuditObservation {
   createdAt: string;
   /** Nombre de quien la registró -- la "estampa" de qué auditor trabajó esta auditoría. */
   createdByName?: string | null;
+}
+
+/** Marca «para revisar» de un control dentro de una evaluación (PRI-352). */
+export interface ControlFlag {
+  controlId: string;
+  flaggedBy: string | null;
+  flaggedByName: string | null;
+  flaggedAt: string | null;
+}
+
+/** Dictamen del auditor sobre un control (RF-AUD-06). */
+export type AuditVerdict = 'VALIDATED' | 'NOT_VALIDATED' | 'NEEDS_MORE_EVIDENCE';
+
+export interface ControlVerdict {
+  controlId: string;
+  verdict: AuditVerdict;
+  setBy: string | null;
+  setByName: string | null;
+  updatedAt: string | null;
 }
 
 export interface ImprovementPlan {

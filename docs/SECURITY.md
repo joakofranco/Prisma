@@ -151,6 +151,16 @@ buscarlo del lado de Keycloak. `LoginFailureAuditSyncService` sondea cada 15s (c
 - El **bloqueo** de la cuenta lo sigue haciendo Keycloak solo (`failureFactor`, ver la tabla de
   arriba) — este mecanismo sólo agrega visibilidad, no reemplaza ni reimplementa el lockout.
 
+## Enmascarado de datos sensibles en logs (RNF-10)
+
+`backend-core` trae un `logback-spring.xml` propio cuyo appender de consola usa
+`MaskingPatternLayout` (`uy.edu.prisma.config.MaskingPatternLayout`) en vez del `PatternLayout` de
+Logback por defecto: antes de escribir cada línea, reemplaza por `***REDACTED***` cualquier valor
+de `password`, `token`/`accessToken`/`refreshToken`/`secret`/`clientSecret` en formato JSON o
+`clave=valor`, y cualquier credencial `Bearer <token>`. Es una red de contención a nivel de
+logging, no un reemplazo de evitar loguear datos sensibles a propósito — sigue sin estar permitido
+loguear explícitamente un objeto `User`/credenciales completas en el código.
+
 ## Pentesting de caja negra (hallazgos y estado)
 
 Batería de pruebas manuales contra el stack local corriendo (puertos expuestos, credenciales por

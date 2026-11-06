@@ -1,6 +1,7 @@
 package uy.edu.prisma.application;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
@@ -10,14 +11,17 @@ import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
+import software.amazon.awssdk.core.ResponseInputStream;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
+import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 import software.amazon.awssdk.services.s3.model.HeadBucketRequest;
 import software.amazon.awssdk.services.s3.model.NoSuchBucketException;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
@@ -27,13 +31,13 @@ import uy.edu.prisma.config.ObjectStorageConfig.StorageProperties;
 import uy.edu.prisma.domain.entity.CatalogControl;
 import uy.edu.prisma.domain.entity.Evaluation;
 import uy.edu.prisma.domain.entity.Evidence;
+import uy.edu.prisma.domain.entity.UserRole;
 import uy.edu.prisma.domain.exception.InvalidRequestException;
 import uy.edu.prisma.domain.exception.ResourceNotFoundException;
 import uy.edu.prisma.domain.repository.CatalogControlRepository;
 import uy.edu.prisma.domain.repository.EvaluationRepository;
 import uy.edu.prisma.domain.repository.EvidenceRepository;
 import uy.edu.prisma.infrastructure.AiEvidenceClient;
-import uy.edu.prisma.web.dto.Dto.DownloadUrlDto;
 import uy.edu.prisma.web.dto.Dto.EvidenceCitationDto;
 import uy.edu.prisma.web.dto.Dto.EvidenceDto;
 import uy.edu.prisma.web.dto.Dto.UploadEvidenceResponseDto;
@@ -50,7 +54,6 @@ public class EvidenceService {
   private final CatalogControlRepository controlRepo;
   private final S3Client s3Client;
   private final S3Presigner internalPresigner;
-  private final S3Presigner publicPresigner;
   private final StorageProperties storageProperties;
   private final CurrentUserService currentUser;
   private final AiEvidenceClient aiClient;
@@ -61,7 +64,6 @@ public class EvidenceService {
       CatalogControlRepository controlRepo,
       S3Client s3Client,
       @Qualifier("internalPresigner") S3Presigner internalPresigner,
-      @Qualifier("publicPresigner") S3Presigner publicPresigner,
       StorageProperties storageProperties,
       CurrentUserService currentUser,
       AiEvidenceClient aiClient) {
@@ -70,7 +72,6 @@ public class EvidenceService {
     this.controlRepo = controlRepo;
     this.s3Client = s3Client;
     this.internalPresigner = internalPresigner;
-    this.publicPresigner = publicPresigner;
     this.storageProperties = storageProperties;
     this.currentUser = currentUser;
     this.aiClient = aiClient;
@@ -83,9 +84,18 @@ public class EvidenceService {
             .findById(evaluationId)
             .orElseThrow(() -> new ResourceNotFoundException("Evaluación", evaluationId));
     currentUser.assertOrganizationAccess(eval.getOrganization().getId());
+    // El listado no entrega enlaces de descarga: el archivo solo sale por download(), que valida
+    // el JWT, la organización y el rol en cada descarga (PRI-286).
     return evidenceRepo.findByEvaluationIdOrderByUploadedAtDesc(evaluationId).stream()
-        .map(e -> toDto(e, publicPresignedUrl(e)))
+        .map(this::toDto)
         .toList();
+  }
+
+  /** Roles que pueden descargar evidencias: PRISMA_ADMIN, ORG_RESPONSIBLE y AUDITOR (PRI-286). */
+  private boolean canDownload() {
+    return currentUser.hasRole(UserRole.PRISMA_ADMIN)
+        || currentUser.hasRole(UserRole.ORG_RESPONSIBLE)
+        || currentUser.hasRole(UserRole.AUDITOR);
   }
 
   public UploadEvidenceResponseDto upload(
@@ -170,7 +180,7 @@ public class EvidenceService {
     // `evidence` ya está administrada (viene de findById en esta misma transacción): alcanza con
     // mutarla, sin volver a llamar a save() -- ver comentario en upload().
     evidence.setAiIndexed(indexInAi(evidence));
-    return toDto(evidence, publicPresignedUrl(evidence));
+    return toDto(evidence);
   }
 
   // Igual que EvaluationService.saveResponse: una vez enviada a auditoría (READY_FOR_AUDIT en
@@ -254,15 +264,39 @@ public class EvidenceService {
     evidenceRepo.delete(evidence);
   }
 
+  /**
+   * Archivo de una evidencia listo para streaming. El backend lo sirve en cada descarga, en lugar
+   * de entregar un enlace pre-firmado de RustFS: así no existe un enlace que se pueda compartir y
+   * cada descarga exige JWT, acceso a la organización y rol (PRI-286). El llamador debe cerrar
+   * {@code content}.
+   */
+  public record EvidenceFile(String fileName, String contentType, long size, InputStream content) {}
+
   @Transactional(readOnly = true)
-  public DownloadUrlDto generateDownloadUrl(UUID id) {
+  public EvidenceFile download(UUID id) {
     Evidence evidence =
         evidenceRepo.findById(id).orElseThrow(() -> new ResourceNotFoundException("Evidencia", id));
     currentUser.assertOrganizationAccess(evidence.getEvaluation().getOrganization().getId());
+    // Defensa en profundidad: el controlador ya exige el rol con @PreAuthorize.
+    if (!canDownload()) {
+      throw new AccessDeniedException("Su rol no puede descargar evidencias");
+    }
     try {
-      return new DownloadUrlDto(presign(publicPresigner, evidence));
+      ResponseInputStream<GetObjectResponse> object =
+          s3Client.getObject(
+              GetObjectRequest.builder()
+                  .bucket(storageProperties.bucket())
+                  .key(evidence.getStorageKey())
+                  .build());
+      return new EvidenceFile(
+          evidence.getFileName(),
+          evidence.getFileType() != null ? evidence.getFileType() : "application/octet-stream",
+          object.response().contentLength() != null
+              ? object.response().contentLength()
+              : evidence.getFileSize(),
+          object);
     } catch (Exception e) {
-      throw new RuntimeException("No se pudo generar la URL de descarga", e);
+      throw new RuntimeException("No se pudo leer el archivo de evidencia", e);
     }
   }
 
@@ -309,20 +343,7 @@ public class EvidenceService {
         .toString();
   }
 
-  // Usada en los DTOs que devuelve la API: URL pública, para que el navegador del usuario pueda
-  // bajar el archivo directamente. Antes se reusaba presignedUrlOrThrow (endpoint interno) acá
-  // también, y el link de "Descargar" del frontend quedaba con un host que ningún navegador podía
-  // resolver (ver ObjectStorageConfig).
-  private String publicPresignedUrl(Evidence e) {
-    try {
-      return presign(publicPresigner, e);
-    } catch (Exception ex) {
-      log.warn("No se pudo firmar la URL pública de descarga para la evidencia {}", e.getId(), ex);
-      return null;
-    }
-  }
-
-  private EvidenceDto toDto(Evidence e, String url) {
+  private EvidenceDto toDto(Evidence e) {
     return new EvidenceDto(
         e.getId(),
         e.getEvaluation().getId(),
@@ -334,7 +355,6 @@ public class EvidenceService {
         e.getDescription(),
         e.getUploadedBy() != null ? e.getUploadedBy().getId() : null,
         e.getUploadedAt(),
-        url,
         e.isAiIndexed());
   }
 }

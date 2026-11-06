@@ -19,7 +19,11 @@ public class ReportsController {
     this.service = service;
   }
 
+  // Solo el Administrador y el Responsable de Organización descargan reportes (PRI-313); el
+  // Auditor queda fuera. assertOrganizationAccess en ReportService sigue acotando a su
+  // organización.
   @GetMapping("/{id}/pdf")
+  @PreAuthorize("hasAnyRole('PRISMA_ADMIN','ORG_RESPONSIBLE')")
   public ResponseEntity<byte[]> pdf(@PathVariable UUID id) {
     byte[] content = service.generatePdf(id);
     return ResponseEntity.ok()
@@ -29,6 +33,7 @@ public class ReportsController {
   }
 
   @GetMapping("/{id}/excel")
+  @PreAuthorize("hasAnyRole('PRISMA_ADMIN','ORG_RESPONSIBLE')")
   public ResponseEntity<byte[]> excel(@PathVariable UUID id) {
     byte[] content = service.generateExcel(id);
     return ResponseEntity.ok()

@@ -72,6 +72,21 @@ public class EmailSettingsService {
     auditLog.record("UPDATE", "email-settings", "{\"host\":\"" + dto.host() + "\"}");
   }
 
+  /**
+   * Envía un correo de prueba con la configuración SMTP ya guardada, para que el admin pueda
+   * confirmar que el servidor realmente funciona antes de confiar en él en producción.
+   */
+  public void testConnection(String recipientEmail) {
+    Map<String, String> smtp = keycloakAdmin.getSmtpConfig();
+    if (smtp.getOrDefault("host", "").isBlank() || smtp.getOrDefault("from", "").isBlank()) {
+      throw new InvalidRequestException(
+          "No hay una configuración SMTP guardada todavía: guardá los datos del servidor antes de"
+              + " probar el envío");
+    }
+    keycloakAdmin.testSmtpConnection(smtp, recipientEmail);
+    auditLog.record("TEST", "email-settings", "{\"to\":\"" + recipientEmail + "\"}");
+  }
+
   private static Integer parsePort(String raw) {
     if (raw == null || raw.isBlank()) {
       return null;

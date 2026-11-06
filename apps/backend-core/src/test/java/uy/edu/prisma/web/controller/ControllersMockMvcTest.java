@@ -1,5 +1,6 @@
 package uy.edu.prisma.web.controller;
 
+import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -33,6 +34,8 @@ class ControllersMockMvcTest {
   @Mock private UserService userService;
   @Mock private EvidenceService evidenceService;
   @Mock private AuditObservationService auditObservationService;
+  @Mock private AuditVerdictService auditVerdictService;
+  @Mock private EvaluationFlagService evaluationFlagService;
   @Mock private ImprovementPlanService improvementPlanService;
   @Mock private ReportService reportService;
   @Mock private EmailSettingsService emailSettingsService;
@@ -47,6 +50,8 @@ class ControllersMockMvcTest {
   private MockMvc users;
   private MockMvc evidence;
   private MockMvc audit;
+  private MockMvc verdicts;
+  private MockMvc flags;
   private MockMvc improvement;
   private MockMvc reports;
   private MockMvc emailSettings;
@@ -69,6 +74,11 @@ class ControllersMockMvcTest {
     audit =
         MockMvcBuilders.standaloneSetup(new AuditObservationController(auditObservationService))
             .build();
+    flags =
+        MockMvcBuilders.standaloneSetup(new EvaluationFlagController(evaluationFlagService))
+            .build();
+    verdicts =
+        MockMvcBuilders.standaloneSetup(new AuditVerdictController(auditVerdictService)).build();
     improvement =
         MockMvcBuilders.standaloneSetup(new ImprovementPlanController(improvementPlanService))
             .build();
@@ -578,14 +588,107 @@ class ControllersMockMvcTest {
   }
 
   @Test
-  void evidenceDownload() throws Exception {
+  void evidenceDownloadStreamsTheFile() throws Exception {
     UUID id = UUID.randomUUID();
-    when(evidenceService.generateDownloadUrl(id)).thenReturn(new DownloadUrlDto("http://signed"));
+    when(evidenceService.download(id))
+        .thenReturn(
+            new EvidenceService.EvidenceFile(
+                "acta.pdf",
+                "application/pdf",
+                3L,
+                new java.io.ByteArrayInputStream(new byte[] {1, 2, 3})));
 
     evidence
         .perform(get("/api/evidence/{id}/download", id))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.url").value("http://signed"));
+        .andExpect(
+            header()
+                .string("Content-Disposition", org.hamcrest.Matchers.containsString("acta.pdf")))
+        .andExpect(content().contentType("application/pdf"))
+        .andExpect(content().bytes(new byte[] {1, 2, 3}));
+  }
+
+  @Test
+  void evidenceDownloadIsRestrictedToAdminOrgResponsibleAndAuditor() throws Exception {
+    var method = EvidenceController.class.getMethod("download", UUID.class);
+    var annotation =
+        method.getAnnotation(org.springframework.security.access.prepost.PreAuthorize.class);
+
+    assertNotNull(annotation);
+    assertEquals("hasAnyRole('PRISMA_ADMIN','ORG_RESPONSIBLE','AUDITOR')", annotation.value());
+  }
+
+  @Test
+  void verdictListAndSet() throws Exception {
+    UUID evalId = UUID.randomUUID();
+    UUID controlId = UUID.randomUUID();
+    when(auditVerdictService.listByEvaluation(evalId)).thenReturn(List.of());
+    when(auditVerdictService.set(evalId, controlId, "VALIDATED"))
+        .thenReturn(new ControlVerdictDto(controlId, "VALIDATED", null, null, null));
+
+    verdicts.perform(get("/api/audit/verdicts/{id}", evalId)).andExpect(status().isOk());
+    verdicts
+        .perform(
+            put("/api/audit/verdicts/{e}/controls/{c}", evalId, controlId)
+                .contentType("application/json")
+                .content("{\"verdict\":\"VALIDATED\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.verdict").value("VALIDATED"));
+    verdicts
+        .perform(
+            put("/api/audit/verdicts/{e}/controls/{c}", evalId, controlId)
+                .contentType("application/json")
+                .content("{\"verdict\":\"\"}"))
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
+  void verdictEndpointsAreRestrictedToAdminAndAuditor() throws Exception {
+    for (String name : List.of("list", "set")) {
+      var method =
+          java.util.Arrays.stream(AuditVerdictController.class.getMethods())
+              .filter(m -> m.getName().equals(name))
+              .findFirst()
+              .orElseThrow();
+      var annotation =
+          method.getAnnotation(org.springframework.security.access.prepost.PreAuthorize.class);
+      assertNotNull(annotation, name);
+      assertEquals("hasAnyRole('PRISMA_ADMIN','AUDITOR')", annotation.value());
+    }
+  }
+
+  @Test
+  void flagListFlagAndUnflag() throws Exception {
+    UUID evalId = UUID.randomUUID();
+    UUID controlId = UUID.randomUUID();
+    when(evaluationFlagService.list(evalId))
+        .thenReturn(List.of(new ControlFlagDto(controlId, null, "Ana", null)));
+
+    flags
+        .perform(get("/api/evaluations/{e}/flags", evalId))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$[0].controlId").value(controlId.toString()));
+    flags
+        .perform(put("/api/evaluations/{e}/flags/{c}", evalId, controlId))
+        .andExpect(status().isNoContent());
+    flags
+        .perform(delete("/api/evaluations/{e}/flags/{c}", evalId, controlId))
+        .andExpect(status().isNoContent());
+    verify(evaluationFlagService).setFlagged(evalId, controlId, true);
+    verify(evaluationFlagService).setFlagged(evalId, controlId, false);
+  }
+
+  @Test
+  void flagEndpointsAreRestrictedToWorkingRoles() throws Exception {
+    for (String name : List.of("flag", "unflag")) {
+      var method = EvaluationFlagController.class.getMethod(name, UUID.class, UUID.class);
+      var annotation =
+          method.getAnnotation(org.springframework.security.access.prepost.PreAuthorize.class);
+      assertNotNull(annotation, name);
+      assertEquals(
+          "hasAnyRole('PRISMA_ADMIN','INTERNAL_EVALUATOR','ORG_RESPONSIBLE','AUDITOR')",
+          annotation.value());
+    }
   }
 
   @Test
@@ -600,7 +703,6 @@ class ControllersMockMvcTest {
                 "doc.pdf",
                 10L,
                 "application/pdf",
-                null,
                 null,
                 null,
                 null,
@@ -768,6 +870,17 @@ class ControllersMockMvcTest {
         .perform(get("/api/reports/{id}/pdf", id))
         .andExpect(status().isOk())
         .andExpect(content().contentType(MediaType.APPLICATION_PDF));
+  }
+
+  @Test
+  void reportDownloadsAreRestrictedToAdminAndOrgResponsible() throws Exception {
+    for (String name : List.of("pdf", "excel")) {
+      var method = ReportsController.class.getMethod(name, UUID.class);
+      var annotation =
+          method.getAnnotation(org.springframework.security.access.prepost.PreAuthorize.class);
+      assertNotNull(annotation, name);
+      assertEquals("hasAnyRole('PRISMA_ADMIN','ORG_RESPONSIBLE')", annotation.value());
+    }
   }
 
   @Test

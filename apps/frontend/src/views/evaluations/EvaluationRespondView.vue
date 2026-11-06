@@ -50,6 +50,30 @@
         >
           Estructura MCU {{ evaluation?.catalogVersion }}
         </h2>
+        <div
+          v-if="flaggedQuestions.length > 0"
+          class="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950"
+          data-testid="flagged-panel"
+        >
+          <h3 class="text-xs font-semibold text-amber-800 dark:text-amber-300 mb-2">
+            Marcadas para revisar ({{ flaggedQuestions.length }})
+          </h3>
+          <ul class="space-y-1">
+            <li v-for="q in flaggedQuestions" :key="q.control.id">
+              <button
+                class="w-full text-left text-xs rounded px-1.5 py-1 hover:bg-amber-100 dark:hover:bg-amber-900 text-amber-900 dark:text-amber-200"
+                :class="q.control.id === currentQuestion?.control.id ? 'font-semibold' : ''"
+                data-testid="flagged-item"
+                @click="goToControl(q.control.id)"
+              >
+                <span class="font-medium">{{ q.control.code }}</span>
+                <span class="block truncate text-amber-700 dark:text-amber-400">{{
+                  q.control.description
+                }}</span>
+              </button>
+            </li>
+          </ul>
+        </div>
         <nav class="space-y-1">
           <div v-for="(func, fi) in catalogFunctions" :key="func.id">
             <button
@@ -172,6 +196,13 @@
               Marcar para revisar
             </button>
           </div>
+          <p
+            v-if="isFlagged && currentFlagAuthor"
+            class="text-xs text-amber-700 dark:text-amber-400 mt-1"
+            data-testid="flag-author"
+          >
+            Marcada para revisar por {{ currentFlagAuthor }}
+          </p>
           <h3 class="text-lg font-bold text-slate-900 dark:text-white mt-2">
             {{ currentQuestion.control.description }}
           </h3>
@@ -254,6 +285,18 @@
           </div>
         </div>
 
+        <div
+          class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6"
+          data-testid="subcategory-comment"
+        >
+          <BaseTextarea
+            v-model="currentSubcategoryComment"
+            :label="`Comentario de la subcategoría: ${currentQuestion.subcategory.name}`"
+            placeholder="Comentario general sobre esta subcategoría (opcional)"
+            :rows="3"
+          />
+        </div>
+
         <div class="flex items-center justify-between gap-3">
           <BaseButton variant="outline" :disabled="isFirst" @click="goPrev"> Anterior </BaseButton>
           <BaseButton variant="primary" :loading="saving" @click="isLast ? finish() : goNext()">
@@ -325,6 +368,8 @@
   const expandedFunctions = ref<Set<string>>(new Set());
   const currentIndex = ref(0);
   const flaggedControls = ref<Set<string>>(new Set());
+  // Quien puso cada marca (la ven el resto de los roles de la evaluación, no solo quien la puso).
+  const flagAuthors = reactive<Record<string, string>>({});
   const showObservations = ref(false);
 
   const responseMap = reactive<
@@ -411,6 +456,22 @@
     return r?.answered ? r.compliant : null;
   });
   const isFlagged = computed(() => flaggedControls.value.has(currentQuestion.value?.control.id));
+  const currentFlagAuthor = computed(() => flagAuthors[currentQuestion.value?.control.id] ?? '');
+  // Conjunto de preguntas marcadas, en el orden del catálogo, para el panel lateral.
+  const flaggedQuestions = computed(() =>
+    flatQuestions.value.filter((q) => flaggedControls.value.has(q.control.id)),
+  );
+
+  // Comentario por subcategoria (RF-EVA-06). `savedSubcategoryComments` es lo que ya esta en el
+  // backend: solo se envian los que cambiaron al guardar el progreso.
+  const subcategoryComments = reactive<Record<string, string>>({});
+  const savedSubcategoryComments = reactive<Record<string, string>>({});
+  const currentSubcategoryComment = computed({
+    get: () => subcategoryComments[currentQuestion.value?.subcategory.id] || '',
+    set: (value: string) => {
+      subcategoryComments[currentQuestion.value.subcategory.id] = value;
+    },
+  });
 
   const currentObservations = computed({
     get: () => responseMap[currentQuestion.value?.control.id]?.observations || '',
@@ -526,12 +587,37 @@
     responseMap[id].answered = true;
   }
 
-  function toggleFlag() {
-    const next = new Set(flaggedControls.value);
+  // La marca se guarda en el momento: antes vivía solo en memoria y se perdía al recargar.
+  async function toggleFlag() {
     const id = currentQuestion.value.control.id;
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
+    const wasFlagged = flaggedControls.value.has(id);
+    setFlagLocal(id, !wasFlagged);
+    try {
+      await store.setFlag(evaluationId, id, !wasFlagged);
+    } catch (err) {
+      setFlagLocal(id, wasFlagged);
+      notification.error(getErrorMessage(err, 'No se pudo guardar la marca'));
+    }
+  }
+
+  function setFlagLocal(controlId: string, flagged: boolean) {
+    const next = new Set(flaggedControls.value);
+    if (flagged) next.add(controlId);
+    else {
+      next.delete(controlId);
+      delete flagAuthors[controlId];
+    }
     flaggedControls.value = next;
+  }
+
+  // Salta directo a una pregunta (desde el panel de marcadas), sin pasar por la navegación
+  // secuencial.
+  function goToControl(controlId: string) {
+    const idx = flatQuestions.value.findIndex((q) => q.control.id === controlId);
+    if (idx < 0) return;
+    currentIndex.value = idx;
+    expandedFunctions.value.add(flatQuestions.value[idx].func.id);
+    showObservations.value = false;
   }
 
   function goPrev() {
@@ -585,6 +671,11 @@
           observations: data.observations,
         });
       }
+      for (const [subcategoryId, comment] of Object.entries(subcategoryComments)) {
+        if (comment === (savedSubcategoryComments[subcategoryId] ?? '')) continue;
+        await store.saveSubcategoryComment(evaluationId, subcategoryId, comment);
+        savedSubcategoryComments[subcategoryId] = comment;
+      }
       return true;
     } catch (err) {
       notification.error(getErrorMessage(err, 'Error al guardar las respuestas'));
@@ -614,11 +705,23 @@
 
   onMounted(async () => {
     try {
-      const [ev, responsesData] = await Promise.all([
+      const [ev, responsesData, commentsData, flagsData] = await Promise.all([
         store.fetchEvaluation(evaluationId),
         store.fetchResponses(evaluationId),
+        store.fetchSubcategoryComments(evaluationId),
+        store.fetchFlags(evaluationId),
       ]);
       evaluation.value = ev;
+
+      flaggedControls.value = new Set(flagsData.map((fl) => fl.controlId));
+      flagsData.forEach((fl) => {
+        if (fl.flaggedByName) flagAuthors[fl.controlId] = fl.flaggedByName;
+      });
+
+      commentsData.forEach((c) => {
+        subcategoryComments[c.subcategoryId] = c.comment || '';
+        savedSubcategoryComments[c.subcategoryId] = c.comment || '';
+      });
 
       responsesData.forEach((r) => {
         responseMap[r.controlId] = {

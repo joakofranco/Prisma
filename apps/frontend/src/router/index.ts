@@ -111,7 +111,11 @@ const routes: RouteRecordRaw[] = [
     path: '/reports',
     name: 'Reports',
     component: () => import('@/views/reports/ReportsView.vue'),
-    meta: { requiresAuth: true, title: 'Reportes' },
+    meta: {
+      requiresAuth: true,
+      title: 'Reportes',
+      roles: ['PRISMA_ADMIN', 'ORG_RESPONSIBLE'],
+    },
   },
   {
     path: '/improvement/:evaluationId',
