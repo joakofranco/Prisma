@@ -230,6 +230,59 @@ class KeycloakAdminClientTest {
   }
 
   @Test
+  void removeOtpCredentialsDeletesOnlyTheOtpOnesAndKeepsThePassword() {
+    UUID keycloakId = UUID.randomUUID();
+    String base = BASE_URL + "/admin/realms/prisma/users/" + keycloakId + "/credentials";
+    expectAdminToken();
+    server
+        .expect(requestTo(base))
+        .andExpect(method(HttpMethod.GET))
+        .andRespond(
+            withSuccess(
+                "[{\"id\":\"c-pass\",\"type\":\"password\",\"createdDate\":1},"
+                    + "{\"id\":\"c-otp1\",\"type\":\"otp\",\"userLabel\":\"viejo\"},"
+                    + "{\"id\":\"c-otp2\",\"type\":\"otp\",\"userLabel\":\"nuevo\"}]",
+                MediaType.APPLICATION_JSON));
+    server
+        .expect(requestTo(base + "/c-otp1"))
+        .andExpect(method(HttpMethod.DELETE))
+        .andRespond(withStatus(HttpStatus.NO_CONTENT));
+    server
+        .expect(requestTo(base + "/c-otp2"))
+        .andExpect(method(HttpMethod.DELETE))
+        .andRespond(withStatus(HttpStatus.NO_CONTENT));
+
+    assertEquals(2, client.removeOtpCredentials(keycloakId));
+    // Nunca se pidió borrar «c-pass»: MockRestServiceServer falla ante una request no esperada.
+    server.verify();
+  }
+
+  @Test
+  void removeOtpCredentialsReturnsZeroWhenTheUserHasNoOtp() {
+    UUID keycloakId = UUID.randomUUID();
+    expectAdminToken();
+    server
+        .expect(requestTo(BASE_URL + "/admin/realms/prisma/users/" + keycloakId + "/credentials"))
+        .andExpect(method(HttpMethod.GET))
+        .andRespond(
+            withSuccess("[{\"id\":\"c-pass\",\"type\":\"password\"}]", MediaType.APPLICATION_JSON));
+
+    assertEquals(0, client.removeOtpCredentials(keycloakId));
+    server.verify();
+  }
+
+  @Test
+  void removeOtpCredentialsPropagatesKeycloakErrors() {
+    UUID keycloakId = UUID.randomUUID();
+    expectAdminToken();
+    server
+        .expect(requestTo(BASE_URL + "/admin/realms/prisma/users/" + keycloakId + "/credentials"))
+        .andRespond(withStatus(HttpStatus.INTERNAL_SERVER_ERROR));
+
+    assertThrows(Exception.class, () -> client.removeOtpCredentials(keycloakId));
+  }
+
+  @Test
   void verifyPasswordReturnsTrueWhenKeycloakIssuesToken() {
     server
         .expect(requestTo(BASE_URL + "/realms/prisma/protocol/openid-connect/token"))

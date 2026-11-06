@@ -87,7 +87,7 @@
           </button>
           <div class="flex gap-1">
             <button
-              v-if="ev.url"
+              v-if="canDownload"
               class="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 hover:text-blue-600 dark:hover:text-blue-300 dark:text-slate-400"
               title="Descargar evidencia"
               @click="downloadEvidence(ev)"
@@ -114,15 +114,14 @@
         <BaseSelect
           v-if="controlOptions.length > 0"
           v-model="uploadForm.controlId"
-          label="Control Asociado"
+          label="Control Asociado (opcional)"
           :options="controlOptions"
           placeholder="Buscar por código o nombre del control"
-          :error="uploadErrors.controlId"
-          required
+          clearable
         />
         <p v-else class="text-sm text-slate-500 dark:text-slate-400">
-          No hay controles marcados como "Cumple" todavía en esta evaluación -- las evidencias solo
-          se cargan para controles cuya respuesta fue positiva.
+          No hay controles marcados como "Cumple" todavía en esta evaluación. Puede subir la
+          evidencia sin asociarla a un control y asociarla más adelante.
         </p>
         <BaseTextarea
           v-model="uploadForm.description"
@@ -160,6 +159,8 @@
   import { evidenceService, evaluationsService, catalogService } from '@/services/resources';
   import { formatDate, formatFileSize, getErrorMessage } from '@/utils/helpers';
   import { useNotification } from '@/composables/useUtils';
+  import { useAuthStore } from '@/stores/auth';
+  import { saveBlob } from '@/utils/files';
   import BaseButton from '@/components/common/BaseButton.vue';
   import BaseModal from '@/components/common/BaseModal.vue';
   import BaseSelect from '@/components/common/BaseSelect.vue';
@@ -176,6 +177,7 @@
 
   const route = useRoute();
   const notification = useNotification();
+  const authStore = useAuthStore();
 
   const evaluationId = route.params.evaluationId as string;
   const loading = ref(true);
@@ -191,7 +193,6 @@
   });
 
   const uploadErrors = reactive({
-    controlId: '',
     file: '',
   });
 
@@ -272,12 +273,7 @@
   }
 
   async function handleUpload() {
-    uploadErrors.controlId = '';
     uploadErrors.file = '';
-    if (!uploadForm.controlId) {
-      uploadErrors.controlId = 'Seleccione un control';
-      return;
-    }
     if (!fileInput.value?.files?.[0]) {
       uploadErrors.file = 'Seleccione un archivo';
       return;
@@ -287,7 +283,8 @@
     try {
       const formData = new FormData();
       formData.append('evaluationId', evaluationId);
-      formData.append('controlId', uploadForm.controlId);
+      // El control es opcional: sin control, la evidencia queda asociada solo a la evaluación.
+      if (uploadForm.controlId) formData.append('controlId', uploadForm.controlId);
       formData.append('description', uploadForm.description);
       formData.append('file', fileInput.value.files[0]);
 
@@ -304,8 +301,17 @@
     }
   }
 
-  function downloadEvidence(ev: Evidence) {
-    if (ev.url) window.open(ev.url, '_blank');
+  // Descargan PRISMA_ADMIN, ORG_RESPONSIBLE y AUDITOR (el backend lo exige igual). El archivo se pide con
+  // el JWT y se guarda desde un blob: no hay un enlace directo al almacenamiento.
+  const canDownload = authStore.hasAnyRole('PRISMA_ADMIN', 'ORG_RESPONSIBLE', 'AUDITOR');
+
+  async function downloadEvidence(ev: Evidence) {
+    try {
+      const { data } = await evidenceService.download(ev.id);
+      saveBlob(data, ev.fileName);
+    } catch (err) {
+      notification.error(getErrorMessage(err, 'No se pudo descargar la evidencia'));
+    }
   }
 
   function confirmDeleteEvidence(ev: Evidence) {

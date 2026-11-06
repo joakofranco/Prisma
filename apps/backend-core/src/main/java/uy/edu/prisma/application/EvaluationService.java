@@ -24,6 +24,8 @@ import uy.edu.prisma.web.dto.Dto.EvaluationResponseDto;
 import uy.edu.prisma.web.dto.Dto.MaturityResultDto;
 import uy.edu.prisma.web.dto.Dto.PaginatedDto;
 import uy.edu.prisma.web.dto.Dto.SaveResponseDto;
+import uy.edu.prisma.web.dto.Dto.SaveSubcategoryCommentDto;
+import uy.edu.prisma.web.dto.Dto.SubcategoryCommentDto;
 
 @Service
 @Transactional
@@ -31,6 +33,7 @@ public class EvaluationService {
 
   private final EvaluationRepository evalRepo;
   private final EvaluationResponseRepository respRepo;
+  private final EvaluationSubcategoryCommentRepository subcatCommentRepo;
   private final MaturityResultRepository matRepo;
   private final OrganizationRepository orgRepo;
   private final CatalogControlRepository controlRepo;
@@ -46,6 +49,7 @@ public class EvaluationService {
   public EvaluationService(
       EvaluationRepository evalRepo,
       EvaluationResponseRepository respRepo,
+      EvaluationSubcategoryCommentRepository subcatCommentRepo,
       MaturityResultRepository matRepo,
       OrganizationRepository orgRepo,
       CatalogControlRepository controlRepo,
@@ -59,6 +63,7 @@ public class EvaluationService {
       @Value("${prisma.certification.secret}") String certificationSecret) {
     this.evalRepo = evalRepo;
     this.respRepo = respRepo;
+    this.subcatCommentRepo = subcatCommentRepo;
     this.matRepo = matRepo;
     this.orgRepo = orgRepo;
     this.controlRepo = controlRepo;
@@ -498,6 +503,68 @@ public class EvaluationService {
   @Transactional(readOnly = true)
   public List<EvaluationAuditCycleEventDto> getAuditTrail(UUID evaluationId) {
     return auditLog.getEvaluationAuditTrail(evaluationId);
+  }
+
+  // ---- Subcategory comments (RF-EVA-06) ----
+  @Transactional(readOnly = true)
+  public List<SubcategoryCommentDto> getSubcategoryComments(UUID evaluationId) {
+    Evaluation eval = findAccessibleEvaluation(evaluationId);
+    return subcatCommentRepo.findByEvaluationId(eval.getId()).stream()
+        .map(this::toSubcatCommentDto)
+        .toList();
+  }
+
+  /** Guarda el comentario de la subcategoria; un texto vacio elimina el comentario existente. */
+  public SubcategoryCommentDto saveSubcategoryComment(
+      UUID evaluationId, UUID subcategoryId, SaveSubcategoryCommentDto dto) {
+    Evaluation eval = findAccessibleEvaluation(evaluationId);
+    if (!eval.isSelfAssessmentEditable()) {
+      throw new InvalidRequestException(
+          "No se pueden cargar comentarios: la evaluación está en estado "
+              + eval.getStatus()
+              + ", que ya no admite edición");
+    }
+    CatalogSubcategory subcategory =
+        subcategoryRepo
+            .findById(subcategoryId)
+            .orElseThrow(() -> new ResourceNotFoundException("Subcategoría", subcategoryId));
+    String text = dto.comment() == null ? "" : dto.comment().strip();
+    Optional<EvaluationSubcategoryComment> existing =
+        subcatCommentRepo.findByEvaluationIdAndSubcategoryId(evaluationId, subcategoryId);
+
+    if (text.isEmpty()) {
+      existing.ifPresent(subcatCommentRepo::delete);
+      return new SubcategoryCommentDto(subcategoryId, null, null, null);
+    }
+    EvaluationSubcategoryComment entity = existing.orElseGet(EvaluationSubcategoryComment::new);
+    entity.setEvaluation(eval);
+    entity.setSubcategory(subcategory);
+    entity.setComment(text);
+    entity.setUpdatedBy(currentUser.currentUser().orElse(null));
+    entity.setUpdatedAt(OffsetDateTime.now());
+    SubcategoryCommentDto result = toSubcatCommentDto(subcatCommentRepo.save(entity));
+    auditLog.record(
+        "SAVE_SUBCATEGORY_COMMENT",
+        "evaluation:" + evaluationId,
+        "{\"subcategoryId\":\"" + subcategoryId + "\"}");
+    return result;
+  }
+
+  private Evaluation findAccessibleEvaluation(UUID evaluationId) {
+    Evaluation eval =
+        evalRepo
+            .findById(evaluationId)
+            .orElseThrow(() -> new ResourceNotFoundException("Evaluación", evaluationId));
+    currentUser.assertOrganizationAccess(eval.getOrganization().getId());
+    return eval;
+  }
+
+  private SubcategoryCommentDto toSubcatCommentDto(EvaluationSubcategoryComment c) {
+    return new SubcategoryCommentDto(
+        c.getSubcategory().getId(),
+        c.getComment(),
+        c.getUpdatedBy() != null ? c.getUpdatedBy().getId() : null,
+        c.getUpdatedAt());
   }
 
   // ---- Maturity Calculation ----

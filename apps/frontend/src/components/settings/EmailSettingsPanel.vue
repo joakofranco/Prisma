@@ -30,6 +30,14 @@
     </div>
 
     <form v-else class="space-y-4 mt-5" @submit.prevent="handleSubmit">
+      <!-- Sin SMTP, el «¿Olvidaste tu contraseña?» del login no avisa de nada: Keycloak responde que
+           enviará un correo, pero no sale ninguno y el error queda solo en los logs de Keycloak. -->
+      <BaseAlert v-if="!settings.configured" variant="warning" data-testid="smtp-missing-warning">
+        <strong>No hay un servidor de correo configurado.</strong> Mientras tanto, el enlace
+        «¿Olvidaste tu contraseña?» del login <strong>no envía ningún correo</strong>: el usuario ve
+        el aviso de que se envió, pero nunca le llega. Configurá el servidor SMTP para habilitar la
+        recuperación de contraseña.
+      </BaseAlert>
       <BaseAlert variant="info">
         Para probar la configuración sin cerrar sesión, usá el botón "Enviar correo de prueba" de
         abajo. También podés probarla cerrando sesión y haciendo clic en "¿Olvidaste tu contraseña?"

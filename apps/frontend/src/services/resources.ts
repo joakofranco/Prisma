@@ -5,6 +5,10 @@ import type {
   Evaluation,
   EvaluationResponse,
   EvaluationAuditCycleEvent,
+  SubcategoryComment,
+  ControlVerdict,
+  ControlFlag,
+  AuditVerdict,
   Evidence,
   EvidenceCitation,
   AuditObservation,
@@ -98,6 +102,23 @@ export const evaluationsService = {
   saveResponse(evaluationId: string, data: Partial<EvaluationResponse>) {
     return apiClient.post<EvaluationResponse>(`/evaluations/${evaluationId}/responses`, data);
   },
+  getFlags(evaluationId: string) {
+    return apiClient.get<ControlFlag[]>(`/evaluations/${evaluationId}/flags`);
+  },
+  /** Marca o desmarca «para revisar»; se guarda en el momento, no con «Guardar progreso». */
+  setFlag(evaluationId: string, controlId: string, flagged: boolean) {
+    const url = `/evaluations/${evaluationId}/flags/${controlId}`;
+    return flagged ? apiClient.put<void>(url) : apiClient.delete<void>(url);
+  },
+  getSubcategoryComments(evaluationId: string) {
+    return apiClient.get<SubcategoryComment[]>(`/evaluations/${evaluationId}/subcategory-comments`);
+  },
+  saveSubcategoryComment(evaluationId: string, subcategoryId: string, comment: string) {
+    return apiClient.put<SubcategoryComment>(
+      `/evaluations/${evaluationId}/subcategory-comments/${subcategoryId}`,
+      { comment },
+    );
+  },
   getResults(evaluationId: string) {
     return apiClient.get<MaturityResult[]>(`/evaluations/${evaluationId}/results`);
   },
@@ -185,8 +206,9 @@ export const evidenceService = {
   delete(id: string) {
     return apiClient.delete(`/evidence/${id}`);
   },
-  getSignedUrl(id: string) {
-    return apiClient.get<{ url: string }>(`/evidence/${id}/download`);
+  /** Descarga el archivo: el backend lo sirve con el JWT en cada petición (PRI-286). */
+  download(id: string) {
+    return apiClient.get<Blob>(`/evidence/${id}/download`, { responseType: 'blob' });
   },
   /** Reintenta indexar la evidencia en el asistente de IA (p.ej. si falló al subirla). */
   reindex(id: string) {
@@ -209,6 +231,14 @@ export const auditService = {
   },
   updateObservation(id: string, data: Partial<AuditObservation>) {
     return apiClient.put<AuditObservation>(`/audit/observations/${id}`, data);
+  },
+  getVerdicts(evaluationId: string) {
+    return apiClient.get<ControlVerdict[]>(`/audit/verdicts/${evaluationId}`);
+  },
+  setVerdict(evaluationId: string, controlId: string, verdict: AuditVerdict) {
+    return apiClient.put<ControlVerdict>(`/audit/verdicts/${evaluationId}/controls/${controlId}`, {
+      verdict,
+    });
   },
 };
 

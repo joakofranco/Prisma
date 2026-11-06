@@ -209,3 +209,7 @@ export const MCU_DOMAIN_LABELS: Record<string, string> = {
 export const ITEMS_PER_PAGE = 10;
 export const DATE_FORMAT = 'dd/MM/yyyy';
 export const DATETIME_FORMAT = 'dd/MM/yyyy HH:mm';
+
+/** sessionStorage: marca que la sesión se cerró porque el usuario acaba de cambiar su contraseña
+ * (PRI-363); la pantalla de login la lee una vez para avisarle que entre con la nueva. */
+export const PASSWORD_CHANGED_KEY = 'prisma:password-changed';

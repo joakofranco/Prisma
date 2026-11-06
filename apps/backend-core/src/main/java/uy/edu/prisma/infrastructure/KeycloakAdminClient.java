@@ -178,6 +178,42 @@ public class KeycloakAdminClient {
     setPassword(keycloakId, newPassword, false);
   }
 
+  /**
+   * Borra TODAS las credenciales OTP (MFA) del usuario en Keycloak y devuelve cuántas borró. Es lo
+   * que hace un PRISMA_ADMIN cuando le restablece la contraseña a quien perdió el acceso a su
+   * autenticador (PRI-365): así no hace falta entrar a la consola de Keycloak. A diferencia de
+   * {@link #deleteUser}, NO es best-effort: si falla, quien lo pidió tiene que enterarse (si no, el
+   * usuario seguiría pidiendo un código que ya no puede generar).
+   */
+  public int removeOtpCredentials(UUID keycloakId) {
+    CredentialSummary[] credentials =
+        restClient
+            .get()
+            .uri("/admin/realms/{realm}/users/{id}/credentials", properties.realm(), keycloakId)
+            .header("Authorization", "Bearer " + adminToken())
+            .retrieve()
+            .body(CredentialSummary[].class);
+    int removed = 0;
+    for (CredentialSummary credential :
+        credentials != null ? credentials : new CredentialSummary[0]) {
+      if (!"otp".equals(credential.type())) {
+        continue;
+      }
+      restClient
+          .delete()
+          .uri(
+              "/admin/realms/{realm}/users/{id}/credentials/{credentialId}",
+              properties.realm(),
+              keycloakId,
+              credential.id())
+          .header("Authorization", "Bearer " + adminToken())
+          .retrieve()
+          .toBodilessEntity();
+      removed++;
+    }
+    return removed;
+  }
+
   private void setPassword(UUID keycloakId, String newPassword, boolean temporary) {
     CredentialRepresentation credential =
         new CredentialRepresentation("password", newPassword, temporary);
@@ -425,6 +461,12 @@ public class KeycloakAdminClient {
       @JsonProperty("expires_in") long expiresIn) {}
 
   private record CredentialRepresentation(String type, String value, boolean temporary) {}
+
+  /**
+   * Credencial tal como la lista Keycloak (solo interesan el id y el tipo: «password», «otp»...).
+   */
+  @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+  private record CredentialSummary(String id, String type) {}
 
   private record UserRepresentation(
       String username,
