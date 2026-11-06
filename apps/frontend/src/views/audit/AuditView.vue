@@ -416,16 +416,14 @@
     type: 'OBSERVATION' as AuditObservation['type'],
     description: '',
     controlId: undefined as string | undefined,
-    subcategoryId: undefined as string | undefined,
+    subcategoryId: '',
   });
 
   // RF-AUD-05: además de por control, el auditor puede atar una observación a una subcategoría
   // del catálogo -- lista plana armada a partir del mismo catálogo que ya se trae para resolver
   // los controles con evidencia (ver loadControlsWithEvidence).
   const subcategories = ref<{ id: string; code: string; name: string }[]>([]);
-  const subcategoryById = computed(
-    () => new Map(subcategories.value.map((s) => [s.id, s])),
-  );
+  const subcategoryById = computed(() => new Map(subcategories.value.map((s) => [s.id, s])));
   const subcategoryOptions = computed(() => [
     { value: '', label: 'Sin subcategoría' },
     ...subcategories.value.map((s) => ({
@@ -529,7 +527,7 @@
   function openObservationForCitation(control: ControlWithEvidence, citation: EvidenceCitation) {
     newObs.type = 'OBSERVATION';
     newObs.controlId = control.controlId;
-    newObs.subcategoryId = undefined;
+    newObs.subcategoryId = '';
     newObs.description =
       `Revisión de evidencia para ${control.code} — "${citation.fileName ?? 'evidencia'}"` +
       `${citation.location ? ` (${citation.location})` : ''}: ${citation.snippet}`;
@@ -539,7 +537,7 @@
   function openCreateModal() {
     newObs.type = 'OBSERVATION';
     newObs.controlId = undefined;
-    newObs.subcategoryId = undefined;
+    newObs.subcategoryId = '';
     newObs.description = '';
     showCreateModal.value = true;
   }
@@ -626,7 +624,7 @@
       showCreateModal.value = false;
       newObs.type = 'OBSERVATION';
       newObs.controlId = undefined;
-      newObs.subcategoryId = undefined;
+      newObs.subcategoryId = '';
       newObs.description = '';
       await fetchObservations();
     } catch {
