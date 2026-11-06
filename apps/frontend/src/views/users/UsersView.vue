@@ -162,19 +162,40 @@
             required
           />
           <div>
+            <!-- Alta: la contraseña se genera sola y se muestra en claro para poder copiarla antes
+                 de crear el usuario. Edición: campo oculto, sin generador (la clave que se fija
+                 ahí queda permanente, a diferencia de la del alta, que es temporal). -->
             <BaseInput
               v-model="form.password"
-              label="Contraseña"
-              type="password"
+              :label="editingUser ? 'Contraseña' : 'Contraseña temporal'"
+              :type="editingUser ? 'password' : 'text'"
               placeholder="••••••••"
               :error="errors.password"
               :required="!editingUser"
             />
+            <div v-if="!editingUser" class="mt-2 flex flex-wrap items-center gap-2">
+              <BaseButton
+                variant="secondary"
+                type="button"
+                data-testid="copy-password"
+                @click="copyPassword"
+              >
+                <ClipboardDocumentIcon class="w-4 h-4" /> Copiar
+              </BaseButton>
+              <BaseButton
+                variant="outline"
+                type="button"
+                data-testid="regenerate-password"
+                @click="form.password = generatePassword()"
+              >
+                <ArrowPathIcon class="w-4 h-4" /> Generar otra
+              </BaseButton>
+            </div>
             <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">
               {{
                 editingUser
                   ? 'Dejar en blanco para no cambiarla. Fijar una acá es lo que le habilita el acceso a un usuario que todavía no puede iniciar sesión.'
-                  : 'Sin esto el usuario no va a poder iniciar sesión.'
+                  : 'Es temporal: el usuario deberá cambiarla en su primer inicio de sesión. Copiela y compártasela antes de crear el usuario; después no se vuelve a mostrar.'
               }}
             </p>
           </div>
@@ -264,6 +285,7 @@
   import { useUsersStore } from '@/stores/users';
   import { useOrganizationsStore } from '@/stores/organizations';
   import { useAuthStore } from '@/stores/auth';
+  import { generatePassword } from '@/utils/password';
   import { usersService } from '@/services/resources';
   import { useNotification } from '@/composables/useUtils';
   import { ROLE_LABELS } from '@/utils/constants';
@@ -283,6 +305,8 @@
     TrashIcon,
     NoSymbolIcon,
     CheckCircleIcon,
+    ClipboardDocumentIcon,
+    ArrowPathIcon,
   } from '@heroicons/vue/24/outline';
   import type { User, UserRole } from '@/types';
 
@@ -468,7 +492,20 @@
       // preseleccionamos ya que el campo queda deshabilitado para ese rol.
       form.organizationIds = [orgOptions.value[0].value];
     }
+    form.password = generatePassword();
     showCreateModal.value = true;
+  }
+
+  // Copia la contraseña generada al portapapeles. Si el navegador no lo permite (contexto no
+  // seguro, permiso denegado), no se falla en silencio: se avisa y se la deja seleccionable para
+  // copiarla a mano.
+  async function copyPassword() {
+    try {
+      await navigator.clipboard.writeText(form.password);
+      notification.success('Contraseña copiada al portapapeles');
+    } catch {
+      notification.warning('No se pudo copiar automáticamente: selecciónela y cópiela a mano');
+    }
   }
 
   let searchTimeout: ReturnType<typeof setTimeout>;
@@ -634,6 +671,7 @@
     if (newOrgId) {
       form.organizationIds = [newOrgId];
       form.roles = ['ORG_RESPONSIBLE'];
+      form.password = generatePassword();
       guidedNewOrgName.value =
         (route.query.newOrgName as string) ||
         orgOptions.value.find((o) => o.value === newOrgId)?.label ||
