@@ -220,6 +220,9 @@ export const auditLogsService = {
   getAll(params?: { page?: number; pageSize?: number; search?: string; action?: string }) {
     return apiClient.get<PaginatedResponse<AuditLog>>('/audit-logs', { params });
   },
+  exportCsv(params?: { search?: string; action?: string }) {
+    return apiClient.get('/audit-logs/export', { params, responseType: 'blob' });
+  },
 };
 
 export const improvementService = {
