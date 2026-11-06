@@ -233,6 +233,9 @@ mfa-status: ## Ver el estado de la MFA y qué usuarios con rol obligado ya regis
 mfa-disable: ## Volver al flujo de login original de Keycloak (MFA solo voluntaria)
 	./scripts/keycloak/enable-mfa.sh --disable
 
+mfa-reset-requires-otp: ## "¿Olvidaste tu contraseña?" pide el OTP actual y no lo regenera (idempotente)
+	./scripts/keycloak/enable-mfa.sh --require-otp-on-reset
+
 # ---------- TLS / CERTIFICADOS ----------
 certs: ## Generar el certificado autofirmado de nginx (pide confirmación si ya existe uno)
 	./scripts/generate-nginx-cert.sh

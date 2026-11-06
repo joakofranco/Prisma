@@ -198,6 +198,33 @@
                   : 'Es temporal: el usuario deberá cambiarla en su primer inicio de sesión. Copiela y compártasela antes de crear el usuario; después no se vuelve a mostrar.'
               }}
             </p>
+            <!-- PRI-365: al cambiar la contraseña de otro usuario, el backend (solo para PRISMA_ADMIN)
+                 le quita el MFA registrado. Se avisa ANTES de guardar. -->
+            <BaseAlert
+              v-if="willRemoveMfa"
+              variant="warning"
+              class="mt-2"
+              data-testid="mfa-removal-warning"
+            >
+              <strong
+                >Vas a cambiar la contraseña de este usuario y se le va a quitar el MFA.</strong
+              >
+              Si tenía un autenticador registrado, deja de valer: en su próximo inicio de sesión
+              tendrá que registrar uno nuevo (si la MFA es obligatoria para su rol) y entrar con la
+              contraseña que le pases. Usalo cuando haya perdido el acceso a su autenticador. Si
+              solo olvidó la contraseña, que use «¿Olvidaste tu contraseña?» en el login: no
+              necesita que se la restablezcas.
+            </BaseAlert>
+            <p
+              v-if="!editingUser && mfaRoleSelected"
+              class="mt-1 text-xs text-amber-700 dark:text-amber-400"
+              data-testid="mfa-first-login-hint"
+            >
+              Este rol requiere MFA: si la MFA obligatoria está activa, en ese mismo primer inicio
+              de sesión también se le pedirá registrar la aplicación autenticadora, además de
+              cambiar la contraseña. Son dos pasos distintos; el MFA no se vuelve a pedir al cambiar
+              la contraseña más adelante.
+            </p>
           </div>
         </div>
         <div v-if="orgMode === 'none'">
@@ -296,6 +323,7 @@
   import BaseMultiSelect from '@/components/common/BaseMultiSelect.vue';
   import DataTable from '@/components/common/DataTable.vue';
   import BaseButton from '@/components/common/BaseButton.vue';
+  import BaseAlert from '@/components/common/BaseAlert.vue';
   import BaseModal from '@/components/common/BaseModal.vue';
   import BaseInput from '@/components/common/BaseInput.vue';
   import {
@@ -359,6 +387,18 @@
   const isEditingOwnAccount = computed(
     () => !!editingUser.value && editingUser.value.id === authStore.user?.id,
   );
+  // Roles para los que `make mfa-enable` exige MFA (ver scripts/keycloak/enable-mfa.sh).
+  const MFA_ROLES = ['PRISMA_ADMIN', 'ORG_RESPONSIBLE'];
+  // Solo un PRISMA_ADMIN que edita a OTRO usuario y le fija una contraseña: es el caso en que el
+  // backend le quita el MFA (ver UserService.removeMfaIfAdminResetsPassword).
+  const willRemoveMfa = computed(
+    () =>
+      !!editingUser.value &&
+      isPlatformAdmin.value &&
+      !isEditingOwnAccount.value &&
+      form.password.trim().length > 0,
+  );
+  const mfaRoleSelected = computed(() => form.roles.some((r) => MFA_ROLES.includes(r)));
 
   const errors = reactive({
     firstName: '',
@@ -629,8 +669,13 @@
       if (form.password) payload.password = form.password;
 
       if (editingUser.value) {
+        const removesMfa = willRemoveMfa.value;
         await store.updateUser(editingUser.value.id, payload);
-        notification.success('Usuario actualizado correctamente');
+        notification.success(
+          removesMfa
+            ? 'Usuario actualizado. Se cambió su contraseña y se le quitó el MFA (si tenía uno).'
+            : 'Usuario actualizado correctamente',
+        );
       } else {
         await store.createUser(payload);
         notification.success('Usuario creado correctamente');

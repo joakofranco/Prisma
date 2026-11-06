@@ -146,4 +146,31 @@ describe('UsersView: contraseña generada en el alta (PRI-356)', () => {
     expect(usersService.create.mock.calls[0][0].password).toBe(shown);
   });
 
+  // ---- PRI-365: el primer login pide dos cosas distintas (cambiar la contraseña y registrar el MFA)
+
+  it('al elegir un rol con MFA obligatoria explica el primer inicio de sesión', async () => {
+    await openCreate();
+    expect(document.body.querySelector('[data-testid="mfa-first-login-hint"]')).toBeNull();
+
+    const role = Array.from(document.body.querySelectorAll<HTMLInputElement>('input')).find(
+      (i) => i.type === 'checkbox' && i.closest('label')?.textContent?.includes('Administrador'),
+    )!;
+    role.click();
+    await flushPromises();
+
+    const hint = document.body.querySelector('[data-testid="mfa-first-login-hint"]');
+    expect(hint?.textContent).toContain('registrar la aplicación autenticadora');
+    expect(hint?.textContent).toContain('no se vuelve a pedir');
+  });
+
+  it('con un rol sin MFA obligatoria no muestra ese aviso', async () => {
+    await openCreate();
+    const role = Array.from(document.body.querySelectorAll<HTMLInputElement>('input')).find(
+      (i) => i.type === 'checkbox' && i.closest('label')?.textContent?.includes('Auditor'),
+    )!;
+    role.click();
+    await flushPromises();
+
+    expect(document.body.querySelector('[data-testid="mfa-first-login-hint"]')).toBeNull();
+  });
 });

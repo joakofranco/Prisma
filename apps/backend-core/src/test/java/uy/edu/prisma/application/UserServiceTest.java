@@ -419,6 +419,93 @@ class UserServiceTest {
     verify(keycloakAdmin, never()).resetPassword(any(), any());
   }
 
+  // ---- PRI-365: el admin que restablece una contraseña le quita el MFA al usuario ----
+
+  private CreateUserDto passwordChange() {
+    return new CreateUserDto("u@test.com", "Jane", "Doe", null, null, "NuevaClave1!");
+  }
+
+  @Test
+  void adminResettingAnotherUsersPasswordRemovesTheirMfaAndAuditsIt() {
+    UUID keycloakId = UUID.randomUUID();
+    user.setKeycloakId(keycloakId);
+    when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
+    when(keycloakAdmin.removeOtpCredentials(keycloakId)).thenReturn(2);
+
+    service.update(user.getId(), passwordChange());
+
+    var order = inOrder(keycloakAdmin);
+    order.verify(keycloakAdmin).setPermanentPassword(keycloakId, "NuevaClave1!");
+    order.verify(keycloakAdmin).removeOtpCredentials(keycloakId);
+    verify(auditLog)
+        .record(eq("REMOVE_MFA"), eq("user:" + user.getId()), contains("\"removedCredentials\":2"));
+  }
+
+  @Test
+  void noMfaAuditWhenTheUserHadNoMfa() {
+    UUID keycloakId = UUID.randomUUID();
+    user.setKeycloakId(keycloakId);
+    when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
+    when(keycloakAdmin.removeOtpCredentials(keycloakId)).thenReturn(0);
+
+    service.update(user.getId(), passwordChange());
+
+    verify(keycloakAdmin).removeOtpCredentials(keycloakId);
+    verify(auditLog, never()).record(eq("REMOVE_MFA"), any(), any());
+  }
+
+  @Test
+  void mfaIsNotRemovedWhenThePasswordIsNotChanged() {
+    UUID keycloakId = UUID.randomUUID();
+    user.setKeycloakId(keycloakId);
+    when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
+
+    service.update(user.getId(), new CreateUserDto("u@test.com", "Jane", "Doe", null, null, null));
+
+    verify(keycloakAdmin, never()).removeOtpCredentials(any());
+  }
+
+  @Test
+  void orgResponsibleResettingAPasswordDoesNotTouchTheMfa() {
+    UUID keycloakId = UUID.randomUUID();
+    user.setKeycloakId(keycloakId);
+    user.setOrganizations(Set.of(tenant));
+    when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
+    when(currentUser.isPrismaAdmin()).thenReturn(false);
+    when(currentUser.currentTenantId()).thenReturn(tenant.getId());
+    when(currentUser.organizationIds()).thenReturn(Set.of(tenant.getId()));
+
+    service.update(user.getId(), passwordChange());
+
+    verify(keycloakAdmin).setPermanentPassword(keycloakId, "NuevaClave1!");
+    verify(keycloakAdmin, never()).removeOtpCredentials(any());
+  }
+
+  @Test
+  void adminEditingTheirOwnAccountKeepsTheirMfa() {
+    UUID keycloakId = UUID.randomUUID();
+    user.setKeycloakId(keycloakId);
+    when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
+    when(currentUser.currentUser()).thenReturn(Optional.of(user));
+
+    service.update(user.getId(), passwordChange());
+
+    verify(keycloakAdmin).setPermanentPassword(keycloakId, "NuevaClave1!");
+    verify(keycloakAdmin, never()).removeOtpCredentials(any());
+  }
+
+  @Test
+  void keycloakFailureRemovingMfaPropagatesSoTheAdminKnows() {
+    UUID keycloakId = UUID.randomUUID();
+    user.setKeycloakId(keycloakId);
+    when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
+    when(keycloakAdmin.removeOtpCredentials(keycloakId))
+        .thenThrow(new IllegalStateException("keycloak caído"));
+
+    assertThrows(IllegalStateException.class, () -> service.update(user.getId(), passwordChange()));
+    verify(auditLog, never()).record(eq("REMOVE_MFA"), any(), any());
+  }
+
   @Test
   void updateSelfHealsProvisioningWhenMissingAndPasswordProvided() {
     // Usuario creado antes de este fix (o cuya creación en Keycloak falló en su momento):
