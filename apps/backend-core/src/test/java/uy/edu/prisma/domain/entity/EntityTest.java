@@ -115,7 +115,19 @@ class EntityTest {
     OffsetDateTime now = OffsetDateTime.now();
     Evaluation all =
         new Evaluation(
-            id, "N", null, "5.0", null, Evaluation.Status.IN_PROGRESS, 3, null, now, now);
+            id,
+            "N",
+            null,
+            "5.0",
+            null,
+            Evaluation.Status.IN_PROGRESS,
+            3,
+            null,
+            now,
+            now,
+            null,
+            null,
+            null);
     assertEquals(id, all.getId());
     assertEquals("N", all.getName());
     assertNull(all.getOrganization());

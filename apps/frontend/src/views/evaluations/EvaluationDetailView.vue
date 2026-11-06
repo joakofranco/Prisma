@@ -80,6 +80,29 @@
     <template v-else-if="evaluation">
       <EvaluationLifecycleStepper :status="evaluation.status" />
 
+      <!-- RF-AUD-09: registro de certificación -- solo existe una vez aprobada (sellada), nunca se
+      recalcula ni se puede editar desde acá. -->
+      <div
+        v-if="evaluation.status === 'APPROVED' && evaluation.certificationSeal"
+        class="bg-emerald-50 dark:bg-emerald-950 border border-emerald-200 dark:border-emerald-800 rounded-xl p-4 flex items-start gap-3"
+      >
+        <ShieldCheckIcon class="w-6 h-6 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+        <div class="text-sm text-emerald-800 dark:text-emerald-200">
+          <p class="font-semibold">Evaluación aprobada y sellada</p>
+          <p class="text-emerald-700 dark:text-emerald-300">
+            <span v-if="evaluation.approvedByName"
+              >Certificada por {{ evaluation.approvedByName }}</span
+            >
+            <span v-if="evaluation.approvedAt">
+              el {{ formatDateTime(evaluation.approvedAt) }}</span
+            >
+          </p>
+          <p class="font-mono text-xs text-emerald-600 dark:text-emerald-400 mt-1 break-all">
+            Sello: {{ evaluation.certificationSeal }}
+          </p>
+        </div>
+      </div>
+
       <div
         class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6 space-y-4"
       >
@@ -164,6 +187,63 @@
           icon-bg-class="bg-amber-50 dark:bg-amber-950"
           icon-color-class="text-amber-700 dark:text-amber-400"
         />
+      </div>
+
+      <!-- RF-AUD-10: historial de ciclos de auditoría (envíos/devoluciones) de esta evaluación --
+      cualquiera con acceso a la organización puede verlo, incluido el AUDITOR. -->
+      <div
+        class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6"
+      >
+        <button
+          type="button"
+          class="flex items-center justify-between w-full text-left"
+          @click="toggleAuditTrail"
+        >
+          <h3 class="text-lg font-semibold text-slate-900 dark:text-white">Ciclos de Auditoría</h3>
+          <ChevronDownIcon
+            class="w-5 h-5 text-slate-400 transition-transform"
+            :class="{ 'rotate-180': showAuditTrail }"
+          />
+        </button>
+        <div v-if="showAuditTrail" class="mt-4 space-y-4">
+          <div v-if="loadingAuditTrail" class="text-sm text-slate-500 dark:text-slate-400">
+            Cargando…
+          </div>
+          <div
+            v-else-if="auditTrail.length === 0"
+            class="text-sm text-slate-500 dark:text-slate-400"
+          >
+            Sin transiciones registradas todavía.
+          </div>
+          <div
+            v-for="(events, cycleNumber) in auditTrailByCycle"
+            v-else
+            :key="cycleNumber"
+            class="space-y-2"
+          >
+            <p class="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">
+              {{ Number(cycleNumber) === 0 ? 'Autoevaluación inicial' : `Ciclo ${cycleNumber}` }}
+            </p>
+            <ul class="space-y-1.5">
+              <li
+                v-for="event in events"
+                :key="event.id"
+                class="flex flex-wrap items-center gap-2 text-sm text-slate-700 dark:text-slate-200"
+              >
+                <span class="font-medium">{{
+                  event.status ? getStatusLabel(event.status) : 'Certificación'
+                }}</span>
+                <span class="text-slate-400 dark:text-slate-500">—</span>
+                <span class="text-slate-500 dark:text-slate-400">{{
+                  formatDateTime(event.occurredAt)
+                }}</span>
+                <span v-if="event.performedByName" class="text-slate-500 dark:text-slate-400">
+                  ({{ event.performedByName }})
+                </span>
+              </li>
+            </ul>
+          </div>
+        </div>
       </div>
 
       <div
@@ -405,6 +485,7 @@
     getMaturityColor,
     getMaturityTextStyle,
     getErrorMessage,
+    formatDateTime,
   } from '@/utils/helpers';
   import StatsCard from '@/components/common/StatsCard.vue';
   import BaseButton from '@/components/common/BaseButton.vue';
@@ -429,7 +510,12 @@
     CalculatorIcon,
     TrashIcon,
   } from '@heroicons/vue/24/outline';
-  import type { MaturityCatalog, MaturityResult, MaturityFunction } from '@/types';
+  import type {
+    MaturityCatalog,
+    MaturityResult,
+    MaturityFunction,
+    EvaluationAuditCycleEvent,
+  } from '@/types';
 
   const route = useRoute();
   const router = useRouter();
@@ -446,6 +532,34 @@
   // contar controles Y para el resumen de la pestaña "Tablas y promedios" (siglas + orden oficial).
   const catalogFunctions = ref<MaturityFunction[]>([]);
   const resultsTab = ref<'desglose' | 'tablas'>('desglose');
+
+  // RF-AUD-10: ciclos de auditoría -- se carga perezoso, solo al abrir la sección la primera vez.
+  const showAuditTrail = ref(false);
+  const loadingAuditTrail = ref(false);
+  const auditTrailLoaded = ref(false);
+  const auditTrail = ref<EvaluationAuditCycleEvent[]>([]);
+  const auditTrailByCycle = computed(() => {
+    const grouped: Record<number, EvaluationAuditCycleEvent[]> = {};
+    for (const event of auditTrail.value) {
+      (grouped[event.cycleNumber] ??= []).push(event);
+    }
+    return grouped;
+  });
+
+  async function toggleAuditTrail() {
+    showAuditTrail.value = !showAuditTrail.value;
+    if (!showAuditTrail.value || auditTrailLoaded.value || !evaluation.value) return;
+    loadingAuditTrail.value = true;
+    try {
+      const { data } = await evaluationsService.getAuditTrail(evaluation.value.id);
+      auditTrail.value = data;
+      auditTrailLoaded.value = true;
+    } catch (err) {
+      console.error(err);
+    } finally {
+      loadingAuditTrail.value = false;
+    }
+  }
 
   const progressPercent = computed(() => {
     if (!evaluation.value || totalControls.value === 0) return 0;

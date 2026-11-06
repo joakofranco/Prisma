@@ -28,6 +28,7 @@ import uy.edu.prisma.domain.repository.EvaluationRepository;
 import uy.edu.prisma.domain.repository.OrganizationRepository;
 import uy.edu.prisma.domain.repository.UserRepository;
 import uy.edu.prisma.web.dto.Dto.AuditLogDto;
+import uy.edu.prisma.web.dto.Dto.EvaluationAuditCycleEventDto;
 import uy.edu.prisma.web.dto.Dto.PaginatedDto;
 
 @ExtendWith(MockitoExtension.class)
@@ -247,5 +248,66 @@ class AuditLogServiceTest {
     assertEquals("nadie@test.com", saved.getResource());
     assertNull(saved.getUserId());
     assertNull(saved.getTenantId());
+  }
+
+  @Test
+  void evaluationAuditTrailGroupsEventsByCycleAndResolvesActorNames() {
+    Evaluation eval = Evaluation.builder().id(UUID.randomUUID()).organization(tenant).build();
+    when(evaluationRepo.findById(eval.getId())).thenReturn(java.util.Optional.of(eval));
+
+    OffsetDateTime t0 = OffsetDateTime.now().minusDays(3);
+    AuditLog sentToAudit =
+        AuditLog.builder()
+            .id(UUID.randomUUID())
+            .userId(actor.getId())
+            .action("UPDATE_STATUS")
+            .resource("evaluation:" + eval.getId())
+            .payload("{\"status\":\"READY_FOR_AUDIT\"}")
+            .createdAt(t0)
+            .build();
+    AuditLog returned =
+        AuditLog.builder()
+            .id(UUID.randomUUID())
+            .userId(actor.getId())
+            .action("UPDATE_STATUS")
+            .resource("evaluation:" + eval.getId())
+            .payload("{\"status\":\"RETURNED\"}")
+            .createdAt(t0.plusHours(1))
+            .build();
+    AuditLog resentToAudit =
+        AuditLog.builder()
+            .id(UUID.randomUUID())
+            .userId(actor.getId())
+            .action("UPDATE_STATUS")
+            .resource("evaluation:" + eval.getId())
+            .payload("{\"status\":\"READY_FOR_AUDIT\"}")
+            .createdAt(t0.plusHours(2))
+            .build();
+    when(auditRepo.findByResourceAndActionInOrderByCreatedAtAsc(
+            "evaluation:" + eval.getId(), List.of("UPDATE_STATUS", "CERTIFY")))
+        .thenReturn(List.of(sentToAudit, returned, resentToAudit));
+    when(userRepo.findAllById(any())).thenReturn(List.of(actor));
+
+    List<EvaluationAuditCycleEventDto> trail = service.getEvaluationAuditTrail(eval.getId());
+
+    assertEquals(3, trail.size());
+    assertEquals("READY_FOR_AUDIT", trail.get(0).status());
+    assertEquals(1, trail.get(0).cycleNumber());
+    assertEquals("Jane Doe", trail.get(0).performedByName());
+    assertEquals("RETURNED", trail.get(1).status());
+    assertEquals(1, trail.get(1).cycleNumber());
+    assertEquals("READY_FOR_AUDIT", trail.get(2).status());
+    assertEquals(2, trail.get(2).cycleNumber());
+    verify(currentUser).assertOrganizationAccess(tenant.getId());
+  }
+
+  @Test
+  void evaluationAuditTrailThrowsWhenEvaluationDoesNotExist() {
+    UUID missingId = UUID.randomUUID();
+    when(evaluationRepo.findById(missingId)).thenReturn(java.util.Optional.empty());
+
+    assertThrows(
+        uy.edu.prisma.domain.exception.ResourceNotFoundException.class,
+        () -> service.getEvaluationAuditTrail(missingId));
   }
 }

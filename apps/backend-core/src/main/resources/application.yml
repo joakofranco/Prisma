@@ -85,6 +85,11 @@ prisma:
     secret: ${JWT_SECRET:change-me-in-production-at-least-256-bits}
     access-expiration-minutes: ${JWT_ACCESS_EXPIRATION_MINUTES:15}
     refresh-expiration-days:  ${JWT_REFRESH_EXPIRATION_DAYS:7}
+  certification:
+    # RF-AUD-09: clave HMAC para sellar una evaluación al aprobarla. Por defecto reusa el secreto
+    # de JWT (ya es el único secreto de firma que maneja este backend) -- se puede fijar aparte con
+    # CERTIFICATION_SECRET si en algún momento conviene rotarlos por separado.
+    secret: ${CERTIFICATION_SECRET:${JWT_SECRET:change-me-in-production-at-least-256-bits}}
   storage:
     endpoint:   ${S3_ENDPOINT:http://localhost:9001}
     # Ver el comentario en ObjectStorageConfig: host desde el que un navegador real puede bajar la
