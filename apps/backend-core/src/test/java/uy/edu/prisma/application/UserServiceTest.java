@@ -251,6 +251,55 @@ class UserServiceTest {
     verify(keycloakAdmin, never()).assignRealmRoles(any(), any());
   }
 
+  // RF-USR-04: segregación de funciones -- un usuario no puede ser auditor y evaluador interno
+  // a la vez (ni al crearse, ni al editarse para sumar el rol que le falta).
+  @Test
+  void createThrowsWhenAuditorAndInternalEvaluatorAssignedTogether() {
+    when(userRepo.existsByEmail("dual@test.com")).thenReturn(false);
+    when(orgRepo.findById(tenant.getId())).thenReturn(Optional.of(tenant));
+    when(orgRepo.findAllById(Set.of(tenant.getId()))).thenReturn(List.of(tenant));
+
+    CreateUserDto dto =
+        new CreateUserDto(
+            "dual@test.com",
+            "N",
+            "L",
+            tenant.getId(),
+            Set.of("AUDITOR", "INTERNAL_EVALUATOR"),
+            Set.of(tenant.getId()),
+            "Secreto123!");
+
+    assertThrows(ConflictException.class, () -> service.create(dto));
+    verify(userRepo, never()).save(any());
+    verify(keycloakAdmin, never()).createUser(any(), any(), any(), any(), any());
+  }
+
+  @Test
+  void updateThrowsWhenAddingAuditorRoleToExistingInternalEvaluator() {
+    user.setRoles(new java.util.HashSet<>(Set.of(UserRole.INTERNAL_EVALUATOR)));
+    when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
+
+    CreateUserDto dto =
+        new CreateUserDto(
+            "u@test.com", "Jane", "Doe", null, Set.of("INTERNAL_EVALUATOR", "AUDITOR"), null);
+
+    assertThrows(ConflictException.class, () -> service.update(user.getId(), dto));
+    verify(keycloakAdmin, never()).assignRealmRoles(any(), any());
+  }
+
+  @Test
+  void updateAllowsChangingBetweenAuditorAndInternalEvaluatorSeparately() {
+    user.setRoles(new java.util.HashSet<>(Set.of(UserRole.AUDITOR)));
+    when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
+
+    CreateUserDto dto =
+        new CreateUserDto("u@test.com", "Jane", "Doe", null, Set.of("INTERNAL_EVALUATOR"), null);
+
+    UserDto result = service.update(user.getId(), dto);
+
+    assertEquals(Set.of("INTERNAL_EVALUATOR"), result.roles());
+  }
+
   @Test
   void createWithoutTenantPersistsUser() {
     when(userRepo.existsByEmail("solo@test.com")).thenReturn(false);

@@ -5,6 +5,7 @@ import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import uy.edu.prisma.application.ReportService;
 
@@ -32,6 +33,28 @@ public class ReportsController {
     byte[] content = service.generateExcel(id);
     return ResponseEntity.ok()
         .headers(fileHeaders("reporte-madurez-" + id + ".xlsx"))
+        .contentType(
+            MediaType.parseMediaType(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+        .body(content);
+  }
+
+  @GetMapping("/{id}/preliminary/pdf")
+  @PreAuthorize("hasAnyRole('PRISMA_ADMIN','AUDITOR')")
+  public ResponseEntity<byte[]> preliminaryPdf(@PathVariable UUID id) {
+    byte[] content = service.generatePreliminaryPdf(id);
+    return ResponseEntity.ok()
+        .headers(fileHeaders("informe-preliminar-" + id + ".pdf"))
+        .contentType(MediaType.APPLICATION_PDF)
+        .body(content);
+  }
+
+  @GetMapping("/{id}/preliminary/excel")
+  @PreAuthorize("hasAnyRole('PRISMA_ADMIN','AUDITOR')")
+  public ResponseEntity<byte[]> preliminaryExcel(@PathVariable UUID id) {
+    byte[] content = service.generatePreliminaryExcel(id);
+    return ResponseEntity.ok()
+        .headers(fileHeaders("informe-preliminar-" + id + ".xlsx"))
         .contentType(
             MediaType.parseMediaType(
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
