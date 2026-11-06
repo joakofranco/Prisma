@@ -21,8 +21,12 @@ public class AuditObservationController {
     this.service = service;
   }
 
+  // Leen el administrador y el auditor, y la organización de la evaluación (responsable o
+  // evaluador interno): el servicio le muestra a la organización las observaciones solo desde que
+  // la evaluación vuelve (RETURNED, APPROVED o ARCHIVED). El VIEWER no las ve. Escribir sigue
+  // siendo solo del administrador y el auditor, y solo con la evaluación en auditoría.
   @GetMapping("/{evaluationId}")
-  @PreAuthorize("hasAnyRole('PRISMA_ADMIN','AUDITOR')")
+  @PreAuthorize("hasAnyRole('PRISMA_ADMIN','AUDITOR','ORG_RESPONSIBLE','INTERNAL_EVALUATOR')")
   public ResponseEntity<List<AuditObservationDto>> listByEvaluation(
       @PathVariable UUID evaluationId) {
     return ResponseEntity.ok(service.listByEvaluation(evaluationId));

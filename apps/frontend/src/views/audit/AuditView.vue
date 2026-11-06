@@ -103,6 +103,7 @@
                 </div>
                 <p class="text-xs text-slate-600 dark:text-slate-300 mt-1">{{ cit.snippet }}</p>
                 <button
+                  v-if="canWriteObservations"
                   class="mt-2 text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400"
                   @click="openObservationForCitation(c, cit)"
                 >
@@ -238,11 +239,19 @@
       >
         <div class="flex items-center justify-between mb-1 gap-3">
           <h3 class="text-lg font-semibold text-slate-900 dark:text-white">Observaciones</h3>
-          <BaseButton variant="primary" @click="openCreateModal()">
+          <BaseButton v-if="canWriteObservations" variant="primary" @click="openCreateModal()">
             <PlusIcon class="w-4 h-4" />
             Nueva Observación
           </BaseButton>
         </div>
+        <p
+          v-if="evaluation && !canWriteObservations"
+          class="mb-4 text-xs text-amber-700 dark:text-amber-400"
+          data-testid="observations-locked"
+        >
+          Las observaciones solo se pueden registrar o modificar mientras la evaluación está en
+          auditoría.
+        </p>
 
         <!-- Estampa del auditor: quién trabajó esta auditoría, según los autores reales de las
         observaciones registradas (no "quién está habilitado para auditar" -- eso es la columna
@@ -298,7 +307,15 @@
                   <span v-if="obs.createdByName"> — Registrada por {{ obs.createdByName }}</span>
                 </p>
               </div>
-              <div class="flex gap-1 shrink-0">
+              <div v-if="canWriteObservations" class="flex gap-1 shrink-0">
+                <button
+                  class="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 hover:text-slate-700 dark:hover:bg-slate-700 dark:hover:text-slate-200 dark:text-slate-400"
+                  title="Editar observación"
+                  data-testid="edit-observation"
+                  @click="openEditModal(obs)"
+                >
+                  <PencilIcon class="w-4 h-4" />
+                </button>
                 <button
                   v-if="obs.status === 'OPEN'"
                   class="p-1.5 rounded-lg hover:bg-blue-50 text-slate-500 hover:text-blue-600 dark:hover:bg-blue-950 dark:hover:text-blue-300 dark:text-slate-400"
@@ -322,11 +339,15 @@
       </div>
     </template>
 
-    <BaseModal v-model="showCreateModal" title="Nueva Observación" size="lg">
-      <form class="space-y-4" @submit.prevent="handleCreateObservation">
+    <BaseModal
+      v-model="showCreateModal"
+      :title="editingObservation ? 'Editar Observación' : 'Nueva Observación'"
+      size="lg"
+    >
+      <form class="space-y-4" @submit.prevent="handleSubmitObservation">
         <BaseSelect v-model="newObs.type" label="Tipo" :options="obsTypeOptions" required />
         <BaseSelect
-          v-if="subcategoryOptions.length > 1"
+          v-if="!editingObservation && subcategoryOptions.length > 1"
           v-model="newObs.subcategoryId"
           label="Subcategoría"
           :options="subcategoryOptions"
@@ -336,13 +357,14 @@
           label="Descripción"
           placeholder="Describa la observación"
           :rows="4"
+          :error="obsError"
           required
         />
       </form>
       <template #footer>
         <BaseButton variant="secondary" @click="showCreateModal = false"> Cancelar </BaseButton>
-        <BaseButton variant="primary" :loading="saving" @click="handleCreateObservation">
-          Crear
+        <BaseButton variant="primary" :loading="saving" @click="handleSubmitObservation">
+          {{ editingObservation ? 'Guardar' : 'Crear' }}
         </BaseButton>
       </template>
     </BaseModal>
@@ -358,14 +380,13 @@
     evaluationsService,
     catalogService,
   } from '@/services/resources';
-  import { formatDate } from '@/utils/helpers';
+  import { formatDate, getErrorMessage } from '@/utils/helpers';
   import { useNotification } from '@/composables/useUtils';
   import BaseButton from '@/components/common/BaseButton.vue';
   import BaseModal from '@/components/common/BaseModal.vue';
   import BaseSelect from '@/components/common/BaseSelect.vue';
   import BaseTextarea from '@/components/common/BaseTextarea.vue';
   import { useAuthStore } from '@/stores/auth';
-  import { getErrorMessage } from '@/utils/helpers';
   import {
     VERDICT_OPTIONS,
     VERDICT_LABELS,
@@ -380,6 +401,7 @@
     ArrowTrendingUpIcon,
     PlusIcon,
     PlayIcon,
+    PencilIcon,
     CheckIcon,
     SparklesIcon,
     CheckBadgeIcon,
@@ -403,6 +425,11 @@
   const showCreateModal = ref(false);
   const observations = ref<AuditObservation[]>([]);
   const evaluation = ref<Evaluation | null>(null);
+  // Crear, editar y cambiar el estado de una observación solo se puede mientras la evaluación está
+  // en auditoría (el backend lo exige igual y responde 409): fuera de eso quedan como registro.
+  const canWriteObservations = computed(() => evaluation.value?.status === 'IN_AUDIT');
+  const editingObservation = ref<AuditObservation | null>(null);
+  const obsError = ref('');
 
   // Autores reales (no "asignados") de las observaciones registradas hasta ahora -- la estampa
   // de qué auditor(es) estuvieron trabajando esta auditoría en concreto.
@@ -525,6 +552,8 @@
   }
 
   function openObservationForCitation(control: ControlWithEvidence, citation: EvidenceCitation) {
+    editingObservation.value = null;
+    obsError.value = '';
     newObs.type = 'OBSERVATION';
     newObs.controlId = control.controlId;
     newObs.subcategoryId = '';
@@ -535,6 +564,9 @@
   }
 
   function openCreateModal() {
+    // Sin esto, después de editar una observación «Nueva observación» seguía en modo edición.
+    editingObservation.value = null;
+    obsError.value = '';
     newObs.type = 'OBSERVATION';
     newObs.controlId = undefined;
     newObs.subcategoryId = '';
@@ -609,8 +641,47 @@
     }
   }
 
+  function openEditModal(obs: AuditObservation) {
+    editingObservation.value = obs;
+    obsError.value = '';
+    newObs.type = obs.type;
+    newObs.description = obs.description;
+    showCreateModal.value = true;
+  }
+
+  async function handleSubmitObservation() {
+    obsError.value = '';
+    if (!newObs.description.trim()) {
+      obsError.value = 'La descripción es obligatoria';
+      return;
+    }
+    if (editingObservation.value) {
+      await handleEditObservation(editingObservation.value.id);
+    } else {
+      await handleCreateObservation();
+    }
+  }
+
+  // Edición de tipo y descripción (PRI-354). Los errores se muestran: antes un fallo se tragaba en
+  // silencio y el auditor no sabía por qué no pasaba nada.
+  async function handleEditObservation(id: string) {
+    saving.value = true;
+    try {
+      await auditService.updateObservation(id, {
+        type: newObs.type,
+        description: newObs.description,
+      });
+      notification.success('Observación actualizada');
+      showCreateModal.value = false;
+      await fetchObservations();
+    } catch (err) {
+      notification.error(getErrorMessage(err, 'No se pudo actualizar la observación'));
+    } finally {
+      saving.value = false;
+    }
+  }
+
   async function handleCreateObservation() {
-    if (!newObs.description) return;
     saving.value = true;
     try {
       await auditService.createObservation({
@@ -627,19 +698,22 @@
       newObs.subcategoryId = '';
       newObs.description = '';
       await fetchObservations();
-    } catch {
-      notification.error('Error al crear la observación');
+    } catch (err) {
+      notification.error(getErrorMessage(err, 'Error al crear la observación'));
     } finally {
       saving.value = false;
     }
   }
 
+  // Cambiar el estado fallaba en silencio (solo un console.error): el auditor veía que el botón no
+  // hacía nada. Ahora se avisa con el mensaje del backend, o uno genérico.
   async function updateObservationStatus(id: string, status: AuditObservation['status']) {
     try {
       await auditService.updateObservation(id, { status });
       await fetchObservations();
     } catch (err) {
       console.error(err);
+      notification.error(getErrorMessage(err, 'No se pudo cambiar el estado de la observación'));
     }
   }
 

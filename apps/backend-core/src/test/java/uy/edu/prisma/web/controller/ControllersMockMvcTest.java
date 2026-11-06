@@ -691,6 +691,124 @@ class ControllersMockMvcTest {
     }
   }
 
+  private static String rolesOf(String method, Class<?>... params) throws Exception {
+    return AuditObservationController.class
+        .getMethod(method, params)
+        .getAnnotation(org.springframework.security.access.prepost.PreAuthorize.class)
+        .value();
+  }
+
+  @Test
+  void observationsCanBeReadByTheOrganizationButNotByTheViewer() throws Exception {
+    String read = rolesOf("listByEvaluation", UUID.class);
+
+    for (String role :
+        List.of("PRISMA_ADMIN", "AUDITOR", "ORG_RESPONSIBLE", "INTERNAL_EVALUATOR")) {
+      assertTrue(read.contains("'" + role + "'"), role + " debería poder leer");
+    }
+    assertFalse(read.contains("VIEWER"), "el VIEWER no ve las observaciones");
+  }
+
+  @Test
+  void observationsCanOnlyBeWrittenByTheAdminAndTheAuditor() throws Exception {
+    String create = rolesOf("create", uy.edu.prisma.web.dto.Dto.CreateAuditObservationDto.class);
+    String update =
+        rolesOf("update", UUID.class, uy.edu.prisma.web.dto.Dto.UpdateAuditObservationDto.class);
+
+    assertEquals("hasAnyRole('PRISMA_ADMIN','AUDITOR')", create);
+    assertEquals("hasAnyRole('PRISMA_ADMIN','AUDITOR')", update);
+  }
+
+  @Test
+  void executiveReportIsServedAsAPdfAttachment() throws Exception {
+    UUID id = UUID.randomUUID();
+    when(reportService.generateExecutivePdf(id)).thenReturn("%PDF-1.4 ejecutivo".getBytes());
+
+    reports
+        .perform(get("/api/reports/{id}/executive/pdf", id))
+        .andExpect(status().isOk())
+        .andExpect(content().contentType(MediaType.APPLICATION_PDF))
+        .andExpect(
+            header()
+                .string(
+                    "Content-Disposition",
+                    org.hamcrest.Matchers.containsString("reporte-ejecutivo-" + id + ".pdf")));
+  }
+
+  @Test
+  void executiveReportIsOnlyForAdminAndOrgResponsible() throws Exception {
+    // Los mismos roles que el PDF final: el auditor no baja reportes finales.
+    var method = ReportsController.class.getMethod("executivePdf", UUID.class);
+    var annotation =
+        method.getAnnotation(org.springframework.security.access.prepost.PreAuthorize.class);
+
+    assertNotNull(annotation);
+    assertEquals("hasAnyRole('PRISMA_ADMIN','ORG_RESPONSIBLE')", annotation.value());
+    assertEquals(
+        annotation.value(),
+        ReportsController.class
+            .getMethod("pdf", UUID.class)
+            .getAnnotation(org.springframework.security.access.prepost.PreAuthorize.class)
+            .value());
+  }
+
+  @Test
+  void userUnlockReturnsWhetherTheAccountWasLocked() throws Exception {
+    UUID id = UUID.randomUUID();
+    when(userService.unlock(id)).thenReturn(true);
+
+    users
+        .perform(post("/api/users/{id}/unlock", id))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.wasLocked").value(true));
+    verify(userService).unlock(id);
+  }
+
+  @Test
+  void userUnlockSaysSoWhenThereWasNothingToUnlock() throws Exception {
+    UUID id = UUID.randomUUID();
+    when(userService.unlock(id)).thenReturn(false);
+
+    users
+        .perform(post("/api/users/{id}/unlock", id))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.wasLocked").value(false));
+  }
+
+  @Test
+  void userUnlockIsOnlyForThePrismaAdmin() throws Exception {
+    // El resto de las acciones sobre usuarios admiten también a ORG_RESPONSIBLE; esta no.
+    var method = UserController.class.getMethod("unlock", UUID.class);
+    var annotation =
+        method.getAnnotation(org.springframework.security.access.prepost.PreAuthorize.class);
+
+    assertNotNull(annotation);
+    assertEquals("hasRole('PRISMA_ADMIN')", annotation.value());
+  }
+
+  @Test
+  void evidenceAllowedFormatsReturnsTheConfiguredList() throws Exception {
+    when(evidenceService.allowedExtensions()).thenReturn(List.of("pdf", "zip", "png"));
+    when(evidenceService.maxSizeBytes()).thenReturn(52_428_800L);
+
+    evidence
+        .perform(get("/api/evidence/allowed-formats"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.allowedExtensions[0]").value("pdf"))
+        .andExpect(jsonPath("$.allowedExtensions.length()").value(3))
+        .andExpect(jsonPath("$.maxSizeBytes").value(52_428_800L));
+  }
+
+  @Test
+  void evidenceAllowedFormatsIsNotRestrictedToAnyParticularRole() throws Exception {
+    // Cualquier usuario autenticado puede ver las reglas (la pantalla las necesita antes de subir):
+    // sin @PreAuthorize propio, solo rige el "anyRequest().authenticated()" de SecurityConfig.
+    var method = EvidenceController.class.getMethod("allowedFormats");
+
+    assertNull(
+        method.getAnnotation(org.springframework.security.access.prepost.PreAuthorize.class));
+  }
+
   @Test
   void evidenceReindex() throws Exception {
     UUID id = UUID.randomUUID();

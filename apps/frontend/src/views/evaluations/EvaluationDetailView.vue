@@ -189,6 +189,11 @@
         />
       </div>
 
+      <!-- PRI-354: observaciones del auditor, de solo lectura, para la organización (responsable
+      y evaluador interno) desde que la evaluación vuelve. Es la forma en que el auditor le explica
+      por qué la devuelve. El VIEWER no las ve; el backend lo exige igual. -->
+      <AuditObservationsReadOnly v-if="showAuditorObservations" :evaluation-id="evaluation.id" />
+
       <!-- RF-AUD-10: historial de ciclos de auditoría (envíos/devoluciones) de esta evaluación --
       cualquiera con acceso a la organización puede verlo, incluido el AUDITOR. -->
       <div
@@ -515,6 +520,7 @@
   import MaturityRadarChart from '@/components/charts/MaturityRadarChart.vue';
   import MaturitySummaryTables from '@/components/evaluations/MaturitySummaryTables.vue';
   import EvaluationLifecycleStepper from '@/components/evaluations/EvaluationLifecycleStepper.vue';
+  import AuditObservationsReadOnly from '@/components/evaluations/AuditObservationsReadOnly.vue';
   import {
     ArrowLeftIcon,
     ChartBarIcon,
@@ -639,6 +645,15 @@
       savingProfile.value = false;
     }
   }
+
+  // PRI-354: las observaciones del auditor las lee la organización desde la devolución.
+  const OBSERVATION_VISIBLE_STATUSES = ['RETURNED', 'APPROVED', 'ARCHIVED'];
+  const showAuditorObservations = computed(
+    () =>
+      !!evaluation.value &&
+      OBSERVATION_VISIBLE_STATUSES.includes(evaluation.value.status) &&
+      authStore.hasAnyRole('ORG_RESPONSIBLE', 'INTERNAL_EVALUATOR'),
+  );
 
   const canRespondRole = computed(() => authStore.hasAnyRole('PRISMA_ADMIN', 'INTERNAL_EVALUATOR'));
   const canAuditRole = computed(() => authStore.hasAnyRole('PRISMA_ADMIN', 'AUDITOR'));
