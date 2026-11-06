@@ -155,8 +155,8 @@ importar el rol que normalmente le correspondería.
 |---|---|---|---|
 | GET | `/{evaluationId}` | cualquiera autenticado | acciones ya creadas |
 | GET | `/{evaluationId}/suggestions` | cualquiera autenticado | sugerencias generadas por reglas a partir de las brechas — no persistidas hasta que se confirman con POST |
-| POST | `/` | `PRISMA_ADMIN`, `ORG_RESPONSIBLE` | `{evaluationId, controlId?, action, responsible?, priority?, dueDate?}` — `priority` ∈ `HIGH`/`MEDIUM`/`LOW` (inglés, no `ALTA`/`MEDIA`/`BAJA`) |
-| PUT | `/{id}` | `PRISMA_ADMIN`, `ORG_RESPONSIBLE` | también actualiza `status` (`PENDING`/`IN_PROGRESS`/`COMPLETED`/`OVERDUE`) |
+| POST | `/` | `PRISMA_ADMIN`, `ORG_RESPONSIBLE` | `{evaluationId, controlId?, action, responsible?, priority?, dueDate?, comments?}` — `priority` ∈ `HIGH`/`MEDIUM`/`LOW` (inglés, no `ALTA`/`MEDIA`/`BAJA`); `comments` hasta 2000 caracteres (400 si lo supera) |
+| PUT | `/{id}` | `PRISMA_ADMIN`, `ORG_RESPONSIBLE` | también actualiza `status` (`PENDING`/`IN_PROGRESS`/`COMPLETED`/`OVERDUE`). `comments`: ausente (`null`) = sin cambios; cadena vacía = borra el comentario |
 
 ## Reportes — `/api/reports`
 

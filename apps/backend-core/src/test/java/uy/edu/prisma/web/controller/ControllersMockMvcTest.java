@@ -822,6 +822,7 @@ class ControllersMockMvcTest {
                 "PENDING",
                 "2026-12-01",
                 10L,
+                null,
                 null));
 
     improvement
@@ -831,6 +832,116 @@ class ControllersMockMvcTest {
                 .content("{\"evaluationId\":\"" + evalId + "\",\"action\":\"Action\"}"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.action").value("Action"));
+  }
+
+  @Test
+  void improvementCreateCarriesTheCommentsToTheService() throws Exception {
+    UUID evalId = UUID.randomUUID();
+    when(improvementPlanService.create(any()))
+        .thenReturn(
+            new ImprovementPlanDto(
+                UUID.randomUUID(),
+                evalId,
+                null,
+                "A",
+                "R",
+                "HIGH",
+                "PENDING",
+                null,
+                null,
+                "nota",
+                null));
+
+    improvement
+        .perform(
+            post("/api/improvement")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"evaluationId\":\"" + evalId + "\",\"action\":\"A\",\"comments\":\"nota\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.comments").value("nota"));
+
+    var captor =
+        org.mockito.ArgumentCaptor.forClass(
+            uy.edu.prisma.web.dto.Dto.CreateImprovementPlanDto.class);
+    verify(improvementPlanService).create(captor.capture());
+    assertEquals("nota", captor.getValue().comments());
+  }
+
+  @Test
+  void improvementUpdateCarriesTheCommentsToTheService() throws Exception {
+    UUID id = UUID.randomUUID();
+    when(improvementPlanService.update(eq(id), any()))
+        .thenReturn(
+            new ImprovementPlanDto(
+                id,
+                UUID.randomUUID(),
+                null,
+                "A",
+                null,
+                "LOW",
+                "PENDING",
+                null,
+                null,
+                "nueva",
+                null));
+
+    improvement
+        .perform(
+            put("/api/improvement/{id}", id)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"comments\":\"nueva\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.comments").value("nueva"));
+
+    var captor =
+        org.mockito.ArgumentCaptor.forClass(
+            uy.edu.prisma.web.dto.Dto.UpdateImprovementPlanDto.class);
+    verify(improvementPlanService).update(eq(id), captor.capture());
+    assertEquals("nueva", captor.getValue().comments());
+  }
+
+  @Test
+  void improvementRejectsCommentsOver2000Characters() throws Exception {
+    String tooLong = "x".repeat(2001);
+    UUID id = UUID.randomUUID();
+
+    improvement
+        .perform(
+            post("/api/improvement")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"evaluationId\":\""
+                        + UUID.randomUUID()
+                        + "\",\"action\":\"A\",\"comments\":\""
+                        + tooLong
+                        + "\"}"))
+        .andExpect(status().isBadRequest());
+    improvement
+        .perform(
+            put("/api/improvement/{id}", id)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"comments\":\"" + tooLong + "\"}"))
+        .andExpect(status().isBadRequest());
+
+    verify(improvementPlanService, never()).create(any());
+    verify(improvementPlanService, never()).update(any(), any());
+  }
+
+  @Test
+  void improvementAcceptsCommentsOfExactly2000Characters() throws Exception {
+    UUID id = UUID.randomUUID();
+    when(improvementPlanService.update(eq(id), any()))
+        .thenReturn(
+            new ImprovementPlanDto(
+                id, UUID.randomUUID(), null, "A", null, "LOW", "PENDING", null, null, null, null));
+
+    improvement
+        .perform(
+            put("/api/improvement/{id}", id)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"comments\":\"" + "x".repeat(2000) + "\"}"))
+        .andExpect(status().isOk());
   }
 
   @Test
@@ -846,6 +957,7 @@ class ControllersMockMvcTest {
                 null,
                 "MEDIUM",
                 "IN_PROGRESS",
+                null,
                 null,
                 null,
                 null));

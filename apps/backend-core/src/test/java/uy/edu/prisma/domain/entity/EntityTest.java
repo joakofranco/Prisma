@@ -535,7 +535,9 @@ class EntityTest {
             ImprovementPlan.Priority.HIGH,
             ImprovementPlan.PlanStatus.IN_PROGRESS,
             java.time.LocalDate.of(2026, 12, 31),
+            "Comentario",
             now);
+    assertEquals("Comentario", all.getComments());
     assertEquals(id, all.getId());
     assertNull(all.getEvaluation());
     assertNull(all.getControl());

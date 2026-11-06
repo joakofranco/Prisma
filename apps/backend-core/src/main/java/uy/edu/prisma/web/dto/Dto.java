@@ -687,6 +687,7 @@ public class Dto {
       String status,
       String dueDate,
       Long dueInDays,
+      String comments,
       OffsetDateTime createdAt) {}
 
   public record CreateImprovementPlanDto(
@@ -695,10 +696,18 @@ public class Dto {
       @NotBlank(message = "La acción es obligatoria") String action,
       String responsible,
       String priority,
-      String dueDate) {}
+      String dueDate,
+      @Size(max = 2000, message = "Los comentarios no pueden superar los 2000 caracteres")
+          String comments) {}
 
   public record UpdateImprovementPlanDto(
-      String action, String responsible, String priority, String dueDate, String status) {}
+      String action,
+      String responsible,
+      String priority,
+      String dueDate,
+      String status,
+      @Size(max = 2000, message = "Los comentarios no pueden superar los 2000 caracteres")
+          String comments) {}
 
   // Sugerencia generada por reglas (RF-PLN-01), todavia no persistida como ImprovementPlan:
   // el usuario la revisa/edita en el frontend y recien ahi se crea via POST /api/improvement.

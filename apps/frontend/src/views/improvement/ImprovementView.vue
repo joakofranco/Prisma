@@ -146,8 +146,23 @@
                     >Vence: {{ formatDate(plan.dueDate) }}</span
                   >
                 </div>
+                <p
+                  v-if="plan.comments"
+                  class="mt-2 text-xs text-slate-600 dark:text-slate-300 whitespace-pre-line"
+                  data-test="plan-comments"
+                >
+                  <span class="font-medium">Comentarios:</span> {{ plan.comments }}
+                </p>
               </div>
-              <div class="flex gap-1 shrink-0">
+              <div class="flex items-center gap-1 shrink-0">
+                <button
+                  class="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 hover:text-blue-600 dark:hover:text-blue-300 dark:text-slate-400"
+                  :title="plan.comments ? 'Editar comentarios' : 'Agregar comentarios'"
+                  :aria-label="plan.comments ? 'Editar comentarios' : 'Agregar comentarios'"
+                  @click="openCommentEditor(plan)"
+                >
+                  <PencilSquareIcon class="w-4 h-4" />
+                </button>
                 <BaseSelect
                   :model-value="plan.status"
                   :options="planStatusOptions"
@@ -195,10 +210,35 @@
           :error="formErrors.dueDate"
           required
         />
+        <BaseTextarea
+          v-model="newPlan.comments"
+          label="Comentarios (opcional)"
+          placeholder="Notas sobre la acción: dependencias, recursos, riesgos…"
+          :error="formErrors.comments"
+        />
       </form>
       <template #footer>
         <BaseButton variant="secondary" @click="showCreateModal = false"> Cancelar </BaseButton>
         <BaseButton variant="primary" :loading="saving" @click="handleCreate"> Crear </BaseButton>
+      </template>
+    </BaseModal>
+
+    <BaseModal v-model="showCommentModal" title="Comentarios de la acción">
+      <p v-if="commentPlan" class="mb-3 text-sm text-slate-600 dark:text-slate-300">
+        {{ commentPlan.action }}
+      </p>
+      <BaseTextarea
+        v-model="commentText"
+        label="Comentarios"
+        placeholder="Vacío para borrar el comentario"
+        :rows="5"
+        :error="commentError"
+      />
+      <template #footer>
+        <BaseButton variant="secondary" @click="showCommentModal = false"> Cancelar </BaseButton>
+        <BaseButton variant="primary" :loading="savingComment" @click="saveComment">
+          Guardar
+        </BaseButton>
       </template>
     </BaseModal>
 
@@ -323,6 +363,7 @@
   import {
     ArrowLeftIcon,
     PlusIcon,
+    PencilSquareIcon,
     SparklesIcon,
     ClockIcon,
     PlayIcon,
@@ -382,13 +423,19 @@
     responsible: '',
     priority: 'MEDIUM' as ImprovementPlan['priority'],
     dueDate: '',
+    comments: '',
   });
 
   const formErrors = reactive({
     action: '',
     responsible: '',
     dueDate: '',
+    comments: '',
   });
+
+  // El mismo tope que valida el backend (@Size en los DTO del plan de mejora).
+  const MAX_COMMENTS = 2000;
+  const commentsTooLong = `Los comentarios no pueden superar los ${MAX_COMMENTS} caracteres`;
 
   const planStatusOptions = [
     { value: 'PENDING', label: 'Pendiente' },
@@ -481,6 +528,10 @@
       formErrors.dueDate = 'La fecha es requerida';
       return;
     }
+    if (newPlan.comments.length > MAX_COMMENTS) {
+      formErrors.comments = commentsTooLong;
+      return;
+    }
 
     saving.value = true;
     try {
@@ -495,9 +546,10 @@
       newPlan.responsible = '';
       newPlan.priority = 'MEDIUM';
       newPlan.dueDate = '';
+      newPlan.comments = '';
       await fetchPlans();
-    } catch {
-      notification.error('Error al crear la acción');
+    } catch (err) {
+      notification.error(getErrorMessage(err, 'Error al crear la acción'));
     } finally {
       saving.value = false;
     }
@@ -509,6 +561,42 @@
       await fetchPlans();
     } catch (err) {
       console.error(err);
+    }
+  }
+
+  // RF-PLN-02: editar o borrar los comentarios de una acción ya creada. Un texto vacío borra el
+  // comentario (el backend toma «sin cambios» solo cuando el campo no viaja).
+  const showCommentModal = ref(false);
+  const commentPlan = ref<ImprovementPlan | null>(null);
+  const commentText = ref('');
+  const commentError = ref('');
+  const savingComment = ref(false);
+
+  function openCommentEditor(plan: ImprovementPlan) {
+    commentPlan.value = plan;
+    commentText.value = plan.comments ?? '';
+    commentError.value = '';
+    showCommentModal.value = true;
+  }
+
+  async function saveComment() {
+    if (!commentPlan.value) return;
+    if (commentText.value.length > MAX_COMMENTS) {
+      commentError.value = commentsTooLong;
+      return;
+    }
+    savingComment.value = true;
+    try {
+      await improvementService.update(commentPlan.value.id, { comments: commentText.value });
+      notification.success(
+        commentText.value.trim() ? 'Comentarios guardados' : 'Comentarios eliminados',
+      );
+      showCommentModal.value = false;
+      await fetchPlans();
+    } catch (err) {
+      commentError.value = getErrorMessage(err, 'No se pudieron guardar los comentarios');
+    } finally {
+      savingComment.value = false;
     }
   }
 

@@ -132,7 +132,8 @@ class ImprovementPlanServiceTest {
     when(repo.save(any(ImprovementPlan.class))).thenAnswer(inv -> inv.getArgument(0));
 
     CreateImprovementPlanDto dto =
-        new CreateImprovementPlanDto(eval.getId(), null, "Mejorar proceso", "Juan", null, null);
+        new CreateImprovementPlanDto(
+            eval.getId(), null, "Mejorar proceso", "Juan", null, null, null);
     ImprovementPlanDto result = service.create(dto);
 
     assertEquals(eval.getId(), result.evaluationId());
@@ -148,7 +149,7 @@ class ImprovementPlanServiceTest {
 
     String dueDate = LocalDate.now().plusDays(7).toString();
     CreateImprovementPlanDto dto =
-        new CreateImprovementPlanDto(eval.getId(), null, "A", "R", "LOW", dueDate);
+        new CreateImprovementPlanDto(eval.getId(), null, "A", "R", "LOW", dueDate, null);
     ImprovementPlanDto result = service.create(dto);
 
     assertEquals("LOW", result.priority());
@@ -164,7 +165,7 @@ class ImprovementPlanServiceTest {
     when(repo.save(any(ImprovementPlan.class))).thenAnswer(inv -> inv.getArgument(0));
 
     CreateImprovementPlanDto dto =
-        new CreateImprovementPlanDto(eval.getId(), control.getId(), "A", "R", null, null);
+        new CreateImprovementPlanDto(eval.getId(), control.getId(), "A", "R", null, null, null);
     ImprovementPlanDto result = service.create(dto);
 
     assertEquals(control.getId(), result.controlId());
@@ -177,7 +178,7 @@ class ImprovementPlanServiceTest {
     when(controlRepo.findById(controlId)).thenReturn(Optional.empty());
 
     CreateImprovementPlanDto dto =
-        new CreateImprovementPlanDto(eval.getId(), controlId, "A", "R", null, null);
+        new CreateImprovementPlanDto(eval.getId(), controlId, "A", "R", null, null, null);
 
     assertThrows(ResourceNotFoundException.class, () -> service.create(dto));
   }
@@ -187,7 +188,7 @@ class ImprovementPlanServiceTest {
     when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.empty());
 
     CreateImprovementPlanDto dto =
-        new CreateImprovementPlanDto(eval.getId(), null, "A", null, null, null);
+        new CreateImprovementPlanDto(eval.getId(), null, "A", null, null, null, null);
 
     assertThrows(ResourceNotFoundException.class, () -> service.create(dto));
   }
@@ -197,7 +198,7 @@ class ImprovementPlanServiceTest {
     when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
 
     CreateImprovementPlanDto dto =
-        new CreateImprovementPlanDto(eval.getId(), null, "A", null, null, "not-a-date");
+        new CreateImprovementPlanDto(eval.getId(), null, "A", null, null, "not-a-date", null);
 
     assertThrows(InvalidRequestException.class, () -> service.create(dto));
   }
@@ -215,7 +216,7 @@ class ImprovementPlanServiceTest {
     when(repo.save(any(ImprovementPlan.class))).thenAnswer(inv -> inv.getArgument(0));
 
     UpdateImprovementPlanDto dto =
-        new UpdateImprovementPlanDto("Accion nueva", "R2", "HIGH", null, "IN_PROGRESS");
+        new UpdateImprovementPlanDto("Accion nueva", "R2", "HIGH", null, "IN_PROGRESS", null);
     ImprovementPlanDto result = service.update(plan.getId(), dto);
 
     assertEquals("Accion nueva", result.action());
@@ -229,7 +230,7 @@ class ImprovementPlanServiceTest {
     UUID id = UUID.randomUUID();
     when(repo.findById(id)).thenReturn(Optional.empty());
 
-    UpdateImprovementPlanDto dto = new UpdateImprovementPlanDto(null, null, null, null, null);
+    UpdateImprovementPlanDto dto = new UpdateImprovementPlanDto(null, null, null, null, null, null);
 
     assertThrows(ResourceNotFoundException.class, () -> service.update(id, dto));
   }
@@ -239,9 +240,107 @@ class ImprovementPlanServiceTest {
     ImprovementPlan plan = ImprovementPlan.builder().id(UUID.randomUUID()).evaluation(eval).build();
     when(repo.findById(plan.getId())).thenReturn(Optional.of(plan));
 
-    UpdateImprovementPlanDto dto = new UpdateImprovementPlanDto(null, null, null, null, "BOGUS");
+    UpdateImprovementPlanDto dto =
+        new UpdateImprovementPlanDto(null, null, null, null, "BOGUS", null);
 
     assertThrows(InvalidRequestException.class, () -> service.update(plan.getId(), dto));
+  }
+
+  // ---- RF-PLN-02 (PRI-303): comentarios del ítem ----
+
+  private ImprovementPlan planWithComments(String comments) {
+    ImprovementPlan plan =
+        ImprovementPlan.builder()
+            .id(UUID.randomUUID())
+            .evaluation(eval)
+            .action("A")
+            .comments(comments)
+            .build();
+    when(repo.findById(plan.getId())).thenReturn(Optional.of(plan));
+    when(repo.save(any(ImprovementPlan.class))).thenAnswer(inv -> inv.getArgument(0));
+    return plan;
+  }
+
+  @Test
+  void createStoresTheCommentsAndTheDtoReturnsThem() {
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(repo.save(any(ImprovementPlan.class))).thenAnswer(inv -> inv.getArgument(0));
+
+    ImprovementPlanDto result =
+        service.create(
+            new CreateImprovementPlanDto(
+                eval.getId(), null, "A", "R", null, null, "  Esperar el presupuesto 2027  "));
+
+    assertEquals("Esperar el presupuesto 2027", result.comments());
+  }
+
+  @Test
+  void createWithoutCommentsKeepsThemEmpty() {
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(repo.save(any(ImprovementPlan.class))).thenAnswer(inv -> inv.getArgument(0));
+
+    ImprovementPlanDto withNull =
+        service.create(
+            new CreateImprovementPlanDto(eval.getId(), null, "A", "R", null, null, null));
+    ImprovementPlanDto withBlank =
+        service.create(
+            new CreateImprovementPlanDto(eval.getId(), null, "A", "R", null, null, "   "));
+
+    assertNull(withNull.comments());
+    assertNull(withBlank.comments());
+  }
+
+  @Test
+  void updateChangesTheComments() {
+    ImprovementPlan plan = planWithComments("viejo");
+
+    ImprovementPlanDto result =
+        service.update(
+            plan.getId(), new UpdateImprovementPlanDto(null, null, null, null, null, "nuevo"));
+
+    assertEquals("nuevo", result.comments());
+    assertEquals("nuevo", plan.getComments());
+  }
+
+  @Test
+  void updateWithAnEmptyStringDeletesTheComments() {
+    ImprovementPlan plan = planWithComments("borrar esto");
+
+    ImprovementPlanDto result =
+        service.update(
+            plan.getId(), new UpdateImprovementPlanDto(null, null, null, null, null, ""));
+
+    assertNull(result.comments());
+    assertNull(plan.getComments());
+  }
+
+  @Test
+  void updateWithNullCommentsLeavesThemUntouched() {
+    ImprovementPlan plan = planWithComments("se queda");
+
+    ImprovementPlanDto result =
+        service.update(
+            plan.getId(),
+            new UpdateImprovementPlanDto(null, null, null, null, "IN_PROGRESS", null));
+
+    assertEquals("se queda", result.comments());
+    assertEquals("IN_PROGRESS", result.status());
+  }
+
+  @Test
+  void anItemCreatedBeforeTheMigrationHasNoCommentsAndCanBeEdited() {
+    // Un ítem que ya existía antes de la columna llega con comments = null.
+    ImprovementPlan legacy = planWithComments(null);
+
+    ImprovementPlanDto before =
+        service.update(
+            legacy.getId(), new UpdateImprovementPlanDto(null, null, null, null, null, null));
+    ImprovementPlanDto after =
+        service.update(
+            legacy.getId(), new UpdateImprovementPlanDto(null, null, null, null, null, "ahora sí"));
+
+    assertNull(before.comments());
+    assertEquals("ahora sí", after.comments());
   }
 
   // ---- suggest() — RF-PLN-01, generacion automatica de plan por brechas ----

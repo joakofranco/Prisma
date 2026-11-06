@@ -199,6 +199,7 @@ classDiagram
     +Priority priority
     +PlanStatus status
     +LocalDate dueDate
+    +String comments
     +OffsetDateTime createdAt
   }
 

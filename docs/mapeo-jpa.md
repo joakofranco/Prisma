@@ -312,6 +312,8 @@ original, no es una restricción que Hibernate haga cumplir contra una columna `
 Enums anidados `Priority` (`LOW`/`MEDIUM`/`HIGH`) y `PlanStatus`
 (`PENDING`/`IN_PROGRESS`/`COMPLETED`/`OVERDUE`), ambos `@Enumerated(STRING)`. `control` es
 `@ManyToOne(LAZY)` nullable (una acción de mejora puede ser general, no atada a un control).
+`comments` (`TEXT`, nullable, hasta 2000 caracteres validados en el DTO) guarda los comentarios
+libres del ítem (RF-PLN-02, migración `V27`); los ítems anteriores quedan con `null`.
 
 ---
 
