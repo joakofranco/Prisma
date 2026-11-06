@@ -370,6 +370,9 @@ services:
       - "${KEYCLOAK_PORT:-8180}:8080"
     volumes:
       - ./infra/keycloak/realm-prisma.json:/opt/keycloak/data/import/realm-prisma.json:ro
+      # PRI-366: theme de email con la identidad visual de PRISMA (ver
+      # infra/keycloak/themes/prisma/email/). emailTheme="prisma" en realm-prisma.json lo activa.
+      - ./infra/keycloak/themes/prisma:/opt/keycloak/themes/prisma:ro
     networks: [prisma-net]
     healthcheck:
       # La imagen no trae curl/wget -- socket TCP crudo vía /dev/tcp (bash), forma recomendada

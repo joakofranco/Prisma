@@ -405,6 +405,33 @@ evidencias más recientes; para restaurar un punto en el tiempo específico, cor
 > mano) y el bucket de evidencias no tenía backup en absoluto — ver el historial de este archivo
 > si hace falta el contexto completo de esa brecha.
 
+## Identidad visual de los correos de Keycloak (PRI-366)
+
+Los correos que envía Keycloak (recuperación de contraseña, verificación de email, etc.) usan
+el theme `prisma` (`infra/keycloak/themes/prisma/email/`), montado al contenedor vía
+`docker-compose.yml` y activado con `"emailTheme": "prisma"` en `realm-prisma.json`. Solo se
+sobrescribe `email/html/template.ftl` (el wrapper que envuelve todos los correos) con una banda
+de color + el wordmark "PRISMA" — el contenido de cada correo (textos, botones, links) sigue
+viniendo del theme `keycloak` por defecto (`parent=keycloak`), así que alcanza con ese único
+archivo para que **todos** los correos, incluido "¿Olvidaste tu contraseña?", queden con la
+identidad visual de PRISMA.
+
+**Cómo probarlo:**
+1. `make up` (o el target que levante el perfil `security`/`full`, que incluye Keycloak).
+2. Si existe el botón "Enviar correo de prueba" en la configuración de SMTP del panel de admin,
+   usarlo apunta a probar la conexión SMTP en sí (PRI-362), no este theme — no sirve para ver el
+   branding.
+3. Para ver el theme real: en la pantalla de login, click en "¿Olvidaste tu contraseña?",
+   ingresar un email de un usuario existente, y revisar la bandeja de ese usuario. El correo
+   debe mostrar la banda azul oscuro con "PRISMA" en el encabezado.
+
+**Si el cambio no se refleja:** Keycloak en `start-dev` (el modo que usa este proyecto, ver el
+`command` del servicio `keycloak`) desactiva el cache de temas por defecto, así que un cambio en
+los archivos del theme se toma sin reiniciar el contenedor — alcanza con refrescar/reintentar el
+envío. Si corre en modo `start` (producción, cache de temas activado), hay que reiniciar el
+contenedor de Keycloak (`docker compose restart keycloak`) después de cambiar cualquier archivo
+de `infra/keycloak/themes/`.
+
 ## Rotación de secretos (JWT/DB)
 
 1. Actualizar el valor en Keycloak y en `.env` — **excepción:** `KEYCLOAK_ADMIN_CLIENT_SECRET` no
