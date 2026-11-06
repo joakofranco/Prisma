@@ -196,6 +196,25 @@ class EvidenceServiceTest {
   }
 
   @Test
+  void uploadWithoutControlLeavesEvidenceUnassociated() throws Exception {
+    // Con magic bytes de PDF reales: la validacion de contenido (RF-EVI-03) rechaza otros bytes.
+    MockMultipartFile file =
+        new MockMultipartFile(
+            "file", "acta.pdf", "application/pdf", "%PDF-1.4".getBytes(StandardCharsets.US_ASCII));
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(s3Client.headBucket(any(HeadBucketRequest.class))).thenReturn(null);
+    when(currentUser.currentUser()).thenReturn(Optional.empty());
+    when(evidenceRepo.save(any(Evidence.class))).thenAnswer(EvidenceServiceTest::simulatePersist);
+
+    service.upload(eval.getId(), null, null, file);
+
+    ArgumentCaptor<Evidence> captor = ArgumentCaptor.forClass(Evidence.class);
+    verify(evidenceRepo).save(captor.capture());
+    assertNull(captor.getValue().getControl());
+    verify(controlRepo, never()).findById(any());
+  }
+
+  @Test
   void uploadCreatesBucketWhenMissing() throws Exception {
     MockMultipartFile file = new MockMultipartFile("file", "f.txt", "text/plain", new byte[] {9});
     when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
