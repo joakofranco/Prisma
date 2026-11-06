@@ -210,6 +210,16 @@ make mfa-status     # confirmar el flujo y quién todavía tiene que registrar O
 El primer login de cada usuario con esos roles (incluido `admin@prisma.local`) le va a pedir
 registrar una app autenticadora (Google/Microsoft Authenticator, FreeOTP...).
 
+**Política de recuperación de contraseña y bloqueo de cuenta** (RF-AUTH-05 y RF-AUTH-08): también hay
+que aplicarla en **cada ambiente que ya exista**, por la misma razón (`--import-realm` solo corre
+la primera vez). Deja el enlace de «¿Olvidaste tu contraseña?» con 30 minutos de vigencia y bloquea
+la cuenta 15 minutos tras 10 intentos fallidos en 15 minutos:
+
+```bash
+make auth-policy          # idempotente; detalle en docs/RUNBOOK.md → "Bloqueo de cuenta"
+make auth-policy-status   # muestra los valores vigentes contra los esperados
+```
+
 **Accedas por el host que accedas** (una IP, un dominio real, `localhost`) no hace falta tocar
 nada en Keycloak: el client `prisma-frontend` trae `redirectUris`/`webOrigins` en `"*"` a propósito
 (ver [`SECURITY.md`](SECURITY.md#endurecimientos-recientes-para-que-no-se-repitan), ítem 10) —

@@ -66,6 +66,12 @@ alcanza con dejar "Requiere autenticación" sin marcar.
 - El realm ya trae `resetPasswordAllowed: true`: sin SMTP configurado, un usuario puede pedir el
   reseteo, pero Keycloak falla en silencio al intentar mandar el correo (queda en los logs del
   contenedor `keycloak`, no en los de backend-core).
+- **Vigencia del enlace de recuperación: 30 minutos** (RF-AUTH-05). El defecto de Keycloak es 5
+  minutos. Se fija con `actionTokenGeneratedByUserLifespan` y con el atributo
+  `actionTokenGeneratedByUserLifespan.reset-credentials`, ambos en 1800 s. En entornos nuevos viene en
+  `realm-prisma.json`; en los que ya existen hay que correr `make auth-policy` (ver
+  [`Ambientes-Despliegue.md`](Ambientes-Despliegue.md)). `make auth-policy-status` muestra el valor
+  vigente.
 
 ## 4. Qué NO hace esta pantalla
 

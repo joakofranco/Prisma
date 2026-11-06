@@ -39,7 +39,8 @@ DC := docker compose
         sonar security-scan sync-knowledge-base \
         certs certs-force restart-nginx \
         mvp-up mvp-down mvp-logs mvp-ps mvp-seed \
-        mcu50-build mcu50-validate bugasura-build
+        mcu50-build mcu50-validate bugasura-build \
+        mfa-enable mfa-status mfa-disable mfa-reset-requires-otp auth-policy auth-policy-status
 
 # Archivos de compose para el stack MVP (mínimo, sin LLM ni servicios extra)
 MVP := -f docker-compose.yml -f docker-compose.mvp.yml
@@ -235,6 +236,13 @@ mfa-disable: ## Volver al flujo de login original de Keycloak (MFA solo voluntar
 
 mfa-reset-requires-otp: ## "¿Olvidaste tu contraseña?" pide el OTP actual y no lo regenera (idempotente)
 	./scripts/keycloak/enable-mfa.sh --require-otp-on-reset
+
+# ---------- KEYCLOAK: POLÍTICA DE AUTENTICACIÓN (recuperación y bloqueo) ----------
+auth-policy: ## Enlace de recuperar contraseña de 30 min y bloqueo tras 10 intentos fallidos (idempotente)
+	./scripts/keycloak/apply-auth-policy.sh
+
+auth-policy-status: ## Ver la vigencia del enlace de recuperación y los parámetros de bloqueo vigentes
+	./scripts/keycloak/apply-auth-policy.sh --status
 
 # ---------- TLS / CERTIFICADOS ----------
 certs: ## Generar el certificado autofirmado de nginx (pide confirmación si ya existe uno)
