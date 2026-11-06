@@ -214,6 +214,41 @@ public class KeycloakAdminClient {
     return removed;
   }
 
+  /**
+   * Estado de la protección contra fuerza bruta de Keycloak para un usuario (PRI-233): cuántos
+   * intentos fallidos lleva seguidos y si está bloqueado ahora. Igual que {@link
+   * #removeOtpCredentials}, NO es best-effort: si falla, quien lo pidió tiene que enterarse.
+   */
+  public LoginFailureStatus loginFailureStatus(UUID keycloakId) {
+    LoginFailureStatus status =
+        restClient
+            .get()
+            .uri(
+                "/admin/realms/{realm}/attack-detection/brute-force/users/{id}",
+                properties.realm(),
+                keycloakId)
+            .header("Authorization", "Bearer " + adminToken())
+            .retrieve()
+            .body(LoginFailureStatus.class);
+    return status != null ? status : new LoginFailureStatus(false, 0);
+  }
+
+  /**
+   * Borra los intentos fallidos de login de un usuario: si la cuenta estaba bloqueada
+   * temporalmente, queda habilitada de inmediato y el contador vuelve a cero (PRI-233).
+   */
+  public void clearLoginFailures(UUID keycloakId) {
+    restClient
+        .delete()
+        .uri(
+            "/admin/realms/{realm}/attack-detection/brute-force/users/{id}",
+            properties.realm(),
+            keycloakId)
+        .header("Authorization", "Bearer " + adminToken())
+        .retrieve()
+        .toBodilessEntity();
+  }
+
   private void setPassword(UUID keycloakId, String newPassword, boolean temporary) {
     CredentialRepresentation credential =
         new CredentialRepresentation("password", newPassword, temporary);
@@ -415,6 +450,13 @@ public class KeycloakAdminClient {
   }
 
   public record LoginFailureEvent(long time, String ipAddress, String username, String error) {}
+
+  /**
+   * Lo que Keycloak informa del bloqueo de un usuario: {@code disabled} es {@code true} mientras la
+   * cuenta está bloqueada, y {@code numFailures} los intentos fallidos seguidos que lleva.
+   */
+  @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+  public record LoginFailureStatus(boolean disabled, int numFailures) {}
 
   // Representación PARCIAL del evento de Keycloak -- sólo los campos que se usan. "details" trae
   // el username tal cual se escribió en el formulario de login (existe o no la cuenta), que es

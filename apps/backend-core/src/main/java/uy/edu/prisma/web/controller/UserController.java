@@ -8,6 +8,7 @@ import org.springframework.web.bind.annotation.*;
 import uy.edu.prisma.application.UserService;
 import uy.edu.prisma.web.dto.Dto.CreateUserDto;
 import uy.edu.prisma.web.dto.Dto.PaginatedDto;
+import uy.edu.prisma.web.dto.Dto.UnlockUserResultDto;
 import uy.edu.prisma.web.dto.Dto.UserDto;
 
 @RestController
@@ -50,6 +51,17 @@ public class UserController {
   public ResponseEntity<UserDto> update(
       @PathVariable UUID id, @Valid @RequestBody CreateUserDto dto) {
     return ResponseEntity.ok(service.update(id, dto));
+  }
+
+  /**
+   * Desbloquea la cuenta de un usuario bloqueado por intentos fallidos de login (RF-AUTH-08). Solo
+   * el administrador global: las demás acciones sobre usuarios admiten también a ORG_RESPONSIBLE,
+   * pero un bloqueo es una medida de seguridad y levantarlo no se delega.
+   */
+  @PostMapping("/{id}/unlock")
+  @PreAuthorize("hasRole('PRISMA_ADMIN')")
+  public ResponseEntity<UnlockUserResultDto> unlock(@PathVariable UUID id) {
+    return ResponseEntity.ok(new UnlockUserResultDto(service.unlock(id)));
   }
 
   @DeleteMapping("/{id}")
