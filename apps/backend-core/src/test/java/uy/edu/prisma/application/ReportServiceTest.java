@@ -14,11 +14,15 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import uy.edu.prisma.domain.entity.AuditObservation;
 import uy.edu.prisma.domain.entity.Evaluation;
 import uy.edu.prisma.domain.entity.MaturityResult;
 import uy.edu.prisma.domain.entity.Organization;
+import uy.edu.prisma.domain.exception.ConflictException;
 import uy.edu.prisma.domain.exception.ResourceNotFoundException;
+import uy.edu.prisma.domain.repository.AuditObservationRepository;
 import uy.edu.prisma.domain.repository.EvaluationRepository;
+import uy.edu.prisma.domain.repository.EvidenceRepository;
 import uy.edu.prisma.domain.repository.MaturityResultRepository;
 
 @ExtendWith(MockitoExtension.class)
@@ -27,6 +31,8 @@ class ReportServiceTest {
 
   @Mock private EvaluationRepository evalRepo;
   @Mock private MaturityResultRepository matRepo;
+  @Mock private AuditObservationRepository obsRepo;
+  @Mock private EvidenceRepository evidenceRepo;
   @Mock private CurrentUserService currentUser;
 
   private ReportService service;
@@ -35,13 +41,14 @@ class ReportServiceTest {
   @BeforeEach
   void setUp() {
     when(currentUser.isGlobalRole()).thenReturn(true);
-    service = new ReportService(evalRepo, matRepo, currentUser);
+    service = new ReportService(evalRepo, matRepo, obsRepo, evidenceRepo, currentUser);
     eval =
         Evaluation.builder()
             .id(UUID.randomUUID())
             .name("Evaluacion 2026")
             .organization(Organization.builder().id(UUID.randomUUID()).name("Acme").build())
             .catalogVersion("5.0")
+            .status(Evaluation.Status.IN_AUDIT)
             .updatedAt(OffsetDateTime.now())
             .build();
   }
@@ -97,5 +104,56 @@ class ReportServiceTest {
     when(evalRepo.findById(id)).thenReturn(Optional.empty());
 
     assertThrows(ResourceNotFoundException.class, () -> service.generateExcel(id));
+  }
+
+  @Test
+  void generatePreliminaryPdfProducesValidDocument() {
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(matRepo.findByEvaluationId(eval.getId())).thenReturn(results());
+    when(obsRepo.findByEvaluationIdOrderByCreatedAtDesc(eval.getId()))
+        .thenReturn(
+            List.of(
+                AuditObservation.builder()
+                    .type(AuditObservation.ObservationType.OBSERVATION)
+                    .description("Falta política documentada")
+                    .status(AuditObservation.ObservationStatus.OPEN)
+                    .createdAt(OffsetDateTime.now())
+                    .build()));
+    when(evidenceRepo.findByEvaluationIdOrderByUploadedAtDesc(eval.getId())).thenReturn(List.of());
+
+    byte[] pdf = service.generatePreliminaryPdf(eval.getId());
+
+    assertTrue(pdf.length > 100);
+    assertEquals("%PDF-", new String(pdf, 0, 5, java.nio.charset.StandardCharsets.UTF_8));
+  }
+
+  @Test
+  void generatePreliminaryExcelProducesWorkbook() {
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(matRepo.findByEvaluationId(eval.getId())).thenReturn(results());
+    when(obsRepo.findByEvaluationIdOrderByCreatedAtDesc(eval.getId())).thenReturn(List.of());
+    when(evidenceRepo.findByEvaluationIdOrderByUploadedAtDesc(eval.getId())).thenReturn(List.of());
+
+    byte[] xlsx = service.generatePreliminaryExcel(eval.getId());
+
+    assertTrue(xlsx.length > 100);
+    assertEquals('P', xlsx[0]);
+    assertEquals('K', xlsx[1]);
+  }
+
+  @Test
+  void generatePreliminaryPdfThrowsWhenEvaluationNotInAudit() {
+    eval.setStatus(Evaluation.Status.DRAFT);
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+
+    assertThrows(ConflictException.class, () -> service.generatePreliminaryPdf(eval.getId()));
+  }
+
+  @Test
+  void generatePreliminaryExcelThrowsWhenEvaluationNotInAudit() {
+    eval.setStatus(Evaluation.Status.APPROVED);
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+
+    assertThrows(ConflictException.class, () -> service.generatePreliminaryExcel(eval.getId()));
   }
 }
