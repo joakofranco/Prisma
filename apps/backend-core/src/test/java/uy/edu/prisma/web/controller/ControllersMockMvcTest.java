@@ -40,6 +40,7 @@ class ControllersMockMvcTest {
   @Mock private ReportService reportService;
   @Mock private EmailSettingsService emailSettingsService;
   @Mock private AccountService accountService;
+  @Mock private AuditLogService auditLogService;
 
   private MockMvc catalog;
   private MockMvc communityProfiles;
@@ -55,6 +56,7 @@ class ControllersMockMvcTest {
   private MockMvc reports;
   private MockMvc emailSettings;
   private MockMvc account;
+  private MockMvc auditLogs;
 
   @BeforeEach
   void setUp() {
@@ -84,6 +86,7 @@ class ControllersMockMvcTest {
     emailSettings =
         MockMvcBuilders.standaloneSetup(new EmailSettingsController(emailSettingsService)).build();
     account = MockMvcBuilders.standaloneSetup(new AccountController(accountService)).build();
+    auditLogs = MockMvcBuilders.standaloneSetup(new AuditLogController(auditLogService)).build();
   }
 
   // ---------------- Catalog ----------------
@@ -949,5 +952,20 @@ class ControllersMockMvcTest {
         .andExpect(status().isNoContent());
 
     verify(accountService, times(1)).changePassword(any());
+  }
+
+  // ---------------- Audit log (bitácora, RF-TRZ-05) ----------------
+
+  @Test
+  void auditLogExportReturnsCsv() throws Exception {
+    when(auditLogService.exportCsv(null, null)).thenReturn("Fecha,Usuario,Email\r\n");
+
+    auditLogs
+        .perform(get("/api/audit-logs/export"))
+        .andExpect(status().isOk())
+        .andExpect(content().contentTypeCompatibleWith(MediaType.valueOf("text/csv")))
+        .andExpect(content().string("Fecha,Usuario,Email\r\n"));
+
+    verify(auditLogService, times(1)).exportCsv(null, null);
   }
 }
