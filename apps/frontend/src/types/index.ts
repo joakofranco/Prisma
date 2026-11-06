@@ -275,6 +275,9 @@ export interface AuditObservation {
   createdAt: string;
   /** Nombre de quien la registró -- la "estampa" de qué auditor trabajó esta auditoría. */
   createdByName?: string | null;
+  /** Código del control y de la subcategoría a los que está atada (PRI-354), si corresponde. */
+  controlCode?: string | null;
+  subcategoryCode?: string | null;
 }
 
 /** Marca «para revisar» de un control dentro de una evaluación (PRI-352). */

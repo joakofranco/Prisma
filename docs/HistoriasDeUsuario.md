@@ -422,7 +422,21 @@ y roles habilitados en [`docs/API.md`](API.md).
 > Como `AUDITOR`/`PRISMA_ADMIN`, quiero editar el control, tipo, descripción o estado de una
 > observación ya creada.
 
+- Se editan el tipo y la descripción desde el botón «Editar» de cada observación (`AuditView.vue`). Solo mientras
+  la evaluación está en auditoría (`IN_AUDIT`); después, las observaciones quedan como registro. Una
+  descripción vacía se rechaza y los errores se muestran en pantalla (antes el cambio de estado fallaba
+  en silencio).
 - **Implementado en:** `PUT /api/audit/observations/{id}`.
+
+### HU-AUD-02b — La organización lee las observaciones del auditor
+> Como `ORG_RESPONSIBLE` o `INTERNAL_EVALUATOR`, quiero leer las observaciones que el auditor registró
+> cuando me devuelve la evaluación, para saber qué corregir.
+
+- Aparecen en el detalle de la evaluación («Observaciones del auditor», solo lectura) desde que la
+  evaluación está devuelta, y siguen visibles al aprobarse o archivarse. Antes de eso son el borrador
+  de trabajo del auditor y no se muestran. El `VIEWER` no las ve.
+- **Implementado en:** `GET /api/audit/observations/{evaluationId}`,
+  `AuditObservationsReadOnly.vue` en `EvaluationDetailView.vue`.
 
 ### HU-AUD-03 — Seguimiento del estado de una observación
 > Como `AUDITOR`, quiero marcar una observación como "en progreso" y después "resuelta", para

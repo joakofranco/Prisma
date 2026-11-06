@@ -642,7 +642,11 @@ public class Dto {
       OffsetDateTime createdAt,
       // Nombre del auditor que la registró -- es la "estampa" de quién trabajó esta auditoría:
       // null si createdBy es null (dato histórico) o no se pudo resolver.
-      String createdByName) {
+      String createdByName,
+      // Código del control y de la subcategoría a los que está atada (null si no lo está): la
+      // organización que lee las observaciones al volver la evaluación no tiene el catálogo a mano.
+      String controlCode,
+      String subcategoryCode) {
     // Compat: firma previa sin subcategoryId ni createdByName (usada en tests existentes).
     public AuditObservationDto(
         UUID id,
@@ -654,7 +658,18 @@ public class Dto {
         UUID createdBy,
         OffsetDateTime createdAt) {
       this(
-          id, evaluationId, controlId, null, type, description, status, createdBy, createdAt, null);
+          id,
+          evaluationId,
+          controlId,
+          null,
+          type,
+          description,
+          status,
+          createdBy,
+          createdAt,
+          null,
+          null,
+          null);
     }
   }
 

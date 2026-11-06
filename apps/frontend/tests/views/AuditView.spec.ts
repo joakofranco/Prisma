@@ -153,3 +153,223 @@ describe('AuditView: dictamen por control (RF-AUD-06)', () => {
     expect(wrapper.find('[data-testid="flagged-controls"]').exists()).toBe(false);
   });
 });
+
+describe('AuditView: observaciones (PRI-354)', () => {
+  const observation = (id: string, status = 'OPEN') => ({
+    id,
+    evaluationId: 'eval-1',
+    type: 'OBSERVATION',
+    description: `Hallazgo ${id}`,
+    status,
+    createdBy: 'u',
+    createdAt: '2026-11-03T10:00:00Z',
+    createdByName: 'Ana',
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    document.body.innerHTML = '';
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    auditService.getObservations.mockResolvedValue({
+      data: [observation('o1'), observation('o2', 'IN_PROGRESS')],
+    });
+    auditService.getVerdicts.mockResolvedValue({ data: [] });
+    auditService.updateObservation.mockResolvedValue({ data: {} });
+    auditService.createObservation.mockResolvedValue({ data: {} });
+    evaluationsService.getFlags.mockResolvedValue({ data: [] });
+    evidenceService.getByEvaluation.mockResolvedValue({ data: [] });
+    catalogService.getByVersion.mockResolvedValue({ data: catalog });
+  });
+
+  const buttonWithTitle = (wrapper: Awaited<ReturnType<typeof mountView>>, title: string) =>
+    wrapper.findAll(`button[title="${title}"]`);
+
+  it('un fallo al cambiar el estado se avisa con el mensaje del backend', async () => {
+    auditService.updateObservation.mockRejectedValue({
+      response: {
+        data: {
+          message:
+            'Solo se pueden modificar observaciones mientras la evaluación está en auditoría',
+        },
+      },
+    });
+    const wrapper = await mountView();
+
+    await buttonWithTitle(wrapper, 'Marcar en progreso')[0].trigger('click');
+    await flushPromises();
+
+    expect(notification.error).toHaveBeenCalledWith(
+      'Solo se pueden modificar observaciones mientras la evaluación está en auditoría',
+    );
+  });
+
+  it('si el error no trae mensaje, el aviso es genérico (no queda en silencio)', async () => {
+    auditService.updateObservation.mockRejectedValue(new Error(''));
+    const wrapper = await mountView();
+
+    await buttonWithTitle(wrapper, 'Marcar resuelta')[0].trigger('click');
+    await flushPromises();
+
+    expect(notification.error).toHaveBeenCalledWith(
+      'No se pudo cambiar el estado de la observación',
+    );
+  });
+
+  it('cambiar el estado con éxito no avisa de error y recarga la lista', async () => {
+    const wrapper = await mountView();
+    const calls = auditService.getObservations.mock.calls.length;
+
+    await buttonWithTitle(wrapper, 'Marcar en progreso')[0].trigger('click');
+    await flushPromises();
+
+    expect(auditService.updateObservation).toHaveBeenCalledWith('o1', { status: 'IN_PROGRESS' });
+    expect(notification.error).not.toHaveBeenCalled();
+    expect(auditService.getObservations.mock.calls.length).toBe(calls + 1);
+  });
+
+  it('cada observación tiene un botón «Editar» que abre el modal con sus datos', async () => {
+    const wrapper = await mountView();
+    expect(wrapper.findAll('[data-testid="edit-observation"]')).toHaveLength(2);
+
+    await wrapper.findAll('[data-testid="edit-observation"]')[0].trigger('click');
+    await flushPromises();
+
+    expect(document.body.textContent).toContain('Editar Observación');
+    const box = document.body.querySelector<HTMLTextAreaElement>('textarea')!;
+    expect(box.value).toBe('Hallazgo o1');
+  });
+
+  it('editar tipo y descripción llama a updateObservation y recarga', async () => {
+    const wrapper = await mountView();
+    await wrapper.findAll('[data-testid="edit-observation"]')[0].trigger('click');
+    await flushPromises();
+
+    const box = document.body.querySelector<HTMLTextAreaElement>('textarea')!;
+    box.value = 'Hallazgo corregido';
+    box.dispatchEvent(new Event('input'));
+    Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+      .find((b) => b.textContent?.trim() === 'Guardar')!
+      .click();
+    await flushPromises();
+
+    expect(auditService.updateObservation).toHaveBeenCalledWith('o1', {
+      type: 'OBSERVATION',
+      description: 'Hallazgo corregido',
+    });
+    expect(notification.success).toHaveBeenCalledWith('Observación actualizada');
+    expect(auditService.createObservation).not.toHaveBeenCalled();
+  });
+
+  it('un error al editar se avisa con el mensaje del backend', async () => {
+    auditService.updateObservation.mockRejectedValue({
+      response: { data: { message: 'La descripción de la observación no puede estar vacía' } },
+    });
+    const wrapper = await mountView();
+    await wrapper.findAll('[data-testid="edit-observation"]')[0].trigger('click');
+    await flushPromises();
+
+    Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+      .find((b) => b.textContent?.trim() === 'Guardar')!
+      .click();
+    await flushPromises();
+
+    expect(notification.error).toHaveBeenCalledWith(
+      'La descripción de la observación no puede estar vacía',
+    );
+  });
+
+  it('no deja guardar una descripción vacía y lo dice en el campo', async () => {
+    const wrapper = await mountView();
+    await wrapper.findAll('[data-testid="edit-observation"]')[0].trigger('click');
+    await flushPromises();
+
+    const box = document.body.querySelector<HTMLTextAreaElement>('textarea')!;
+    box.value = '   ';
+    box.dispatchEvent(new Event('input'));
+    Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+      .find((b) => b.textContent?.trim() === 'Guardar')!
+      .click();
+    await flushPromises();
+
+    expect(auditService.updateObservation).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain('La descripción es obligatoria');
+  });
+
+  it('«Nueva observación» sigue creando (el modal no queda en modo edición)', async () => {
+    const wrapper = await mountView();
+    await wrapper.findAll('[data-testid="edit-observation"]')[0].trigger('click');
+    await flushPromises();
+    Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+      .find((b) => b.textContent?.trim() === 'Cancelar')!
+      .click();
+    await flushPromises();
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Nueva Observación'))!
+      .trigger('click');
+    await flushPromises();
+
+    expect(document.body.textContent).toContain('Nueva Observación');
+    const box = document.body.querySelector<HTMLTextAreaElement>('textarea')!;
+    expect(box.value).toBe('');
+  });
+
+  it('crear con un error del backend avisa con su mensaje', async () => {
+    auditService.createObservation.mockRejectedValue({
+      response: {
+        data: {
+          message:
+            'Solo se pueden registrar observaciones mientras la evaluación está en auditoría',
+        },
+      },
+    });
+    const wrapper = await mountView();
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Nueva Observación'))!
+      .trigger('click');
+    await flushPromises();
+
+    const box = document.body.querySelector<HTMLTextAreaElement>('textarea')!;
+    box.value = 'algo';
+    box.dispatchEvent(new Event('input'));
+    Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+      .find((b) => b.textContent?.trim() === 'Crear')!
+      .click();
+    await flushPromises();
+
+    expect(notification.error).toHaveBeenCalledWith(
+      'Solo se pueden registrar observaciones mientras la evaluación está en auditoría',
+    );
+  });
+
+  it('fuera de IN_AUDIT se ocultan «Nueva observación», «Editar» y los botones de estado', async () => {
+    for (const status of ['DRAFT', 'RETURNED', 'APPROVED', 'ARCHIVED']) {
+      document.body.innerHTML = '';
+      const wrapper = await mountView(status);
+
+      expect(
+        wrapper.findAll('button').some((b) => b.text().includes('Nueva Observación')),
+        status,
+      ).toBe(false);
+      expect(wrapper.findAll('[data-testid="edit-observation"]'), status).toHaveLength(0);
+      expect(buttonWithTitle(wrapper, 'Marcar en progreso'), status).toHaveLength(0);
+      expect(buttonWithTitle(wrapper, 'Marcar resuelta'), status).toHaveLength(0);
+      expect(wrapper.find('[data-testid="observations-locked"]').exists(), status).toBe(true);
+    }
+  });
+
+  it('en IN_AUDIT no aparece el aviso de bloqueo', async () => {
+    const wrapper = await mountView('IN_AUDIT');
+
+    expect(wrapper.find('[data-testid="observations-locked"]').exists()).toBe(false);
+  });
+
+  it('fuera de IN_AUDIT las observaciones siguen visibles para el auditor', async () => {
+    const wrapper = await mountView('RETURNED');
+
+    expect(wrapper.text()).toContain('Hallazgo o1');
+    expect(wrapper.text()).toContain('Hallazgo o2');
+  });
+});

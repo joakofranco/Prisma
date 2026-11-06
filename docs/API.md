@@ -145,7 +145,7 @@ importar el rol que normalmente le correspondería.
 
 | Método | Path | Rol | Notas |
 |---|---|---|---|
-| GET | `/{evaluationId}` | `PRISMA_ADMIN`, `AUDITOR` | **no** visible para `ORG_RESPONSIBLE`/`INTERNAL_EVALUATOR` — es la herramienta de trabajo del auditor |
+| GET | `/{evaluationId}` | `PRISMA_ADMIN`, `AUDITOR`, `ORG_RESPONSIBLE`, `INTERNAL_EVALUATOR` | el administrador y el auditor las ven siempre; la **organización** (responsable o evaluador interno, de esa organización) solo desde que la evaluación vuelve (`RETURNED`, `APPROVED` o `ARCHIVED`) — antes responde `200` con lista vacía, no un error. El `VIEWER` recibe `403`. Cada una trae `controlCode` y `subcategoryCode` (`null` si no está atada a ninguno) |
 | POST | `/` | `PRISMA_ADMIN`, `AUDITOR` | `{evaluationId, controlId?, type, description, status?}` — `type` ∈ `OBSERVATION`/`NON_CONFORMITY`/`RECOMMENDATION`, `status` ∈ `OPEN`/`IN_PROGRESS`/`RESOLVED`/`CLOSED` (default `OPEN`) |
 | PUT | `/{id}` | `PRISMA_ADMIN`, `AUDITOR` | actualización parcial (sólo los campos presentes); una `description` vacía responde `400` |
 

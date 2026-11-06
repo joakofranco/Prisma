@@ -1,6 +1,7 @@
 package uy.edu.prisma.application;
 
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -11,6 +12,7 @@ import uy.edu.prisma.domain.entity.CatalogControl;
 import uy.edu.prisma.domain.entity.CatalogSubcategory;
 import uy.edu.prisma.domain.entity.Evaluation;
 import uy.edu.prisma.domain.entity.User;
+import uy.edu.prisma.domain.exception.ConflictException;
 import uy.edu.prisma.domain.exception.InvalidRequestException;
 import uy.edu.prisma.domain.exception.ResourceNotFoundException;
 import uy.edu.prisma.domain.repository.AuditObservationRepository;
@@ -30,6 +32,12 @@ public class AuditObservationService {
   private final CatalogControlRepository controlRepo;
   private final CatalogSubcategoryRepository subcategoryRepo;
   private final CurrentUserService currentUser;
+
+  // Estados en los que la organización puede leer las observaciones del auditor: cuando la
+  // evaluación vuelve (RETURNED) y después. Las observaciones son la forma en que el auditor le
+  // comunica por qué la devuelve; antes de eso son su borrador de trabajo (PRI-354).
+  private static final Set<Evaluation.Status> VISIBLE_TO_ORGANIZATION =
+      Set.of(Evaluation.Status.RETURNED, Evaluation.Status.APPROVED, Evaluation.Status.ARCHIVED);
 
   public AuditObservationService(
       AuditObservationRepository repo,
@@ -51,9 +59,31 @@ public class AuditObservationService {
             .findById(evaluationId)
             .orElseThrow(() -> new ResourceNotFoundException("Evaluación", evaluationId));
     currentUser.assertOrganizationAccess(eval.getOrganization().getId());
+    // El administrador y el auditor las ven siempre. La organización (responsable o evaluador
+    // interno), solo desde que la evaluación vuelve; antes recibe una lista vacía y no un error,
+    // así la pantalla no muestra un fallo y no se revela si hay observaciones en borrador.
+    boolean always = currentUser.isPrismaAdmin() || currentUser.isAuditor();
+    if (!always && !VISIBLE_TO_ORGANIZATION.contains(eval.getStatus())) {
+      return List.of();
+    }
     return repo.findByEvaluationIdOrderByCreatedAtDesc(evaluationId).stream()
         .map(this::toDto)
         .toList();
+  }
+
+  /**
+   * Escribir (crear o editar) observaciones solo se puede mientras la evaluación está en auditoría,
+   * igual que el dictamen por control: después de devolverla o aprobarla quedan como registro.
+   */
+  private void assertInAudit(Evaluation eval, String action) {
+    if (eval.getStatus() != Evaluation.Status.IN_AUDIT) {
+      throw new ConflictException(
+          "Solo se pueden "
+              + action
+              + " mientras la evaluación está en auditoría (estado actual: "
+              + eval.getStatus()
+              + ")");
+    }
   }
 
   public AuditObservationDto create(CreateAuditObservationDto dto) {
@@ -62,6 +92,7 @@ public class AuditObservationService {
             .findById(dto.evaluationId())
             .orElseThrow(() -> new ResourceNotFoundException("Evaluación", dto.evaluationId()));
     currentUser.assertOrganizationAccess(eval.getOrganization().getId());
+    assertInAudit(eval, "registrar observaciones");
     AuditObservation obs =
         AuditObservation.builder()
             .evaluation(eval)
@@ -83,6 +114,11 @@ public class AuditObservationService {
         repo.findById(id)
             .orElseThrow(() -> new ResourceNotFoundException("Observación de auditoría", id));
     currentUser.assertOrganizationAccess(obs.getEvaluation().getOrganization().getId());
+    assertInAudit(obs.getEvaluation(), "modificar observaciones");
+    // Antes una descripción vacía se ignoraba en silencio y la observación quedaba como estaba.
+    if (dto.description() != null && dto.description().isBlank()) {
+      throw new InvalidRequestException("La descripción de la observación no puede estar vacía");
+    }
     if (dto.controlId() != null) {
       obs.setControl(resolveControl(dto.controlId()));
     }
@@ -155,6 +191,8 @@ public class AuditObservationService {
         o.getStatus().name(),
         author != null ? author.getId() : null,
         o.getCreatedAt(),
-        author != null ? (author.getFirstName() + " " + author.getLastName()).trim() : null);
+        author != null ? (author.getFirstName() + " " + author.getLastName()).trim() : null,
+        o.getControl() != null ? o.getControl().getCode() : null,
+        o.getSubcategory() != null ? o.getSubcategory().getCode() : null);
   }
 }

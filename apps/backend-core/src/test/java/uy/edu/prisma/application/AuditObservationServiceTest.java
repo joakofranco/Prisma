@@ -20,6 +20,7 @@ import uy.edu.prisma.domain.entity.CatalogSubcategory;
 import uy.edu.prisma.domain.entity.Evaluation;
 import uy.edu.prisma.domain.entity.Organization;
 import uy.edu.prisma.domain.entity.User;
+import uy.edu.prisma.domain.exception.ConflictException;
 import uy.edu.prisma.domain.exception.InvalidRequestException;
 import uy.edu.prisma.domain.exception.ResourceNotFoundException;
 import uy.edu.prisma.domain.repository.AuditObservationRepository;
@@ -46,6 +47,9 @@ class AuditObservationServiceTest {
   @BeforeEach
   void setUp() {
     when(currentUser.isGlobalRole()).thenReturn(true);
+    // Por defecto quien consulta es el administrador y la evaluación está en auditoría, que es
+    // cuando el auditor trabaja; los casos de la organización y de otros estados lo cambian.
+    when(currentUser.isPrismaAdmin()).thenReturn(true);
     service =
         new AuditObservationService(
             repo, evaluationRepo, controlRepo, subcategoryRepo, currentUser);
@@ -54,6 +58,7 @@ class AuditObservationServiceTest {
             .id(UUID.randomUUID())
             .name("E")
             .organization(Organization.builder().id(UUID.randomUUID()).build())
+            .status(Evaluation.Status.IN_AUDIT)
             .build();
   }
 
@@ -142,6 +147,33 @@ class AuditObservationServiceTest {
     AuditObservationDto result = service.create(dto);
 
     assertEquals(control.getId(), result.controlId());
+  }
+
+  @Test
+  void theDtoCarriesTheControlAndSubcategoryCodesForTheOrganization() {
+    CatalogControl control = CatalogControl.builder().id(UUID.randomUUID()).code("PL.1-1").build();
+    CatalogSubcategory subcategory =
+        CatalogSubcategory.builder().id(UUID.randomUUID()).code("GV.OC").build();
+    AuditObservation obs =
+        AuditObservation.builder()
+            .id(UUID.randomUUID())
+            .evaluation(eval)
+            .control(control)
+            .subcategory(subcategory)
+            .description("o")
+            .build();
+    AuditObservation general =
+        AuditObservation.builder().id(UUID.randomUUID()).evaluation(eval).description("g").build();
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(repo.findByEvaluationIdOrderByCreatedAtDesc(eval.getId()))
+        .thenReturn(List.of(obs, general));
+
+    List<AuditObservationDto> result = service.listByEvaluation(eval.getId());
+
+    assertEquals("PL.1-1", result.get(0).controlCode());
+    assertEquals("GV.OC", result.get(0).subcategoryCode());
+    assertNull(result.get(1).controlCode());
+    assertNull(result.get(1).subcategoryCode());
   }
 
   @Test
@@ -274,6 +306,176 @@ class AuditObservationServiceTest {
     UpdateAuditObservationDto dto = new UpdateAuditObservationDto(null, null, "x", "y", "z");
 
     assertThrows(ResourceNotFoundException.class, () -> service.update(id, dto));
+  }
+
+  // ---- PRI-354: escritura solo en IN_AUDIT; lectura de la organización desde la devolución ----
+
+  private static final List<Evaluation.Status> NOT_IN_AUDIT =
+      List.of(
+          Evaluation.Status.DRAFT,
+          Evaluation.Status.IN_PROGRESS,
+          Evaluation.Status.READY_FOR_AUDIT,
+          Evaluation.Status.APPROVED,
+          Evaluation.Status.RETURNED,
+          Evaluation.Status.ARCHIVED);
+
+  private AuditObservation existingObservation() {
+    AuditObservation obs =
+        AuditObservation.builder().id(UUID.randomUUID()).evaluation(eval).description("d").build();
+    when(repo.findById(obs.getId())).thenReturn(Optional.of(obs));
+    when(repo.save(any(AuditObservation.class))).thenAnswer(inv -> inv.getArgument(0));
+    return obs;
+  }
+
+  private void asOrganizationUser() {
+    when(currentUser.isPrismaAdmin()).thenReturn(false);
+    when(currentUser.isAuditor()).thenReturn(false);
+  }
+
+  @Test
+  void createIsRejectedWithTheCurrentStatusOutsideOfAudit() {
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    CreateAuditObservationDto dto =
+        new CreateAuditObservationDto(eval.getId(), null, null, null, "x", null);
+
+    for (Evaluation.Status status : NOT_IN_AUDIT) {
+      eval.setStatus(status);
+      ConflictException error =
+          assertThrows(ConflictException.class, () -> service.create(dto), status.name());
+      assertTrue(error.getMessage().contains("en auditoría"), error.getMessage());
+      assertTrue(error.getMessage().contains(status.name()), error.getMessage());
+    }
+    verify(repo, never()).save(any());
+  }
+
+  @Test
+  void updateIsRejectedOutsideOfAuditEvenForTheStatusChange() {
+    AuditObservation obs = existingObservation();
+    UpdateAuditObservationDto statusChange =
+        new UpdateAuditObservationDto(null, null, null, null, "RESOLVED");
+
+    for (Evaluation.Status status : NOT_IN_AUDIT) {
+      eval.setStatus(status);
+      assertThrows(
+          ConflictException.class, () -> service.update(obs.getId(), statusChange), status.name());
+    }
+    assertEquals(AuditObservation.ObservationStatus.OPEN, obs.getStatus());
+    verify(repo, never()).save(any());
+  }
+
+  @Test
+  void updateWithAnEmptyDescriptionIsRejectedInsteadOfIgnored() {
+    AuditObservation obs = existingObservation();
+
+    for (String blank : List.of("", "   ")) {
+      InvalidRequestException error =
+          assertThrows(
+              InvalidRequestException.class,
+              () ->
+                  service.update(
+                      obs.getId(), new UpdateAuditObservationDto(null, null, null, blank, null)));
+      assertTrue(error.getMessage().contains("descripción"));
+    }
+    assertEquals("d", obs.getDescription());
+  }
+
+  @Test
+  void updateWithoutDescriptionKeepsTheCurrentOne() {
+    AuditObservation obs = existingObservation();
+
+    AuditObservationDto result =
+        service.update(
+            obs.getId(), new UpdateAuditObservationDto(null, null, "RECOMMENDATION", null, null));
+
+    assertEquals("d", result.description());
+    assertEquals("RECOMMENDATION", result.type());
+  }
+
+  @Test
+  void updateOfAnotherOrganizationIsRejectedByTheAccessCheck() {
+    AuditObservation obs = existingObservation();
+    doThrow(new org.springframework.security.access.AccessDeniedException("otra organización"))
+        .when(currentUser)
+        .assertOrganizationAccess(any());
+
+    assertThrows(
+        org.springframework.security.access.AccessDeniedException.class,
+        () ->
+            service.update(
+                obs.getId(), new UpdateAuditObservationDto(null, null, null, "x", null)));
+  }
+
+  @Test
+  void theOrganizationReadsTheObservationsOnceTheEvaluationIsReturned() {
+    asOrganizationUser();
+    AuditObservation obs =
+        AuditObservation.builder().id(UUID.randomUUID()).evaluation(eval).description("o").build();
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(repo.findByEvaluationIdOrderByCreatedAtDesc(eval.getId())).thenReturn(List.of(obs));
+
+    for (Evaluation.Status status :
+        List.of(
+            Evaluation.Status.RETURNED, Evaluation.Status.APPROVED, Evaluation.Status.ARCHIVED)) {
+      eval.setStatus(status);
+      assertEquals(1, service.listByEvaluation(eval.getId()).size(), status.name());
+    }
+  }
+
+  @Test
+  void theOrganizationGetsAnEmptyListWhileTheEvaluationIsNotReturned() {
+    asOrganizationUser();
+    AuditObservation draft =
+        AuditObservation.builder()
+            .id(UUID.randomUUID())
+            .evaluation(eval)
+            .description("borrador")
+            .build();
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(repo.findByEvaluationIdOrderByCreatedAtDesc(eval.getId())).thenReturn(List.of(draft));
+
+    for (Evaluation.Status status :
+        List.of(
+            Evaluation.Status.DRAFT,
+            Evaluation.Status.IN_PROGRESS,
+            Evaluation.Status.READY_FOR_AUDIT,
+            Evaluation.Status.IN_AUDIT)) {
+      eval.setStatus(status);
+      assertTrue(service.listByEvaluation(eval.getId()).isEmpty(), status.name());
+    }
+    // Ni siquiera se consulta la base: no se arma una lista para descartarla.
+    verify(repo, never()).findByEvaluationIdOrderByCreatedAtDesc(any());
+  }
+
+  @Test
+  void theAuditorAndTheAdminSeeTheObservationsInAnyStatus() {
+    AuditObservation obs =
+        AuditObservation.builder().id(UUID.randomUUID()).evaluation(eval).description("o").build();
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(repo.findByEvaluationIdOrderByCreatedAtDesc(eval.getId())).thenReturn(List.of(obs));
+
+    for (boolean admin : List.of(true, false)) {
+      when(currentUser.isPrismaAdmin()).thenReturn(admin);
+      when(currentUser.isAuditor()).thenReturn(!admin);
+      for (Evaluation.Status status : Evaluation.Status.values()) {
+        eval.setStatus(status);
+        assertEquals(1, service.listByEvaluation(eval.getId()).size(), status.name());
+      }
+    }
+  }
+
+  @Test
+  void anotherOrganizationCannotReadEvenAfterTheReturn() {
+    asOrganizationUser();
+    eval.setStatus(Evaluation.Status.RETURNED);
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    doThrow(new org.springframework.security.access.AccessDeniedException("otra organización"))
+        .when(currentUser)
+        .assertOrganizationAccess(any());
+
+    assertThrows(
+        org.springframework.security.access.AccessDeniedException.class,
+        () -> service.listByEvaluation(eval.getId()));
+    verify(repo, never()).findByEvaluationIdOrderByCreatedAtDesc(any());
   }
 
   @Test
