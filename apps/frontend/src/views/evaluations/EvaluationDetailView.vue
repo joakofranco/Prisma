@@ -308,7 +308,10 @@
                 {{ results.length ? 'Recalcular Madurez' : 'Calcular Madurez' }}
               </BaseButton>
               <router-link
-                v-if="evaluation.status === 'APPROVED'"
+                v-if="
+                  evaluation.status === 'APPROVED' &&
+                  authStore.hasAnyRole('PRISMA_ADMIN', 'ORG_RESPONSIBLE')
+                "
                 to="/reports"
                 class="text-sm text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
               >

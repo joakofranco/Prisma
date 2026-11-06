@@ -831,6 +831,17 @@ class ControllersMockMvcTest {
   }
 
   @Test
+  void reportDownloadsAreRestrictedToAdminAndOrgResponsible() throws Exception {
+    for (String name : List.of("pdf", "excel")) {
+      var method = ReportsController.class.getMethod(name, UUID.class);
+      var annotation =
+          method.getAnnotation(org.springframework.security.access.prepost.PreAuthorize.class);
+      assertNotNull(annotation, name);
+      assertEquals("hasAnyRole('PRISMA_ADMIN','ORG_RESPONSIBLE')", annotation.value());
+    }
+  }
+
+  @Test
   void reportsExcel() throws Exception {
     UUID id = UUID.randomUUID();
     when(reportService.generateExcel(id)).thenReturn("PK".getBytes());
