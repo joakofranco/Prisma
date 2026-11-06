@@ -14,12 +14,15 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import uy.edu.prisma.domain.entity.AuditControlVerdict;
 import uy.edu.prisma.domain.entity.AuditObservation;
 import uy.edu.prisma.domain.entity.Evaluation;
 import uy.edu.prisma.domain.entity.MaturityResult;
 import uy.edu.prisma.domain.entity.Organization;
+import uy.edu.prisma.domain.entity.User;
 import uy.edu.prisma.domain.exception.ConflictException;
 import uy.edu.prisma.domain.exception.ResourceNotFoundException;
+import uy.edu.prisma.domain.repository.AuditControlVerdictRepository;
 import uy.edu.prisma.domain.repository.AuditObservationRepository;
 import uy.edu.prisma.domain.repository.EvaluationRepository;
 import uy.edu.prisma.domain.repository.EvidenceRepository;
@@ -34,6 +37,7 @@ class ReportServiceTest {
   @Mock private AuditObservationRepository obsRepo;
   @Mock private EvidenceRepository evidenceRepo;
   @Mock private CurrentUserService currentUser;
+  @Mock private AuditControlVerdictRepository verdictRepo;
 
   private ReportService service;
   private Evaluation eval;
@@ -41,7 +45,7 @@ class ReportServiceTest {
   @BeforeEach
   void setUp() {
     when(currentUser.isGlobalRole()).thenReturn(true);
-    service = new ReportService(evalRepo, matRepo, obsRepo, evidenceRepo, currentUser);
+    service = new ReportService(evalRepo, matRepo, obsRepo, evidenceRepo, currentUser, verdictRepo);
     eval =
         Evaluation.builder()
             .id(UUID.randomUUID())
@@ -155,5 +159,134 @@ class ReportServiceTest {
     when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
 
     assertThrows(ConflictException.class, () -> service.generatePreliminaryExcel(eval.getId()));
+  }
+
+  // ---- PRI-311: metadatos de identidad en los reportes ----
+
+  private List<MaturityResult> manyResults(int n) {
+    List<MaturityResult> out = new java.util.ArrayList<>();
+    for (int i = 0; i < n; i++) {
+      out.add(
+          MaturityResult.builder()
+              .functionName("Funcion " + i)
+              .categoryName("Categoria " + i)
+              .subcategoryName("Subcategoria " + i)
+              .currentLevel(i % 5)
+              .targetLevel(4)
+              .gap(i % 3)
+              .build());
+    }
+    return out;
+  }
+
+  private static String pdfPageText(byte[] pdf, int page) throws Exception {
+    com.lowagie.text.pdf.PdfReader reader = new com.lowagie.text.pdf.PdfReader(pdf);
+    try {
+      return new com.lowagie.text.pdf.parser.PdfTextExtractor(reader).getTextFromPage(page);
+    } finally {
+      reader.close();
+    }
+  }
+
+  private void withAuditor(String first, String last) {
+    User auditor = User.builder().id(UUID.randomUUID()).firstName(first).lastName(last).build();
+    AuditObservation obs =
+        AuditObservation.builder().description("x").createdBy(auditor).evaluation(eval).build();
+    when(obsRepo.findByEvaluationIdOrderByCreatedAtDesc(eval.getId())).thenReturn(List.of(obs));
+  }
+
+  @Test
+  void pdfRepeatsTheIdentityHeaderOnEveryPage() throws Exception {
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(matRepo.findByEvaluationId(eval.getId())).thenReturn(manyResults(120));
+
+    byte[] pdf = service.generatePdf(eval.getId());
+
+    com.lowagie.text.pdf.PdfReader reader = new com.lowagie.text.pdf.PdfReader(pdf);
+    int pages = reader.getNumberOfPages();
+    reader.close();
+    assertTrue(pages >= 3, "el reporte de prueba debe ocupar varias paginas, tiene " + pages);
+    for (int p = 1; p <= pages; p++) {
+      String text = pdfPageText(pdf, p);
+      assertTrue(text.contains("Acme"), "organizacion en pagina " + p);
+      assertTrue(text.contains("Evaluacion 2026"), "evaluacion en pagina " + p);
+      assertTrue(text.contains("MCU 5.0"), "version del MCU en pagina " + p);
+      assertTrue(text.contains("Página " + p), "pie con numero en pagina " + p);
+    }
+  }
+
+  @Test
+  void pdfInfoBoxShowsUpdatedAndGeneratedDates() throws Exception {
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(matRepo.findByEvaluationId(eval.getId())).thenReturn(results());
+
+    String first = pdfPageText(service.generatePdf(eval.getId()), 1);
+
+    assertTrue(first.contains("ACTUALIZADA"));
+    assertTrue(first.contains("GENERADO"));
+  }
+
+  @Test
+  void pdfShowsAuditorOnlyWhenTheEvaluationHasOne() throws Exception {
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(matRepo.findByEvaluationId(eval.getId())).thenReturn(results());
+
+    String without = pdfPageText(service.generatePdf(eval.getId()), 1);
+    assertFalse(without.contains("AUDITOR"));
+    assertFalse(without.contains("Auditor:"));
+
+    withAuditor("Ana", "Pérez");
+    String with = pdfPageText(service.generatePdf(eval.getId()), 1);
+    assertTrue(with.contains("AUDITOR"));
+    assertTrue(with.contains("Ana Pérez"));
+    assertTrue(with.contains("Auditor: Ana Pérez"));
+  }
+
+  @Test
+  void auditorsAlsoComeFromControlVerdicts() throws Exception {
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(matRepo.findByEvaluationId(eval.getId())).thenReturn(results());
+    User auditor = User.builder().id(UUID.randomUUID()).firstName("Luis").lastName("Gómez").build();
+    when(verdictRepo.findByEvaluationId(eval.getId()))
+        .thenReturn(List.of(AuditControlVerdict.builder().setBy(auditor).build()));
+
+    assertTrue(pdfPageText(service.generatePdf(eval.getId()), 1).contains("Luis Gómez"));
+  }
+
+  @Test
+  void excelSummaryListsAuditorOnlyWhenPresentAndSetsPrintHeader() throws Exception {
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(matRepo.findByEvaluationId(eval.getId())).thenReturn(results());
+
+    try (var wb =
+        new org.apache.poi.xssf.usermodel.XSSFWorkbook(
+            new java.io.ByteArrayInputStream(service.generateExcel(eval.getId())))) {
+      assertFalse(summaryLabels(wb).contains("Auditor"));
+    }
+
+    withAuditor("Ana", "Pérez");
+    try (var wb =
+        new org.apache.poi.xssf.usermodel.XSSFWorkbook(
+            new java.io.ByteArrayInputStream(service.generateExcel(eval.getId())))) {
+      assertTrue(summaryLabels(wb).contains("Auditor"));
+      for (org.apache.poi.ss.usermodel.Sheet sheet : wb) {
+        String header = sheet.getHeader().getLeft();
+        assertTrue(header.contains("Acme"), sheet.getSheetName());
+        assertTrue(header.contains("Evaluacion 2026"), sheet.getSheetName());
+        assertTrue(header.contains("MCU 5.0"), sheet.getSheetName());
+        assertTrue(header.contains("Ana Pérez"), sheet.getSheetName());
+      }
+    }
+  }
+
+  private static List<String> summaryLabels(org.apache.poi.xssf.usermodel.XSSFWorkbook wb) {
+    List<String> labels = new java.util.ArrayList<>();
+    for (org.apache.poi.ss.usermodel.Row row : wb.getSheet("Resumen")) {
+      org.apache.poi.ss.usermodel.Cell cell = row.getCell(0);
+      if (cell != null) {
+        labels.add(cell.getStringCellValue());
+      }
+    }
+    return labels;
   }
 }

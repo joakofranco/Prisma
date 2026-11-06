@@ -24,6 +24,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.UUID;
 import org.apache.poi.ss.usermodel.BorderStyle;
 import org.apache.poi.ss.usermodel.CellStyle;
@@ -38,12 +39,15 @@ import org.apache.poi.xssf.usermodel.XSSFFont;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import uy.edu.prisma.domain.entity.AuditControlVerdict;
 import uy.edu.prisma.domain.entity.AuditObservation;
 import uy.edu.prisma.domain.entity.Evaluation;
 import uy.edu.prisma.domain.entity.Evidence;
 import uy.edu.prisma.domain.entity.MaturityResult;
+import uy.edu.prisma.domain.entity.User;
 import uy.edu.prisma.domain.exception.ConflictException;
 import uy.edu.prisma.domain.exception.ResourceNotFoundException;
+import uy.edu.prisma.domain.repository.AuditControlVerdictRepository;
 import uy.edu.prisma.domain.repository.AuditObservationRepository;
 import uy.edu.prisma.domain.repository.EvaluationRepository;
 import uy.edu.prisma.domain.repository.EvidenceRepository;
@@ -76,18 +80,21 @@ public class ReportService {
   private final AuditObservationRepository obsRepo;
   private final EvidenceRepository evidenceRepo;
   private final CurrentUserService currentUser;
+  private final AuditControlVerdictRepository verdictRepo;
 
   public ReportService(
       EvaluationRepository evalRepo,
       MaturityResultRepository matRepo,
       AuditObservationRepository obsRepo,
       EvidenceRepository evidenceRepo,
-      CurrentUserService currentUser) {
+      CurrentUserService currentUser,
+      AuditControlVerdictRepository verdictRepo) {
     this.evalRepo = evalRepo;
     this.matRepo = matRepo;
     this.obsRepo = obsRepo;
     this.evidenceRepo = evidenceRepo;
     this.currentUser = currentUser;
+    this.verdictRepo = verdictRepo;
   }
 
   // =====================================================================================
@@ -98,15 +105,18 @@ public class ReportService {
     Evaluation eval = load(evaluationId);
     List<MaturityResult> results = results(evaluationId);
     Summary summary = summarize(results);
+    List<String> auditors = auditorNames(evaluationId);
 
     try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
-      Document document = new Document(PageSize.A4, 36, 36, 0, 54);
+      // Margen superior de 54 pt en TODAS las paginas: ahi va el encabezado institucional que
+      // repite PageEvent (organizacion, evaluacion, version del MCU, fecha y auditor).
+      Document document = new Document(PageSize.A4, 36, 36, 54, 54);
       PdfWriter writer = PdfWriter.getInstance(document, out);
-      writer.setPageEvent(new FooterEvent());
+      writer.setPageEvent(new PageEvent(eval, auditors));
       document.open();
 
       addPdfBanner(document);
-      addPdfInfoBox(document, eval);
+      addPdfInfoBox(document, eval, auditors);
       addPdfKpiRow(document, eval, summary);
       if (!summary.topGaps().isEmpty()) {
         addPdfTopGaps(document, summary.topGaps());
@@ -141,7 +151,8 @@ public class ReportService {
     document.add(banner);
   }
 
-  private void addPdfInfoBox(Document document, Evaluation eval) throws DocumentException {
+  private void addPdfInfoBox(Document document, Evaluation eval, List<String> auditors)
+      throws DocumentException {
     PdfPTable info = new PdfPTable(4);
     info.setWidthPercentage(100);
     info.setWidths(new float[] {1.1f, 2f, 1.1f, 2f});
@@ -154,11 +165,21 @@ public class ReportService {
     addInfoCell(info, "ESTADO", statusLabel(eval.getStatus()));
     addInfoCell(info, "ACTUALIZADA", eval.getUpdatedAt().format(DATE_FMT));
     addInfoCell(info, "GENERADO", OffsetDateTime.now().format(DATE_FMT));
+    // El auditor solo se muestra si la evaluacion ya tiene uno (ver auditorNames).
+    if (!auditors.isEmpty()) {
+      addInfoCell(info, "AUDITOR", String.join(", ", auditors), 2);
+    }
+    info.completeRow();
     document.add(info);
   }
 
   private void addInfoCell(PdfPTable table, String label, String value) {
+    addInfoCell(table, label, value, 1);
+  }
+
+  private void addInfoCell(PdfPTable table, String label, String value, int colspan) {
     PdfPCell cell = new PdfPCell();
+    cell.setColspan(colspan);
     cell.setBorder(Rectangle.BOTTOM);
     cell.setBorderColor(SLATE_200);
     cell.setPaddingTop(2);
@@ -328,32 +349,81 @@ public class ReportService {
     table.addCell(cell);
   }
 
-  /** Pie de pagina simple (marca + fecha + numero de pagina) en cada hoja del PDF. */
-  private static final class FooterEvent extends PdfPageEventHelper {
+  /**
+   * Encabezado institucional y pie en cada hoja del PDF. El encabezado repite los datos de
+   * identidad del reporte (organizacion, evaluacion, version del MCU, fecha de generacion y, si lo
+   * hay, el auditor) para que cualquier pagina suelta se identifique sola.
+   */
+  private static final class PageEvent extends PdfPageEventHelper {
     private final BaseFont baseFont;
+    private final BaseFont boldFont;
     private final String generatedAt = OffsetDateTime.now().format(DATE_FMT);
+    private final String headline;
+    private final String detail;
 
-    FooterEvent() {
+    PageEvent(Evaluation eval, List<String> auditors) {
       try {
         this.baseFont =
             BaseFont.createFont(BaseFont.HELVETICA, BaseFont.CP1252, BaseFont.NOT_EMBEDDED);
+        this.boldFont =
+            BaseFont.createFont(BaseFont.HELVETICA_BOLD, BaseFont.CP1252, BaseFont.NOT_EMBEDDED);
       } catch (Exception e) {
         throw new RuntimeException(e);
       }
+      this.headline = eval.getOrganization().getName() + " · " + eval.getName();
+      this.detail =
+          "MCU "
+              + eval.getCatalogVersion()
+              + " · "
+              + generatedAt
+              + (auditors.isEmpty() ? "" : " · Auditor: " + String.join(", ", auditors));
     }
 
     @Override
     public void onEndPage(PdfWriter writer, Document document) {
       PdfContentByte cb = writer.getDirectContent();
-      String text = "PRISMA · Generado " + generatedAt + " · Página " + writer.getPageNumber();
+      float width = document.right() - document.left();
+      float top = document.top();
+
       cb.saveState();
+      cb.setColorFill(SLATE_900);
+      cb.beginText();
+      cb.setFontAndSize(boldFont, 9);
+      cb.setTextMatrix(document.left(), top + 30);
+      cb.showText(fit(headline, boldFont, 9, width));
+      cb.endText();
       cb.setColorFill(SLATE_500);
       cb.beginText();
       cb.setFontAndSize(baseFont, 8);
-      cb.setTextMatrix(document.leftMargin(), document.bottom() - 20);
-      cb.showText(text);
+      cb.setTextMatrix(document.left(), top + 19);
+      cb.showText(fit(detail, baseFont, 8, width));
+      cb.endText();
+      cb.setColorStroke(SLATE_200);
+      cb.setLineWidth(0.5f);
+      cb.moveTo(document.left(), top + 12);
+      cb.lineTo(document.right(), top + 12);
+      cb.stroke();
+
+      String footer = "PRISMA · Generado " + generatedAt + " · Página " + writer.getPageNumber();
+      cb.setColorFill(SLATE_500);
+      cb.beginText();
+      cb.setFontAndSize(baseFont, 8);
+      cb.setTextMatrix(document.left(), document.bottom() - 20);
+      cb.showText(footer);
       cb.endText();
       cb.restoreState();
+    }
+
+    /** Recorta el texto con «…» para que nunca se salga del ancho util de la pagina. */
+    private static String fit(String text, BaseFont font, float size, float maxWidth) {
+      if (font.getWidthPoint(text, size) <= maxWidth) {
+        return text;
+      }
+      String cut = text;
+      while (cut.length() > 1 && font.getWidthPoint(cut + "…", size) > maxWidth) {
+        cut = cut.substring(0, cut.length() - 1);
+      }
+      return cut + "…";
     }
   }
 
@@ -365,6 +435,7 @@ public class ReportService {
     Evaluation eval = load(evaluationId);
     List<MaturityResult> results = results(evaluationId);
     Summary summary = summarize(results);
+    List<String> auditors = auditorNames(evaluationId);
 
     try (XSSFWorkbook workbook = new XSSFWorkbook();
         ByteArrayOutputStream out = new ByteArrayOutputStream()) {
@@ -372,8 +443,13 @@ public class ReportService {
       props.setTitle("Reporte de Madurez PRISMA - " + eval.getName());
       props.setCreator("PRISMA");
 
-      addSummarySheet(workbook, eval, summary);
+      addSummarySheet(workbook, eval, summary, auditors);
       addDetailSheet(workbook, results);
+      // Encabezado de impresion: se repite en cada hoja impresa de ambas pestañas.
+      String printHeader = printHeader(eval, auditors);
+      for (Sheet sheet : workbook) {
+        sheet.getHeader().setLeft(printHeader);
+      }
 
       workbook.write(out);
       return out.toByteArray();
@@ -382,7 +458,8 @@ public class ReportService {
     }
   }
 
-  private void addSummarySheet(XSSFWorkbook workbook, Evaluation eval, Summary summary) {
+  private void addSummarySheet(
+      XSSFWorkbook workbook, Evaluation eval, Summary summary, List<String> auditors) {
     Sheet sheet = workbook.createSheet("Resumen");
     sheet.setColumnWidth(0, 26 * 256);
     sheet.setColumnWidth(1, 40 * 256);
@@ -414,6 +491,9 @@ public class ReportService {
     r = summaryRow(sheet, r, "Evaluación", eval.getName(), labelStyle, valueStyle);
     r = summaryRow(sheet, r, "Catálogo", "MCU " + eval.getCatalogVersion(), labelStyle, valueStyle);
     r = summaryRow(sheet, r, "Estado", statusLabel(eval.getStatus()), labelStyle, valueStyle);
+    if (!auditors.isEmpty()) {
+      r = summaryRow(sheet, r, "Auditor", String.join(", ", auditors), labelStyle, valueStyle);
+    }
     r =
         summaryRow(
             sheet, r, "Generado", OffsetDateTime.now().format(DATE_FMT), labelStyle, valueStyle);
@@ -614,15 +694,17 @@ public class ReportService {
     List<AuditObservation> observations =
         obsRepo.findByEvaluationIdOrderByCreatedAtDesc(evaluationId);
     List<MaturityResult> missingEvidence = missingEvidence(evaluationId, results);
+    List<String> auditors = auditorNames(evaluationId);
 
     try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
-      Document document = new Document(PageSize.A4, 36, 36, 0, 54);
+      // Igual que el reporte final (PRI-311): encabezado institucional en todas las paginas.
+      Document document = new Document(PageSize.A4, 36, 36, 54, 54);
       PdfWriter writer = PdfWriter.getInstance(document, out);
-      writer.setPageEvent(new FooterEvent());
+      writer.setPageEvent(new PageEvent(eval, auditors));
       document.open();
 
       addPdfBanner(document);
-      addPdfInfoBox(document, eval);
+      addPdfInfoBox(document, eval, auditors);
       addPdfKpiRow(document, eval, summary);
       addPdfObservations(document, observations);
       addPdfMissingEvidence(document, missingEvidence);
@@ -642,6 +724,7 @@ public class ReportService {
     List<AuditObservation> observations =
         obsRepo.findByEvaluationIdOrderByCreatedAtDesc(evaluationId);
     List<MaturityResult> missingEvidence = missingEvidence(evaluationId, results);
+    List<String> auditors = auditorNames(evaluationId);
 
     try (XSSFWorkbook workbook = new XSSFWorkbook();
         ByteArrayOutputStream out = new ByteArrayOutputStream()) {
@@ -649,10 +732,15 @@ public class ReportService {
       props.setTitle("Informe Preliminar de Auditoría PRISMA - " + eval.getName());
       props.setCreator("PRISMA");
 
-      addSummarySheet(workbook, eval, summary);
+      addSummarySheet(workbook, eval, summary, auditors);
       addObservationsSheet(workbook, observations);
       addMissingEvidenceSheet(workbook, missingEvidence);
       addDetailSheet(workbook, results);
+      // Encabezado de impresion en cada hoja, como en el reporte final (PRI-311).
+      String printHeader = printHeader(eval, auditors);
+      for (Sheet sheet : workbook) {
+        sheet.getHeader().setLeft(printHeader);
+      }
 
       workbook.write(out);
       return out.toByteArray();
@@ -873,6 +961,51 @@ public class ReportService {
   // =====================================================================================
   // Datos compartidos
   // =====================================================================================
+
+  /**
+   * Auditores que efectivamente trabajaron la evaluacion: autores de sus observaciones de auditoria
+   * y de sus dictamenes por control. Vacio mientras nadie auditó, y entonces el reporte omite el
+   * campo.
+   */
+  private List<String> auditorNames(UUID evaluationId) {
+    TreeSet<String> names = new TreeSet<>();
+    for (AuditObservation o : obsRepo.findByEvaluationIdOrderByCreatedAtDesc(evaluationId)) {
+      addName(names, o.getCreatedBy());
+    }
+    for (AuditControlVerdict v : verdictRepo.findByEvaluationId(evaluationId)) {
+      addName(names, v.getSetBy());
+    }
+    return List.copyOf(names);
+  }
+
+  private static void addName(TreeSet<String> names, User user) {
+    if (user == null) {
+      return;
+    }
+    String name =
+        ((user.getFirstName() == null ? "" : user.getFirstName())
+                + " "
+                + (user.getLastName() == null ? "" : user.getLastName()))
+            .trim();
+    if (!name.isEmpty()) {
+      names.add(name);
+    }
+  }
+
+  /** Texto del encabezado de impresion de Excel; «&» se duplica porque POI lo usa como escape. */
+  private static String printHeader(Evaluation eval, List<String> auditors) {
+    String text =
+        "PRISMA · "
+            + eval.getOrganization().getName()
+            + " · "
+            + eval.getName()
+            + " · MCU "
+            + eval.getCatalogVersion()
+            + " · "
+            + OffsetDateTime.now().format(DATE_FMT)
+            + (auditors.isEmpty() ? "" : " · Auditor: " + String.join(", ", auditors));
+    return text.replace("&", "&&");
+  }
 
   private Evaluation load(UUID evaluationId) {
     Evaluation eval =
