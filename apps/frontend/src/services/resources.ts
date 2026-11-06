@@ -299,6 +299,10 @@ export const reportsService = {
   generateExcel(evaluationId: string) {
     return apiClient.get(`/reports/${evaluationId}/excel`, { responseType: 'blob' });
   },
+  /** Reporte ejecutivo gerencial (RF-REP-01): 1 a 2 páginas, solo con la evaluación aprobada. */
+  generateExecutivePDF(evaluationId: string) {
+    return apiClient.get(`/reports/${evaluationId}/executive/pdf`, { responseType: 'blob' });
+  },
   generatePreliminaryPDF(evaluationId: string) {
     return apiClient.get(`/reports/${evaluationId}/preliminary/pdf`, { responseType: 'blob' });
   },

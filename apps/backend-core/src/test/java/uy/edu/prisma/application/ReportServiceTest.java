@@ -17,6 +17,7 @@ import org.mockito.quality.Strictness;
 import uy.edu.prisma.domain.entity.AuditControlVerdict;
 import uy.edu.prisma.domain.entity.AuditObservation;
 import uy.edu.prisma.domain.entity.Evaluation;
+import uy.edu.prisma.domain.entity.ImprovementPlan;
 import uy.edu.prisma.domain.entity.MaturityResult;
 import uy.edu.prisma.domain.entity.Organization;
 import uy.edu.prisma.domain.entity.User;
@@ -26,6 +27,7 @@ import uy.edu.prisma.domain.repository.AuditControlVerdictRepository;
 import uy.edu.prisma.domain.repository.AuditObservationRepository;
 import uy.edu.prisma.domain.repository.EvaluationRepository;
 import uy.edu.prisma.domain.repository.EvidenceRepository;
+import uy.edu.prisma.domain.repository.ImprovementPlanRepository;
 import uy.edu.prisma.domain.repository.MaturityResultRepository;
 
 @ExtendWith(MockitoExtension.class)
@@ -38,6 +40,7 @@ class ReportServiceTest {
   @Mock private EvidenceRepository evidenceRepo;
   @Mock private CurrentUserService currentUser;
   @Mock private AuditControlVerdictRepository verdictRepo;
+  @Mock private ImprovementPlanRepository planRepo;
 
   private ReportService service;
   private Evaluation eval;
@@ -45,14 +48,16 @@ class ReportServiceTest {
   @BeforeEach
   void setUp() {
     when(currentUser.isGlobalRole()).thenReturn(true);
-    service = new ReportService(evalRepo, matRepo, obsRepo, evidenceRepo, currentUser, verdictRepo);
+    service =
+        new ReportService(
+            evalRepo, matRepo, obsRepo, evidenceRepo, currentUser, verdictRepo, planRepo);
     eval =
         Evaluation.builder()
             .id(UUID.randomUUID())
             .name("Evaluacion 2026")
             .organization(Organization.builder().id(UUID.randomUUID()).name("Acme").build())
             .catalogVersion("5.0")
-            .status(Evaluation.Status.IN_AUDIT)
+            .status(Evaluation.Status.APPROVED)
             .updatedAt(OffsetDateTime.now())
             .build();
   }
@@ -112,6 +117,7 @@ class ReportServiceTest {
 
   @Test
   void generatePreliminaryPdfProducesValidDocument() {
+    eval.setStatus(Evaluation.Status.IN_AUDIT);
     when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
     when(matRepo.findByEvaluationId(eval.getId())).thenReturn(results());
     when(obsRepo.findByEvaluationIdOrderByCreatedAtDesc(eval.getId()))
@@ -133,6 +139,7 @@ class ReportServiceTest {
 
   @Test
   void generatePreliminaryExcelProducesWorkbook() {
+    eval.setStatus(Evaluation.Status.IN_AUDIT);
     when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
     when(matRepo.findByEvaluationId(eval.getId())).thenReturn(results());
     when(obsRepo.findByEvaluationIdOrderByCreatedAtDesc(eval.getId())).thenReturn(List.of());
@@ -159,6 +166,344 @@ class ReportServiceTest {
     when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
 
     assertThrows(ConflictException.class, () -> service.generatePreliminaryExcel(eval.getId()));
+  }
+
+  // ---- PRI-309: el reporte final y el ejecutivo solo con la evaluación aprobada ----
+
+  private static final List<Evaluation.Status> NOT_APPROVED =
+      List.of(
+          Evaluation.Status.DRAFT,
+          Evaluation.Status.IN_PROGRESS,
+          Evaluation.Status.READY_FOR_AUDIT,
+          Evaluation.Status.IN_AUDIT,
+          Evaluation.Status.RETURNED,
+          Evaluation.Status.ARCHIVED);
+
+  @Test
+  void finalAndExecutiveReportsAreRejectedUnlessTheEvaluationIsApproved() {
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(matRepo.findByEvaluationId(eval.getId())).thenReturn(results());
+
+    for (Evaluation.Status status : NOT_APPROVED) {
+      eval.setStatus(status);
+      for (var report :
+          List.<java.util.function.Function<UUID, byte[]>>of(
+              service::generatePdf, service::generateExcel, service::generateExecutivePdf)) {
+        ConflictException error =
+            assertThrows(ConflictException.class, () -> report.apply(eval.getId()), status.name());
+        assertTrue(error.getMessage().contains("Aprobada"), error.getMessage());
+      }
+    }
+    // Se rechaza antes de leer los resultados: no se calcula nada para un reporte que no va.
+    verify(matRepo, never()).findByEvaluationId(any());
+  }
+
+  @Test
+  void theRejectionMessageSaysTheCurrentStatus() {
+    eval.setStatus(Evaluation.Status.IN_AUDIT);
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+
+    ConflictException error =
+        assertThrows(ConflictException.class, () -> service.generatePdf(eval.getId()));
+
+    assertTrue(error.getMessage().contains("En Auditoría"), error.getMessage());
+  }
+
+  @Test
+  void anApprovedEvaluationStillGetsTheFinalReports() {
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(matRepo.findByEvaluationId(eval.getId())).thenReturn(results());
+
+    assertTrue(service.generatePdf(eval.getId()).length > 100);
+    assertTrue(service.generateExcel(eval.getId()).length > 100);
+    assertTrue(service.generateExecutivePdf(eval.getId()).length > 100);
+  }
+
+  @Test
+  void thePreliminaryReportKeepsRequiringInAuditAndNotApproved() {
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(matRepo.findByEvaluationId(eval.getId())).thenReturn(results());
+    when(obsRepo.findByEvaluationIdOrderByCreatedAtDesc(eval.getId())).thenReturn(List.of());
+    when(evidenceRepo.findByEvaluationIdOrderByUploadedAtDesc(eval.getId())).thenReturn(List.of());
+
+    // Aprobada: el preliminar ya no corresponde.
+    assertThrows(ConflictException.class, () -> service.generatePreliminaryPdf(eval.getId()));
+    // En auditoría: el preliminar sí, y el final no.
+    eval.setStatus(Evaluation.Status.IN_AUDIT);
+    assertTrue(service.generatePreliminaryPdf(eval.getId()).length > 100);
+    assertThrows(ConflictException.class, () -> service.generatePdf(eval.getId()));
+  }
+
+  // ---- PRI-309: reporte ejecutivo ----
+
+  private static final String[] FUNCTIONS = {
+    "Gobernar", "Identificar", "Proteger", "Detectar", "Responder", "Recuperar"
+  };
+
+  /** Resultados de {@code functions} funciones, con {@code perFunction} subcategorías cada una. */
+  private List<MaturityResult> functionResults(int functions, int perFunction) {
+    List<MaturityResult> out = new java.util.ArrayList<>();
+    for (int f = 0; f < functions; f++) {
+      UUID functionId = UUID.randomUUID();
+      for (int i = 0; i < perFunction; i++) {
+        out.add(
+            MaturityResult.builder()
+                .functionId(functionId)
+                .functionName(FUNCTIONS[f])
+                .categoryName("Categoria " + f)
+                .subcategoryName("Subcategoria " + f + "." + i)
+                .currentLevel(1 + (f + i) % 4)
+                .targetLevel(4)
+                .gap((f + i) % 3)
+                .build());
+      }
+    }
+    return out;
+  }
+
+  private ImprovementPlan plan(
+      String action,
+      ImprovementPlan.Priority priority,
+      java.time.LocalDate due,
+      ImprovementPlan.PlanStatus status,
+      int createdMinutesAgo) {
+    return ImprovementPlan.builder()
+        .id(UUID.randomUUID())
+        .evaluation(eval)
+        .action(action)
+        .responsible("Ana")
+        .priority(priority)
+        .status(status)
+        .dueDate(due)
+        .createdAt(OffsetDateTime.now().minusMinutes(createdMinutesAgo))
+        .build();
+  }
+
+  private static int pageCount(byte[] pdf) throws Exception {
+    com.lowagie.text.pdf.PdfReader reader = new com.lowagie.text.pdf.PdfReader(pdf);
+    try {
+      return reader.getNumberOfPages();
+    } finally {
+      reader.close();
+    }
+  }
+
+  private String allText(byte[] pdf) throws Exception {
+    StringBuilder text = new StringBuilder();
+    for (int p = 1; p <= pageCount(pdf); p++) {
+      text.append(pdfPageText(pdf, p)).append('\n');
+    }
+    return text.toString();
+  }
+
+  private void withExecutiveData(List<MaturityResult> results, List<ImprovementPlan> plans) {
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(matRepo.findByEvaluationId(eval.getId())).thenReturn(results);
+    when(planRepo.findByEvaluationIdOrderByCreatedAtDesc(eval.getId())).thenReturn(plans);
+  }
+
+  @Test
+  void executiveReportIsAValidPdfOfOneOrTwoPagesWithAllTheRequestedData() throws Exception {
+    eval.setCommunityProfile(
+        uy.edu.prisma.domain.entity.CommunityProfile.builder()
+            .id(UUID.randomUUID())
+            .name("Perfil Básico")
+            .build());
+    withExecutiveData(
+        functionResults(6, 5),
+        List.of(
+            plan(
+                "Definir la política de respaldo",
+                ImprovementPlan.Priority.HIGH,
+                java.time.LocalDate.of(2026, 12, 15),
+                ImprovementPlan.PlanStatus.PENDING,
+                1)));
+
+    byte[] pdf = service.generateExecutivePdf(eval.getId());
+
+    assertEquals("%PDF-", new String(pdf, 0, 5, java.nio.charset.StandardCharsets.UTF_8));
+    assertTrue(pageCount(pdf) <= 2, "páginas: " + pageCount(pdf));
+    String text = allText(pdf);
+    // Los seis datos que pide el Jira.
+    assertTrue(text.contains("Acme"), "organización");
+    assertTrue(text.contains("Evaluacion 2026"), "evaluación");
+    assertTrue(text.contains("Perfil Básico"), "perfil comunitario");
+    assertTrue(text.contains("NIVEL DE MADUREZ GLOBAL"), "madurez global");
+    assertTrue(text.contains("Madurez por Función"), "radar");
+    assertTrue(text.contains("Principales Brechas"), "mayores brechas");
+    assertTrue(text.contains("Definir la política de respaldo"), "acciones del plan");
+    assertTrue(text.contains("Reporte Ejecutivo"));
+  }
+
+  @Test
+  void theRadarHasOneAxisPerFunction() throws Exception {
+    withExecutiveData(functionResults(6, 3), List.of());
+
+    String text = allText(service.generateExecutivePdf(eval.getId()));
+
+    for (String function : FUNCTIONS) {
+      assertTrue(text.contains(function), "falta el eje de " + function);
+    }
+    assertTrue(text.contains("Nivel actual") && text.contains("Nivel objetivo"), "leyenda");
+  }
+
+  @Test
+  void aSmallNumberOfFunctionsFallsBackToATableInsteadOfAShapelessRadar() throws Exception {
+    withExecutiveData(functionResults(2, 3), List.of());
+
+    String text = allText(service.generateExecutivePdf(eval.getId()));
+
+    assertTrue(text.contains("Gobernar") && text.contains("Identificar"));
+    assertFalse(text.contains("Nivel objetivo"), "sin leyenda de radar");
+  }
+
+  @Test
+  void anEvaluationWithoutResultsStillProducesAnExecutiveReport() throws Exception {
+    withExecutiveData(List.of(), List.of());
+
+    byte[] pdf = service.generateExecutivePdf(eval.getId());
+
+    assertTrue(pageCount(pdf) <= 2);
+    assertTrue(allText(pdf).contains("Sin resultados de madurez"));
+  }
+
+  @Test
+  void withoutAnImprovementPlanTheSectionSaysSoInsteadOfDisappearing() throws Exception {
+    withExecutiveData(functionResults(6, 3), List.of());
+
+    String text = allText(service.generateExecutivePdf(eval.getId()));
+
+    assertTrue(text.contains("Acciones Principales del Plan de Mejora"));
+    assertTrue(text.contains("Sin acciones registradas"));
+  }
+
+  @Test
+  void withoutACommunityProfileItSaysTheWholeCatalogApplies() throws Exception {
+    eval.setCommunityProfile(null);
+    withExecutiveData(functionResults(6, 2), List.of());
+
+    assertTrue(allText(service.generateExecutivePdf(eval.getId())).contains("Sin perfil"));
+  }
+
+  @Test
+  void theFiveMainActionsAreChosenByPriorityThenDueDate() throws Exception {
+    var high = ImprovementPlan.Priority.HIGH;
+    var medium = ImprovementPlan.Priority.MEDIUM;
+    var low = ImprovementPlan.Priority.LOW;
+    var pending = ImprovementPlan.PlanStatus.PENDING;
+    var due =
+        (java.util.function.IntFunction<java.time.LocalDate>)
+            d -> java.time.LocalDate.of(2026, 12, d);
+    withExecutiveData(
+        functionResults(6, 2),
+        List.of(
+            plan("ACCION-baja-temprana", low, due.apply(1), pending, 1),
+            plan("ACCION-media-tarde", medium, due.apply(28), pending, 2),
+            plan("ACCION-alta-tarde", high, due.apply(30), pending, 3),
+            plan("ACCION-alta-temprana", high, due.apply(2), pending, 4),
+            plan("ACCION-media-temprana", medium, due.apply(3), pending, 5),
+            plan("ACCION-alta-sin-fecha", high, null, pending, 6),
+            plan("ACCION-baja-tarde", low, due.apply(29), pending, 7)));
+
+    String text = allText(service.generateExecutivePdf(eval.getId()));
+
+    // Orden esperado: alta (con fecha, luego sin fecha), después media por fecha. Son 5.
+    List<String> expected =
+        List.of(
+            "ACCION-alta-temprana",
+            "ACCION-alta-tarde",
+            "ACCION-alta-sin-fecha",
+            "ACCION-media-temprana",
+            "ACCION-media-tarde");
+    int last = -1;
+    for (String action : expected) {
+      int at = text.indexOf(action);
+      assertTrue(at > last, action + " fuera de orden o ausente");
+      last = at;
+    }
+    assertFalse(text.contains("ACCION-baja-temprana"), "la sexta y la séptima no entran");
+    assertFalse(text.contains("ACCION-baja-tarde"));
+  }
+
+  @Test
+  void anOverdueActionIsShownAsOverdueAndACompletedOneAsCompleted() throws Exception {
+    withExecutiveData(
+        functionResults(6, 2),
+        List.of(
+            plan(
+                "Vencida una",
+                ImprovementPlan.Priority.HIGH,
+                java.time.LocalDate.of(2026, 1, 5),
+                ImprovementPlan.PlanStatus.OVERDUE,
+                1),
+            plan(
+                "Hecha una",
+                ImprovementPlan.Priority.MEDIUM,
+                java.time.LocalDate.of(2026, 3, 5),
+                ImprovementPlan.PlanStatus.COMPLETED,
+                2)));
+
+    String text = allText(service.generateExecutivePdf(eval.getId()));
+
+    assertTrue(text.contains("Vencida"));
+    assertTrue(text.contains("Completada"));
+    assertTrue(text.contains("05/01/2026"));
+  }
+
+  @Test
+  void veryLongActionsDoNotPushTheReportPastTwoPages() throws Exception {
+    String longText =
+        "Implementar un procedimiento de gestión de accesos privilegiados. ".repeat(40);
+    List<ImprovementPlan> plans = new java.util.ArrayList<>();
+    for (int i = 0; i < 8; i++) {
+      plans.add(
+          plan(
+              longText,
+              ImprovementPlan.Priority.HIGH,
+              java.time.LocalDate.of(2026, 12, 1 + i),
+              ImprovementPlan.PlanStatus.PENDING,
+              i));
+    }
+    withExecutiveData(functionResults(6, 10), plans);
+
+    byte[] pdf = service.generateExecutivePdf(eval.getId());
+
+    assertTrue(pageCount(pdf) <= 2, "páginas: " + pageCount(pdf));
+    assertTrue(allText(pdf).contains("…"), "la acción larga se recorta");
+  }
+
+  @Test
+  void everyPageOfTheExecutiveReportRepeatsTheInstitutionalHeader() throws Exception {
+    withExecutiveData(functionResults(6, 10), List.of());
+
+    byte[] pdf = service.generateExecutivePdf(eval.getId());
+
+    for (int p = 1; p <= pageCount(pdf); p++) {
+      String text = pdfPageText(pdf, p);
+      assertTrue(text.contains("Acme"), "organización en la página " + p);
+      assertTrue(text.contains("MCU 5.0"), "versión del MCU en la página " + p);
+    }
+  }
+
+  @Test
+  void theExecutiveReportOfAnotherOrganizationIsRejected() {
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    doThrow(new org.springframework.security.access.AccessDeniedException("otra organización"))
+        .when(currentUser)
+        .assertOrganizationAccess(any());
+
+    assertThrows(
+        org.springframework.security.access.AccessDeniedException.class,
+        () -> service.generateExecutivePdf(eval.getId()));
+    verify(planRepo, never()).findByEvaluationIdOrderByCreatedAtDesc(any());
+  }
+
+  @Test
+  void executiveReportOfAMissingEvaluationIsNotFound() {
+    UUID id = UUID.randomUUID();
+    when(evalRepo.findById(id)).thenReturn(Optional.empty());
+
+    assertThrows(ResourceNotFoundException.class, () -> service.generateExecutivePdf(id));
   }
 
   // ---- PRI-311: metadatos de identidad en los reportes ----

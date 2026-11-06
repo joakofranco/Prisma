@@ -44,6 +44,18 @@ public class ReportsController {
         .body(content);
   }
 
+  // Reporte ejecutivo gerencial (RF-REP-01): de una a dos páginas, solo con la evaluación aprobada.
+  // Mismos roles que el PDF final: el Auditor no baja reportes finales.
+  @GetMapping("/{id}/executive/pdf")
+  @PreAuthorize("hasAnyRole('PRISMA_ADMIN','ORG_RESPONSIBLE')")
+  public ResponseEntity<byte[]> executivePdf(@PathVariable UUID id) {
+    byte[] content = service.generateExecutivePdf(id);
+    return ResponseEntity.ok()
+        .headers(fileHeaders("reporte-ejecutivo-" + id + ".pdf"))
+        .contentType(MediaType.APPLICATION_PDF)
+        .body(content);
+  }
+
   @GetMapping("/{id}/preliminary/pdf")
   @PreAuthorize("hasAnyRole('PRISMA_ADMIN','AUDITOR')")
   public ResponseEntity<byte[]> preliminaryPdf(@PathVariable UUID id) {
