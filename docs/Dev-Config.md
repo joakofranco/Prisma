@@ -248,7 +248,7 @@ make shell-db           # Consola psql
 make shell-core         # Shell dentro del contenedor Java
 make sonar              # Análisis SonarQube local
 make security-scan      # Trivy local
-make backup             # Backup Postgres
+make backup             # Backup Postgres + evidencias (RNF-13, ver RUNBOOK.md)
 make nuke               # ⚠️ Reset TOTAL de datos locales
 ```
 
