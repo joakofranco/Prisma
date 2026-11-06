@@ -5,6 +5,7 @@ import type {
   EvaluationResponse,
   MaturityResult,
   SubcategoryComment,
+  ControlFlag,
 } from '@/types';
 import { evaluationsService } from '@/services/resources';
 
@@ -84,6 +85,15 @@ export const useEvaluationsStore = defineStore('evaluations', () => {
     return data;
   }
 
+  async function fetchFlags(evaluationId: string): Promise<ControlFlag[]> {
+    const { data } = await evaluationsService.getFlags(evaluationId);
+    return data;
+  }
+
+  async function setFlag(evaluationId: string, controlId: string, flagged: boolean) {
+    await evaluationsService.setFlag(evaluationId, controlId, flagged);
+  }
+
   async function fetchSubcategoryComments(evaluationId: string): Promise<SubcategoryComment[]> {
     const { data } = await evaluationsService.getSubcategoryComments(evaluationId);
     return data;
@@ -146,6 +156,8 @@ export const useEvaluationsStore = defineStore('evaluations', () => {
     fetchResponses,
     saveResponse,
     fetchSubcategoryComments,
+    fetchFlags,
+    setFlag,
     saveSubcategoryComment,
     fetchResults,
     calculateMaturity,

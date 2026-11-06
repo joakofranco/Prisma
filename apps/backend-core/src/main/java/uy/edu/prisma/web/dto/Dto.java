@@ -662,6 +662,10 @@ public class Dto {
   public record SetControlVerdictDto(
       @NotBlank(message = "El dictamen es obligatorio") String verdict) {}
 
+  // ---- Marca "para revisar" por control (PRI-352) ----
+  public record ControlFlagDto(
+      UUID controlId, UUID flaggedBy, String flaggedByName, OffsetDateTime flaggedAt) {}
+
   // ---- Improvement Plans ----
   public record ImprovementPlanDto(
       UUID id,

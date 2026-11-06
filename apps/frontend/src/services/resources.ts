@@ -7,6 +7,7 @@ import type {
   EvaluationAuditCycleEvent,
   SubcategoryComment,
   ControlVerdict,
+  ControlFlag,
   AuditVerdict,
   Evidence,
   EvidenceCitation,
@@ -100,6 +101,14 @@ export const evaluationsService = {
   },
   saveResponse(evaluationId: string, data: Partial<EvaluationResponse>) {
     return apiClient.post<EvaluationResponse>(`/evaluations/${evaluationId}/responses`, data);
+  },
+  getFlags(evaluationId: string) {
+    return apiClient.get<ControlFlag[]>(`/evaluations/${evaluationId}/flags`);
+  },
+  /** Marca o desmarca «para revisar»; se guarda en el momento, no con «Guardar progreso». */
+  setFlag(evaluationId: string, controlId: string, flagged: boolean) {
+    const url = `/evaluations/${evaluationId}/flags/${controlId}`;
+    return flagged ? apiClient.put<void>(url) : apiClient.delete<void>(url);
   },
   getSubcategoryComments(evaluationId: string) {
     return apiClient.get<SubcategoryComment[]>(`/evaluations/${evaluationId}/subcategory-comments`);

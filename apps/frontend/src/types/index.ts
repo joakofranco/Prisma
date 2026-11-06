@@ -267,6 +267,14 @@ export interface AuditObservation {
   createdByName?: string | null;
 }
 
+/** Marca «para revisar» de un control dentro de una evaluación (PRI-352). */
+export interface ControlFlag {
+  controlId: string;
+  flaggedBy: string | null;
+  flaggedByName: string | null;
+  flaggedAt: string | null;
+}
+
 /** Dictamen del auditor sobre un control (RF-AUD-06). */
 export type AuditVerdict = 'VALIDATED' | 'NOT_VALIDATED' | 'NEEDS_MORE_EVIDENCE';
 

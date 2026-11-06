@@ -13,7 +13,7 @@ const evidenceService = vi.hoisted(() => ({
   getCitations: vi.fn(),
   download: vi.fn(),
 }));
-const evaluationsService = vi.hoisted(() => ({ getById: vi.fn() }));
+const evaluationsService = vi.hoisted(() => ({ getById: vi.fn(), getFlags: vi.fn() }));
 const catalogService = vi.hoisted(() => ({ getByVersion: vi.fn() }));
 const notification = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 
@@ -85,6 +85,7 @@ describe('AuditView: dictamen por control (RF-AUD-06)', () => {
       data: [{ controlId: 'ctl-1', verdict: 'VALIDATED', setBy: null, setByName: null }],
     });
     auditService.setVerdict.mockResolvedValue({ data: {} });
+    evaluationsService.getFlags.mockResolvedValue({ data: [] });
     evidenceService.getByEvaluation.mockResolvedValue({ data: [] });
     catalogService.getByVersion.mockResolvedValue({ data: catalog });
   });
@@ -134,4 +135,21 @@ describe('AuditView: dictamen por control (RF-AUD-06)', () => {
     );
   });
 
+  it('lista los controles marcados para revisar y quién los marcó (PRI-352)', async () => {
+    evaluationsService.getFlags.mockResolvedValue({
+      data: [{ controlId: 'ctl-2', flaggedBy: 'u', flaggedByName: 'Ana Pérez', flaggedAt: null }],
+    });
+    const wrapper = await mountView();
+
+    const items = wrapper.findAll('[data-testid="flagged-control"]');
+    expect(items).toHaveLength(1);
+    expect(items[0].text()).toContain('AD.2');
+    expect(items[0].text()).toContain('Ana Pérez');
+  });
+
+  it('no muestra la sección si no hay controles marcados', async () => {
+    const wrapper = await mountView();
+
+    expect(wrapper.find('[data-testid="flagged-controls"]').exists()).toBe(false);
+  });
 });

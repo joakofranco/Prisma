@@ -115,6 +115,33 @@
       </div>
 
       <div
+        v-if="flaggedAuditControls.length > 0"
+        class="bg-amber-50 dark:bg-amber-950 rounded-xl border border-amber-200 dark:border-amber-800 p-6"
+        data-testid="flagged-controls"
+      >
+        <h3 class="text-lg font-semibold text-amber-900 dark:text-amber-200 mb-1">
+          Controles marcados para revisar ({{ flaggedAuditControls.length }})
+        </h3>
+        <p class="text-sm text-amber-800 dark:text-amber-300 mb-3">
+          Los marcó el equipo que respondió la evaluación (o el propio auditor) para una segunda
+          mirada.
+        </p>
+        <ul class="space-y-1.5">
+          <li
+            v-for="c in flaggedAuditControls"
+            :key="c.id"
+            class="text-sm text-amber-900 dark:text-amber-200"
+            data-testid="flagged-control"
+          >
+            <span class="font-medium">{{ c.code }}</span> — {{ c.description }}
+            <span v-if="flagAuthors[c.id]" class="text-xs text-amber-700 dark:text-amber-400">
+              · marcado por {{ flagAuthors[c.id] }}
+            </span>
+          </li>
+        </ul>
+      </div>
+
+      <div
         class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6"
         data-testid="verdict-section"
       >
@@ -582,6 +609,11 @@
   // ---------------- Dictamen por control (RF-AUD-06) ----------------
 
   const verdictControls = ref<VerdictControl[]>([]);
+  const flaggedIds = ref<Set<string>>(new Set());
+  const flagAuthors = reactive<Record<string, string>>({});
+  const flaggedAuditControls = computed(() =>
+    verdictControls.value.filter((c) => flaggedIds.value.has(c.id)),
+  );
   const verdicts = reactive<Record<string, AuditVerdict>>({});
   const verdictSearch = ref('');
   const verdictFilter = ref<'ALL' | 'NONE' | AuditVerdict>('ALL');
@@ -608,13 +640,18 @@
     try {
       const { data: evaluationData } = await evaluationsService.getById(evaluationId);
       evaluation.value = evaluationData;
-      const [{ data: catalog }, { data: saved }] = await Promise.all([
+      const [{ data: catalog }, { data: saved }, { data: flags }] = await Promise.all([
         catalogService.getByVersion(
           evaluationData.catalogVersion,
           evaluationData.communityProfileId,
         ),
         auditService.getVerdicts(evaluationId),
+        evaluationsService.getFlags(evaluationId),
       ]);
+      flaggedIds.value = new Set(flags.map((fl) => fl.controlId));
+      for (const fl of flags) {
+        if (fl.flaggedByName) flagAuthors[fl.controlId] = fl.flaggedByName;
+      }
       verdictControls.value = flattenControls(catalog as MaturityCatalog);
       for (const v of saved) verdicts[v.controlId] = v.verdict;
     } catch (err) {

@@ -35,6 +35,7 @@ class ControllersMockMvcTest {
   @Mock private EvidenceService evidenceService;
   @Mock private AuditObservationService auditObservationService;
   @Mock private AuditVerdictService auditVerdictService;
+  @Mock private EvaluationFlagService evaluationFlagService;
   @Mock private ImprovementPlanService improvementPlanService;
   @Mock private ReportService reportService;
   @Mock private EmailSettingsService emailSettingsService;
@@ -49,6 +50,7 @@ class ControllersMockMvcTest {
   private MockMvc evidence;
   private MockMvc audit;
   private MockMvc verdicts;
+  private MockMvc flags;
   private MockMvc improvement;
   private MockMvc reports;
   private MockMvc emailSettings;
@@ -69,6 +71,9 @@ class ControllersMockMvcTest {
     evidence = MockMvcBuilders.standaloneSetup(new EvidenceController(evidenceService)).build();
     audit =
         MockMvcBuilders.standaloneSetup(new AuditObservationController(auditObservationService))
+            .build();
+    flags =
+        MockMvcBuilders.standaloneSetup(new EvaluationFlagController(evaluationFlagService))
             .build();
     verdicts =
         MockMvcBuilders.standaloneSetup(new AuditVerdictController(auditVerdictService)).build();
@@ -646,6 +651,40 @@ class ControllersMockMvcTest {
           method.getAnnotation(org.springframework.security.access.prepost.PreAuthorize.class);
       assertNotNull(annotation, name);
       assertEquals("hasAnyRole('PRISMA_ADMIN','AUDITOR')", annotation.value());
+    }
+  }
+
+  @Test
+  void flagListFlagAndUnflag() throws Exception {
+    UUID evalId = UUID.randomUUID();
+    UUID controlId = UUID.randomUUID();
+    when(evaluationFlagService.list(evalId))
+        .thenReturn(List.of(new ControlFlagDto(controlId, null, "Ana", null)));
+
+    flags
+        .perform(get("/api/evaluations/{e}/flags", evalId))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$[0].controlId").value(controlId.toString()));
+    flags
+        .perform(put("/api/evaluations/{e}/flags/{c}", evalId, controlId))
+        .andExpect(status().isNoContent());
+    flags
+        .perform(delete("/api/evaluations/{e}/flags/{c}", evalId, controlId))
+        .andExpect(status().isNoContent());
+    verify(evaluationFlagService).setFlagged(evalId, controlId, true);
+    verify(evaluationFlagService).setFlagged(evalId, controlId, false);
+  }
+
+  @Test
+  void flagEndpointsAreRestrictedToWorkingRoles() throws Exception {
+    for (String name : List.of("flag", "unflag")) {
+      var method = EvaluationFlagController.class.getMethod(name, UUID.class, UUID.class);
+      var annotation =
+          method.getAnnotation(org.springframework.security.access.prepost.PreAuthorize.class);
+      assertNotNull(annotation, name);
+      assertEquals(
+          "hasAnyRole('PRISMA_ADMIN','INTERNAL_EVALUATOR','ORG_RESPONSIBLE','AUDITOR')",
+          annotation.value());
     }
   }
 
