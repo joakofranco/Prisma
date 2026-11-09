@@ -145,6 +145,9 @@ models/
 infra/nginx/certs/*.crt
 infra/nginx/certs/*.key
 !infra/nginx/certs/.gitkeep
+# CA interna + cert de Keycloak (scripts/generate-internal-ca.sh, BUG-12)
+infra/keycloak/certs/*
+!infra/keycloak/certs/.gitkeep
 
 # ---------- RAG: copia generada por `make sync-knowledge-base` ----------
 # docs/mcu-5.0 (fuente de verdad) copiado acá para que el Dockerfile de backend-ai lo empaquete

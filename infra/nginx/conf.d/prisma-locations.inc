@@ -51,7 +51,8 @@ location /ai/ {
 # que esto los corte.
 location ~ ^/auth/realms/[^/]+/login-actions/authenticate {
     limit_req zone=auth_login burst=2 nodelay;
-    proxy_pass         http://keycloak_svc;
+    proxy_pass         https://keycloak_svc;
+    include            /etc/nginx/conf.d/keycloak-upstream-tls.inc;
     proxy_set_header   Host              $http_host;
     proxy_set_header   X-Real-IP         $remote_addr;
     proxy_set_header   X-Forwarded-For   $remote_addr;
@@ -64,7 +65,8 @@ location /auth/ {
     # SIN barra final en el destino: a diferencia de /api y /ai, acá se preserva el prefijo
     # /auth tal cual llegó (Keycloak corre con KC_HTTP_RELATIVE_PATH=/auth, así que espera
     # recibir ese prefijo -- ver el servicio "keycloak" en docker-compose.yml).
-    proxy_pass         http://keycloak_svc;
+    proxy_pass         https://keycloak_svc;
+    include            /etc/nginx/conf.d/keycloak-upstream-tls.inc;
     proxy_set_header   Host              $http_host;
     proxy_set_header   X-Real-IP         $remote_addr;
     # $remote_addr, NO $proxy_add_x_forwarded_for -- ver el comentario en location /api/.

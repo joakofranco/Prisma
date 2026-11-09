@@ -88,6 +88,9 @@ services:
     command: ["start", "--import-realm"]
     environment:
       KC_HOSTNAME_STRICT: "false"
+      # BUG-12: en producción nadie accede a Keycloak por HTTP (ni el host ni la red interna): se
+      # deshabilita el 8080 y todo el tráfico va por TLS (8443).
+      KC_HTTP_ENABLED: "false"
     deploy:
       resources:
         limits: { cpus: '1.0', memory: 1G }
