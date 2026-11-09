@@ -245,15 +245,15 @@ auth-policy-status: ## Ver la vigencia del enlace de recuperación y los paráme
 	./scripts/keycloak/apply-auth-policy.sh --status
 
 # ---------- TLS / CERTIFICADOS ----------
-certs: ## Generar el certificado autofirmado de nginx (pide confirmación si ya existe) + la CA interna de Keycloak (si falta)
+certs: ## Generar el certificado autofirmado de nginx (pide confirmación si ya existe) + la CA interna y sus certificados (si faltan)
 	./scripts/generate-nginx-cert.sh
-	@[ -f infra/keycloak/certs/ca.crt ] || ./scripts/generate-internal-ca.sh --force
+	@[ -f infra/tls/ca.crt ] || ./scripts/generate-internal-ca.sh --force
 
-certs-force: ## Regenerar el certificado de nginx y la CA interna de Keycloak sin preguntar (sobreescribe)
+certs-force: ## Regenerar el certificado de nginx y la CA interna sin preguntar (sobreescribe)
 	./scripts/generate-nginx-cert.sh --force
 	./scripts/generate-internal-ca.sh --force
 
-internal-ca: ## Generar la CA interna y el cert TLS de Keycloak (BUG-12; pide confirmación si ya existen)
+internal-ca: ## Generar la CA interna y los certificados TLS por servicio (PRI-369; pide confirmación si ya existen)
 	./scripts/generate-internal-ca.sh
 
 restart-nginx: ## Reiniciar solo nginx (para que tome un certificado nuevo)

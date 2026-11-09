@@ -193,7 +193,7 @@ services:
       - "${BACKEND_CORE_PORT:-8081}:8080"
     volumes:
       - evidences-data:/var/prisma/evidences
-      - ./infra/keycloak/certs/ca.crt:/etc/prisma/tls/ca.crt:ro
+      - ./infra/tls/ca.crt:/etc/prisma/tls/ca.crt:ro
     # BUG-12: copia el truststore por defecto del JRE (para no perder las CAs públicas), le suma la CA
     # interna y arranca la JVM con él. Reemplaza el CMD del Dockerfile (mismo java -cp / main class).
     command:
@@ -315,7 +315,7 @@ services:
       - "${FRONTEND_PORT:-8080}:80"
     volumes:
       # BUG-12: CA interna para verificar el certificado de Keycloak (proxy_ssl_trusted_certificate).
-      - ./infra/keycloak/certs/ca.crt:/etc/nginx/internal-ca.crt:ro
+      - ./infra/tls/ca.crt:/etc/nginx/internal-ca.crt:ro
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:80"]
       interval: 30s
@@ -400,8 +400,8 @@ services:
     ports:
       - "127.0.0.1:${KEYCLOAK_PORT:-8180}:8080"
     volumes:
-      - ./infra/keycloak/certs/keycloak.crt:/opt/keycloak/conf/tls/keycloak.crt:ro
-      - ./infra/keycloak/certs/keycloak.key:/opt/keycloak/conf/tls/keycloak.key:ro
+      - ./infra/tls/keycloak.crt:/opt/keycloak/conf/tls/keycloak.crt:ro
+      - ./infra/tls/keycloak.key:/opt/keycloak/conf/tls/keycloak.key:ro
       - ./infra/keycloak/realm-prisma.json:/opt/keycloak/data/import/realm-prisma.json:ro
       # PRI-366: theme de email con la identidad visual de PRISMA (ver
       # infra/keycloak/themes/prisma/email/). emailTheme="prisma" en realm-prisma.json lo activa.
@@ -889,5 +889,5 @@ services:
       - ./infra/nginx/conf.d:/etc/nginx/conf.d:ro
       - ./infra/nginx/certs:/etc/nginx/certs:ro
       # BUG-12: CA interna para verificar el certificado de Keycloak (proxy_ssl_trusted_certificate).
-      - ./infra/keycloak/certs/ca.crt:/etc/nginx/internal-ca.crt:ro
+      - ./infra/tls/ca.crt:/etc/nginx/internal-ca.crt:ro
     networks: [prisma-net]

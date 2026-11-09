@@ -41,8 +41,8 @@ va cifrado y verificado**:
 | backend-core → Keycloak (JWKS y Admin API) | `http://keycloak:8080` | `https://keycloak:8443`, CA en el truststore de la JVM |
 
 - `scripts/generate-internal-ca.sh` (también lo ejecuta `make certs`; `make internal-ca` lo corre solo)
-  crea en `infra/keycloak/certs/` (ignorada por git) la CA interna `ca.crt`/`ca.key` y el
-  certificado de Keycloak `keycloak.crt`/`keycloak.key` (SAN: `keycloak`, `localhost`, `127.0.0.1`).
+  crea en `infra/tls/` (ignorada por git) la CA interna `ca.crt`/`ca.key` y un
+  certificado por servicio `<servicio>.crt`/`.key` (SAN: nombre del servicio, `localhost`, `127.0.0.1`).
 - Keycloak monta `keycloak.crt/.key`; nginx y el frontend montan solo `ca.crt` en
   `/etc/nginx/internal-ca.crt`; backend-core arranca copiando el truststore por defecto del JRE,
   importando `ca.crt` y arrancando la JVM con ese truststore (ver `command` en `docker-compose.yml`).
