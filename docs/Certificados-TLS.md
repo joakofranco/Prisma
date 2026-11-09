@@ -55,8 +55,18 @@ va cifrado y verificado**:
 - Rotación: `make internal-ca` (o `scripts/generate-internal-ca.sh --force`) y
   `docker compose up -d --force-recreate keycloak nginx frontend backend-core`.
 
-Siguen en HTTP interno (deuda conocida, fuera del alcance de BUG-12): nginx → backend-core /
-backend-ai / frontend, Postgres, Elasticsearch y RustFS.
+### Postgres con TLS (PRI-369, solo producción)
+
+`docker-compose.prod.yml` activa TLS en `postgres` y `keycloak-db` (certificados `postgres.crt` y
+`keycloak-db.crt` de `infra/tls/`): `ssl=on`, TLS 1.2 mínimo y `infra/postgres/pg_hba.tls.conf`, que
+solo admite `hostssl` para conexiones por red (una conexión sin TLS se rechaza). Como Postgres exige
+que la clave sea suya y de permisos 0600, el contenedor la copia a `/var/lib/postgresql` antes de
+arrancar. Los clientes verifican el certificado (`sslmode=verify-full` + la CA interna):
+backend-core, Keycloak, postgres-exporter, Grafana y backup-runner. pgAdmin usa `prefer`, así que
+negocia TLS pero no verifica el certificado. En desarrollo Postgres sigue sin TLS.
+
+Siguen en HTTP interno (deuda conocida): nginx → backend-core / backend-ai / frontend,
+Elasticsearch y RustFS.
 
 El contenedor del propio frontend (`apps/frontend/nginx.conf`) tiene la **misma** definición de
 `/api`, `/ai`, `/auth` que el reverse-proxy principal, así que acceder directo a

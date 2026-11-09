@@ -530,6 +530,9 @@ services:
       # (no alcanza con que este en el .env de docker-compose). Sin esto, el datasource
       # de PostgreSQL quedaba con la contrasena vacia y fallaba al conectar.
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      # PRI-369: modo SSL del datasource de PostgreSQL (datasources.yml). En desarrollo Postgres no
+      # usa TLS; docker-compose.prod.yml lo sube a verify-full.
+      GRAFANA_PG_SSLMODE: disable
     ports:
       - "${GRAFANA_PORT:-3000}:3000"
     volumes:

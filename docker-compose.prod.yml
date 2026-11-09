@@ -10,27 +10,45 @@ services:
   postgres:
     restart: always
     ports: []                          # No exponer al host
-    # NOTA: sin "ssl=on" -- la imagen postgres:17-alpine no trae ningún certificado en
-    # /etc/ssl/certs/server.crt / /etc/ssl/private/server.key (ni los genera sola), y nada en
-    # este compose los monta. Con ssl=on puesto y esos archivos ausentes, Postgres no llega a
-    # arrancar ("could not load server certificate file") -- eso es lo que se veía como
-    # "container prisma-postgres is unhealthy" bloqueando todo lo que depende de él (condition:
-    # service_healthy). El tráfico a postgres no sale de la red interna `prisma-net` (ports: []
-    # más abajo, no se expone al host) -- si en algún momento se quiere TLS acá también, hay que
-    # generar y montar un certificado primero (mismo mecanismo que scripts/generate-nginx-cert.sh
-    # para nginx), no alcanza con el flag solo.
+    # PRI-369: TLS en las conexiones por red. Antes no se activaba "ssl=on" porque la imagen
+    # postgres:17-alpine no trae ningún certificado y, con ssl=on y los archivos ausentes, Postgres
+    # no arranca ("could not load server certificate file"). Ahora el certificado lo emite
+    # scripts/generate-internal-ca.sh (make certs) y se monta desde infra/tls. Postgres exige que la
+    # clave sea del usuario postgres con permisos 0600, algo que un bind mount no garantiza, así que
+    # se copia a /var/lib/postgresql antes de delegar en el entrypoint original. pg_hba.tls.conf deja
+    # solo "hostssl": una conexión por red sin TLS se rechaza.
+    volumes:
+      - ./infra/tls/postgres.crt:/etc/prisma/tls/server.crt:ro
+      - ./infra/tls/postgres.key:/etc/prisma/tls/server.key.src:ro
+      - ./infra/postgres/pg_hba.tls.conf:/etc/prisma/pg_hba.conf:ro
     command:
-      - "postgres"
-      - "-c"
-      - "max_connections=200"
-      - "-c"
-      - "shared_buffers=1GB"
-      - "-c"
-      - "log_statement=none"
+      - sh
+      - -c
+      - >-
+        install -m 600 -o postgres -g postgres /etc/prisma/tls/server.key.src /var/lib/postgresql/server.key &&
+        exec docker-entrypoint.sh postgres
+        -c max_connections=200 -c shared_buffers=1GB -c log_statement=none
+        -c ssl=on -c ssl_cert_file=/etc/prisma/tls/server.crt -c ssl_key_file=/var/lib/postgresql/server.key
+        -c ssl_min_protocol_version=TLSv1.2 -c hba_file=/etc/prisma/pg_hba.conf
     deploy:
       resources:
         limits: { cpus: '2.0', memory: 4G }
         reservations: { cpus: '1.0', memory: 2G }
+
+  # PRI-369: misma configuración TLS que "postgres" para la base de Keycloak.
+  keycloak-db:
+    volumes:
+      - ./infra/tls/keycloak-db.crt:/etc/prisma/tls/server.crt:ro
+      - ./infra/tls/keycloak-db.key:/etc/prisma/tls/server.key.src:ro
+      - ./infra/postgres/pg_hba.tls.conf:/etc/prisma/pg_hba.conf:ro
+    command:
+      - sh
+      - -c
+      - >-
+        install -m 600 -o postgres -g postgres /etc/prisma/tls/server.key.src /var/lib/postgresql/server.key &&
+        exec docker-entrypoint.sh postgres
+        -c ssl=on -c ssl_cert_file=/etc/prisma/tls/server.crt -c ssl_key_file=/var/lib/postgresql/server.key
+        -c ssl_min_protocol_version=TLSv1.2 -c hba_file=/etc/prisma/pg_hba.conf
 
   redis:
     restart: always
@@ -51,6 +69,8 @@ services:
     environment:
       SPRING_PROFILES_ACTIVE: production
       LOGGING_LEVEL_ROOT: WARN
+      # PRI-369: TLS verificado hacia Postgres (la CA interna ya está montada en /etc/prisma/tls/ca.crt).
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}?sslmode=verify-full&sslrootcert=/etc/prisma/tls/ca.crt
     # NOTA: sin "replicas" -- container_name (fijo en docker-compose.yml) es incompatible con
     # escalar a más de una réplica vía docker compose (Compose lo rechaza al cargar el archivo).
     # Escalar horizontalmente requeriría un orquestador (ver
@@ -88,9 +108,14 @@ services:
     command: ["start", "--import-realm"]
     environment:
       KC_HOSTNAME_STRICT: "false"
+      # PRI-369: TLS verificado hacia keycloak-db.
+      KC_DB_URL: jdbc:postgresql://keycloak-db:5432/keycloak?sslmode=verify-full&sslrootcert=/opt/keycloak/conf/tls/ca.crt
       # BUG-12: en producción nadie accede a Keycloak por HTTP (ni el host ni la red interna): se
       # deshabilita el 8080 y todo el tráfico va por TLS (8443).
       KC_HTTP_ENABLED: "false"
+    volumes:
+      # PRI-369: CA interna para verificar el certificado de keycloak-db (sslrootcert).
+      - ./infra/tls/ca.crt:/opt/keycloak/conf/tls/ca.crt:ro
     deploy:
       resources:
         limits: { cpus: '1.0', memory: 1G }
@@ -100,3 +125,24 @@ services:
     deploy:
       resources:
         limits: { cpus: '1.0', memory: 512M }
+
+  # PRI-369: los clientes de Postgres que no son backend-core también verifican el certificado,
+  # porque pg_hba.tls.conf rechaza las conexiones por red sin TLS.
+  postgres-exporter:
+    environment:
+      DATA_SOURCE_NAME: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=verify-full&sslrootcert=/etc/prisma/tls/ca.crt
+    volumes:
+      - ./infra/tls/ca.crt:/etc/prisma/tls/ca.crt:ro
+
+  grafana:
+    environment:
+      GRAFANA_PG_SSLMODE: verify-full
+    volumes:
+      - ./infra/tls/ca.crt:/etc/prisma/tls/ca.crt:ro
+
+  backup-runner:
+    environment:
+      PGSSLMODE: verify-full
+      PGSSLROOTCERT: /etc/prisma/tls/ca.crt
+    volumes:
+      - ./infra/tls/ca.crt:/etc/prisma/tls/ca.crt:ro
