@@ -37,7 +37,7 @@ DC := docker compose
         test test-frontend test-core test-ai lint format \
         seed migrate backup restore health pull-llm shell-core shell-ai \
         sonar security-scan sync-knowledge-base \
-        certs certs-force restart-nginx \
+        certs certs-force internal-ca restart-nginx \
         mvp-up mvp-down mvp-logs mvp-ps mvp-seed \
         mcu50-build mcu50-validate bugasura-build \
         mfa-enable mfa-status mfa-disable mfa-reset-requires-otp auth-policy auth-policy-status
@@ -245,11 +245,16 @@ auth-policy-status: ## Ver la vigencia del enlace de recuperación y los paráme
 	./scripts/keycloak/apply-auth-policy.sh --status
 
 # ---------- TLS / CERTIFICADOS ----------
-certs: ## Generar el certificado autofirmado de nginx (pide confirmación si ya existe uno)
+certs: ## Generar el certificado autofirmado de nginx (pide confirmación si ya existe) + la CA interna de Keycloak (si falta)
 	./scripts/generate-nginx-cert.sh
+	@[ -f infra/keycloak/certs/ca.crt ] || ./scripts/generate-internal-ca.sh --force
 
-certs-force: ## Regenerar el certificado de nginx sin preguntar (sobreescribe el actual)
+certs-force: ## Regenerar el certificado de nginx y la CA interna de Keycloak sin preguntar (sobreescribe)
 	./scripts/generate-nginx-cert.sh --force
+	./scripts/generate-internal-ca.sh --force
+
+internal-ca: ## Generar la CA interna y el cert TLS de Keycloak (BUG-12; pide confirmación si ya existen)
+	./scripts/generate-internal-ca.sh
 
 restart-nginx: ## Reiniciar solo nginx (para que tome un certificado nuevo)
 	$(DC) restart nginx
