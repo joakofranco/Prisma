@@ -15,7 +15,7 @@ add_header X-Content-Type-Options nosniff always;
 location /api/ {
     limit_req zone=api burst=50 nodelay;
     limit_conn addr 20;
-    proxy_pass         http://backend_core;
+    include            /etc/nginx/conf.d/proxy-backend-core.inc;
     proxy_set_header   Host              $http_host;
     proxy_set_header   X-Real-IP         $remote_addr;
     # $remote_addr, NO $proxy_add_x_forwarded_for: este nginx es el único hop confiable frente

@@ -65,8 +65,18 @@ arrancar. Los clientes verifican el certificado (`sslmode=verify-full` + la CA i
 backend-core, Keycloak, postgres-exporter, Grafana y backup-runner. pgAdmin usa `prefer`, así que
 negocia TLS pero no verifica el certificado. En desarrollo Postgres sigue sin TLS.
 
-Siguen en HTTP interno (deuda conocida): nginx → backend-core / backend-ai / frontend,
-Elasticsearch y RustFS.
+### backend-core con TLS (PRI-369, solo producción)
+
+`docker-compose.prod.yml` activa HTTPS en backend-core (`SERVER_SSL_*`, mismo puerto 8080, certificado
+`backend-core.crt`). Quienes lo consumen verifican el certificado contra la CA interna:
+- **nginx principal:** las locations `/api/` incluyen `conf.d/proxy-backend-core.inc` (HTTP en
+  desarrollo); producción monta `infra/nginx/tls/proxy-backend-core.inc` encima, con `proxy_ssl_verify on`.
+- **backend-ai** (`CORE_BACKEND_URL=https://backend-core:8080`, CA en `SSL_CERT_FILE`).
+- **Prometheus:** usa `infra/monitoring/prometheus/prometheus.prod.yml` (copia de `prometheus.yml` con
+  scrape por TLS; mantener ambos sincronizados).
+- **Healthcheck del contenedor:** `curl --cacert ... https://localhost:8080/actuator/health`.
+
+Siguen en HTTP interno (deuda conocida): nginx → backend-ai / frontend, Elasticsearch y RustFS.
 
 El contenedor del propio frontend (`apps/frontend/nginx.conf`) tiene la **misma** definición de
 `/api`, `/ai`, `/auth` que el reverse-proxy principal, así que acceder directo a

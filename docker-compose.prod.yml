@@ -71,6 +71,15 @@ services:
       LOGGING_LEVEL_ROOT: WARN
       # PRI-369: TLS verificado hacia Postgres (la CA interna ya está montada en /etc/prisma/tls/ca.crt).
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}?sslmode=verify-full&sslrootcert=/etc/prisma/tls/ca.crt
+      # PRI-369: backend-core sirve HTTPS (mismo puerto 8080) con el certificado de la CA interna.
+      SERVER_SSL_ENABLED: "true"
+      SERVER_SSL_CERTIFICATE: /etc/prisma/tls/backend-core.crt
+      SERVER_SSL_CERTIFICATE_PRIVATE_KEY: /etc/prisma/tls/backend-core.key
+    volumes:
+      - ./infra/tls/backend-core.crt:/etc/prisma/tls/backend-core.crt:ro
+      - ./infra/tls/backend-core.key:/etc/prisma/tls/backend-core.key:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "--cacert", "/etc/prisma/tls/ca.crt", "https://localhost:8080/actuator/health"]
     # NOTA: sin "replicas" -- container_name (fijo en docker-compose.yml) es incompatible con
     # escalar a más de una réplica vía docker compose (Compose lo rechaza al cargar el archivo).
     # Escalar horizontalmente requeriría un orquestador (ver
@@ -86,6 +95,13 @@ services:
     restart: always
     image: ghcr.io/${GHCR_ORG}/prisma-backend-ai:${TAG:-latest}
     pull_policy: always
+    environment:
+      # PRI-369: backend-core sirve HTTPS; httpx toma la CA de SSL_CERT_FILE. Reemplaza el bundle por
+      # defecto: backend-ai solo habla con servicios internos (Ollama va por HTTP).
+      CORE_BACKEND_URL: https://backend-core:8080
+      SSL_CERT_FILE: /etc/prisma/tls/ca.crt
+    volumes:
+      - ./infra/tls/ca.crt:/etc/prisma/tls/ca.crt:ro
     deploy:
       replicas: 1
       resources:
@@ -122,6 +138,9 @@ services:
 
   nginx:
     restart: always
+    volumes:
+      # PRI-369: destinos TLS de nginx (reemplazan a conf.d/proxy-*.inc, que en desarrollo van por HTTP).
+      - ./infra/nginx/tls/proxy-backend-core.inc:/etc/nginx/conf.d/proxy-backend-core.inc:ro
     deploy:
       resources:
         limits: { cpus: '1.0', memory: 512M }
@@ -145,4 +164,10 @@ services:
       PGSSLMODE: verify-full
       PGSSLROOTCERT: /etc/prisma/tls/ca.crt
     volumes:
+      - ./infra/tls/ca.crt:/etc/prisma/tls/ca.crt:ro
+
+  # PRI-369: Prometheus scrapea por TLS los servicios que sirven HTTPS en producción.
+  prometheus:
+    volumes:
+      - ./infra/monitoring/prometheus/prometheus.prod.yml:/etc/prometheus/prometheus.yml:ro
       - ./infra/tls/ca.crt:/etc/prisma/tls/ca.crt:ro
