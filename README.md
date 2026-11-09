@@ -215,7 +215,7 @@ cp .env.example .env
 
 # 3) Generar el certificado TLS autofirmado de nginx (una vez; sin esto el contenedor
 #    de nginx no arranca -- ver docs/Certificados-TLS.md)
-make certs
+make certs      # también genera la CA interna que cifra nginx/backend-core -> Keycloak
 
 # 4) Levantar TODA la stack (frontend, backends, BD, IAM, monitoreo, etc.)
 make up

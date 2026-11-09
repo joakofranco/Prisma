@@ -16,16 +16,47 @@ Navegador ──HTTPS (443)──▶ nginx (infra/nginx/conf.d/prisma.conf)
                               ├─ /            → frontend (SPA Vue, HTTP interno)
                               ├─ /api/*        → backend-core:8080 (HTTP interno)
                               ├─ /ai/*         → backend-ai:8000 (HTTP interno)
-                              └─ /auth/*       → keycloak:8080 (HTTP interno)
+                              └─ /auth/*       → keycloak:8443 (HTTPS interno, CA interna — BUG-12)
 ```
 
 La SPA usa **rutas relativas** (`VITE_API_BASE_URL=/api`, `VITE_AI_API_BASE_URL=/ai/api/v1`,
 `VITE_KEYCLOAK_URL=/auth`, ver `.env.example`) — el navegador nunca sale del origen HTTPS desde el
-que se sirvió la página. Los tramos `nginx → servicio` quedan en HTTP simple porque viajan por la
-red interna de Docker (`prisma-net`), no por la red pública; es el mismo criterio que separa
+que se sirvió la página. Los tramos `nginx → frontend/backend-core/backend-ai` quedan en HTTP
+simple porque viajan por la red interna de Docker (`prisma-net`), no por la red pública; es el
+mismo criterio que separa
 "cifrado en tránsito hacia el cliente" (obligatorio, cruza una red no confiable) de "cifrado
 interno entre contenedores del mismo host" (mTLS/service mesh, una capa adicional que este
 proyecto no implementa).
+
+### Tramos hacia Keycloak: TLS interno con CA propia (BUG-12 / PRI-369)
+
+Las pruebas de cifrado en tránsito marcaron como incumplido el tramo interno hacia Keycloak
+(lleva credenciales de login, tokens y el `client-secret` de la Admin API), así que **ese tramo sí
+va cifrado y verificado**:
+
+| Tramo | Antes | Ahora |
+|---|---|---|
+| nginx principal → Keycloak | `http://keycloak:8080` | `https://keycloak:8443` + `proxy_ssl_verify on` |
+| nginx del frontend → Keycloak | `http://keycloak:8080` | `https://keycloak:8443` + `proxy_ssl_verify on` |
+| backend-core → Keycloak (JWKS y Admin API) | `http://keycloak:8080` | `https://keycloak:8443`, CA en el truststore de la JVM |
+
+- `scripts/generate-internal-ca.sh` (también lo ejecuta `make certs`; `make internal-ca` lo corre solo)
+  crea en `infra/keycloak/certs/` (ignorada por git) la CA interna `ca.crt`/`ca.key` y el
+  certificado de Keycloak `keycloak.crt`/`keycloak.key` (SAN: `keycloak`, `localhost`, `127.0.0.1`).
+- Keycloak monta `keycloak.crt/.key`; nginx y el frontend montan solo `ca.crt` en
+  `/etc/nginx/internal-ca.crt`; backend-core arranca copiando el truststore por defecto del JRE,
+  importando `ca.crt` y arrancando la JVM con ese truststore (ver `command` en `docker-compose.yml`).
+- Sin generar la CA primero, `docker compose up` falla al montar los archivos: ejecutá `make certs`.
+- **Desarrollo:** Keycloak mantiene el 8080 HTTP habilitado solo para el acceso directo desde el host
+  (`http://localhost:8180`, e2e, `kcadm`); se publica ligado a `127.0.0.1` y ningún servicio interno lo
+  usa. **Producción** (`docker-compose.prod.yml`): `KC_HTTP_ENABLED=false`, solo TLS.
+- El management interface (9000, `/health`) se mantiene en HTTP (`KC_HTTP_MANAGEMENT_SCHEME=http`)
+  para el healthcheck; no se publica al host.
+- Rotación: `make internal-ca` (o `scripts/generate-internal-ca.sh --force`) y
+  `docker compose up -d --force-recreate keycloak nginx frontend backend-core`.
+
+Siguen en HTTP interno (deuda conocida, fuera del alcance de BUG-12): nginx → backend-core /
+backend-ai / frontend, Postgres, Elasticsearch y RustFS.
 
 El contenedor del propio frontend (`apps/frontend/nginx.conf`) tiene la **misma** definición de
 `/api`, `/ai`, `/auth` que el reverse-proxy principal, así que acceder directo a
