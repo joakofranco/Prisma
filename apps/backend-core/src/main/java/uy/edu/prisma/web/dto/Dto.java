@@ -61,6 +61,9 @@ public class Dto {
       String sector,
       String size,
       UUID responsibleId,
+      // Nombre (o email, si no tiene nombre cargado) del responsable; null si no tiene. Lo muestra
+      // la pantalla de Reportes junto a los datos de la organización (PRI-367).
+      String responsibleName,
       Boolean enabled,
       OffsetDateTime createdAt) {}
 

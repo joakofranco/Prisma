@@ -410,7 +410,8 @@ class ControllersMockMvcTest {
   void organizationGetById() throws Exception {
     UUID id = UUID.randomUUID();
     when(organizationService.getById(id))
-        .thenReturn(new OrganizationDto(id, "Acme", "NIT-1", "TECH", "SMALL", null, true, null));
+        .thenReturn(
+            new OrganizationDto(id, "Acme", "NIT-1", "TECH", "SMALL", null, null, true, null));
 
     organizations
         .perform(get("/api/organizations/{id}", id))
@@ -422,7 +423,8 @@ class ControllersMockMvcTest {
   void organizationCreate() throws Exception {
     UUID id = UUID.randomUUID();
     when(organizationService.create(any(CreateOrganizationDto.class)))
-        .thenReturn(new OrganizationDto(id, "NewCo", "NIT-9", "FIN", "LARGE", null, true, null));
+        .thenReturn(
+            new OrganizationDto(id, "NewCo", "NIT-9", "FIN", "LARGE", null, null, true, null));
 
     organizations
         .perform(
@@ -438,7 +440,8 @@ class ControllersMockMvcTest {
     UUID id = UUID.randomUUID();
     when(organizationService.update(eq(id), any(CreateOrganizationDto.class)))
         .thenReturn(
-            new OrganizationDto(id, "Renamed", "NIT-X", "HEALTH", "MEDIUM", null, true, null));
+            new OrganizationDto(
+                id, "Renamed", "NIT-X", "HEALTH", "MEDIUM", null, null, true, null));
 
     organizations
         .perform(
@@ -455,7 +458,8 @@ class ControllersMockMvcTest {
     when(organizationService.enable(id))
         .thenReturn(
             new OrganizationReactivationDto(
-                new OrganizationDto(id, "Acme", "NIT-1", "TECH", "SMALL", null, true, null), 3));
+                new OrganizationDto(id, "Acme", "NIT-1", "TECH", "SMALL", null, null, true, null),
+                3));
 
     organizations
         .perform(put("/api/organizations/{id}/enable", id))

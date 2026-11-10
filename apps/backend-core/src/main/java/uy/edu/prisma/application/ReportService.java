@@ -177,11 +177,21 @@ public class ReportService {
     addInfoCell(info, "ESTADO", statusLabel(eval.getStatus()));
     addInfoCell(info, "ACTUALIZADA", eval.getUpdatedAt().format(DATE_FMT));
     addInfoCell(info, "GENERADO", OffsetDateTime.now().format(DATE_FMT));
-    // El auditor solo se muestra si la evaluacion ya tiene uno (ver auditorNames).
-    if (!auditors.isEmpty()) {
-      addInfoCell(info, "AUDITOR", String.join(", ", auditors), 2);
+    // PRI-367: con una evaluación archivada, la fecha de aprobación dice a qué versión aprobada
+    // corresponde el reporte.
+    int cells = 6;
+    if (eval.getApprovedAt() != null) {
+      addInfoCell(info, "APROBADA", eval.getApprovedAt().format(DATE_FMT));
+      cells++;
     }
-    info.completeRow();
+    // El auditor solo se muestra si la evaluacion ya tiene uno (ver auditorNames). Ocupa lo que
+    // queda de la segunda fila: dos celdas, o una si ya está la fecha de aprobación.
+    if (!auditors.isEmpty()) {
+      int span = 4 - cells % 4;
+      addInfoCell(info, "AUDITOR", String.join(", ", auditors), span);
+      cells += span;
+    }
+    padRow(info, cells, 4);
     document.add(info);
   }
 
@@ -503,6 +513,10 @@ public class ReportService {
     r = summaryRow(sheet, r, "Evaluación", eval.getName(), labelStyle, valueStyle);
     r = summaryRow(sheet, r, "Catálogo", "MCU " + eval.getCatalogVersion(), labelStyle, valueStyle);
     r = summaryRow(sheet, r, "Estado", statusLabel(eval.getStatus()), labelStyle, valueStyle);
+    if (eval.getApprovedAt() != null) {
+      String approvedAt = eval.getApprovedAt().format(DATE_FMT);
+      r = summaryRow(sheet, r, "Aprobada", approvedAt, labelStyle, valueStyle);
+    }
     if (!auditors.isEmpty()) {
       r = summaryRow(sheet, r, "Auditor", String.join(", ", auditors), labelStyle, valueStyle);
     }
@@ -759,17 +773,32 @@ public class ReportService {
     addInfoCell(info, "ESTADO", statusLabel(eval.getStatus()));
     addInfoCell(info, "ACTUALIZADA", eval.getUpdatedAt().format(DATE_FMT));
     addInfoCell(info, "GENERADO", OffsetDateTime.now().format(DATE_FMT));
-    // El auditor solo se muestra si la evaluación ya tiene uno (ver auditorNames). Sin él, la
-    // última fila quedaría con una celda de menos y iText la completaría con una caja con borde.
+    int cells = 7;
+    // PRI-367: con una evaluación archivada, la fecha de aprobación dice a qué versión aprobada
+    // corresponde el reporte.
+    if (eval.getApprovedAt() != null) {
+      addInfoCell(info, "APROBADA", eval.getApprovedAt().format(DATE_FMT));
+      cells++;
+    }
+    // El auditor solo se muestra si la evaluación ya tiene uno (ver auditorNames).
     if (!auditors.isEmpty()) {
       addInfoCell(info, "AUDITOR", String.join(", ", auditors));
-    } else {
+      cells++;
+    }
+    padRow(info, cells, 4);
+    document.add(info);
+  }
+
+  /**
+   * Completa la última fila con celdas vacías sin borde: si no, iText la completa con cajas con
+   * borde que se ven como campos vacíos.
+   */
+  private static void padRow(PdfPTable table, int usedCells, int columns) {
+    for (int i = usedCells % columns; i != 0 && i < columns; i++) {
       PdfPCell blank = new PdfPCell();
       blank.setBorder(Rectangle.NO_BORDER);
-      info.addCell(blank);
+      table.addCell(blank);
     }
-    info.completeRow();
-    document.add(info);
   }
 
   /** Nivel actual y objetivo medios de cada función, en el orden en que aparecen los resultados. */
@@ -1008,21 +1037,29 @@ public class ReportService {
   }
 
   /**
-   * Igual que {@link #load(UUID)}, pero exige que la evaluación esté «Aprobada»: el reporte final y
-   * el ejecutivo solo valen para una evaluación ya aprobada (el preliminar, en cambio, solo en
-   * auditoría, ver {@link #loadForAudit(UUID)}). La pantalla de reportes ya solo ofrece las
-   * aprobadas, pero el endpoint se puede llamar directo con el id de cualquier evaluación.
+   * Igual que {@link #load(UUID)}, pero exige que la evaluación haya sido aprobada: el reporte
+   * final y el ejecutivo solo valen para una evaluación «Aprobada», o «Archivada» después de haber
+   * sido aprobada (PRI-367: tiene {@code approvedAt}, así que el reporte refleja esa aprobación).
+   * Una archivada que se descartó sin aprobar no tiene reporte. El preliminar, en cambio, solo en
+   * auditoría (ver {@link #loadForAudit(UUID)}). El endpoint se puede llamar directo con el id de
+   * cualquier evaluación, por eso se valida acá y no solo en la pantalla. Generar un reporte no
+   * modifica la evaluación.
    */
   private Evaluation loadApproved(UUID evaluationId) {
     Evaluation eval = load(evaluationId);
-    if (eval.getStatus() != Evaluation.Status.APPROVED) {
+    if (!isReportable(eval)) {
       throw new ConflictException(
-          "El reporte final y el ejecutivo sólo pueden exportarse con la evaluación en estado"
-              + " 'Aprobada' (estado actual: "
+          "El reporte final y el ejecutivo sólo pueden exportarse con la evaluación 'Aprobada', o"
+              + " 'Archivada' después de haber sido aprobada (estado actual: "
               + statusLabel(eval.getStatus())
               + ")");
     }
     return eval;
+  }
+
+  private static boolean isReportable(Evaluation eval) {
+    return eval.getStatus() == Evaluation.Status.APPROVED
+        || (eval.getStatus() == Evaluation.Status.ARCHIVED && eval.getApprovedAt() != null);
   }
 
   /** Igual que {@link #load(UUID)}, pero exige que la evaluación esté "En Auditoría". */

@@ -28,6 +28,8 @@ export interface Organization {
   sector: string;
   size: string;
   responsibleId?: string;
+  /** Nombre (o email) del responsable; null si no tiene (PRI-367, lo muestra Reportes). */
+  responsibleName?: string | null;
   enabled: boolean;
   createdAt: string;
 }

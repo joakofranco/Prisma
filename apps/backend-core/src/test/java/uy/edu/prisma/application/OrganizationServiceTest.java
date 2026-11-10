@@ -79,8 +79,22 @@ class OrganizationServiceTest {
     assertEquals("TECH", dto.sector());
     assertEquals("SMALL", dto.size());
     assertEquals(responsible.getId(), dto.responsibleId());
+    // Sin nombre cargado, el responsable se muestra por su email (PRI-367).
+    assertEquals("r@test.com", dto.responsibleName());
     assertTrue(dto.enabled());
     assertEquals(org.getCreatedAt(), dto.createdAt());
+  }
+
+  @Test
+  void theResponsibleNameIsFirstAndLastName() {
+    responsible.setFirstName("Ana");
+    responsible.setLastName("Pérez");
+    PageRequest pr = PageRequest.of(0, 10, Sort.by("createdAt").descending());
+    when(repo.search(any(), any())).thenReturn(new PageImpl<>(List.of(org), pr, 1));
+
+    PaginatedDto<OrganizationDto> result = service.list(null, 0, 10);
+
+    assertEquals("Ana Pérez", result.data().get(0).responsibleName());
   }
 
   @Test
@@ -92,6 +106,7 @@ class OrganizationServiceTest {
     PaginatedDto<OrganizationDto> result = service.list(null, 0, 10);
 
     assertNull(result.data().get(0).responsibleId());
+    assertNull(result.data().get(0).responsibleName());
   }
 
   @Test
