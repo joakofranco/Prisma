@@ -756,6 +756,7 @@ services:
       ELASTICSEARCH_PASSWORD: ${ELASTIC_PASSWORD}
     volumes:
       - ./infra/monitoring/filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - ./infra/tls/ca.crt:/etc/prisma/tls/ca.crt:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - filebeat-data:/usr/share/filebeat/data

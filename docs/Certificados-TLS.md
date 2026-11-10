@@ -107,7 +107,21 @@ no conoce, en producción esa URL debe apuntar a un endpoint público con certif
 ejemplo un dominio detrás de un reverse proxy), no a `rustfs:9000`. Su valor por defecto
 (`http://localhost:9001`) es solo para desarrollo.
 
-Sigue en HTTP interno (deuda conocida): Elasticsearch.
+### Elasticsearch con TLS (PRI-369, solo producción)
+
+Elasticsearch sirve HTTPS en el 9200 (`xpack.security.http.ssl.*`, certificado `elasticsearch.crt`,
+TLS 1.2 mínimo). Verifican el certificado contra la CA interna: el healthcheck, `kibana-init`, Kibana
+(`ELASTICSEARCH_SSL_CERTIFICATEAUTHORITIES`) y Filebeat (`ssl.certificate_authorities` en
+`filebeat.yml`, que solo se aplica cuando `ELASTICSEARCH_HOSTS` es `https://`). Los certificados deben
+ser legibles por el usuario `elasticsearch` del contenedor. Esto no cubre el TLS de Kibana hacia el
+navegador (puerto 5601), que sigue siendo HTTP.
+
+### Resumen de lo que queda sin TLS
+
+En producción ya no queda ningún tramo interno entre servicios de PRISMA sin cifrar. Quedan en HTTP:
+el management interface de Keycloak (9000, solo `/health`, sin publicar), Kibana → navegador (5601) y el
+TLS de transporte entre nodos de Elasticsearch (no aplica: nodo único). En desarrollo todo lo anterior
+sigue en HTTP salvo los tramos hacia Keycloak.
 
 El contenedor del propio frontend (`apps/frontend/nginx.conf`) tiene la **misma** definición de
 `/api`, `/ai`, `/auth` que el reverse-proxy principal, así que acceder directo a

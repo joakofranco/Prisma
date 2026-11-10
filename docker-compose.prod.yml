@@ -208,3 +208,46 @@ services:
       - ./infra/tls/ca.crt:/etc/prisma/tls/ca.crt:ro
     healthcheck:
       test: ["CMD-SHELL", "curl -f --cacert /etc/prisma/tls/ca.crt https://localhost:9000/health || exit 1"]
+
+  # PRI-369: Elasticsearch sirve HTTPS (certificado de la CA interna) y sus clientes verifican el
+  # certificado: kibana-init, Kibana y Filebeat. La clave debe ser legible por el usuario elasticsearch
+  # (uid 1000) dentro del contenedor.
+  elasticsearch:
+    environment:
+      xpack.security.http.ssl.enabled: "true"
+      xpack.security.http.ssl.key: /usr/share/elasticsearch/config/certs/elasticsearch.key
+      xpack.security.http.ssl.certificate: /usr/share/elasticsearch/config/certs/elasticsearch.crt
+      xpack.security.http.ssl.certificate_authorities: /usr/share/elasticsearch/config/certs/ca.crt
+      xpack.security.http.ssl.supported_protocols: TLSv1.3,TLSv1.2
+    volumes:
+      - ./infra/tls/elasticsearch.crt:/usr/share/elasticsearch/config/certs/elasticsearch.crt:ro
+      - ./infra/tls/elasticsearch.key:/usr/share/elasticsearch/config/certs/elasticsearch.key:ro
+      - ./infra/tls/ca.crt:/usr/share/elasticsearch/config/certs/ca.crt:ro
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - >-
+          curl -sf --cacert /usr/share/elasticsearch/config/certs/ca.crt -u elastic:${ELASTIC_PASSWORD}
+          https://localhost:9200/_cluster/health
+          | grep -qE '"status":"(green|yellow)"'
+
+  kibana-init:
+    entrypoint: >
+      /bin/sh -c "
+      curl -sf --cacert /usr/share/elasticsearch/config/certs/ca.crt -u elastic:$$ELASTIC_PASSWORD -X POST https://elasticsearch:9200/_security/user/kibana_system/_password
+      -H 'Content-Type: application/json'
+      -d '{\"password\":\"'\"$$KIBANA_SYSTEM_PASSWORD\"'\"}';
+      "
+    volumes:
+      - ./infra/tls/ca.crt:/usr/share/elasticsearch/config/certs/ca.crt:ro
+
+  kibana:
+    environment:
+      ELASTICSEARCH_HOSTS: https://elasticsearch:9200
+      ELASTICSEARCH_SSL_CERTIFICATEAUTHORITIES: /usr/share/kibana/config/certs/ca.crt
+    volumes:
+      - ./infra/tls/ca.crt:/usr/share/kibana/config/certs/ca.crt:ro
+
+  filebeat:
+    environment:
+      ELASTICSEARCH_HOSTS: https://elasticsearch:9200
