@@ -76,7 +76,15 @@ negocia TLS pero no verifica el certificado. En desarrollo Postgres sigue sin TL
   scrape por TLS; mantener ambos sincronizados).
 - **Healthcheck del contenedor:** `curl --cacert ... https://localhost:8080/actuator/health`.
 
-Siguen en HTTP interno (deuda conocida): nginx → backend-ai / frontend, Elasticsearch y RustFS.
+### backend-ai con TLS (PRI-369, solo producción)
+
+En producción backend-ai arranca uvicorn con `--ssl-keyfile/--ssl-certfile` (mismo puerto 8000,
+certificado `backend-ai.crt`). Verifican el certificado: nginx (`conf.d/proxy-backend-ai.inc`, que en
+producción se reemplaza por `infra/nginx/tls/proxy-backend-ai.inc`), backend-core
+(`AI_SERVICE_URL=https://backend-ai:8000`, usa el truststore de la JVM con la CA interna), Prometheus
+(`prometheus.prod.yml`) y el healthcheck del contenedor.
+
+Siguen en HTTP interno (deuda conocida): nginx → frontend, Elasticsearch y RustFS.
 
 El contenedor del propio frontend (`apps/frontend/nginx.conf`) tiene la **misma** definición de
 `/api`, `/ai`, `/auth` que el reverse-proxy principal, así que acceder directo a

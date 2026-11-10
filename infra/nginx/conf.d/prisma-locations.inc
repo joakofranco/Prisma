@@ -35,7 +35,7 @@ location /api/ {
 # ---- API IA / RAG ----
 location /ai/ {
     limit_req zone=api burst=20 nodelay;
-    proxy_pass         http://backend_ai/;
+    include            /etc/nginx/conf.d/proxy-backend-ai.inc;
     proxy_set_header   Host              $http_host;
     proxy_set_header   X-Real-IP         $remote_addr;
     # $remote_addr, NO $proxy_add_x_forwarded_for -- ver el comentario en location /api/.

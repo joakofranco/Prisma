@@ -36,6 +36,10 @@ scrape_configs:
   # ---------- Backend AI (FastAPI + prometheus_client) ----------
   - job_name: backend-ai
     metrics_path: /metrics
+    scheme: https
+    tls_config:
+      ca_file: /etc/prisma/tls/ca.crt
+      server_name: backend-ai
     static_configs:
       - targets: ['backend-ai:8000']
 

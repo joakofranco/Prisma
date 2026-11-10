@@ -75,6 +75,8 @@ services:
       SERVER_SSL_ENABLED: "true"
       SERVER_SSL_CERTIFICATE: /etc/prisma/tls/backend-core.crt
       SERVER_SSL_CERTIFICATE_PRIVATE_KEY: /etc/prisma/tls/backend-core.key
+      # PRI-369: backend-core -> backend-ai por TLS (la CA interna va en el truststore de la JVM, ver el command de docker-compose.yml).
+      AI_SERVICE_URL: https://backend-ai:8000
     volumes:
       - ./infra/tls/backend-core.crt:/etc/prisma/tls/backend-core.crt:ro
       - ./infra/tls/backend-core.key:/etc/prisma/tls/backend-core.key:ro
@@ -102,6 +104,12 @@ services:
       SSL_CERT_FILE: /etc/prisma/tls/ca.crt
     volumes:
       - ./infra/tls/ca.crt:/etc/prisma/tls/ca.crt:ro
+      - ./infra/tls/backend-ai.crt:/etc/prisma/tls/backend-ai.crt:ro
+      - ./infra/tls/backend-ai.key:/etc/prisma/tls/backend-ai.key:ro
+    # PRI-369: backend-ai sirve HTTPS (mismo puerto 8000) con el certificado de la CA interna.
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2", "--ssl-keyfile", "/etc/prisma/tls/backend-ai.key", "--ssl-certfile", "/etc/prisma/tls/backend-ai.crt"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "--cacert", "/etc/prisma/tls/ca.crt", "https://localhost:8000/health"]
     deploy:
       replicas: 1
       resources:
@@ -141,6 +149,7 @@ services:
     volumes:
       # PRI-369: destinos TLS de nginx (reemplazan a conf.d/proxy-*.inc, que en desarrollo van por HTTP).
       - ./infra/nginx/tls/proxy-backend-core.inc:/etc/nginx/conf.d/proxy-backend-core.inc:ro
+      - ./infra/nginx/tls/proxy-backend-ai.inc:/etc/nginx/conf.d/proxy-backend-ai.inc:ro
     deploy:
       resources:
         limits: { cpus: '1.0', memory: 512M }
