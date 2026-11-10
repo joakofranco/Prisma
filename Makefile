@@ -131,9 +131,7 @@ pull: ## Descargar imágenes upstream
 
 health: ## Chequear salud de los servicios
 	@echo "$(CYAN)🩺 Health check...$(RESET)"
-	@curl -sf http://localhost:8081/actuator/health && echo " backend-core OK" || echo " backend-core FAIL"
-	@curl -sf http://localhost:8000/health         && echo " backend-ai OK"   || echo " backend-ai FAIL"
-	@curl -sfI http://localhost:8080               > /dev/null && echo " frontend OK" || echo " frontend FAIL"
+	@bash scripts/health-check.sh
 
 # ---------- LIMPIEZA ----------
 clean: ## Detener y eliminar contenedores + redes (preserva volúmenes)

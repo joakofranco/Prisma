@@ -67,6 +67,7 @@ services:
       SERVER_SSL_CERTIFICATE_PRIVATE_KEY: /etc/prisma/tls/backend-core.key
       AI_SERVICE_URL: https://backend-ai:8000
       S3_ENDPOINT: https://rustfs:9000
+      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-https://prisma.local:${S3_PORT_API:-9001}}
     volumes:
       - ./infra/tls/backend-core.crt:/etc/prisma/tls/backend-core.crt:ro
       - ./infra/tls/backend-core.key:/etc/prisma/tls/backend-core.key:ro

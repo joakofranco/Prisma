@@ -73,8 +73,13 @@ login() {
   if ! docker ps --format '{{.Names}}' | grep -qx "$KC_CONTAINER"; then
     echo "❌ El contenedor $KC_CONTAINER no está corriendo." >&2; exit 1
   fi
-  kcadm config credentials --server http://localhost:8080/auth --realm master \
-    --user "$KEYCLOAK_ADMIN" --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null
+  if kcadm config credentials --server http://localhost:8080/auth --realm master \
+    --user "$KEYCLOAK_ADMIN" --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1; then
+    return 0
+  fi
+  docker exec "$KC_CONTAINER" sh -c 'keytool -importcert -noprompt -alias prisma-internal-ca -file /opt/keycloak/conf/tls/ca.crt -keystore /tmp/kcadm-truststore.p12 -storetype PKCS12 -storepass changeit >/dev/null 2>&1 || true'
+  kcadm config credentials --server https://localhost:8443/auth --truststore /tmp/kcadm-truststore.p12 --trustpass changeit \
+    --realm master --user "$KEYCLOAK_ADMIN" --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null
 }
 
 # ---- helpers sobre flujos --------------------------------------------------

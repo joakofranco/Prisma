@@ -8,9 +8,19 @@ OUT_DIR="${CERT_OUT_DIR:-$SCRIPT_DIR/../infra/tls}"
 SERVICES="${CERT_SERVICES:-keycloak keycloak-db postgres backend-core backend-ai frontend rustfs elasticsearch}"
 FORCE=0
 ONLY=""
+EXTRA_SAN="${CERT_EXTRA_SAN:-}"
 
 usage() {
-  sed -n '2,27p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  cat <<'USAGE'
+Uso: scripts/generate-internal-ca.sh [opciones]
+  (sin opciones)     genera la CA y un certificado por servicio en infra/tls
+  --force            regenera todo sin preguntar
+  --only <servicio>  reemite solo ese certificado reusando la CA
+  --days <n>         validez en dias (por defecto 1825)
+  --out-dir <ruta>   carpeta de salida
+Variables: CERT_DAYS, CERT_OUT_DIR, CERT_SERVICES, CERT_EXTRA_SAN (ej. DNS:otro.host,IP:10.0.0.5)
+Cada certificado incluye como SAN: <servicio>, localhost, prisma.local y 127.0.0.1
+USAGE
   exit 0
 }
 
@@ -74,7 +84,7 @@ issue() {
 basicConstraints=CA:FALSE
 keyUsage=critical,digitalSignature,keyEncipherment
 extendedKeyUsage=serverAuth
-subjectAltName=DNS:$svc,DNS:localhost,IP:127.0.0.1
+subjectAltName=DNS:$svc,DNS:localhost,DNS:prisma.local,IP:127.0.0.1${EXTRA_SAN:+,$EXTRA_SAN}
 EOF
   openssl x509 -req -in "$CSR_FILE" -CA "$CA_CRT" -CAkey "$CA_KEY" -CAcreateserial \
     -out "$crt" -days "$DAYS" -extfile "$EXT_FILE" 2>/dev/null

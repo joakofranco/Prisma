@@ -101,11 +101,15 @@ RustFS sirve HTTPS (API en el 9000 y consola en el 9001) con `RUSTFS_TLS_PATH`; 
 backend-core (`S3_ENDPOINT=https://rustfs:9000`, truststore de la JVM), backend-ai (descarga
 evidencias con URLs firmadas contra ese endpoint; `SSL_CERT_FILE`) y backup-runner (`AWS_CA_BUNDLE`).
 
-**Ojo con `S3_PUBLIC_ENDPOINT`:** es el host con el que backend-core firma las URLs de descarga que
-abre el navegador y no se cambió. Como el certificado de RustFS lo firma la CA interna, que el navegador
-no conoce, en producción esa URL debe apuntar a un endpoint público con certificado confiable (por
-ejemplo un dominio detrás de un reverse proxy), no a `rustfs:9000`. Su valor por defecto
-(`http://localhost:9001`) es solo para desarrollo.
+**`S3_PUBLIC_ENDPOINT`:** es el host con el que backend-core firma las URLs de descarga que abre el
+navegador (`window.open`, directo contra RustFS). En producción vale por defecto
+`https://prisma.local:${S3_PORT_API:-9001}` y se puede cambiar con la variable de entorno
+`S3_PUBLIC_ENDPOINT`. El certificado de RustFS lo firma la CA interna, así que el navegador muestra la
+advertencia de certificado autofirmado: se acepta una vez por navegador, igual que con nginx y Kibana,
+y la descarga sigue. Los certificados incluyen como SAN `prisma.local`, `localhost` y `127.0.0.1`; para
+otro host se agrega al generarlos, por ejemplo
+`CERT_EXTRA_SAN=DNS:s3.midominio.com scripts/generate-internal-ca.sh --only rustfs`, y se usa ese host en
+`S3_PUBLIC_ENDPOINT`.
 
 ### Elasticsearch con TLS (PRI-369, solo producción)
 
@@ -124,6 +128,18 @@ certificado incluye `prisma.local`, `localhost` y `127.0.0.1`: entrar a Kibana p
 la advertencia de nombre. El healthcheck lo verifica contra el propio certificado y
 `kibana-dashboards-init` se conecta con `--connect-to prisma.local:5601:kibana:5601` para poder
 verificarlo sin desactivar la validación.
+
+### Scripts del entorno y la CA interna
+
+- `scripts/generate-internal-ca.sh` (también `make certs` / `make internal-ca`) crea la CA y los certificados; el
+  workflow `deploy.yml` lo ejecuta en el servidor si falta `infra/tls/ca.crt`, y `ci.yml` lo ejecuta antes de
+  levantar compose.
+- `scripts/keycloak/enable-mfa.sh` y `apply-auth-policy.sh` entran a Keycloak por HTTP (8080) y, si está
+  deshabilitado como en producción, por HTTPS (8443) con un truststore creado con la CA interna.
+- `scripts/health-check.sh` (y `make health`) prueba cada servicio por HTTP y, si no responde, por HTTPS
+  verificando con la CA o aceptando el certificado autofirmado.
+- `scripts/backup/backup.sh` y `restore.sh` no cambian: `docker-compose.prod.yml` le da a `backup-runner`
+  `PGSSLMODE`, `PGSSLROOTCERT`, `S3_ENDPOINT` y `AWS_CA_BUNDLE`.
 
 ### Resumen de lo que queda sin TLS
 
