@@ -10,7 +10,9 @@ const improvementService = vi.hoisted(() => ({
 }));
 const notification = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 
-vi.mock('@/services/resources', () => ({ improvementService }));
+const evaluationsService = vi.hoisted(() => ({ getResults: vi.fn() }));
+
+vi.mock('@/services/resources', () => ({ improvementService, evaluationsService }));
 vi.mock('@/composables/useUtils', () => ({ useNotification: () => notification }));
 vi.mock('vue-router', () => ({ useRoute: () => ({ params: { evaluationId: 'eval-1' } }) }));
 
@@ -53,6 +55,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   document.body.innerHTML = '';
   improvementService.getByEvaluation.mockResolvedValue({ data: [] });
+  evaluationsService.getResults.mockResolvedValue({ data: [] });
   improvementService.update.mockResolvedValue({ data: {} });
   improvementService.create.mockResolvedValue({ data: {} });
 });
@@ -353,5 +356,130 @@ describe('ImprovementView: comentarios del ítem (PRI-303)', () => {
     await flushPromises();
 
     expect(document.body.textContent).toContain('no pueden superar los 2000 caracteres');
+  });
+});
+
+const createButton = () =>
+  Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+    (b) => b.textContent?.trim() === 'Crear',
+  )!;
+
+const gapResult = (extra: Record<string, unknown> = {}) => ({
+  functionId: 'f1',
+  functionName: 'Proteger',
+  categoryId: 'c1',
+  categoryName: 'Control de acceso',
+  subcategoryId: 's1',
+  subcategoryName: 'PR.AA-05',
+  currentLevel: 1,
+  targetLevel: 4,
+  gap: 3,
+  nextLevel: 2,
+  missingControls: [
+    {
+      id: 'ctl-1',
+      code: 'MCU-AA-11',
+      description: 'Revisar privilegios administrativos',
+      targetLevel: 2,
+      status: 'NON_COMPLIANT',
+    },
+    {
+      id: 'ctl-2',
+      code: 'MCU-AA-14',
+      description: 'Registrar excepciones de acceso',
+      targetLevel: 2,
+      status: 'UNANSWERED',
+    },
+  ],
+  ...extra,
+});
+
+describe('ImprovementView: brechas por subcategoría (RF-CALC-07)', () => {
+  it('lista nivel actual, próximo nivel y controles faltantes', async () => {
+    evaluationsService.getResults.mockResolvedValue({ data: [gapResult()] });
+    await mountView();
+
+    const text = document.body.querySelector('[data-test="gap-section"]')!.textContent!;
+    expect(text).toContain('PR.AA-05');
+    expect(text).toContain('Nivel 1');
+    expect(text).toContain('Nivel 2');
+    expect(text).toContain('Faltan 2 controles para llegar al nivel 2');
+    expect(text).toContain('No cumple');
+    expect(text).toContain('Sin respuesta');
+    expect(document.body.querySelectorAll('[data-test="gap-control"]')).toHaveLength(2);
+  });
+
+  it('cuenta las subcategorías sin brecha y no las lista', async () => {
+    evaluationsService.getResults.mockResolvedValue({
+      data: [gapResult(), gapResult({ subcategoryId: 's2', nextLevel: null, missingControls: [] })],
+    });
+    await mountView();
+
+    expect(document.body.querySelector('[data-test="gap-summary"]')!.textContent).toContain(
+      '1 con brecha · 1 sin brecha',
+    );
+    expect(document.body.querySelectorAll('[data-test="gap-row"]')).toHaveLength(1);
+  });
+
+  it('muestra un mensaje cuando no hay resultados calculados', async () => {
+    await mountView();
+
+    expect(document.body.querySelector('[data-test="gap-empty"]')).not.toBeNull();
+  });
+
+  it('«Crear acción» abre el modal con el control precargado y lo envía al crear', async () => {
+    evaluationsService.getResults.mockResolvedValue({ data: [gapResult()] });
+    await mountView();
+
+    (document.body.querySelector('[data-test="gap-create"]') as HTMLElement).click();
+    await flushPromises();
+
+    expect(document.body.textContent).toContain('Nueva Acción de Mejora');
+    const action = document.body.querySelector<HTMLInputElement>(
+      'input[placeholder="Describa la acción de mejora"]',
+    )!;
+    expect(action.value).toBe(
+      'Implementar (PR.AA-05, nivel 2): Revisar privilegios administrativos',
+    );
+
+    const responsible = document.body.querySelector<HTMLInputElement>(
+      'input[placeholder="Nombre del responsable"]',
+    )!;
+    responsible.value = 'Ana';
+    responsible.dispatchEvent(new Event('input'));
+    const due = document.body.querySelector<HTMLInputElement>('input[type="date"]')!;
+    due.value = '2026-12-31';
+    due.dispatchEvent(new Event('input'));
+    createButton().click();
+    await flushPromises();
+
+    expect(improvementService.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        evaluationId: 'eval-1',
+        controlId: 'ctl-1',
+        priority: 'MEDIUM',
+        status: 'PENDING',
+      }),
+    );
+  });
+
+  it('marca «Acción creada» en los controles que ya tienen plan', async () => {
+    evaluationsService.getResults.mockResolvedValue({ data: [gapResult()] });
+    improvementService.getByEvaluation.mockResolvedValue({
+      data: [plan('1', 'MEDIUM', 'PENDING', { controlId: 'ctl-1' })],
+    });
+    await mountView();
+
+    expect(document.body.querySelectorAll('[data-test="gap-planned"]')).toHaveLength(1);
+    expect(document.body.querySelectorAll('[data-test="gap-create"]')).toHaveLength(1);
+  });
+
+  it('si falla la carga de resultados el resto de la pantalla sigue funcionando', async () => {
+    evaluationsService.getResults.mockRejectedValue(new Error('boom'));
+    improvementService.getByEvaluation.mockResolvedValue({ data: [plan('1', 'HIGH', 'PENDING')] });
+    await mountView();
+
+    expect(document.body.textContent).toContain('Acción 1');
+    expect(document.body.querySelector('[data-test="gap-empty"]')).not.toBeNull();
   });
 });
