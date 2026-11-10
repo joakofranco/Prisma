@@ -30,6 +30,7 @@ class ControllersMockMvcTest {
   @Mock private CommunityProfileService communityProfileService;
   @Mock private DashboardService dashboardService;
   @Mock private EvaluationService evaluationService;
+  @Mock private EvaluationOverviewService evaluationOverviewService;
   @Mock private OrganizationService organizationService;
   @Mock private UserService userService;
   @Mock private EvidenceService evidenceService;
@@ -46,6 +47,7 @@ class ControllersMockMvcTest {
   private MockMvc communityProfiles;
   private MockMvc dashboard;
   private MockMvc evaluations;
+  private MockMvc evaluationOverview;
   private MockMvc organizations;
   private MockMvc users;
   private MockMvc evidence;
@@ -67,6 +69,9 @@ class ControllersMockMvcTest {
     dashboard = MockMvcBuilders.standaloneSetup(new DashboardController(dashboardService)).build();
     evaluations =
         MockMvcBuilders.standaloneSetup(new EvaluationController(evaluationService)).build();
+    evaluationOverview =
+        MockMvcBuilders.standaloneSetup(new EvaluationOverviewController(evaluationOverviewService))
+            .build();
     organizations =
         MockMvcBuilders.standaloneSetup(new OrganizationController(organizationService)).build();
     users = MockMvcBuilders.standaloneSetup(new UserController(userService)).build();
@@ -340,6 +345,31 @@ class ControllersMockMvcTest {
     when(evaluationService.getResponses(id)).thenReturn(List.of());
 
     evaluations.perform(get("/api/evaluations/{id}/responses", id)).andExpect(status().isOk());
+  }
+
+  @Test
+  void evaluationOverview() throws Exception {
+    UUID id = UUID.randomUUID();
+    when(evaluationOverviewService.getOverview(id))
+        .thenReturn(
+            new EvaluationOverviewDto(
+                id,
+                "Eva",
+                "5.0",
+                "MCU 5.0",
+                null,
+                null,
+                0,
+                0,
+                0,
+                new OverviewPriorityCountsDto(0, 0, 0, 0),
+                List.of()));
+
+    evaluationOverview
+        .perform(get("/api/evaluations/{id}/overview", id))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.evaluationName").value("Eva"))
+        .andExpect(jsonPath("$.catalogVersion").value("5.0"));
   }
 
   @Test
