@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { mount, flushPromises } from '@vue/test-utils';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { mount, flushPromises, type VueWrapper } from '@vue/test-utils';
 
 const improvementService = vi.hoisted(() => ({
   getByEvaluation: vi.fn(),
@@ -8,9 +8,12 @@ const improvementService = vi.hoisted(() => ({
   create: vi.fn(),
   update: vi.fn(),
 }));
+const evaluationsService = vi.hoisted(() => ({ getById: vi.fn() }));
+const auth = vi.hoisted(() => ({ hasAnyRole: vi.fn() }));
 const notification = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 
-vi.mock('@/services/resources', () => ({ improvementService }));
+vi.mock('@/services/resources', () => ({ improvementService, evaluationsService }));
+vi.mock('@/stores/auth', () => ({ useAuthStore: () => auth }));
 vi.mock('@/composables/useUtils', () => ({ useNotification: () => notification }));
 vi.mock('vue-router', () => ({ useRoute: () => ({ params: { evaluationId: 'eval-1' } }) }));
 
@@ -51,11 +54,45 @@ const valueOf = (key: string) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // «Hoy» fijo (solo Date, los timers siguen reales para flushPromises): 09/11/2026.
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date(2026, 10, 9, 12, 0, 0));
   document.body.innerHTML = '';
+  auth.hasAnyRole.mockReturnValue(true);
+  evaluationsService.getById.mockResolvedValue({ data: { status: 'IN_PROGRESS' } });
   improvementService.getByEvaluation.mockResolvedValue({ data: [] });
   improvementService.update.mockResolvedValue({ data: {} });
   improvementService.create.mockResolvedValue({ data: {} });
 });
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+const buttonWithText = (text: string) =>
+  Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+    (b) => b.textContent?.trim() === text,
+  );
+
+async function openEditorFor(index = 0) {
+  document.body.querySelectorAll<HTMLElement>('button[title="Editar acción"]')[index].click();
+  await flushPromises();
+}
+
+function setValue(el: HTMLInputElement | HTMLTextAreaElement, value: string) {
+  el.value = value;
+  el.dispatchEvent(new Event('input'));
+}
+
+const editCommentsBox = () =>
+  Array.from(document.body.querySelectorAll<HTMLTextAreaElement>('textarea')).find((t) =>
+    t.placeholder.includes('Vacío para borrar'),
+  )!;
+const editResponsible = () =>
+  document.body.querySelector<HTMLInputElement>('input[placeholder="Nombre del responsable"]')!;
+const editDate = () => document.body.querySelector<HTMLInputElement>('input[type="date"]')!;
+const selectLabeled = (wrapper: VueWrapper, label: string) =>
+  wrapper.findAllComponents({ name: 'BaseSelect' }).find((s) => s.props('label') === label)!;
 
 describe('ImprovementView: avance de remediación (PRI-307)', () => {
   it('muestra el porcentaje global y por prioridad con «X de Y cerradas»', async () => {
@@ -127,7 +164,7 @@ describe('ImprovementView: avance de remediación (PRI-307)', () => {
     improvementService.getByEvaluation.mockResolvedValue({ data: [plan('1', 'HIGH', 'PENDING')] });
     await mountView();
 
-    for (const title of ['Pendientes', 'En Progreso', 'Completadas', 'Vencidas']) {
+    for (const title of ['Pendientes', 'En curso', 'Realizadas', 'Vencidas']) {
       expect(document.body.textContent).toContain(title);
     }
   });
@@ -256,33 +293,21 @@ describe('ImprovementView: comentarios del ítem (PRI-303)', () => {
     expect(shown[0].textContent).toContain('Depende del área legal');
   });
 
-  it('el botón del ítem dice «Agregar» si no hay comentario y «Editar» si lo hay', async () => {
-    improvementService.getByEvaluation.mockResolvedValue({
-      data: [plan('1', 'HIGH', 'PENDING', { comments: 'algo' }), plan('2', 'LOW', 'PENDING')],
-    });
-    await mountView();
-
-    expect(document.body.querySelectorAll('button[title="Editar comentarios"]')).toHaveLength(1);
-    expect(document.body.querySelectorAll('button[title="Agregar comentarios"]')).toHaveLength(1);
-  });
-
+  // Desde PRI-305 los comentarios se editan en el modal «Editar acción».
   it('editar el comentario de un ítem existente lo guarda y recarga la lista', async () => {
     improvementService.getByEvaluation.mockResolvedValue({
       data: [plan('1', 'HIGH', 'PENDING', { comments: 'viejo' })],
     });
     await mountView();
-    (document.body.querySelector('button[title="Editar comentarios"]') as HTMLElement).click();
-    await flushPromises();
+    await openEditorFor(0);
 
-    const box = document.body.querySelector<HTMLTextAreaElement>('textarea')!;
-    expect(box.value).toBe('viejo');
-    box.value = 'nuevo';
-    box.dispatchEvent(new Event('input'));
-    modalButton('Guardar').click();
+    expect(editCommentsBox().value).toBe('viejo');
+    setValue(editCommentsBox(), 'nuevo');
+    modalButton('Guardar cambios').click();
     await flushPromises();
 
     expect(improvementService.update).toHaveBeenCalledWith('1', { comments: 'nuevo' });
-    expect(notification.success).toHaveBeenCalledWith('Comentarios guardados');
+    expect(notification.success).toHaveBeenCalledWith('Acción actualizada');
     expect(improvementService.getByEvaluation).toHaveBeenCalledTimes(2);
   });
 
@@ -291,17 +316,13 @@ describe('ImprovementView: comentarios del ítem (PRI-303)', () => {
       data: [plan('1', 'HIGH', 'PENDING', { comments: 'borrar' })],
     });
     await mountView();
-    (document.body.querySelector('button[title="Editar comentarios"]') as HTMLElement).click();
-    await flushPromises();
+    await openEditorFor(0);
 
-    const box = document.body.querySelector<HTMLTextAreaElement>('textarea')!;
-    box.value = '';
-    box.dispatchEvent(new Event('input'));
-    modalButton('Guardar').click();
+    setValue(editCommentsBox(), '');
+    modalButton('Guardar cambios').click();
     await flushPromises();
 
     expect(improvementService.update).toHaveBeenCalledWith('1', { comments: '' });
-    expect(notification.success).toHaveBeenCalledWith('Comentarios eliminados');
   });
 
   it('un ítem creado antes de la migración (sin comentario) se puede editar', async () => {
@@ -309,14 +330,11 @@ describe('ImprovementView: comentarios del ítem (PRI-303)', () => {
       data: [plan('1', 'HIGH', 'PENDING', { comments: undefined })],
     });
     await mountView();
-    (document.body.querySelector('button[title="Agregar comentarios"]') as HTMLElement).click();
-    await flushPromises();
+    await openEditorFor(0);
 
-    const box = document.body.querySelector<HTMLTextAreaElement>('textarea')!;
-    expect(box.value).toBe('');
-    box.value = 'primer comentario';
-    box.dispatchEvent(new Event('input'));
-    modalButton('Guardar').click();
+    expect(editCommentsBox().value).toBe('');
+    setValue(editCommentsBox(), 'primer comentario');
+    modalButton('Guardar cambios').click();
     await flushPromises();
 
     expect(improvementService.update).toHaveBeenCalledWith('1', { comments: 'primer comentario' });
@@ -325,13 +343,10 @@ describe('ImprovementView: comentarios del ítem (PRI-303)', () => {
   it('un comentario demasiado largo al editar muestra el error y no llama al servicio', async () => {
     improvementService.getByEvaluation.mockResolvedValue({ data: [plan('1', 'HIGH', 'PENDING')] });
     await mountView();
-    (document.body.querySelector('button[title="Agregar comentarios"]') as HTMLElement).click();
-    await flushPromises();
+    await openEditorFor(0);
 
-    const box = document.body.querySelector<HTMLTextAreaElement>('textarea')!;
-    box.value = 'x'.repeat(MAX + 1);
-    box.dispatchEvent(new Event('input'));
-    modalButton('Guardar').click();
+    setValue(editCommentsBox(), 'x'.repeat(MAX + 1));
+    modalButton('Guardar cambios').click();
     await flushPromises();
 
     expect(improvementService.update).not.toHaveBeenCalled();
@@ -344,14 +359,155 @@ describe('ImprovementView: comentarios del ítem (PRI-303)', () => {
       response: { data: { message: 'Los comentarios no pueden superar los 2000 caracteres' } },
     });
     await mountView();
-    (document.body.querySelector('button[title="Agregar comentarios"]') as HTMLElement).click();
-    await flushPromises();
-    const box = document.body.querySelector<HTMLTextAreaElement>('textarea')!;
-    box.value = 'algo';
-    box.dispatchEvent(new Event('input'));
-    modalButton('Guardar').click();
+    await openEditorFor(0);
+    setValue(editCommentsBox(), 'algo');
+    modalButton('Guardar cambios').click();
     await flushPromises();
 
     expect(document.body.textContent).toContain('no pueden superar los 2000 caracteres');
+  });
+});
+
+describe('ImprovementView: gestión operativa del plan (PRI-305, RF-PLN-04)', () => {
+  it('editar plazo y responsable envía solo los campos que cambiaron', async () => {
+    improvementService.getByEvaluation.mockResolvedValue({ data: [plan('1', 'HIGH', 'PENDING')] });
+    await mountView();
+    await openEditorFor(0);
+
+    expect(editDate().min).toBe('2026-11-09');
+    setValue(editResponsible(), 'Beto');
+    setValue(editDate(), '2026-12-15');
+    buttonWithText('Guardar cambios')!.click();
+    await flushPromises();
+
+    expect(improvementService.update).toHaveBeenCalledWith('1', {
+      responsible: 'Beto',
+      dueDate: '2026-12-15',
+    });
+  });
+
+  it('no deja guardar una fecha límite anterior a hoy', async () => {
+    improvementService.getByEvaluation.mockResolvedValue({ data: [plan('1', 'HIGH', 'PENDING')] });
+    await mountView();
+    await openEditorFor(0);
+
+    setValue(editDate(), '2026-11-01');
+    buttonWithText('Guardar cambios')!.click();
+    await flushPromises();
+
+    expect(improvementService.update).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain('La fecha límite no puede ser anterior a hoy');
+  });
+
+  it('una acción vencida a la que se le pone una fecha vigente pasa a Pendiente', async () => {
+    improvementService.getByEvaluation.mockResolvedValue({
+      data: [plan('1', 'HIGH', 'OVERDUE', { dueDate: '2026-10-30' })],
+    });
+    await mountView();
+    await openEditorFor(0);
+
+    setValue(editDate(), '2026-11-30');
+    await flushPromises();
+    expect(document.body.querySelector('[data-test="overdue-reset"]')?.textContent).toContain(
+      'Pendiente',
+    );
+    buttonWithText('Guardar cambios')!.click();
+    await flushPromises();
+
+    expect(improvementService.update).toHaveBeenCalledWith('1', {
+      status: 'PENDING',
+      dueDate: '2026-11-30',
+    });
+  });
+
+  it('en la fila, una acción vencida solo ofrece Realizado y muestra «Vencida»', async () => {
+    improvementService.getByEvaluation.mockResolvedValue({
+      data: [plan('1', 'HIGH', 'OVERDUE', { dueDate: '2026-10-30' })],
+    });
+    const wrapper = await mountView();
+
+    const options = wrapper.findAllComponents({ name: 'BaseSelect' })[0].props('options') as {
+      value: string;
+      label: string;
+      disabled?: boolean;
+    }[];
+    const byValue = Object.fromEntries(options.map((o) => [o.value, o]));
+    expect(byValue.PENDING.disabled).toBe(true);
+    expect(byValue.IN_PROGRESS.disabled).toBe(true);
+    expect(byValue.COMPLETED.disabled).toBeFalsy();
+    expect(byValue.COMPLETED.label).toBe('Realizado');
+    expect(byValue.OVERDUE).toMatchObject({ label: 'Vencida', disabled: true });
+  });
+
+  it('las etiquetas de estado son las del requerimiento', async () => {
+    improvementService.getByEvaluation.mockResolvedValue({
+      data: [plan('1', 'HIGH', 'IN_PROGRESS'), plan('2', 'LOW', 'COMPLETED')],
+    });
+    await mountView();
+
+    expect(document.body.textContent).toContain('En curso');
+    expect(document.body.textContent).toContain('Realizado');
+    expect(document.body.textContent).not.toContain('Completada');
+    expect(document.body.textContent).not.toContain('En Progreso');
+  });
+
+  it('si el backend rechaza el cambio de estado lo avisa', async () => {
+    improvementService.getByEvaluation.mockResolvedValue({ data: [plan('1', 'HIGH', 'PENDING')] });
+    improvementService.update.mockRejectedValue({
+      response: { data: { message: 'La fecha límite ya venció' } },
+    });
+    const wrapper = await mountView();
+
+    wrapper.findAllComponents({ name: 'BaseSelect' })[0].vm.$emit('update:modelValue', 'COMPLETED');
+    await flushPromises();
+
+    expect(notification.error).toHaveBeenCalledWith('La fecha límite ya venció');
+  });
+
+  it('sin rol de gestión el plan es de solo lectura', async () => {
+    auth.hasAnyRole.mockReturnValue(false);
+    improvementService.getByEvaluation.mockResolvedValue({ data: [plan('1', 'HIGH', 'PENDING')] });
+    const wrapper = await mountView();
+
+    expect(buttonWithText('Nueva Acción')).toBeUndefined();
+    expect(buttonWithText('Generar Sugerencias')).toBeUndefined();
+    expect(document.body.querySelector('button[title="Editar acción"]')).toBeNull();
+    expect(wrapper.findAllComponents({ name: 'BaseSelect' })).toHaveLength(0);
+  });
+
+  it('con la evaluación en borrador o archivada el plan no se edita', async () => {
+    for (const status of ['DRAFT', 'ARCHIVED']) {
+      document.body.innerHTML = '';
+      evaluationsService.getById.mockResolvedValue({ data: { status } });
+      improvementService.getByEvaluation.mockResolvedValue({
+        data: [plan('1', 'HIGH', 'PENDING')],
+      });
+      await mountView();
+
+      expect(document.body.querySelector('[data-test="closed-banner"]')).not.toBeNull();
+      expect(document.body.querySelector('button[title="Editar acción"]')).toBeNull();
+      expect(buttonWithText('Nueva Acción')!.disabled).toBe(true);
+    }
+  });
+
+  it('con la evaluación aprobada solo se puede cambiar el estado', async () => {
+    evaluationsService.getById.mockResolvedValue({ data: { status: 'APPROVED' } });
+    improvementService.getByEvaluation.mockResolvedValue({ data: [plan('1', 'HIGH', 'PENDING')] });
+    const wrapper = await mountView();
+
+    expect(document.body.querySelector('[data-test="approved-banner"]')).not.toBeNull();
+    expect(buttonWithText('Nueva Acción')!.disabled).toBe(true);
+    expect(buttonWithText('Generar Sugerencias')!.disabled).toBe(true);
+
+    await openEditorFor(0);
+    expect(editResponsible().disabled).toBe(true);
+    expect(editDate().disabled).toBe(true);
+    expect(editCommentsBox().disabled).toBe(true);
+    selectLabeled(wrapper, 'Estado').vm.$emit('update:modelValue', 'COMPLETED');
+    await flushPromises();
+    buttonWithText('Guardar estado')!.click();
+    await flushPromises();
+
+    expect(improvementService.update).toHaveBeenCalledWith('1', { status: 'COMPLETED' });
   });
 });

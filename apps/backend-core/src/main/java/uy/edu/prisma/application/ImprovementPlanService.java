@@ -3,6 +3,7 @@ package uy.edu.prisma.application;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -35,12 +36,18 @@ import uy.edu.prisma.web.dto.Dto.UpdateImprovementPlanDto;
 @Transactional
 public class ImprovementPlanService {
 
+  private static final String EXPIRED_APPROVED =
+      "La fecha límite ya venció: con la evaluación aprobada solo se puede pasar a Realizado";
+  private static final String EXPIRED_OPEN =
+      "La fecha límite ya venció: asigne una fecha vigente o pase la acción a Realizado";
+
   private final ImprovementPlanRepository repo;
   private final EvaluationRepository evaluationRepo;
   private final CatalogControlRepository controlRepo;
   private final EvaluationResponseRepository responseRepo;
   private final AiEvidenceClient aiClient;
   private final CurrentUserService currentUser;
+  private final AuditLogService auditLog;
 
   public ImprovementPlanService(
       ImprovementPlanRepository repo,
@@ -48,13 +55,15 @@ public class ImprovementPlanService {
       CatalogControlRepository controlRepo,
       EvaluationResponseRepository responseRepo,
       AiEvidenceClient aiClient,
-      CurrentUserService currentUser) {
+      CurrentUserService currentUser,
+      AuditLogService auditLog) {
     this.repo = repo;
     this.evaluationRepo = evaluationRepo;
     this.controlRepo = controlRepo;
     this.responseRepo = responseRepo;
     this.aiClient = aiClient;
     this.currentUser = currentUser;
+    this.auditLog = auditLog;
   }
 
   // On-demand (un control a la vez, ver AiEvidenceClient.suggestRemediation): no necesita
@@ -93,6 +102,13 @@ public class ImprovementPlanService {
             .findById(dto.evaluationId())
             .orElseThrow(() -> new ResourceNotFoundException("Evaluación", dto.evaluationId()));
     currentUser.assertOrganizationAccess(eval.getOrganization().getId());
+    assertPlanOpen(eval);
+    if (eval.getStatus() == Evaluation.Status.APPROVED) {
+      throw new InvalidRequestException(
+          "La evaluación está aprobada: no se pueden agregar acciones al plan de mejora");
+    }
+    LocalDate dueDate = parseDueDate(dto.dueDate());
+    assertNotPast(dueDate);
     // dto.controlId() se ignoraba silenciosamente: la accion quedaba creada pero sin vincular al
     // control del catalogo, asi que suggest() nunca podia detectar que ese control ya tenia un
     // plan y lo volvia a sugerir en cada llamada (duplicados).
@@ -110,36 +126,173 @@ public class ImprovementPlanService {
             .responsible(dto.responsible())
             .priority(parsePriority(dto.priority()))
             .status(PlanStatus.PENDING)
-            .dueDate(parseDueDate(dto.dueDate()))
+            .dueDate(dueDate)
             .comments(normalizeComments(dto.comments()))
             .build();
     return toDto(repo.save(plan));
   }
 
+  /**
+   * RF-PLN-04 — Gestión operativa: editar plazo, responsable y estado de una acción. Reglas:
+   *
+   * <ul>
+   *   <li>Con la evaluación en DRAFT o ARCHIVED el plan no está activo: no se edita.
+   *   <li>Con la evaluación APPROVED solo se puede cambiar el estado.
+   *   <li>Una fecha límite nueva no puede ser anterior a hoy (si no cambia, no se revalida: una
+   *       acción vencida se puede seguir editando sin tocar su fecha).
+   *   <li>OVERDUE lo asigna el sistema ({@link ImprovementPlanRepository#markOverdue()}), nunca el
+   *       usuario. Si una acción vencida recibe una fecha nueva y no se pide otro estado, vuelve a
+   *       PENDING.
+   *   <li>No se puede pasar a PENDING / IN_PROGRESS una acción cuya fecha ya venció: el próximo
+   *       listado la volvería a marcar vencida. Hay que darle una fecha vigente o pasarla a
+   *       COMPLETED (con la evaluación aprobada, como la fecha no se edita, solo queda COMPLETED).
+   * </ul>
+   *
+   * Cada cambio real queda en la bitácora como UPDATE_IMPROVEMENT_PLAN.
+   */
   public ImprovementPlanDto update(UUID id, UpdateImprovementPlanDto dto) {
     ImprovementPlan plan =
         repo.findById(id).orElseThrow(() -> new ResourceNotFoundException("Plan de mejora", id));
-    currentUser.assertOrganizationAccess(plan.getEvaluation().getOrganization().getId());
-    if (dto.action() != null && !dto.action().isBlank()) {
-      plan.setAction(dto.action());
-    }
-    if (dto.responsible() != null) {
-      plan.setResponsible(dto.responsible());
-    }
-    if (dto.priority() != null && !dto.priority().isBlank()) {
-      plan.setPriority(parsePriority(dto.priority()));
-    }
-    if (dto.status() != null && !dto.status().isBlank()) {
-      plan.setStatus(parseStatus(dto.status()));
-    }
-    if (dto.dueDate() != null && !dto.dueDate().isBlank()) {
-      plan.setDueDate(parseDueDate(dto.dueDate()));
-    }
+    Evaluation eval = plan.getEvaluation();
+    currentUser.assertOrganizationAccess(eval.getOrganization().getId());
+    assertPlanOpen(eval);
+
+    String action = isBlank(dto.action()) ? plan.getAction() : dto.action();
+    String responsible = dto.responsible() != null ? dto.responsible() : plan.getResponsible();
+    Priority priority =
+        isBlank(dto.priority()) ? plan.getPriority() : parsePriority(dto.priority());
+    LocalDate dueDate = isBlank(dto.dueDate()) ? plan.getDueDate() : parseDueDate(dto.dueDate());
     // Comentarios: null = sin cambios; una cadena vacía (o en blanco) borra el comentario.
-    if (dto.comments() != null) {
-      plan.setComments(normalizeComments(dto.comments()));
+    String comments =
+        dto.comments() != null ? normalizeComments(dto.comments()) : plan.getComments();
+
+    boolean dueDateChanged = !Objects.equals(dueDate, plan.getDueDate());
+    if (dueDateChanged) {
+      assertNotPast(dueDate);
     }
-    return toDto(repo.save(plan));
+
+    PlanStatus requested = isBlank(dto.status()) ? null : parseStatus(dto.status());
+    if (requested == PlanStatus.OVERDUE) {
+      if (plan.getStatus() != PlanStatus.OVERDUE) {
+        throw new InvalidRequestException(
+            "El estado Vencida lo asigna el sistema según la fecha límite");
+      }
+      requested = null; // reenviar el estado actual no es un cambio
+    }
+    PlanStatus status;
+    if (requested != null) {
+      status = requested;
+    } else if (plan.getStatus() == PlanStatus.OVERDUE && dueDateChanged) {
+      status = PlanStatus.PENDING;
+    } else {
+      status = plan.getStatus();
+    }
+
+    Map<String, String[]> changes = new LinkedHashMap<>();
+    addChange(changes, "action", plan.getAction(), action);
+    addChange(changes, "responsible", plan.getResponsible(), responsible);
+    addChange(changes, "priority", plan.getPriority(), priority);
+    addChange(changes, "dueDate", plan.getDueDate(), dueDate);
+    addChange(changes, "status", plan.getStatus(), status);
+    addChange(changes, "comments", plan.getComments(), comments);
+
+    boolean approved = eval.getStatus() == Evaluation.Status.APPROVED;
+    if (approved && changes.keySet().stream().anyMatch(field -> !field.equals("status"))) {
+      throw new InvalidRequestException(
+          "La evaluación está aprobada: solo se puede cambiar el estado de la acción");
+    }
+
+    boolean reopening =
+        status != plan.getStatus()
+            && (status == PlanStatus.PENDING || status == PlanStatus.IN_PROGRESS);
+    if (reopening && dueDate != null && dueDate.isBefore(LocalDate.now())) {
+      throw new InvalidRequestException(approved ? EXPIRED_APPROVED : EXPIRED_OPEN);
+    }
+
+    plan.setAction(action);
+    plan.setResponsible(responsible);
+    plan.setPriority(priority);
+    plan.setDueDate(dueDate);
+    plan.setStatus(status);
+    plan.setComments(comments);
+    ImprovementPlan saved = repo.save(plan);
+
+    if (!changes.isEmpty()) {
+      auditLog.record("UPDATE_IMPROVEMENT_PLAN", "improvement_plan:" + id, changesJson(changes));
+    }
+    return toDto(saved);
+  }
+
+  /** El plan solo está activo mientras la evaluación no sea un borrador ni esté archivada. */
+  private static void assertPlanOpen(Evaluation eval) {
+    if (eval.getStatus() == Evaluation.Status.DRAFT
+        || eval.getStatus() == Evaluation.Status.ARCHIVED) {
+      throw new InvalidRequestException(
+          "El plan de mejora no está activo: la evaluación está en borrador o archivada");
+    }
+  }
+
+  private static void assertNotPast(LocalDate dueDate) {
+    if (dueDate != null && dueDate.isBefore(LocalDate.now())) {
+      throw new InvalidRequestException("La fecha límite no puede ser anterior a hoy");
+    }
+  }
+
+  private static boolean isBlank(String value) {
+    return value == null || value.isBlank();
+  }
+
+  private static void addChange(
+      Map<String, String[]> changes, String field, Object from, Object to) {
+    if (!Objects.equals(from, to)) {
+      changes.put(field, new String[] {Objects.toString(from, null), Objects.toString(to, null)});
+    }
+  }
+
+  /**
+   * {"changes":{"campo":{"from":…,"to":…}}}. La columna payload es jsonb, así que los textos libres
+   * (acción, responsable, comentarios) se escapan.
+   */
+  private static String changesJson(Map<String, String[]> changes) {
+    StringBuilder sb = new StringBuilder("{\"changes\":{");
+    boolean first = true;
+    for (Map.Entry<String, String[]> e : changes.entrySet()) {
+      if (!first) {
+        sb.append(',');
+      }
+      first = false;
+      sb.append(jsonString(e.getKey()))
+          .append(":{\"from\":")
+          .append(jsonString(e.getValue()[0]))
+          .append(",\"to\":")
+          .append(jsonString(e.getValue()[1]))
+          .append('}');
+    }
+    return sb.append("}}").toString();
+  }
+
+  private static String jsonString(String value) {
+    if (value == null) {
+      return "null";
+    }
+    StringBuilder sb = new StringBuilder("\"");
+    for (char c : value.toCharArray()) {
+      switch (c) {
+        case '"' -> sb.append("\\\"");
+        case '\\' -> sb.append("\\\\");
+        case '\n' -> sb.append("\\n");
+        case '\r' -> sb.append("\\r");
+        case '\t' -> sb.append("\\t");
+        default -> {
+          if (c < 0x20) {
+            sb.append(String.format("\\u%04x", (int) c));
+          } else {
+            sb.append(c);
+          }
+        }
+      }
+    }
+    return sb.append('"').toString();
   }
 
   /**

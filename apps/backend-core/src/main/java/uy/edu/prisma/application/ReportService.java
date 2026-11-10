@@ -938,8 +938,9 @@ public class ReportService {
   private static String planStatusLabel(ImprovementPlan.PlanStatus status) {
     return switch (status) {
       case PENDING -> "Pendiente";
-      case IN_PROGRESS -> "En Progreso";
-      case COMPLETED -> "Completada";
+      // Etiquetas de RF-PLN-04: Pendiente / En curso / Realizado (Vencida la asigna el sistema).
+      case IN_PROGRESS -> "En curso";
+      case COMPLETED -> "Realizado";
       case OVERDUE -> "Vencida";
     };
   }

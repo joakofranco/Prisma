@@ -446,7 +446,7 @@ class ReportServiceTest {
     String text = allText(service.generateExecutivePdf(eval.getId()));
 
     assertTrue(text.contains("Vencida"));
-    assertTrue(text.contains("Completada"));
+    assertTrue(text.contains("Realizado"));
     assertTrue(text.contains("05/01/2026"));
   }
 

@@ -158,6 +158,7 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   LINK_KEYCLOAK_ACCOUNT: 'Vinculación de Cuenta',
   REACTIVATE: 'Reactivación',
   SAVE_RESPONSE: 'Respuesta Guardada',
+  UPDATE_IMPROVEMENT_PLAN: 'Edición de Plan de Mejora',
   LOGIN: 'Inicio de Sesión',
   LOGOUT: 'Cierre de Sesión',
   // A diferencia del resto, esto NO lo registra AuditLogService.record desde un request HTTP --
@@ -175,6 +176,7 @@ export const AUDIT_RESOURCE_TYPE_LABELS: Record<string, string> = {
   organization: 'Organización',
   evaluation: 'Evaluación',
   catalog_version: 'Versión de Catálogo',
+  improvement_plan: 'Acción del Plan de Mejora',
   'email-settings': 'Configuración de Email',
 };
 

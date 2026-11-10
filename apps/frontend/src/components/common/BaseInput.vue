@@ -14,6 +14,7 @@
       :value="modelValue"
       :placeholder="placeholder"
       :disabled="disabled"
+      :min="min || undefined"
       :aria-required="required ? 'true' : undefined"
       :aria-invalid="error ? 'true' : undefined"
       :aria-describedby="error ? errorId : undefined"
@@ -47,6 +48,8 @@
       required?: boolean;
       error?: string;
       id?: string;
+      /** Valor mínimo (p.ej. la fecha de hoy en un `type="date"`). */
+      min?: string;
     }>(),
     {
       label: '',
@@ -56,6 +59,7 @@
       required: false,
       error: '',
       id: '',
+      min: '',
     },
   );
 
