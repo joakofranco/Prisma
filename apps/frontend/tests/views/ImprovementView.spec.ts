@@ -10,7 +10,17 @@ const improvementService = vi.hoisted(() => ({
 }));
 const notification = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 
-vi.mock('@/services/resources', () => ({ improvementService }));
+const reportsService = vi.hoisted(() => ({
+  exportImprovementPlanPDF: vi.fn(),
+  exportImprovementPlanExcel: vi.fn(),
+}));
+const saveBlob = vi.hoisted(() => vi.fn());
+
+vi.mock('@/services/resources', () => ({ improvementService, reportsService }));
+vi.mock('@/utils/files', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/utils/files')>()),
+  saveBlob,
+}));
 vi.mock('@/composables/useUtils', () => ({ useNotification: () => notification }));
 vi.mock('vue-router', () => ({ useRoute: () => ({ params: { evaluationId: 'eval-1' } }) }));
 
@@ -353,5 +363,120 @@ describe('ImprovementView: comentarios del ítem (PRI-303)', () => {
     await flushPromises();
 
     expect(document.body.textContent).toContain('no pueden superar los 2000 caracteres');
+  });
+});
+
+if (!Blob.prototype.text) {
+  Blob.prototype.text = function (this: Blob) {
+    return new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(reader.error);
+      reader.readAsText(this);
+    });
+  };
+}
+
+describe('ImprovementView: exportación del plan (RF-PLN-05)', () => {
+  const exportButton = () =>
+    document.body.querySelector<HTMLButtonElement>('[data-test="export-button"]')!;
+  const choose = async (format: 'pdf' | 'excel') => {
+    exportButton().click();
+    await flushPromises();
+    document.body.querySelector<HTMLElement>(`[data-test="export-${format}"]`)!.click();
+    await flushPromises();
+  };
+
+  beforeEach(() => {
+    reportsService.exportImprovementPlanPDF.mockResolvedValue({ data: new ArrayBuffer(8) });
+    reportsService.exportImprovementPlanExcel.mockResolvedValue({ data: new ArrayBuffer(8) });
+  });
+
+  it('con el plan vacío el botón está deshabilitado y se explica por qué', async () => {
+    await mountView();
+
+    expect(exportButton().disabled).toBe(true);
+    expect(document.body.querySelector('[data-test="export-hint"]')).not.toBeNull();
+  });
+
+  it('con acciones el botón está habilitado y el menú ofrece PDF y Excel', async () => {
+    improvementService.getByEvaluation.mockResolvedValue({ data: [plan('1', 'HIGH', 'PENDING')] });
+    await mountView();
+
+    expect(exportButton().disabled).toBe(false);
+    expect(document.body.querySelector('[data-test="export-pdf"]')).toBeNull();
+    exportButton().click();
+    await flushPromises();
+    expect(document.body.querySelector('[data-test="export-pdf"]')).not.toBeNull();
+    expect(document.body.querySelector('[data-test="export-excel"]')).not.toBeNull();
+  });
+
+  it('exportar a PDF pide el archivo de la evaluación y lo descarga', async () => {
+    improvementService.getByEvaluation.mockResolvedValue({ data: [plan('1', 'HIGH', 'PENDING')] });
+    await mountView();
+
+    await choose('pdf');
+
+    expect(reportsService.exportImprovementPlanPDF).toHaveBeenCalledWith('eval-1');
+    expect(saveBlob).toHaveBeenCalledWith(expect.any(Blob), 'plan-mejora-eval-1.pdf');
+    expect(notification.success).toHaveBeenCalled();
+  });
+
+  it('exportar a Excel pide el archivo de la evaluación y lo descarga', async () => {
+    improvementService.getByEvaluation.mockResolvedValue({ data: [plan('1', 'HIGH', 'PENDING')] });
+    await mountView();
+
+    await choose('excel');
+
+    expect(reportsService.exportImprovementPlanExcel).toHaveBeenCalledWith('eval-1');
+    expect(saveBlob).toHaveBeenCalledWith(expect.any(Blob), 'plan-mejora-eval-1.xlsx');
+  });
+
+  it('muestra el mensaje del backend cuando la exportación falla', async () => {
+    improvementService.getByEvaluation.mockResolvedValue({ data: [plan('1', 'HIGH', 'PENDING')] });
+    reportsService.exportImprovementPlanPDF.mockRejectedValue({
+      response: {
+        data: new Blob([JSON.stringify({ message: 'El plan no tiene acciones' })], {
+          type: 'application/json',
+        }),
+      },
+    });
+    await mountView();
+
+    await choose('pdf');
+
+    expect(saveBlob).not.toHaveBeenCalled();
+    await vi.waitFor(() =>
+      expect(notification.error).toHaveBeenCalledWith('El plan no tiene acciones'),
+    );
+  });
+
+  it('usa un mensaje genérico si el error no trae mensaje', async () => {
+    improvementService.getByEvaluation.mockResolvedValue({ data: [plan('1', 'HIGH', 'PENDING')] });
+    reportsService.exportImprovementPlanExcel.mockRejectedValue({});
+    await mountView();
+
+    await choose('excel');
+
+    expect(notification.error).toHaveBeenCalledWith('No se pudo generar el archivo');
+  });
+
+  it('mientras genera el archivo el botón queda deshabilitado', async () => {
+    improvementService.getByEvaluation.mockResolvedValue({ data: [plan('1', 'HIGH', 'PENDING')] });
+    let release: (v: unknown) => void = () => {};
+    reportsService.exportImprovementPlanPDF.mockReturnValue(
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+    );
+    await mountView();
+
+    await choose('pdf');
+
+    expect(exportButton().disabled).toBe(true);
+    expect(exportButton().textContent).toContain('Generando archivo');
+    release({ data: new ArrayBuffer(8) });
+    await flushPromises();
+    expect(exportButton().disabled).toBe(false);
   });
 });
