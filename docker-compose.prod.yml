@@ -245,9 +245,30 @@ services:
     environment:
       ELASTICSEARCH_HOSTS: https://elasticsearch:9200
       ELASTICSEARCH_SSL_CERTIFICATEAUTHORITIES: /usr/share/kibana/config/certs/ca.crt
+      SERVER_SSL_ENABLED: "true"
+      SERVER_SSL_CERTIFICATE: /usr/share/kibana/config/certs/kibana.crt
+      SERVER_SSL_KEY: /usr/share/kibana/config/certs/kibana.key
     volumes:
       - ./infra/tls/ca.crt:/usr/share/kibana/config/certs/ca.crt:ro
+      - ./infra/nginx/certs/prisma.crt:/usr/share/kibana/config/certs/kibana.crt:ro
+      - ./infra/nginx/certs/prisma.key:/usr/share/kibana/config/certs/kibana.key:ro
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - >-
+          curl -sf --cacert /usr/share/kibana/config/certs/kibana.crt https://localhost:5601/api/status
+          | grep -q '"level":"available"'
 
   filebeat:
     environment:
       ELASTICSEARCH_HOSTS: https://elasticsearch:9200
+
+  kibana-dashboards-init:
+    volumes:
+      - ./infra/nginx/certs/prisma.crt:/kibana.crt:ro
+    entrypoint: >
+      sh -c "
+      curl -sf --cacert /kibana.crt --connect-to prisma.local:5601:kibana:5601
+      -u elastic:$$ELASTIC_PASSWORD -X POST 'https://prisma.local:5601/api/saved_objects/_import?overwrite=true'
+      -H 'kbn-xsrf: true' --form file=@/dashboards.ndjson;
+      "

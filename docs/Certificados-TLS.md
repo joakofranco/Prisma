@@ -113,15 +113,24 @@ Elasticsearch sirve HTTPS en el 9200 (`xpack.security.http.ssl.*`, certificado `
 TLS 1.2 mínimo). Verifican el certificado contra la CA interna: el healthcheck, `kibana-init`, Kibana
 (`ELASTICSEARCH_SSL_CERTIFICATEAUTHORITIES`) y Filebeat (`ssl.certificate_authorities` en
 `filebeat.yml`, que solo se aplica cuando `ELASTICSEARCH_HOSTS` es `https://`). Los certificados deben
-ser legibles por el usuario `elasticsearch` del contenedor. Esto no cubre el TLS de Kibana hacia el
-navegador (puerto 5601), que sigue siendo HTTP.
+ser legibles por el usuario `elasticsearch` del contenedor.
+
+### Kibana con el certificado autofirmado de nginx (PRI-369, solo producción)
+
+Kibana sirve HTTPS hacia el navegador en el 5601 (`SERVER_SSL_*`) con el **mismo certificado
+autofirmado de nginx** (`infra/nginx/certs/prisma.crt/.key`, el que genera `make certs`), así que el
+navegador pide aceptar la excepción una sola vez, igual que con `https://prisma.local`. El SAN del
+certificado incluye `prisma.local`, `localhost` y `127.0.0.1`: entrar a Kibana por otro nombre mostrará
+la advertencia de nombre. El healthcheck lo verifica contra el propio certificado y
+`kibana-dashboards-init` se conecta con `--connect-to prisma.local:5601:kibana:5601` para poder
+verificarlo sin desactivar la validación.
 
 ### Resumen de lo que queda sin TLS
 
-En producción ya no queda ningún tramo interno entre servicios de PRISMA sin cifrar. Quedan en HTTP:
-el management interface de Keycloak (9000, solo `/health`, sin publicar), Kibana → navegador (5601) y el
-TLS de transporte entre nodos de Elasticsearch (no aplica: nodo único). En desarrollo todo lo anterior
-sigue en HTTP salvo los tramos hacia Keycloak.
+En producción ya no queda ningún tramo entre servicios de PRISMA ni hacia el navegador sin cifrar,
+salvo el management interface de Keycloak (9000, solo `/health`, sin publicar) y el TLS de transporte
+entre nodos de Elasticsearch (no aplica: nodo único). En desarrollo todo lo anterior sigue en HTTP
+salvo los tramos hacia Keycloak.
 
 El contenedor del propio frontend (`apps/frontend/nginx.conf`) tiene la **misma** definición de
 `/api`, `/ai`, `/auth` que el reverse-proxy principal, así que acceder directo a
