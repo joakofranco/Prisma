@@ -106,7 +106,7 @@ Todos los errores de `backend-core` devuelven el mismo shape (`GlobalExceptionHa
 | DELETE | `/{id}` | `PRISMA_ADMIN`, `ORG_RESPONSIBLE` | — |
 | GET | `/{id}/responses` | cualquiera autenticado (con acceso a la organización) | — |
 | POST | `/{id}/responses` | `PRISMA_ADMIN`, `INTERNAL_EVALUATOR`, `ORG_RESPONSIBLE` | `{controlId, compliant, observations?}` — **rechaza con 400** si la evaluación no está en `DRAFT`/`IN_PROGRESS`/`RETURNED` (`Evaluation.isSelfAssessmentEditable()`) |
-| GET | `/{id}/results` | cualquiera autenticado | resultados de madurez ya calculados (vacío si nunca se calculó) |
+| GET | `/{id}/results` | cualquiera autenticado | resultados de madurez ya calculados (vacío si nunca se calculó). Cada fila trae además `nextLevel` (próximo nivel con controles del perfil pendientes, `null` si no hay brecha accionable) y `missingControls` (controles del perfil de nivel ≤ `nextLevel` sin respuesta «cumple», con `status` `NON_COMPLIANT` o `UNANSWERED`), calculados al vuelo con las respuestas actuales (RF-CALC-07) |
 | POST | `/{id}/calculate` | `PRISMA_ADMIN`, `INTERNAL_EVALUATOR` | recalcula madurez/brechas — idempotente, pisa el cálculo anterior |
 
 ### Ciclo de vida — transiciones válidas
