@@ -9,5 +9,7 @@ public interface EvidenceRepository extends JpaRepository<Evidence, UUID> {
 
   List<Evidence> findByEvaluationIdOrderByUploadedAtDesc(UUID evaluationId);
 
+  List<Evidence> findByScanStatusOrderByUploadedAtAsc(Evidence.ScanStatus scanStatus);
+
   void deleteByEvaluationId(UUID evaluationId);
 }

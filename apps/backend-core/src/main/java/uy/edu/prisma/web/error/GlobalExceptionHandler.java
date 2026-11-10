@@ -20,6 +20,7 @@ import uy.edu.prisma.application.OrganizationMessages;
 import uy.edu.prisma.config.EvidenceConfig.EvidenceProperties;
 import uy.edu.prisma.domain.exception.ConflictException;
 import uy.edu.prisma.domain.exception.InvalidRequestException;
+import uy.edu.prisma.domain.exception.MalwareDetectedException;
 import uy.edu.prisma.domain.exception.PayloadTooLargeException;
 import uy.edu.prisma.domain.exception.ResourceNotFoundException;
 import uy.edu.prisma.web.dto.Dto.ApiErrorDto;
@@ -56,6 +57,13 @@ public class GlobalExceptionHandler {
   @ExceptionHandler(PayloadTooLargeException.class)
   public ResponseEntity<ApiErrorDto> handlePayloadTooLarge(PayloadTooLargeException ex) {
     return build(HttpStatus.PAYLOAD_TOO_LARGE, "PAYLOAD_TOO_LARGE", ex.getMessage(), null);
+  }
+
+  @ExceptionHandler(MalwareDetectedException.class)
+  public ResponseEntity<ApiErrorDto> handleMalware(MalwareDetectedException ex) {
+    Map<String, List<String>> details =
+        ex.getSignature() == null ? null : Map.of("signature", List.of(ex.getSignature()));
+    return build(HttpStatus.UNPROCESSABLE_ENTITY, "MALWARE_DETECTED", ex.getMessage(), details);
   }
 
   // Spring corta la petición multipart antes de llegar al controlador si supera el límite de
