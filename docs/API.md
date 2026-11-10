@@ -107,6 +107,7 @@ Todos los errores de `backend-core` devuelven el mismo shape (`GlobalExceptionHa
 | GET | `/{id}/responses` | cualquiera autenticado (con acceso a la organización) | — |
 | POST | `/{id}/responses` | `PRISMA_ADMIN`, `INTERNAL_EVALUATOR`, `ORG_RESPONSIBLE` | `{controlId, compliant, observations?}` — **rechaza con 400** si la evaluación no está en `DRAFT`/`IN_PROGRESS`/`RETURNED` (`Evaluation.isSelfAssessmentEditable()`) |
 | GET | `/{id}/results` | cualquiera autenticado | resultados de madurez ya calculados (vacío si nunca se calculó) |
+| GET | `/{id}/overview` | cualquiera autenticado (con acceso a la organización) | RF-EVA-04: estructura de la evaluación (función > categoría > subcategoría) podada al perfil comunitario de la evaluación, con descripción, requisitos MCU, controles por nivel (1-4) y `priority` (`ALTA`/`MEDIA`/`BAJA`, o `null`) de cada subcategoría. La prioridad se deriva de los perfiles oficiales del catálogo: `ALTA` si la subcategoría está en el perfil Básico, `MEDIA` si solo llega al Estándar, `BAJA` si solo llega al Avanzado; `null` si esos perfiles no existen. Sin perfil en la evaluación muestra el catálogo completo |
 | POST | `/{id}/calculate` | `PRISMA_ADMIN`, `INTERNAL_EVALUATOR` | recalcula madurez/brechas — idempotente, pisa el cálculo anterior |
 
 ### Ciclo de vida — transiciones válidas
