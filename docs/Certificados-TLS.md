@@ -94,7 +94,20 @@ El nginx principal usa `infra/nginx/tls/proxy-frontend.inc` (`proxy_pass https:/
 nginx del frontend solo se usan al entrar directo al contenedor (desarrollo); en producción todo pasa
 por el nginx principal.
 
-Siguen en HTTP interno (deuda conocida): Elasticsearch y RustFS.
+### RustFS (S3) con TLS (PRI-369, solo producción)
+
+RustFS sirve HTTPS (API en el 9000 y consola en el 9001) con `RUSTFS_TLS_PATH`; el certificado
+`rustfs.crt/.key` se monta como `rustfs_cert.pem`/`rustfs_key.pem`. Lo consumen por TLS verificado:
+backend-core (`S3_ENDPOINT=https://rustfs:9000`, truststore de la JVM), backend-ai (descarga
+evidencias con URLs firmadas contra ese endpoint; `SSL_CERT_FILE`) y backup-runner (`AWS_CA_BUNDLE`).
+
+**Ojo con `S3_PUBLIC_ENDPOINT`:** es el host con el que backend-core firma las URLs de descarga que
+abre el navegador y no se cambió. Como el certificado de RustFS lo firma la CA interna, que el navegador
+no conoce, en producción esa URL debe apuntar a un endpoint público con certificado confiable (por
+ejemplo un dominio detrás de un reverse proxy), no a `rustfs:9000`. Su valor por defecto
+(`http://localhost:9001`) es solo para desarrollo.
+
+Sigue en HTTP interno (deuda conocida): Elasticsearch.
 
 El contenedor del propio frontend (`apps/frontend/nginx.conf`) tiene la **misma** definición de
 `/api`, `/ai`, `/auth` que el reverse-proxy principal, así que acceder directo a

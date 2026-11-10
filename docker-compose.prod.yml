@@ -77,6 +77,10 @@ services:
       SERVER_SSL_CERTIFICATE_PRIVATE_KEY: /etc/prisma/tls/backend-core.key
       # PRI-369: backend-core -> backend-ai por TLS (la CA interna va en el truststore de la JVM, ver el command de docker-compose.yml).
       AI_SERVICE_URL: https://backend-ai:8000
+      # PRI-369: backend-core -> RustFS (S3) por TLS. Ojo: S3_PUBLIC_ENDPOINT (URLs firmadas que abre el
+      # navegador) NO se toca aca: debe apuntar a un endpoint publico con certificado confiable para el
+      # navegador, no al certificado de la CA interna (ver docs/Certificados-TLS.md).
+      S3_ENDPOINT: https://rustfs:9000
     volumes:
       - ./infra/tls/backend-core.crt:/etc/prisma/tls/backend-core.crt:ro
       - ./infra/tls/backend-core.key:/etc/prisma/tls/backend-core.key:ro
@@ -182,6 +186,8 @@ services:
     environment:
       PGSSLMODE: verify-full
       PGSSLROOTCERT: /etc/prisma/tls/ca.crt
+      S3_ENDPOINT: https://rustfs:9000
+      AWS_CA_BUNDLE: /etc/prisma/tls/ca.crt
     volumes:
       - ./infra/tls/ca.crt:/etc/prisma/tls/ca.crt:ro
 
@@ -190,3 +196,15 @@ services:
     volumes:
       - ./infra/monitoring/prometheus/prometheus.prod.yml:/etc/prometheus/prometheus.yml:ro
       - ./infra/tls/ca.crt:/etc/prisma/tls/ca.crt:ro
+
+  # PRI-369: RustFS (S3) sirve HTTPS. RUSTFS_TLS_PATH espera rustfs_cert.pem y rustfs_key.pem en ese
+  # directorio. La API (9000) y la consola (9001) pasan a TLS.
+  rustfs:
+    environment:
+      RUSTFS_TLS_PATH: /etc/prisma/tls
+    volumes:
+      - ./infra/tls/rustfs.crt:/etc/prisma/tls/rustfs_cert.pem:ro
+      - ./infra/tls/rustfs.key:/etc/prisma/tls/rustfs_key.pem:ro
+      - ./infra/tls/ca.crt:/etc/prisma/tls/ca.crt:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f --cacert /etc/prisma/tls/ca.crt https://localhost:9000/health || exit 1"]
