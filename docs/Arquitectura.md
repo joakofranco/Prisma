@@ -84,6 +84,22 @@ implementar rate-limiting real.
 - Bucket `prisma-evidences` — evidencias privadas; lo crea `backend-core` en la primera subida.
 - URLs firmadas (SigV4) con TTL para descargas.
 
+### 6b. Antivirus (ClamAV, RNF-09)
+
+- Contenedor `clamav` (imagen `clamav/clamav`); `backend-core` le manda cada evidencia por el
+  protocolo `INSTREAM` de `clamd` (puerto 3310) después de validar tamaño y firma, y antes de guardarla
+  en RustFS. Toda evidencia se analiza.
+- Archivo infectado: se rechaza con 422 (`MALWARE_DETECTED`) y no se guarda.
+- Antivirus caído o sin responder: la evidencia **se guarda en cuarentena** (`scan_status = QUARANTINED`).
+  Mientras está en cuarentena no se puede descargar, ver ni indexar en el asistente de IA; sí se puede
+  eliminar. Una tarea programada (`EvidenceRescanScheduler`, cada `CLAMAV_RESCAN_INTERVAL_MS`, 60 s por
+  defecto) la reanaliza apenas ClamAV responde: si está limpia pasa a `CLEAN` y se indexa; si tiene
+  malware pasa a `INFECTED` y se borra el archivo del almacenamiento.
+- Cada resultado queda en la bitácora de auditoría: `EVIDENCE_SCAN_CLEAN`, `EVIDENCE_SCAN_INFECTED`,
+  `EVIDENCE_QUARANTINED`, `EVIDENCE_QUARANTINE_RELEASED` y `EVIDENCE_QUARANTINE_INFECTED`, con nombre,
+  tamaño, SHA-256 y, si corresponde, la firma detectada. Se registran en una transacción aparte para que un
+  rechazo no los borre. Las evidencias anteriores a RNF-09 quedan como `CLEAN` y no se reanalizan.
+
 ### 7. IAM (Keycloak)
 
 - Realm `prisma` con roles: `PRISMA_ADMIN`, `ORG_RESPONSIBLE`, `INTERNAL_EVALUATOR`, `AUDITOR`, `VIEWER`.
