@@ -90,7 +90,7 @@ location /auth/ {
 
 # ---- Frontend (SPA Vue) ----
 location / {
-    proxy_pass         http://frontend_svc;
+    include            /etc/nginx/conf.d/proxy-frontend.inc;
     proxy_set_header   Host              $http_host;
     proxy_set_header   X-Real-IP         $remote_addr;
     # $remote_addr, NO $proxy_add_x_forwarded_for -- ver el comentario en location /api/.

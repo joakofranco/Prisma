@@ -120,6 +120,15 @@ services:
     image: ghcr.io/${GHCR_ORG}/prisma-frontend:${TAG:-latest}
     pull_policy: always
     ports: []                          # Sólo detrás de nginx
+    # PRI-369: el contenedor sirve HTTPS en el 8443 (certificado de la CA interna); nginx lo verifica.
+    volumes:
+      - ./infra/nginx/tls/frontend-listen.conf:/etc/nginx/frontend-listen.conf:ro
+      - ./infra/tls/frontend.crt:/etc/prisma/tls/frontend.crt:ro
+      - ./infra/tls/frontend.key:/etc/prisma/tls/frontend.key:ro
+    healthcheck:
+      # --no-check-certificate: es un chequeo a localhost dentro del propio contenedor (el certificado
+      # es para el nombre "frontend"); lo que se verifica de verdad es nginx -> frontend.
+      test: ["CMD", "wget", "--spider", "-q", "--no-check-certificate", "https://localhost:8443"]
     # NOTA: sin "replicas" -- mismo motivo que backend-core más arriba (container_name fijo).
     deploy:
       resources:
@@ -150,6 +159,7 @@ services:
       # PRI-369: destinos TLS de nginx (reemplazan a conf.d/proxy-*.inc, que en desarrollo van por HTTP).
       - ./infra/nginx/tls/proxy-backend-core.inc:/etc/nginx/conf.d/proxy-backend-core.inc:ro
       - ./infra/nginx/tls/proxy-backend-ai.inc:/etc/nginx/conf.d/proxy-backend-ai.inc:ro
+      - ./infra/nginx/tls/proxy-frontend.inc:/etc/nginx/conf.d/proxy-frontend.inc:ro
     deploy:
       resources:
         limits: { cpus: '1.0', memory: 512M }

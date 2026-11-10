@@ -84,7 +84,17 @@ producción se reemplaza por `infra/nginx/tls/proxy-backend-ai.inc`), backend-co
 (`AI_SERVICE_URL=https://backend-ai:8000`, usa el truststore de la JVM con la CA interna), Prometheus
 (`prometheus.prod.yml`) y el healthcheck del contenedor.
 
-Siguen en HTTP interno (deuda conocida): nginx → frontend, Elasticsearch y RustFS.
+### frontend con TLS (PRI-369, solo producción)
+
+El nginx del contenedor frontend toma su listener de `/etc/nginx/frontend-listen.conf`
+(`apps/frontend/nginx-listen.conf`: HTTP en el 80). Producción monta
+`infra/nginx/tls/frontend-listen.conf` encima, que sirve HTTPS en el 8443 con `frontend.crt`.
+El nginx principal usa `infra/nginx/tls/proxy-frontend.inc` (`proxy_pass https://frontend:8443` con
+`proxy_ssl_verify on`) en lugar de `conf.d/proxy-frontend.inc`. Las rutas `/api`, `/ai` y `/auth` del
+nginx del frontend solo se usan al entrar directo al contenedor (desarrollo); en producción todo pasa
+por el nginx principal.
+
+Siguen en HTTP interno (deuda conocida): Elasticsearch y RustFS.
 
 El contenedor del propio frontend (`apps/frontend/nginx.conf`) tiene la **misma** definición de
 `/api`, `/ai`, `/auth` que el reverse-proxy principal, así que acceder directo a
