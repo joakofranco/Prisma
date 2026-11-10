@@ -10,13 +10,6 @@ services:
   postgres:
     restart: always
     ports: []                          # No exponer al host
-    # PRI-369: TLS en las conexiones por red. Antes no se activaba "ssl=on" porque la imagen
-    # postgres:17-alpine no trae ningún certificado y, con ssl=on y los archivos ausentes, Postgres
-    # no arranca ("could not load server certificate file"). Ahora el certificado lo emite
-    # scripts/generate-internal-ca.sh (make certs) y se monta desde infra/tls. Postgres exige que la
-    # clave sea del usuario postgres con permisos 0600, algo que un bind mount no garantiza, así que
-    # se copia a /var/lib/postgresql antes de delegar en el entrypoint original. pg_hba.tls.conf deja
-    # solo "hostssl": una conexión por red sin TLS se rechaza.
     volumes:
       - ./infra/tls/postgres.crt:/etc/prisma/tls/server.crt:ro
       - ./infra/tls/postgres.key:/etc/prisma/tls/server.key.src:ro
@@ -35,7 +28,6 @@ services:
         limits: { cpus: '2.0', memory: 4G }
         reservations: { cpus: '1.0', memory: 2G }
 
-  # PRI-369: misma configuración TLS que "postgres" para la base de Keycloak.
   keycloak-db:
     volumes:
       - ./infra/tls/keycloak-db.crt:/etc/prisma/tls/server.crt:ro
@@ -69,17 +61,11 @@ services:
     environment:
       SPRING_PROFILES_ACTIVE: production
       LOGGING_LEVEL_ROOT: WARN
-      # PRI-369: TLS verificado hacia Postgres (la CA interna ya está montada en /etc/prisma/tls/ca.crt).
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}?sslmode=verify-full&sslrootcert=/etc/prisma/tls/ca.crt
-      # PRI-369: backend-core sirve HTTPS (mismo puerto 8080) con el certificado de la CA interna.
       SERVER_SSL_ENABLED: "true"
       SERVER_SSL_CERTIFICATE: /etc/prisma/tls/backend-core.crt
       SERVER_SSL_CERTIFICATE_PRIVATE_KEY: /etc/prisma/tls/backend-core.key
-      # PRI-369: backend-core -> backend-ai por TLS (la CA interna va en el truststore de la JVM, ver el command de docker-compose.yml).
       AI_SERVICE_URL: https://backend-ai:8000
-      # PRI-369: backend-core -> RustFS (S3) por TLS. Ojo: S3_PUBLIC_ENDPOINT (URLs firmadas que abre el
-      # navegador) NO se toca aca: debe apuntar a un endpoint publico con certificado confiable para el
-      # navegador, no al certificado de la CA interna (ver docs/Certificados-TLS.md).
       S3_ENDPOINT: https://rustfs:9000
     volumes:
       - ./infra/tls/backend-core.crt:/etc/prisma/tls/backend-core.crt:ro
@@ -102,15 +88,12 @@ services:
     image: ghcr.io/${GHCR_ORG}/prisma-backend-ai:${TAG:-latest}
     pull_policy: always
     environment:
-      # PRI-369: backend-core sirve HTTPS; httpx toma la CA de SSL_CERT_FILE. Reemplaza el bundle por
-      # defecto: backend-ai solo habla con servicios internos (Ollama va por HTTP).
       CORE_BACKEND_URL: https://backend-core:8080
       SSL_CERT_FILE: /etc/prisma/tls/ca.crt
     volumes:
       - ./infra/tls/ca.crt:/etc/prisma/tls/ca.crt:ro
       - ./infra/tls/backend-ai.crt:/etc/prisma/tls/backend-ai.crt:ro
       - ./infra/tls/backend-ai.key:/etc/prisma/tls/backend-ai.key:ro
-    # PRI-369: backend-ai sirve HTTPS (mismo puerto 8000) con el certificado de la CA interna.
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2", "--ssl-keyfile", "/etc/prisma/tls/backend-ai.key", "--ssl-certfile", "/etc/prisma/tls/backend-ai.crt"]
     healthcheck:
       test: ["CMD", "curl", "-f", "--cacert", "/etc/prisma/tls/ca.crt", "https://localhost:8000/health"]
@@ -124,14 +107,11 @@ services:
     image: ghcr.io/${GHCR_ORG}/prisma-frontend:${TAG:-latest}
     pull_policy: always
     ports: []                          # Sólo detrás de nginx
-    # PRI-369: el contenedor sirve HTTPS en el 8443 (certificado de la CA interna); nginx lo verifica.
     volumes:
       - ./infra/nginx/tls/frontend-listen.conf:/etc/nginx/frontend-listen.conf:ro
       - ./infra/tls/frontend.crt:/etc/prisma/tls/frontend.crt:ro
       - ./infra/tls/frontend.key:/etc/prisma/tls/frontend.key:ro
     healthcheck:
-      # --no-check-certificate: es un chequeo a localhost dentro del propio contenedor (el certificado
-      # es para el nombre "frontend"); lo que se verifica de verdad es nginx -> frontend.
       test: ["CMD", "wget", "--spider", "-q", "--no-check-certificate", "https://localhost:8443"]
     # NOTA: sin "replicas" -- mismo motivo que backend-core más arriba (container_name fijo).
     deploy:
@@ -145,13 +125,9 @@ services:
     command: ["start", "--import-realm"]
     environment:
       KC_HOSTNAME_STRICT: "false"
-      # PRI-369: TLS verificado hacia keycloak-db.
       KC_DB_URL: jdbc:postgresql://keycloak-db:5432/keycloak?sslmode=verify-full&sslrootcert=/opt/keycloak/conf/tls/ca.crt
-      # BUG-12: en producción nadie accede a Keycloak por HTTP (ni el host ni la red interna): se
-      # deshabilita el 8080 y todo el tráfico va por TLS (8443).
       KC_HTTP_ENABLED: "false"
     volumes:
-      # PRI-369: CA interna para verificar el certificado de keycloak-db (sslrootcert).
       - ./infra/tls/ca.crt:/opt/keycloak/conf/tls/ca.crt:ro
     deploy:
       resources:
@@ -160,7 +136,6 @@ services:
   nginx:
     restart: always
     volumes:
-      # PRI-369: destinos TLS de nginx (reemplazan a conf.d/proxy-*.inc, que en desarrollo van por HTTP).
       - ./infra/nginx/tls/proxy-backend-core.inc:/etc/nginx/conf.d/proxy-backend-core.inc:ro
       - ./infra/nginx/tls/proxy-backend-ai.inc:/etc/nginx/conf.d/proxy-backend-ai.inc:ro
       - ./infra/nginx/tls/proxy-frontend.inc:/etc/nginx/conf.d/proxy-frontend.inc:ro
@@ -168,8 +143,6 @@ services:
       resources:
         limits: { cpus: '1.0', memory: 512M }
 
-  # PRI-369: los clientes de Postgres que no son backend-core también verifican el certificado,
-  # porque pg_hba.tls.conf rechaza las conexiones por red sin TLS.
   postgres-exporter:
     environment:
       DATA_SOURCE_NAME: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=verify-full&sslrootcert=/etc/prisma/tls/ca.crt
@@ -191,14 +164,11 @@ services:
     volumes:
       - ./infra/tls/ca.crt:/etc/prisma/tls/ca.crt:ro
 
-  # PRI-369: Prometheus scrapea por TLS los servicios que sirven HTTPS en producción.
   prometheus:
     volumes:
       - ./infra/monitoring/prometheus/prometheus.prod.yml:/etc/prometheus/prometheus.yml:ro
       - ./infra/tls/ca.crt:/etc/prisma/tls/ca.crt:ro
 
-  # PRI-369: RustFS (S3) sirve HTTPS. RUSTFS_TLS_PATH espera rustfs_cert.pem y rustfs_key.pem en ese
-  # directorio. La API (9000) y la consola (9001) pasan a TLS.
   rustfs:
     environment:
       RUSTFS_TLS_PATH: /etc/prisma/tls
@@ -209,9 +179,6 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "curl -f --cacert /etc/prisma/tls/ca.crt https://localhost:9000/health || exit 1"]
 
-  # PRI-369: Elasticsearch sirve HTTPS (certificado de la CA interna) y sus clientes verifican el
-  # certificado: kibana-init, Kibana y Filebeat. La clave debe ser legible por el usuario elasticsearch
-  # (uid 1000) dentro del contenedor.
   elasticsearch:
     environment:
       xpack.security.http.ssl.enabled: "true"

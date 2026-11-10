@@ -1,30 +1,4 @@
 #!/usr/bin/env bash
-# =====================================================================
-# generate-internal-ca.sh — genera (o renueva) la CA interna de PRISMA y un
-# certificado TLS por servicio para el cifrado en tránsito entre contenedores
-# (PRI-369 / BUG-12).
-# ---------------------------------------------------------------------
-# Salida (por defecto en infra/tls/, ignorada por git):
-#   ca.crt / ca.key      CA interna (ca.crt es lo que montan los clientes para VERIFICAR
-#                        a cada servicio; ca.key no sale de esta carpeta)
-#   <servicio>.crt/.key  certificado de servidor firmado por la CA, SAN: <servicio>,
-#                        localhost, 127.0.0.1
-#
-# Servicios (SERVICES): keycloak keycloak-db postgres backend-core backend-ai frontend
-#                       rustfs elasticsearch
-#
-# Distinto de scripts/generate-nginx-cert.sh: aquel genera el certificado PÚBLICO
-# (navegador -> nginx :443); éste cubre los tramos INTERNOS dentro de prisma-net.
-#
-# Uso:
-#   scripts/generate-internal-ca.sh                 # CA + certificados (5 años)
-#   scripts/generate-internal-ca.sh --force         # regenera todo sin preguntar
-#   scripts/generate-internal-ca.sh --only postgres # reemite solo un certificado (reusa la CA)
-#   scripts/generate-internal-ca.sh --days 825 --out-dir /ruta/custom
-#
-# Variables equivalentes: CERT_DAYS, CERT_OUT_DIR, CERT_SERVICES
-# Después: docker compose up -d --force-recreate <servicios que lo usan>
-# =====================================================================
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -61,10 +35,8 @@ CA_KEY="$OUT_DIR/ca.key"
 
 mkdir -p "$OUT_DIR"
 
-# MSYS2_ARG_CONV_EXCL="/C=": ver el comentario en generate-nginx-cert.sh (Git Bash reescribe "/C=...").
 export MSYS2_ARG_CONV_EXCL="/C="
 
-# --only reusa la CA existente; sin --only se (re)genera todo.
 if [ -n "$ONLY" ]; then
   if [ ! -f "$CA_CRT" ] || [ ! -f "$CA_KEY" ]; then
     echo "ERROR: no existe la CA en $OUT_DIR; corré el script sin --only primero." >&2
@@ -94,7 +66,6 @@ EXT_FILE="$(mktemp)"
 CSR_FILE="$(mktemp)"
 trap 'rm -f "$EXT_FILE" "$CSR_FILE"' EXIT
 
-# issue <servicio>: certificado de servidor firmado por la CA, SAN = servicio, localhost, 127.0.0.1.
 issue() {
   local svc="$1" crt="$OUT_DIR/$1.crt" key="$OUT_DIR/$1.key"
   openssl req -newkey rsa:2048 -nodes -keyout "$key" -out "$CSR_FILE" \
@@ -107,8 +78,6 @@ subjectAltName=DNS:$svc,DNS:localhost,IP:127.0.0.1
 EOF
   openssl x509 -req -in "$CSR_FILE" -CA "$CA_CRT" -CAkey "$CA_KEY" -CAcreateserial \
     -out "$crt" -days "$DAYS" -extfile "$EXT_FILE" 2>/dev/null
-  # Los contenedores corren con uids distintos de root: el bind mount debe ser legible. Los servicios
-  # que exigen permisos estrictos sobre la clave (Postgres) la copian a un lugar propio al arrancar.
   chmod 644 "$key" "$crt" 2>/dev/null || true
   openssl verify -CAfile "$CA_CRT" "$crt" >/dev/null
   echo "  ✔ $svc"

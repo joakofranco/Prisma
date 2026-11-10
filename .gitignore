@@ -145,7 +145,6 @@ models/
 infra/nginx/certs/*.crt
 infra/nginx/certs/*.key
 !infra/nginx/certs/.gitkeep
-# CA interna y certificados TLS por servicio (scripts/generate-internal-ca.sh, PRI-369)
 infra/tls/*
 !infra/tls/.gitkeep
 

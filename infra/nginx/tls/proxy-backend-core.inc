@@ -1,5 +1,3 @@
-# PRODUCCION (PRI-369): nginx -> backend-core por TLS verificado contra la CA interna
-# (scripts/generate-internal-ca.sh). Reemplaza conf.d/proxy-backend-core.inc.
 proxy_pass                    https://backend_core;
 proxy_ssl_server_name         on;
 proxy_ssl_name                backend-core;

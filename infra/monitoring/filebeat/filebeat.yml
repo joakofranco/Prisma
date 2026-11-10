@@ -42,8 +42,6 @@ processors:
 
 output.elasticsearch:
   hosts: ["${ELASTICSEARCH_HOSTS}"]
-  # PRI-369: CA interna para verificar a Elasticsearch cuando ELASTICSEARCH_HOSTS es https:// (produccion).
-  # Con http:// (desarrollo) no se usa; el archivo se monta siempre (ver docker-compose.yml).
   ssl.certificate_authorities: ["/etc/prisma/tls/ca.crt"]
   username: "${ELASTICSEARCH_USERNAME}"
   password: "${ELASTICSEARCH_PASSWORD}"

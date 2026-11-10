@@ -146,7 +146,6 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       JWT_ACCESS_EXPIRATION_MINUTES: ${JWT_ACCESS_EXPIRATION_MINUTES:-15}
       JWT_REFRESH_EXPIRATION_DAYS: ${JWT_REFRESH_EXPIRATION_DAYS:-7}
-      # BUG-12: tramo interno por TLS (CA interna montada abajo, importada al truststore en el arranque).
       KEYCLOAK_AUTH_SERVER_URL: https://keycloak:8443
       # Habilita/deshabilita el JwtDecoder de Keycloak (ver SecurityConfig.MissingIssuerCondition)
       # -- su valor concreto ya no es lo que valida el claim "iss" (eso lo hace
@@ -194,8 +193,6 @@ services:
     volumes:
       - evidences-data:/var/prisma/evidences
       - ./infra/tls/ca.crt:/etc/prisma/tls/ca.crt:ro
-    # BUG-12: copia el truststore por defecto del JRE (para no perder las CAs públicas), le suma la CA
-    # interna y arranca la JVM con él. Reemplaza el CMD del Dockerfile (mismo java -cp / main class).
     command:
       - sh
       - -c
@@ -314,7 +311,6 @@ services:
     ports:
       - "${FRONTEND_PORT:-8080}:80"
     volumes:
-      # BUG-12: CA interna para verificar el certificado de Keycloak (proxy_ssl_trusted_certificate).
       - ./infra/tls/ca.crt:/etc/nginx/internal-ca.crt:ro
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:80"]
@@ -373,12 +369,6 @@ services:
       # solo (KEYCLOAK_TRUSTED_ISSUERS en application.yml), ya que ahora el issuer varía según el
       # host usado para loguearse.
       KC_HTTP_RELATIVE_PATH: /auth
-      # BUG-12 (PRI-369): TLS interno. Keycloak escucha HTTPS en 8443 con un certificado firmado por
-      # la CA interna (scripts/generate-internal-ca.sh); nginx, el nginx del frontend y backend-core
-      # lo consumen SOLO por 8443 y verifican el certificado contra esa CA.
-      # HTTP (8080) sigue habilitado únicamente para el acceso directo desde el host en desarrollo
-      # (VITE_KEYCLOAK_URL=http://localhost:8180, e2e, scripts kcadm): el puerto se publica ligado a
-      # 127.0.0.1 (ver "ports"), no es alcanzable desde otras máquinas y ningún servicio interno lo usa.
       KC_HTTP_ENABLED: "true"
       KC_HTTPS_PORT: "8443"
       KC_HTTPS_CERTIFICATE_FILE: /opt/keycloak/conf/tls/keycloak.crt
@@ -393,9 +383,6 @@ services:
       # (el arranque completo tarda ~30-60s) -- esa ventana es la que daba 502 en /auth/* al
       # levantar el stack o reiniciar este servicio (ver docs/RUNBOOK.md).
       KC_HEALTH_ENABLED: "true"
-      # BUG-12: al configurar HTTPS, el management interface (9000) hereda TLS por defecto y el
-      # healthcheck de abajo (socket TCP crudo, la imagen no trae curl/openssl) deja de funcionar.
-      # Se mantiene en HTTP: sólo expone /health y /metrics, no se publica al host.
       KC_HTTP_MANAGEMENT_SCHEME: http
     ports:
       - "127.0.0.1:${KEYCLOAK_PORT:-8180}:8080"
@@ -530,8 +517,6 @@ services:
       # (no alcanza con que este en el .env de docker-compose). Sin esto, el datasource
       # de PostgreSQL quedaba con la contrasena vacia y fallaba al conectar.
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      # PRI-369: modo SSL del datasource de PostgreSQL (datasources.yml). En desarrollo Postgres no
-      # usa TLS; docker-compose.prod.yml lo sube a verify-full.
       GRAFANA_PG_SSLMODE: disable
     ports:
       - "${GRAFANA_PORT:-3000}:3000"
@@ -892,6 +877,5 @@ services:
       - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./infra/nginx/conf.d:/etc/nginx/conf.d:ro
       - ./infra/nginx/certs:/etc/nginx/certs:ro
-      # BUG-12: CA interna para verificar el certificado de Keycloak (proxy_ssl_trusted_certificate).
       - ./infra/tls/ca.crt:/etc/nginx/internal-ca.crt:ro
     networks: [prisma-net]
