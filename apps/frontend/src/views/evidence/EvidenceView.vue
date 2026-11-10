@@ -64,6 +64,22 @@
             >
               {{ ev.description }}
             </p>
+            <p
+              v-if="ev.scanStatus === 'QUARANTINED'"
+              class="mt-2 inline-block text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-300"
+              title="El antivirus no estaba disponible al subirla: se analizará automáticamente y mientras tanto no se puede descargar ni usar"
+              data-test="quarantine-badge"
+            >
+              En cuarentena: pendiente de análisis
+            </p>
+            <p
+              v-else-if="ev.scanStatus === 'INFECTED'"
+              class="mt-2 inline-block text-[11px] font-semibold px-2 py-0.5 rounded-full bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300"
+              title="El análisis posterior detectó contenido malicioso y el archivo fue eliminado"
+              data-test="infected-badge"
+            >
+              Rechazada: contenido malicioso
+            </p>
           </div>
         </div>
         <div
@@ -77,7 +93,7 @@
             <SparklesIcon class="w-3.5 h-3.5" /> Indexado
           </span>
           <button
-            v-else-if="isAiAnalyzable(ev.fileType)"
+            v-else-if="isUsable(ev) && isAiAnalyzable(ev.fileType)"
             class="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-blue-600 disabled:opacity-50 dark:hover:text-blue-300 dark:text-slate-400"
             :disabled="reindexingId === ev.id"
             @click="reindexEvidence(ev)"
@@ -94,7 +110,7 @@
           </span>
           <div class="flex gap-1">
             <button
-              v-if="canDownload && previewKind(ev.fileType)"
+              v-if="canDownload && isUsable(ev) && previewKind(ev.fileType)"
               class="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 hover:text-blue-600 dark:hover:text-blue-300 dark:text-slate-400"
               title="Ver evidencia"
               @click="openPreview(ev)"
@@ -102,7 +118,7 @@
               <EyeIcon class="w-4 h-4" />
             </button>
             <button
-              v-if="canDownload"
+              v-if="canDownload && isUsable(ev)"
               class="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 hover:text-blue-600 dark:hover:text-blue-300 dark:text-slate-400"
               title="Descargar evidencia"
               @click="downloadEvidence(ev)"
@@ -198,6 +214,30 @@
             {{ uploadErrors.file }}
           </p>
         </div>
+        <div
+          v-if="uploading"
+          class="flex items-center gap-3 rounded-lg border border-blue-200 dark:border-blue-900 bg-blue-50 dark:bg-blue-950 px-4 py-3 text-sm text-blue-800 dark:text-blue-200"
+          role="status"
+          data-test="scan-progress"
+        >
+          <div class="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600" />
+          Analizando el archivo con el antivirus…
+        </div>
+        <div
+          v-if="malware"
+          class="rounded-lg border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950 px-4 py-3 text-sm text-red-800 dark:text-red-200"
+          role="alert"
+          data-test="malware-alert"
+        >
+          <p class="font-semibold">{{ malware.message }}</p>
+          <p class="mt-1 text-xs">
+            <template v-if="malware.signature"
+              >Amenaza detectada: <span class="font-mono">{{ malware.signature }}</span
+              >.
+            </template>
+            No se guardó. Revise el archivo o suba otro.
+          </p>
+        </div>
       </form>
       <template #footer>
         <BaseButton variant="secondary" @click="showUploadModal = false"> Cancelar </BaseButton>
@@ -261,6 +301,8 @@
     file: '',
   });
 
+  const malware = ref<{ message: string; signature: string } | null>(null);
+
   const controlOptions = ref<{ value: string; label: string }[]>([]);
 
   // Formatos permitidos, tal como los define el backend. Si no se pudieron cargar queda vacía: no se
@@ -310,7 +352,12 @@
     return '';
   }
 
+  function isUsable(ev: Evidence) {
+    return !ev.scanStatus || ev.scanStatus === 'CLEAN';
+  }
+
   function validateSelectedFile() {
+    malware.value = null;
     uploadErrors.file = formatError(fileInput.value?.files?.[0]);
   }
 
@@ -399,8 +446,20 @@
     return getErrorMessage(err, 'Error al subir la evidencia');
   }
 
+  interface UploadErrorBody {
+    code?: string;
+    message?: string;
+    details?: Record<string, string[]>;
+  }
+
+  function uploadErrorBody(err: unknown): { status?: number; body?: UploadErrorBody } {
+    const response = (err as { response?: { status?: number; data?: UploadErrorBody } })?.response;
+    return { status: response?.status, body: response?.data };
+  }
+
   async function handleUpload() {
     uploadErrors.file = '';
+    malware.value = null;
     if (!fileInput.value?.files?.[0]) {
       uploadErrors.file = 'Seleccione un archivo';
       return;
@@ -420,14 +479,28 @@
       formData.append('description', uploadForm.description);
       formData.append('file', fileInput.value.files[0]);
 
-      await evidenceService.upload(formData);
-      notification.success('Evidencia subida correctamente');
+      const { data: uploaded } = await evidenceService.upload(formData);
+      if (uploaded?.scanStatus === 'QUARANTINED') {
+        notification.warning(
+          'Evidencia subida en cuarentena: se analizará automáticamente cuando el antivirus se restablezca',
+        );
+      } else {
+        notification.success('Evidencia subida correctamente');
+      }
       showUploadModal.value = false;
       uploadForm.controlId = '';
       uploadForm.description = '';
       await fetchEvidences();
     } catch (err) {
-      notification.error(uploadErrorMessage(err));
+      const { status, body } = uploadErrorBody(err);
+      if (status === 422 && body?.code === 'MALWARE_DETECTED') {
+        malware.value = {
+          message: body.message ?? 'El archivo fue rechazado: se detectó contenido malicioso.',
+          signature: body.details?.signature?.[0] ?? '',
+        };
+      } else {
+        notification.error(uploadErrorMessage(err));
+      }
     } finally {
       uploading.value = false;
     }
