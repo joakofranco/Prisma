@@ -48,6 +48,7 @@ public class ImprovementPlanService {
   private final AiEvidenceClient aiClient;
   private final CurrentUserService currentUser;
   private final AuditLogService auditLog;
+  private final PlanDeadlineSettingsService deadlines;
 
   public ImprovementPlanService(
       ImprovementPlanRepository repo,
@@ -56,7 +57,8 @@ public class ImprovementPlanService {
       EvaluationResponseRepository responseRepo,
       AiEvidenceClient aiClient,
       CurrentUserService currentUser,
-      AuditLogService auditLog) {
+      AuditLogService auditLog,
+      PlanDeadlineSettingsService deadlines) {
     this.repo = repo;
     this.evaluationRepo = evaluationRepo;
     this.controlRepo = controlRepo;
@@ -64,6 +66,7 @@ public class ImprovementPlanService {
     this.aiClient = aiClient;
     this.currentUser = currentUser;
     this.auditLog = auditLog;
+    this.deadlines = deadlines;
   }
 
   // On-demand (un control a la vez, ver AiEvidenceClient.suggestRemediation): no necesita
@@ -107,7 +110,12 @@ public class ImprovementPlanService {
       throw new InvalidRequestException(
           "La evaluación está aprobada: no se pueden agregar acciones al plan de mejora");
     }
+    Priority priority = parsePriority(dto.priority());
     LocalDate dueDate = parseDueDate(dto.dueDate());
+    // RF-PLN-03: sin fecha, se estampa el plazo por defecto de la prioridad.
+    if (dueDate == null) {
+      dueDate = deadlines.defaultDueDate(priority, LocalDate.now());
+    }
     assertNotPast(dueDate);
     // dto.controlId() se ignoraba silenciosamente: la accion quedaba creada pero sin vincular al
     // control del catalogo, asi que suggest() nunca podia detectar que ese control ya tenia un
@@ -124,7 +132,7 @@ public class ImprovementPlanService {
             .control(control)
             .action(dto.action())
             .responsible(dto.responsible())
-            .priority(parsePriority(dto.priority()))
+            .priority(priority)
             .status(PlanStatus.PENDING)
             .dueDate(dueDate)
             .comments(normalizeComments(dto.comments()))
@@ -331,6 +339,10 @@ public class ImprovementPlanService {
                 .collect(Collectors.toSet())
             : null;
 
+    // RF-PLN-03: plazos por defecto vigentes (una sola lectura para todas las sugerencias).
+    Map<Priority, Integer> monthsByPriority = deadlines.currentMonths();
+    LocalDate today = LocalDate.now();
+
     List<SuggestedImprovementDto> suggestions = new java.util.ArrayList<>();
     for (CatalogControl control : controlRepo.findByVersionOrdered(eval.getCatalogVersion())) {
       if (alreadyPlanned.contains(control.getId())) {
@@ -368,7 +380,7 @@ public class ImprovementPlanService {
                 0,
                 control.getTargetLevel(),
                 priority.name(),
-                suggestDueDate(priority).toString()));
+                today.plusMonths(monthsByPriority.get(priority)).toString()));
       }
     }
 
@@ -383,16 +395,6 @@ public class ImprovementPlanService {
       return Priority.HIGH;
     }
     return controlLevel == 2 ? Priority.MEDIUM : Priority.LOW;
-  }
-
-  private LocalDate suggestDueDate(Priority priority) {
-    int daysAhead =
-        switch (priority) {
-          case HIGH -> 30;
-          case MEDIUM -> 60;
-          case LOW -> 90;
-        };
-    return LocalDate.now().plusDays(daysAhead);
   }
 
   private int priorityRank(String priority) {

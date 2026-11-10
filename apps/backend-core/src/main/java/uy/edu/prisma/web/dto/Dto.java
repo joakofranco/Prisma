@@ -810,6 +810,10 @@ public class Dto {
       @NotBlank(message = "El email de destino es obligatorio") @Email(message = "Email inválido")
           String recipientEmail) {}
 
+  // RF-PLN-03: plazos por defecto (meses) del plan de mejora por prioridad. El rango y el orden
+  // (Alta <= Media <= Baja) los valida PlanDeadlineSettingsService.
+  public record PlanDeadlinesDto(Integer highMonths, Integer mediumMonths, Integer lowMonths) {}
+
   // ---- Audit log (bitácora de acciones del sistema, distinta de AuditObservation/"Auditoría"
   // MCU) ----
   public record AuditLogDto(

@@ -372,6 +372,14 @@ export interface EmailSettings {
   configured: boolean;
 }
 
+/** RF-PLN-03: plazos por defecto (en meses) con los que se sugiere la fecha límite de una acción
+ * del plan de mejora según su prioridad. Los configura PRISMA_ADMIN (1–60, Alta ≤ Media ≤ Baja). */
+export interface PlanDeadlines {
+  highMonths: number;
+  mediumMonths: number;
+  lowMonths: number;
+}
+
 /** Body de actualización: `password` es obligatorio si `authEnabled` es true (Keycloak nunca
  * devuelve el valor guardado, así que hay que reingresarlo en cada guardado). */
 export interface UpdateEmailSettings {

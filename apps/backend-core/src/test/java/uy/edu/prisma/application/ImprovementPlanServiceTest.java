@@ -49,16 +49,37 @@ class ImprovementPlanServiceTest {
   @Mock private AiEvidenceClient aiClient;
   @Mock private CurrentUserService currentUser;
   @Mock private AuditLogService auditLog;
+  @Mock private PlanDeadlineSettingsService deadlines;
 
   private ImprovementPlanService service;
   private Evaluation eval;
 
+  private static final java.util.Map<ImprovementPlan.Priority, Integer> MONTHS =
+      java.util.Map.of(
+          ImprovementPlan.Priority.HIGH, 3,
+          ImprovementPlan.Priority.MEDIUM, 6,
+          ImprovementPlan.Priority.LOW, 12);
+
   @BeforeEach
   void setUp() {
     when(currentUser.isGlobalRole()).thenReturn(true);
+    // Plazos por defecto del requerimiento (RF-PLN-03): Alta 3, Media 6, Baja 12 meses.
+    when(deadlines.currentMonths()).thenReturn(MONTHS);
+    when(deadlines.defaultDueDate(any(), any()))
+        .thenAnswer(
+            inv ->
+                ((LocalDate) inv.getArgument(1))
+                    .plusMonths(MONTHS.get((ImprovementPlan.Priority) inv.getArgument(0))));
     service =
         new ImprovementPlanService(
-            repo, evaluationRepo, controlRepo, responseRepo, aiClient, currentUser, auditLog);
+            repo,
+            evaluationRepo,
+            controlRepo,
+            responseRepo,
+            aiClient,
+            currentUser,
+            auditLog,
+            deadlines);
     // IN_PROGRESS: el plan está activo (en DRAFT / ARCHIVED no se puede crear ni editar).
     eval =
         Evaluation.builder()
@@ -142,7 +163,39 @@ class ImprovementPlanServiceTest {
     assertEquals(eval.getId(), result.evaluationId());
     assertEquals("MEDIUM", result.priority());
     assertEquals("PENDING", result.status());
-    assertNull(result.dueInDays());
+    // RF-PLN-03: sin fecha, se estampa el plazo por defecto de la prioridad (Media = 6 meses).
+    assertEquals(LocalDate.now().plusMonths(6).toString(), result.dueDate());
+  }
+
+  @Test
+  void createWithoutADueDateStampsTheDefaultOfItsPriority() {
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(repo.save(any(ImprovementPlan.class))).thenAnswer(inv -> inv.getArgument(0));
+
+    CreateImprovementPlanDto highDto =
+        new CreateImprovementPlanDto(eval.getId(), null, "A", "R", "HIGH", "", null);
+    CreateImprovementPlanDto lowDto =
+        new CreateImprovementPlanDto(eval.getId(), null, "A", "R", "LOW", null, null);
+
+    ImprovementPlanDto high = service.create(highDto);
+    ImprovementPlanDto low = service.create(lowDto);
+
+    assertEquals(LocalDate.now().plusMonths(3).toString(), high.dueDate());
+    assertEquals(LocalDate.now().plusMonths(12).toString(), low.dueDate());
+  }
+
+  @Test
+  void createKeepsTheDueDateTheUserChose() {
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(repo.save(any(ImprovementPlan.class))).thenAnswer(inv -> inv.getArgument(0));
+    String chosen = LocalDate.now().plusDays(10).toString();
+
+    ImprovementPlanDto result =
+        service.create(
+            new CreateImprovementPlanDto(eval.getId(), null, "A", "R", "HIGH", chosen, null));
+
+    assertEquals(chosen, result.dueDate());
+    verify(deadlines, never()).defaultDueDate(any(), any());
   }
 
   @Test
@@ -632,6 +685,28 @@ class ImprovementPlanServiceTest {
     assertEquals("MEDIUM", result.get(1).priority());
     assertEquals(level3.getId(), result.get(2).controlId());
     assertEquals("LOW", result.get(2).priority());
+  }
+
+  @Test
+  void suggestionsUseTheConfiguredDeadlinesInMonths() {
+    CatalogControl level1 = buildControl(1); // HIGH
+    CatalogControl level3 = buildControl(3); // LOW
+    when(deadlines.currentMonths())
+        .thenReturn(
+            java.util.Map.of(
+                ImprovementPlan.Priority.HIGH, 1,
+                ImprovementPlan.Priority.MEDIUM, 2,
+                ImprovementPlan.Priority.LOW, 4));
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(controlRepo.findByVersionOrdered("5.0")).thenReturn(List.of(level1, level3));
+    when(responseRepo.findByEvaluationId(eval.getId())).thenReturn(List.of());
+    when(repo.findByEvaluationIdOrderByCreatedAtDesc(eval.getId())).thenReturn(List.of());
+
+    List<SuggestedImprovementDto> result = service.suggest(eval.getId());
+
+    assertEquals(LocalDate.now().plusMonths(1).toString(), result.get(0).suggestedDueDate());
+    assertEquals(LocalDate.now().plusMonths(4).toString(), result.get(1).suggestedDueDate());
+    verify(deadlines, times(1)).currentMonths();
   }
 
   @Test

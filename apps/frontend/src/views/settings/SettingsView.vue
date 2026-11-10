@@ -31,6 +31,7 @@
       <div class="flex-1 min-w-0">
         <EmailSettingsPanel v-if="activeTab === 'email'" />
         <CatalogImportPanel v-else-if="activeTab === 'catalog'" />
+        <PlanDeadlinesPanel v-else-if="activeTab === 'plan'" />
       </div>
     </div>
   </div>
@@ -38,15 +39,18 @@
 
 <script setup lang="ts">
   import { ref } from 'vue';
-  import { EnvelopeIcon, BookOpenIcon } from '@heroicons/vue/24/outline';
+  import { EnvelopeIcon, BookOpenIcon, ArrowTrendingUpIcon } from '@heroicons/vue/24/outline';
   import EmailSettingsPanel from '@/components/settings/EmailSettingsPanel.vue';
   import CatalogImportPanel from '@/components/settings/CatalogImportPanel.vue';
+  import PlanDeadlinesPanel from '@/components/settings/PlanDeadlinesPanel.vue';
 
-  type TabKey = 'email' | 'catalog';
+  type TabKey = 'email' | 'catalog' | 'plan';
 
   const tabs: { key: TabKey; label: string; icon: unknown }[] = [
     { key: 'email', label: 'Correo electrónico', icon: EnvelopeIcon },
     { key: 'catalog', label: 'Catálogo', icon: BookOpenIcon },
+    // RF-PLN-03: plazos por defecto del plan de mejora.
+    { key: 'plan', label: 'Plan de mejora', icon: ArrowTrendingUpIcon },
   ];
 
   const activeTab = ref<TabKey>('email');

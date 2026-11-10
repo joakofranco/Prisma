@@ -24,7 +24,7 @@
           <SparklesIcon class="w-4 h-4" />
           Generar Sugerencias
         </BaseButton>
-        <BaseButton variant="primary" :disabled="!canEditFully" @click="showCreateModal = true">
+        <BaseButton variant="primary" :disabled="!canEditFully" @click="openCreateModal">
           <PlusIcon class="w-4 h-4" />
           Nueva Acción
         </BaseButton>
@@ -233,7 +233,16 @@
           :min="today"
           :error="formErrors.dueDate"
           required
+          @update:model-value="dueDateTouched = true"
         />
+        <p
+          v-if="!dueDateTouched && !formErrors.dueDate"
+          class="-mt-3 text-xs text-slate-500 dark:text-slate-400"
+          data-test="due-date-hint"
+        >
+          Sugerida: {{ suggestedMonths }} meses por ser prioridad
+          {{ getPriorityLabel(newPlan.priority) }}. Podés cambiarla.
+        </p>
         <BaseTextarea
           v-model="newPlan.comments"
           label="Comentarios (opcional)"
@@ -436,7 +445,12 @@
   import { ref, computed, reactive, onMounted, watch } from 'vue';
   import { useRoute } from 'vue-router';
   import { format } from 'date-fns';
-  import { improvementService, evaluationsService } from '@/services/resources';
+  import {
+    improvementService,
+    evaluationsService,
+    planDeadlinesService,
+  } from '@/services/resources';
+  import { DEFAULT_PLAN_DEADLINES, defaultDueDate, monthsFor } from '@/utils/planDeadlines';
   import { useAuthStore } from '@/stores/auth';
   import { formatDate, getErrorMessage } from '@/utils/helpers';
   import { useNotification } from '@/composables/useUtils';
@@ -458,7 +472,12 @@
     CheckCircleIcon,
     ExclamationCircleIcon,
   } from '@heroicons/vue/24/outline';
-  import type { ImprovementPlan, SuggestedImprovement, RemediationTips } from '@/types';
+  import type {
+    ImprovementPlan,
+    PlanDeadlines,
+    SuggestedImprovement,
+    RemediationTips,
+  } from '@/types';
 
   interface EditableSuggestion extends SuggestedImprovement {
     selected: boolean;
@@ -541,6 +560,37 @@
     dueDate: '',
     comments: '',
   });
+
+  // RF-PLN-03: la fecha límite se precarga con el plazo por defecto de la prioridad y se recalcula
+  // al cambiarla, mientras el usuario no la haya editado a mano. Si no se pudieron leer los plazos
+  // configurados, se usan los del requerimiento (el backend aplica los vigentes igual).
+  const planDeadlines = ref<PlanDeadlines>({ ...DEFAULT_PLAN_DEADLINES });
+  const dueDateTouched = ref(false);
+  const suggestedMonths = computed(() => monthsFor(newPlan.priority, planDeadlines.value));
+
+  async function fetchPlanDeadlines() {
+    try {
+      const { data } = await planDeadlinesService.get();
+      planDeadlines.value = data;
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  function openCreateModal() {
+    dueDateTouched.value = false;
+    newPlan.dueDate = defaultDueDate(newPlan.priority, planDeadlines.value);
+    showCreateModal.value = true;
+  }
+
+  watch(
+    () => newPlan.priority,
+    (priority) => {
+      if (!dueDateTouched.value) {
+        newPlan.dueDate = defaultDueDate(priority, planDeadlines.value);
+      }
+    },
+  );
 
   const formErrors = reactive({
     action: '',
@@ -851,5 +901,6 @@
   onMounted(() => {
     fetchPlans();
     fetchEvaluationStatus();
+    fetchPlanDeadlines();
   });
 </script>

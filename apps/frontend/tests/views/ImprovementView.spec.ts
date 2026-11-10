@@ -9,10 +9,15 @@ const improvementService = vi.hoisted(() => ({
   update: vi.fn(),
 }));
 const evaluationsService = vi.hoisted(() => ({ getById: vi.fn() }));
+const planDeadlinesService = vi.hoisted(() => ({ get: vi.fn() }));
 const auth = vi.hoisted(() => ({ hasAnyRole: vi.fn() }));
 const notification = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 
-vi.mock('@/services/resources', () => ({ improvementService, evaluationsService }));
+vi.mock('@/services/resources', () => ({
+  improvementService,
+  evaluationsService,
+  planDeadlinesService,
+}));
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => auth }));
 vi.mock('@/composables/useUtils', () => ({ useNotification: () => notification }));
 vi.mock('vue-router', () => ({ useRoute: () => ({ params: { evaluationId: 'eval-1' } }) }));
@@ -60,6 +65,9 @@ beforeEach(() => {
   document.body.innerHTML = '';
   auth.hasAnyRole.mockReturnValue(true);
   evaluationsService.getById.mockResolvedValue({ data: { status: 'IN_PROGRESS' } });
+  planDeadlinesService.get.mockResolvedValue({
+    data: { highMonths: 3, mediumMonths: 6, lowMonths: 12 },
+  });
   improvementService.getByEvaluation.mockResolvedValue({ data: [] });
   improvementService.update.mockResolvedValue({ data: {} });
   improvementService.create.mockResolvedValue({ data: {} });
@@ -509,5 +517,62 @@ describe('ImprovementView: gestión operativa del plan (PRI-305, RF-PLN-04)', ()
     await flushPromises();
 
     expect(improvementService.update).toHaveBeenCalledWith('1', { status: 'COMPLETED' });
+  });
+});
+
+describe('ImprovementView: fecha límite por defecto en «Nueva Acción» (PRI-304, RF-PLN-03)', () => {
+  async function openCreate() {
+    const wrapper = await mountView();
+    buttonWithText('Nueva Acción')!.click();
+    await flushPromises();
+    return wrapper;
+  }
+
+  const createDate = () => document.body.querySelector<HTMLInputElement>('input[type="date"]')!;
+  const hint = () => document.body.querySelector('[data-test="due-date-hint"]');
+
+  it('precarga la fecha con el plazo de la prioridad (Media = 6 meses)', async () => {
+    await openCreate();
+
+    expect(createDate().value).toBe('2027-05-09');
+    expect(hint()?.textContent).toContain('6 meses');
+  });
+
+  it('al cambiar la prioridad recalcula la fecha', async () => {
+    const wrapper = await openCreate();
+
+    selectLabeled(wrapper, 'Prioridad').vm.$emit('update:modelValue', 'HIGH');
+    await flushPromises();
+
+    expect(createDate().value).toBe('2027-02-09');
+    expect(hint()?.textContent).toContain('3 meses');
+  });
+
+  it('si el usuario editó la fecha, cambiar la prioridad no la pisa', async () => {
+    const wrapper = await openCreate();
+
+    setValue(createDate(), '2026-12-01');
+    await flushPromises();
+    selectLabeled(wrapper, 'Prioridad').vm.$emit('update:modelValue', 'LOW');
+    await flushPromises();
+
+    expect(createDate().value).toBe('2026-12-01');
+    expect(hint()).toBeNull();
+  });
+
+  it('usa los plazos configurados por el administrador', async () => {
+    planDeadlinesService.get.mockResolvedValue({
+      data: { highMonths: 1, mediumMonths: 2, lowMonths: 4 },
+    });
+    await openCreate();
+
+    expect(createDate().value).toBe('2027-01-09');
+  });
+
+  it('si no se pudieron leer los plazos usa los del requerimiento', async () => {
+    planDeadlinesService.get.mockRejectedValue(new Error('offline'));
+    await openCreate();
+
+    expect(createDate().value).toBe('2027-05-09');
   });
 });

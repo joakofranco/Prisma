@@ -24,6 +24,7 @@ import type {
   CommunityProfileSummary,
   EmailSettings,
   UpdateEmailSettings,
+  PlanDeadlines,
   ChangePasswordPayload,
   CatalogImportPayload,
   CatalogControlFlat,
@@ -314,6 +315,17 @@ export const reportsService = {
 export const dashboardService = {
   getStats(tenantId?: string) {
     return apiClient.get<DashboardStats>('/dashboard/stats', { params: { tenantId } });
+  },
+};
+
+// RF-PLN-03: leerlos puede cualquier usuario autenticado (el alta de una acción precarga la fecha);
+// cambiarlos, solo PRISMA_ADMIN.
+export const planDeadlinesService = {
+  get() {
+    return apiClient.get<PlanDeadlines>('/settings/plan-deadlines');
+  },
+  update(data: PlanDeadlines) {
+    return apiClient.put<PlanDeadlines>('/settings/plan-deadlines', data);
   },
 };
 
