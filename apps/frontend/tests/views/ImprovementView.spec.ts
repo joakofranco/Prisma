@@ -10,13 +10,18 @@ const improvementService = vi.hoisted(() => ({
 }));
 const notification = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 
+const evaluationsService = vi.hoisted(() => ({ getResults: vi.fn() }));
 const reportsService = vi.hoisted(() => ({
   exportImprovementPlanPDF: vi.fn(),
   exportImprovementPlanExcel: vi.fn(),
 }));
 const saveBlob = vi.hoisted(() => vi.fn());
 
-vi.mock('@/services/resources', () => ({ improvementService, reportsService }));
+vi.mock('@/services/resources', () => ({
+  improvementService,
+  reportsService,
+  evaluationsService,
+}));
 vi.mock('@/utils/files', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/utils/files')>()),
   saveBlob,
@@ -479,6 +484,9 @@ describe('ImprovementView: exportación del plan (RF-PLN-05)', () => {
     release({ data: new ArrayBuffer(8) });
     await flushPromises();
     expect(exportButton().disabled).toBe(false);
+  });
+});
+
 const createButton = () =>
   Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
     (b) => b.textContent?.trim() === 'Crear',

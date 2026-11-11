@@ -415,8 +415,7 @@
 <script setup lang="ts">
   import { ref, computed, reactive, watch, onMounted } from 'vue';
   import { useRoute } from 'vue-router';
-  import { improvementService, reportsService } from '@/services/resources';
-  import { evaluationsService, improvementService } from '@/services/resources';
+  import { evaluationsService, improvementService, reportsService } from '@/services/resources';
   import { formatDate, getErrorMessage } from '@/utils/helpers';
   import { blobErrorMessage, saveBlob } from '@/utils/files';
   import { useNotification } from '@/composables/useUtils';
