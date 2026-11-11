@@ -8,15 +8,30 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import uy.edu.prisma.application.ReportService;
+import uy.edu.prisma.application.TechnicalReportService;
 
 @RestController
 @RequestMapping("/api/reports")
 public class ReportsController {
 
   private final ReportService service;
+  private final TechnicalReportService technical;
 
-  public ReportsController(ReportService service) {
+  public ReportsController(ReportService service, TechnicalReportService technical) {
     this.service = service;
+    this.technical = technical;
+  }
+
+  // Reporte técnico detallado (RF-REP-02, PRI-310): control por control, con veredictos,
+  // observaciones y evidencias. Mismos roles y estados que el reporte final.
+  @GetMapping("/{id}/technical/pdf")
+  @PreAuthorize("hasAnyRole('PRISMA_ADMIN','ORG_RESPONSIBLE')")
+  public ResponseEntity<byte[]> technicalPdf(@PathVariable UUID id) {
+    byte[] content = technical.generate(id);
+    return ResponseEntity.ok()
+        .headers(fileHeaders("reporte-tecnico-" + id + ".pdf"))
+        .contentType(MediaType.APPLICATION_PDF)
+        .body(content);
   }
 
   // Solo el Administrador y el Responsable de Organización descargan reportes (PRI-313); el

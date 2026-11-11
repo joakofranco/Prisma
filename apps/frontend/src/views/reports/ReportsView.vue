@@ -275,7 +275,7 @@
   type StatusFilter = 'ALL' | 'APPROVED' | 'ARCHIVED';
 
   interface ReportFormat {
-    key: 'executive' | 'pdf' | 'excel';
+    key: 'executive' | 'pdf' | 'excel' | 'technical';
     label: string;
     hint: string;
     badge: string;
@@ -342,6 +342,19 @@
       mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       success: 'Reporte Excel descargado',
       error: 'Error al generar el reporte Excel',
+    },
+    // RF-REP-02 (PRI-310): desglose control por control.
+    {
+      key: 'technical',
+      label: 'Reporte técnico',
+      hint: 'Detalle por control: cumplimiento, veredicto, observaciones y evidencias',
+      badge: 'PDF',
+      badgeClass: 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300',
+      run: (id) => reportsService.generateTechnicalPDF(id),
+      fileName: (id) => `reporte-tecnico-${id}.pdf`,
+      mime: 'application/pdf',
+      success: 'Reporte técnico descargado',
+      error: 'Error al generar el reporte técnico',
     },
   ];
 

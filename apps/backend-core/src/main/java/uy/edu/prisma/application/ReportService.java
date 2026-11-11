@@ -1057,7 +1057,8 @@ public class ReportService {
     return eval;
   }
 
-  private static boolean isReportable(Evaluation eval) {
+  // Package-private: TechnicalReportService (PRI-310) aplica el mismo criterio.
+  static boolean isReportable(Evaluation eval) {
     return eval.getStatus() == Evaluation.Status.APPROVED
         || (eval.getStatus() == Evaluation.Status.ARCHIVED && eval.getApprovedAt() != null);
   }
@@ -1381,7 +1382,7 @@ public class ReportService {
           Evaluation.Status.RETURNED, "Devuelta",
           Evaluation.Status.ARCHIVED, "Archivada");
 
-  private static String statusLabel(Evaluation.Status status) {
+  static String statusLabel(Evaluation.Status status) {
     return STATUS_LABELS.getOrDefault(status, status.name());
   }
 }

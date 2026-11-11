@@ -7,6 +7,7 @@ const reportsService = vi.hoisted(() => ({
   generatePDF: vi.fn(),
   generateExcel: vi.fn(),
   generateExecutivePDF: vi.fn(),
+  generateTechnicalPDF: vi.fn(),
   generatePreliminaryPDF: vi.fn(),
   generatePreliminaryExcel: vi.fn(),
 }));
@@ -96,7 +97,7 @@ async function openMenuOf(rowIndex = 0) {
   await flushPromises();
 }
 
-async function pick(format: 'executive' | 'pdf' | 'excel') {
+async function pick(format: 'executive' | 'pdf' | 'excel' | 'technical') {
   q(`[data-testid="format-${format}"]`)!.click();
   await flushPromises();
 }
@@ -109,6 +110,7 @@ beforeEach(() => {
   reportsService.generateExecutivePDF.mockResolvedValue({ data: new Blob(['%PDF-']) });
   reportsService.generatePDF.mockResolvedValue({ data: new Blob(['%PDF-']) });
   reportsService.generateExcel.mockResolvedValue({ data: new Blob(['PK']) });
+  reportsService.generateTechnicalPDF.mockResolvedValue({ data: new Blob(['%PDF-']) });
 });
 
 describe('ReportsView: evaluaciones archivadas (PRI-367)', () => {
@@ -284,6 +286,55 @@ describe('ReportsView: menú «Descargar» con formatos', () => {
     await openMenuOf(0);
 
     expect(button.getAttribute('aria-expanded')).toBe('true');
+  });
+});
+
+describe('ReportsView: reporte técnico (PRI-310, RF-REP-02)', () => {
+  it('el menú ofrece el reporte técnico con su descripción', async () => {
+    await mountView();
+
+    await openMenuOf(0);
+    const item = q('[data-testid="format-technical"]')!;
+
+    expect(item.getAttribute('role')).toBe('menuitem');
+    expect(item.textContent).toContain('Reporte técnico');
+    expect(item.textContent).toContain('cumplimiento, veredicto, observaciones y evidencias');
+  });
+
+  it('descarga el reporte técnico de la evaluación como PDF', async () => {
+    await mountView();
+
+    await openMenuOf(0);
+    await pick('technical');
+
+    expect(reportsService.generateTechnicalPDF).toHaveBeenCalledWith('a1');
+    expect(saveBlob.mock.calls[0][1]).toBe('reporte-tecnico-a1.pdf');
+    expect((saveBlob.mock.calls[0][0] as Blob).type).toBe('application/pdf');
+    expect(notification.success).toHaveBeenCalledWith('Reporte técnico descargado');
+  });
+
+  it('también está para las archivadas que fueron aprobadas', async () => {
+    mockEvaluations({ APPROVED: [], ARCHIVED: [evaluation('x1', 'ARCHIVED')] });
+    await mountView();
+
+    await openMenuOf(0);
+    await pick('technical');
+
+    expect(reportsService.generateTechnicalPDF).toHaveBeenCalledWith('x1');
+  });
+
+  it('si el servidor lo rechaza muestra su mensaje', async () => {
+    const message = "El reporte técnico sólo puede exportarse con la evaluación 'Aprobada'";
+    reportsService.generateTechnicalPDF.mockRejectedValue({
+      response: { data: new Blob([JSON.stringify({ message })], { type: 'application/json' }) },
+    });
+    await mountView();
+
+    await openMenuOf(0);
+    await pick('technical');
+
+    await vi.waitFor(() => expect(notification.error).toHaveBeenCalledWith(message));
+    expect(saveBlob).not.toHaveBeenCalled();
   });
 });
 

@@ -38,6 +38,7 @@ class ControllersMockMvcTest {
   @Mock private EvaluationFlagService evaluationFlagService;
   @Mock private ImprovementPlanService improvementPlanService;
   @Mock private ReportService reportService;
+  @Mock private uy.edu.prisma.application.TechnicalReportService technicalReportService;
   @Mock private EmailSettingsService emailSettingsService;
   @Mock private AccountService accountService;
   @Mock private AuditLogService auditLogService;
@@ -82,7 +83,10 @@ class ControllersMockMvcTest {
     improvement =
         MockMvcBuilders.standaloneSetup(new ImprovementPlanController(improvementPlanService))
             .build();
-    reports = MockMvcBuilders.standaloneSetup(new ReportsController(reportService)).build();
+    reports =
+        MockMvcBuilders.standaloneSetup(
+                new ReportsController(reportService, technicalReportService))
+            .build();
     emailSettings =
         MockMvcBuilders.standaloneSetup(new EmailSettingsController(emailSettingsService)).build();
     account = MockMvcBuilders.standaloneSetup(new AccountController(accountService)).build();
@@ -1108,13 +1112,29 @@ class ControllersMockMvcTest {
 
   @Test
   void reportDownloadsAreRestrictedToAdminAndOrgResponsible() throws Exception {
-    for (String name : List.of("pdf", "excel")) {
+    for (String name : List.of("pdf", "excel", "technicalPdf")) {
       var method = ReportsController.class.getMethod(name, UUID.class);
       var annotation =
           method.getAnnotation(org.springframework.security.access.prepost.PreAuthorize.class);
       assertNotNull(annotation, name);
       assertEquals("hasAnyRole('PRISMA_ADMIN','ORG_RESPONSIBLE')", annotation.value());
     }
+  }
+
+  @Test
+  void reportsTechnicalPdf() throws Exception {
+    UUID id = UUID.randomUUID();
+    when(technicalReportService.generate(id)).thenReturn("%PDF-1.4".getBytes());
+
+    reports
+        .perform(get("/api/reports/{id}/technical/pdf", id))
+        .andExpect(status().isOk())
+        .andExpect(content().contentType(MediaType.APPLICATION_PDF))
+        .andExpect(
+            header()
+                .string(
+                    "Content-Disposition",
+                    org.hamcrest.Matchers.containsString("reporte-tecnico-" + id + ".pdf")));
   }
 
   @Test

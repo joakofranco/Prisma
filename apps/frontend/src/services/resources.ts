@@ -304,6 +304,11 @@ export const reportsService = {
   generateExecutivePDF(evaluationId: string) {
     return apiClient.get(`/reports/${evaluationId}/executive/pdf`, { responseType: 'blob' });
   },
+  /** Reporte técnico detallado (RF-REP-02): control por control, con veredictos, observaciones y
+   * evidencias. Mismos estados que el reporte final (aprobada, o archivada que fue aprobada). */
+  generateTechnicalPDF(evaluationId: string) {
+    return apiClient.get(`/reports/${evaluationId}/technical/pdf`, { responseType: 'blob' });
+  },
   generatePreliminaryPDF(evaluationId: string) {
     return apiClient.get(`/reports/${evaluationId}/preliminary/pdf`, { responseType: 'blob' });
   },
