@@ -380,6 +380,31 @@ class AuditLogServiceTest {
   }
 
   @Test
+  void evaluationAuditTrailReadsTheStatusAsPostgresReturnsTheJsonb() {
+    Evaluation eval = Evaluation.builder().id(UUID.randomUUID()).organization(tenant).build();
+    when(evaluationRepo.findById(eval.getId())).thenReturn(java.util.Optional.of(eval));
+    // JSONB normalizado por Postgres: con espacio después de «:».
+    AuditLog sentToAudit =
+        AuditLog.builder()
+            .id(UUID.randomUUID())
+            .userId(actor.getId())
+            .action("UPDATE_STATUS")
+            .resource("evaluation:" + eval.getId())
+            .payload("{\"status\": \"READY_FOR_AUDIT\"}")
+            .createdAt(OffsetDateTime.now())
+            .build();
+    when(auditRepo.findByResourceAndActionInOrderByCreatedAtAsc(
+            "evaluation:" + eval.getId(), List.of("UPDATE_STATUS", "CERTIFY")))
+        .thenReturn(List.of(sentToAudit));
+    when(userRepo.findAllById(any())).thenReturn(List.of(actor));
+
+    List<EvaluationAuditCycleEventDto> trail = service.getEvaluationAuditTrail(eval.getId());
+
+    assertEquals("READY_FOR_AUDIT", trail.get(0).status());
+    assertEquals(1, trail.get(0).cycleNumber());
+  }
+
+  @Test
   void evaluationAuditTrailThrowsWhenEvaluationDoesNotExist() {
     UUID missingId = UUID.randomUUID();
     when(evaluationRepo.findById(missingId)).thenReturn(java.util.Optional.empty());

@@ -968,25 +968,49 @@ public class TechnicalReportService {
     }
 
     sectionTitle(doc, "7. Trazabilidad y certificación");
-    PdfPTable trace = new PdfPTable(2);
-    trace.setWidthPercentage(100);
-    PdfPCell cycle = new PdfPCell();
-    cycle.setBorderColor(SLATE_200);
-    cycle.setPadding(8);
-    cycle.addElement(
-        new Paragraph("CICLO DE LA EVALUACIÓN", font(FontFactory.HELVETICA_BOLD, 7.5f, SLATE_500)));
+    Paragraph traceIntro =
+        new Paragraph(
+            "Recorrido de la evaluación según la bitácora: cada cambio de estado con quién lo hizo"
+                + " y cuándo. El ciclo cuenta las veces que se envió a auditoría.",
+            font(FontFactory.HELVETICA, 8.5f, SLATE_700));
+    traceIntro.setSpacingAfter(6);
+    doc.add(traceIntro);
+    Paragraph cycleTitle =
+        new Paragraph("CICLO DE LA EVALUACIÓN", font(FontFactory.HELVETICA_BOLD, 7.5f, SLATE_500));
+    cycleTitle.setSpacingAfter(3);
+    doc.add(cycleTitle);
     if (data.trail().isEmpty()) {
-      cycle.addElement(new Paragraph("Sin cambios de estado registrados.", italic(8.5f)));
+      Paragraph none = new Paragraph("Sin cambios de estado registrados.", italic(8.5f));
+      none.setSpacingAfter(8);
+      doc.add(none);
+    } else {
+      PdfPTable trail = new PdfPTable(new float[] {19, 8, 47, 26});
+      trail.setWidthPercentage(100);
+      trail.setHeaderRows(1);
+      header(trail, "Fecha y hora", "Ciclo", "Cambio", "Quién");
+      // Toda evaluación nace en borrador: es el «desde» del primer cambio registrado.
+      String previous = ReportService.statusLabel(Evaluation.Status.DRAFT);
+      for (EvaluationAuditCycleEventDto event : data.trail()) {
+        boolean isSeal = "CERTIFY".equals(event.action());
+        Color bg = isSeal ? GREEN_BG : Color.WHITE;
+        body(trail, event.occurredAt() != null ? dateTime(event.occurredAt()) : "—", bg, false);
+        body(trail, event.cycleNumber() > 0 ? String.valueOf(event.cycleNumber()) : "—", bg, false);
+        String current = trailLabel(event);
+        if (event.status() != null) {
+          // «›» y no «→»: la Helvetica estándar del PDF (WinAnsi) no tiene la flecha.
+          body(trail, previous + " › " + current, bg, false);
+          previous = current;
+        } else {
+          body(trail, current, bg, true);
+        }
+        body(trail, event.performedByName() != null ? event.performedByName() : "—", bg, false);
+      }
+      trail.setSpacingAfter(8);
+      doc.add(trail);
     }
-    for (EvaluationAuditCycleEventDto event : data.trail()) {
-      cycle.addElement(
-          new Paragraph(
-              trailLabel(event)
-                  + (event.occurredAt() != null ? " · " + event.occurredAt().format(DATE) : "")
-                  + (event.performedByName() != null ? " · " + event.performedByName() : ""),
-              font(FontFactory.HELVETICA, 8.5f, SLATE_700)));
-    }
-    trace.addCell(cycle);
+
+    PdfPTable trace = new PdfPTable(1);
+    trace.setWidthPercentage(100);
     PdfPCell seal = new PdfPCell();
     seal.setBorderColor(GREEN_BG);
     seal.setPadding(8);
@@ -1245,6 +1269,11 @@ public class TechnicalReportService {
       case RESOLVED -> "Resuelta";
       case CLOSED -> "Cerrada";
     };
+  }
+
+  /** Fecha y hora en la zona del servidor (TZ): la base puede devolverla en UTC. */
+  private static String dateTime(OffsetDateTime at) {
+    return at.atZoneSameInstant(java.time.ZoneId.systemDefault()).format(DATE_TIME);
   }
 
   private static String trailLabel(EvaluationAuditCycleEventDto event) {

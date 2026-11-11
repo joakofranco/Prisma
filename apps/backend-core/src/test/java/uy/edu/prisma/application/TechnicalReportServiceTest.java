@@ -272,6 +272,57 @@ class TechnicalReportServiceTest {
   }
 
   @Test
+  void theTraceabilityShowsEachStatusChangeWithItsTimeCycleAndAuthor() throws Exception {
+    OffsetDateTime sent = APPROVED_AT.minusHours(2);
+    when(auditLog.getEvaluationAuditTrail(eval.getId()))
+        .thenReturn(
+            List.of(
+                new EvaluationAuditCycleEventDto(
+                    UUID.randomUUID(), "UPDATE_STATUS", "IN_PROGRESS", null, "Ana Pérez", sent, 0),
+                new EvaluationAuditCycleEventDto(
+                    UUID.randomUUID(),
+                    "UPDATE_STATUS",
+                    "READY_FOR_AUDIT",
+                    null,
+                    "Ana Pérez",
+                    sent.plusMinutes(5),
+                    1),
+                new EvaluationAuditCycleEventDto(
+                    UUID.randomUUID(),
+                    "UPDATE_STATUS",
+                    "APPROVED",
+                    null,
+                    "Laura Méndez",
+                    APPROVED_AT,
+                    1),
+                new EvaluationAuditCycleEventDto(
+                    UUID.randomUUID(), "CERTIFY", null, null, "Laura Méndez", APPROVED_AT, 1)));
+
+    String text = text(service.generate(eval.getId()));
+
+    assertFalse(text.contains("UPDATE_STATUS"));
+    assertTrue(text.contains("Fecha y hora"));
+    assertTrue(text.contains("Borrador › En Curso"), text);
+    assertTrue(text.contains("En Curso › Lista para Auditoría"));
+    assertTrue(text.contains("Lista para Auditoría › Aprobada"));
+    assertTrue(text.contains("Sello de certificación emitido"));
+    String approvedAt =
+        APPROVED_AT
+            .atZoneSameInstant(java.time.ZoneId.systemDefault())
+            .format(java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm"));
+    assertTrue(text.contains(approvedAt), approvedAt);
+  }
+
+  @Test
+  void withoutStatusChangesTheTraceabilitySaysSo() throws Exception {
+    when(auditLog.getEvaluationAuditTrail(eval.getId())).thenReturn(List.of());
+
+    String text = text(service.generate(eval.getId()));
+
+    assertTrue(text.contains("Sin cambios de estado registrados."));
+  }
+
+  @Test
   void itShowsTheAuditorVerdictsAndObservations() throws Exception {
     String text = text(service.generate(eval.getId()));
 
