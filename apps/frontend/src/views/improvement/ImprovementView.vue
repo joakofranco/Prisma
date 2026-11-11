@@ -105,6 +105,12 @@
         </div>
       </section>
 
+      <MaturityGapSection
+        :results="results"
+        :planned-control-ids="plannedControlIds"
+        @create-action="openCreateFromGap"
+      />
+
       <div
         class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden"
       >
@@ -407,9 +413,10 @@
 </template>
 
 <script setup lang="ts">
-  import { ref, computed, reactive, onMounted } from 'vue';
+  import { ref, computed, reactive, watch, onMounted } from 'vue';
   import { useRoute } from 'vue-router';
   import { improvementService, reportsService } from '@/services/resources';
+  import { evaluationsService, improvementService } from '@/services/resources';
   import { formatDate, getErrorMessage } from '@/utils/helpers';
   import { blobErrorMessage, saveBlob } from '@/utils/files';
   import { useNotification } from '@/composables/useUtils';
@@ -417,6 +424,9 @@
   import ProgressBar from '@/components/common/ProgressBar.vue';
   import { planProgress, type Progress } from '@/utils/planProgress';
   import BaseButton from '@/components/common/BaseButton.vue';
+  import MaturityGapSection, {
+    type GapActionDraft,
+  } from '@/components/improvement/MaturityGapSection.vue';
   import BaseModal from '@/components/common/BaseModal.vue';
   import BaseInput from '@/components/common/BaseInput.vue';
   import BaseSelect from '@/components/common/BaseSelect.vue';
@@ -433,7 +443,12 @@
     CheckCircleIcon,
     ExclamationCircleIcon,
   } from '@heroicons/vue/24/outline';
-  import type { ImprovementPlan, SuggestedImprovement, RemediationTips } from '@/types';
+  import type {
+    ImprovementPlan,
+    MaturityResult,
+    SuggestedImprovement,
+    RemediationTips,
+  } from '@/types';
 
   interface EditableSuggestion extends SuggestedImprovement {
     selected: boolean;
@@ -448,6 +463,11 @@
   const saving = ref(false);
   const showCreateModal = ref(false);
   const plans = ref<ImprovementPlan[]>([]);
+  const results = ref<MaturityResult[]>([]);
+  const plannedControlIds = computed(
+    () => new Set(plans.value.map((p) => p.controlId).filter(Boolean)),
+  );
+  const draftControlId = ref<string | null>(null);
 
   const showSuggestModal = ref(false);
   const loadingSuggestions = ref(false);
@@ -604,6 +624,27 @@
     }
   }
 
+  async function fetchResults() {
+    try {
+      const { data } = await evaluationsService.getResults(evaluationId);
+      results.value = data;
+    } catch (err) {
+      console.error(err);
+      results.value = [];
+    }
+  }
+
+  function openCreateFromGap(draft: GapActionDraft) {
+    newPlan.action = draft.action;
+    newPlan.priority = draft.priority;
+    draftControlId.value = draft.controlId;
+    showCreateModal.value = true;
+  }
+
+  watch(showCreateModal, (open) => {
+    if (!open) draftControlId.value = null;
+  });
+
   async function handleCreate() {
     Object.keys(formErrors).forEach((k) => (formErrors[k as keyof typeof formErrors] = ''));
     if (!newPlan.action) {
@@ -628,6 +669,7 @@
       await improvementService.create({
         evaluationId,
         ...newPlan,
+        ...(draftControlId.value ? { controlId: draftControlId.value } : {}),
         status: 'PENDING',
       });
       notification.success('Acción de mejora creada');
@@ -741,5 +783,6 @@
 
   onMounted(() => {
     fetchPlans();
+    fetchResults();
   });
 </script>

@@ -571,7 +571,45 @@ public class Dto {
       String subcategoryName,
       Integer currentLevel,
       Integer targetLevel,
-      Integer gap) {}
+      Integer gap,
+      Integer nextLevel,
+      List<MissingControlDto> missingControls) {
+    public MaturityResultDto {
+      missingControls = missingControls == null ? List.of() : List.copyOf(missingControls);
+    }
+
+    public MaturityResultDto(
+        UUID functionId,
+        String functionName,
+        UUID categoryId,
+        String categoryName,
+        UUID subcategoryId,
+        String subcategoryName,
+        Integer currentLevel,
+        Integer targetLevel,
+        Integer gap) {
+      this(
+          functionId,
+          functionName,
+          categoryId,
+          categoryName,
+          subcategoryId,
+          subcategoryName,
+          currentLevel,
+          targetLevel,
+          gap,
+          null,
+          List.of());
+    }
+
+    @Override
+    public List<MissingControlDto> missingControls() {
+      return Collections.unmodifiableList(missingControls);
+    }
+  }
+
+  public record MissingControlDto(
+      UUID id, String code, String description, int targetLevel, String status) {}
 
   // ---- Dashboard ----
   public record DashboardStatsDto(
@@ -861,6 +899,83 @@ public class Dto {
       details = details == null ? Map.of() : Map.copyOf(details);
     }
   }
+
+  public record EvaluationOverviewDto(
+      UUID evaluationId,
+      String evaluationName,
+      String catalogVersion,
+      String catalogLabel,
+      UUID communityProfileId,
+      String communityProfileName,
+      int subcategoryCount,
+      int requirementCount,
+      int controlCount,
+      OverviewPriorityCountsDto priorityCounts,
+      List<OverviewFunctionDto> functions) {
+    public EvaluationOverviewDto {
+      functions = functions == null ? List.of() : List.copyOf(functions);
+    }
+
+    @Override
+    public List<OverviewFunctionDto> functions() {
+      return Collections.unmodifiableList(functions);
+    }
+  }
+
+  public record OverviewPriorityCountsDto(int alta, int media, int baja, int sinPrioridad) {}
+
+  public record OverviewFunctionDto(
+      UUID id, String code, String name, List<OverviewCategoryDto> categories) {
+    public OverviewFunctionDto {
+      categories = categories == null ? List.of() : List.copyOf(categories);
+    }
+
+    @Override
+    public List<OverviewCategoryDto> categories() {
+      return Collections.unmodifiableList(categories);
+    }
+  }
+
+  public record OverviewCategoryDto(
+      UUID id, String code, String name, List<OverviewSubcategoryDto> subcategories) {
+    public OverviewCategoryDto {
+      subcategories = subcategories == null ? List.of() : List.copyOf(subcategories);
+    }
+
+    @Override
+    public List<OverviewSubcategoryDto> subcategories() {
+      return Collections.unmodifiableList(subcategories);
+    }
+  }
+
+  public record OverviewSubcategoryDto(
+      UUID id,
+      String code,
+      String name,
+      String description,
+      String priority,
+      List<OverviewRequirementDto> requirements,
+      List<OverviewControlDto> controls) {
+    public OverviewSubcategoryDto {
+      requirements = requirements == null ? List.of() : List.copyOf(requirements);
+      controls = controls == null ? List.of() : List.copyOf(controls);
+    }
+
+    @Override
+    public List<OverviewRequirementDto> requirements() {
+      return Collections.unmodifiableList(requirements);
+    }
+
+    @Override
+    public List<OverviewControlDto> controls() {
+      return Collections.unmodifiableList(controls);
+    }
+  }
+
+  public record OverviewRequirementDto(UUID id, String code, String description) {}
+
+  public record OverviewControlDto(
+      UUID id, String code, String description, int targetLevel, String requirementCode) {}
 
   // ---- Paginated ----
   public record PaginatedDto<T>(List<T> data, long total, int page, int pageSize) {

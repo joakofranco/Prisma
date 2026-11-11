@@ -575,20 +575,51 @@ public class EvaluationService {
             .findById(evaluationId)
             .orElseThrow(() -> new ResourceNotFoundException("Evaluación", evaluationId));
     currentUser.assertOrganizationAccess(eval.getOrganization().getId());
-    return matRepo.findByEvaluationId(evaluationId).stream()
-        .map(
-            m ->
-                new MaturityResultDto(
-                    m.getFunctionId(),
-                    m.getFunctionName(),
-                    m.getCategoryId(),
-                    m.getCategoryName(),
-                    m.getSubcategoryId(),
-                    m.getSubcategoryName(),
-                    m.getCurrentLevel(),
-                    m.getTargetLevel(),
-                    m.getGap()))
-        .toList();
+    List<MaturityResult> stored = matRepo.findByEvaluationId(evaluationId);
+
+    Map<UUID, List<CatalogControl>> controlsBySubcategory = new HashMap<>();
+    Map<UUID, EvaluationResponse> responsesByControl = new HashMap<>();
+    Set<UUID> profileControlIds = null;
+    if (!stored.isEmpty()) {
+      for (CatalogControl control : controlRepo.findByVersionOrdered(eval.getCatalogVersion())) {
+        for (CatalogSubcategory sub : control.effectiveSubcategories()) {
+          controlsBySubcategory.computeIfAbsent(sub.getId(), k -> new ArrayList<>()).add(control);
+        }
+      }
+      for (EvaluationResponse r : respRepo.findByEvaluationId(evaluationId)) {
+        responsesByControl.put(r.getControl().getId(), r);
+      }
+      if (eval.getCommunityProfile() != null) {
+        profileControlIds =
+            eval.getCommunityProfile().getControls().stream()
+                .map(CatalogControl::getId)
+                .collect(Collectors.toSet());
+      }
+    }
+
+    List<MaturityResultDto> results = new ArrayList<>();
+    for (MaturityResult m : stored) {
+      MaturityGapCalculator.Gap gap =
+          MaturityGapCalculator.compute(
+              m.getCurrentLevel(),
+              controlsBySubcategory.getOrDefault(m.getSubcategoryId(), List.of()),
+              responsesByControl,
+              profileControlIds);
+      results.add(
+          new MaturityResultDto(
+              m.getFunctionId(),
+              m.getFunctionName(),
+              m.getCategoryId(),
+              m.getCategoryName(),
+              m.getSubcategoryId(),
+              m.getSubcategoryName(),
+              m.getCurrentLevel(),
+              m.getTargetLevel(),
+              m.getGap(),
+              gap.nextLevel(),
+              gap.missingControls()));
+    }
+    return results;
   }
 
   public void calculateMaturity(UUID evaluationId) {
