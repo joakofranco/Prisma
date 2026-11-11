@@ -40,6 +40,7 @@ class ControllersMockMvcTest {
   @Mock private ReportService reportService;
   @Mock private uy.edu.prisma.application.TechnicalReportService technicalReportService;
   @Mock private EmailSettingsService emailSettingsService;
+  @Mock private PlanDeadlineSettingsService planDeadlineSettingsService;
   @Mock private AccountService accountService;
   @Mock private AuditLogService auditLogService;
 
@@ -56,6 +57,7 @@ class ControllersMockMvcTest {
   private MockMvc improvement;
   private MockMvc reports;
   private MockMvc emailSettings;
+  private MockMvc planDeadlines;
   private MockMvc account;
   private MockMvc auditLogs;
 
@@ -89,6 +91,10 @@ class ControllersMockMvcTest {
             .build();
     emailSettings =
         MockMvcBuilders.standaloneSetup(new EmailSettingsController(emailSettingsService)).build();
+    planDeadlines =
+        MockMvcBuilders.standaloneSetup(
+                new PlanDeadlineSettingsController(planDeadlineSettingsService))
+            .build();
     account = MockMvcBuilders.standaloneSetup(new AccountController(accountService)).build();
     auditLogs = MockMvcBuilders.standaloneSetup(new AuditLogController(auditLogService)).build();
   }
@@ -1122,6 +1128,35 @@ class ControllersMockMvcTest {
   }
 
   @Test
+  void reportsPreliminaryPdfAndExcel() throws Exception {
+    UUID id = UUID.randomUUID();
+    when(reportService.generatePreliminaryPdf(id)).thenReturn("%PDF-1.4".getBytes());
+    when(reportService.generatePreliminaryExcel(id)).thenReturn("PK".getBytes());
+
+    reports
+        .perform(get("/api/reports/{id}/preliminary/pdf", id))
+        .andExpect(status().isOk())
+        .andExpect(content().contentType(MediaType.APPLICATION_PDF));
+    reports
+        .perform(get("/api/reports/{id}/preliminary/excel", id))
+        .andExpect(status().isOk())
+        .andExpect(
+            content()
+                .contentType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"));
+  }
+
+  @Test
+  void thePreliminaryReportIsForTheAdminAndTheAuditor() throws Exception {
+    for (String name : List.of("preliminaryPdf", "preliminaryExcel")) {
+      var annotation =
+          ReportsController.class
+              .getMethod(name, UUID.class)
+              .getAnnotation(org.springframework.security.access.prepost.PreAuthorize.class);
+      assertEquals("hasAnyRole('PRISMA_ADMIN','AUDITOR')", annotation.value(), name);
+    }
+  }
+
+  @Test
   void reportsTechnicalPdf() throws Exception {
     UUID id = UUID.randomUUID();
     when(technicalReportService.generate(id)).thenReturn("%PDF-1.4".getBytes());
@@ -1192,6 +1227,48 @@ class ControllersMockMvcTest {
         .andExpect(jsonPath("$.host").value("mailhog"));
 
     verify(emailSettingsService, times(1)).update(any(UpdateEmailSettingsDto.class));
+  }
+
+  // ---------------- Plazos por defecto del plan de mejora (RF-PLN-03, PRI-304) ----------------
+
+  @Test
+  void planDeadlinesGet() throws Exception {
+    when(planDeadlineSettingsService.get()).thenReturn(new PlanDeadlinesDto(3, 6, 12));
+
+    planDeadlines
+        .perform(get("/api/settings/plan-deadlines"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.highMonths").value(3))
+        .andExpect(jsonPath("$.mediumMonths").value(6))
+        .andExpect(jsonPath("$.lowMonths").value(12));
+  }
+
+  @Test
+  void planDeadlinesUpdate() throws Exception {
+    when(planDeadlineSettingsService.update(any(PlanDeadlinesDto.class)))
+        .thenReturn(new PlanDeadlinesDto(1, 6, 12));
+
+    planDeadlines
+        .perform(
+            put("/api/settings/plan-deadlines")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"highMonths\":1,\"mediumMonths\":6,\"lowMonths\":12}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.highMonths").value(1));
+
+    verify(planDeadlineSettingsService).update(new PlanDeadlinesDto(1, 6, 12));
+  }
+
+  @Test
+  void planDeadlinesAreReadableByAnyoneButOnlyTheAdminChangesThem() throws Exception {
+    var get = PlanDeadlineSettingsController.class.getMethod("get");
+    var update = PlanDeadlineSettingsController.class.getMethod("update", PlanDeadlinesDto.class);
+    var preAuthorize = org.springframework.security.access.prepost.PreAuthorize.class;
+
+    // Leerlos lo necesita el alta de una acción (cualquier usuario autenticado).
+    assertNull(get.getAnnotation(preAuthorize));
+    assertNull(PlanDeadlineSettingsController.class.getAnnotation(preAuthorize));
+    assertEquals("hasRole('PRISMA_ADMIN')", update.getAnnotation(preAuthorize).value());
   }
 
   // ---------------- Account (autoservicio) ----------------
