@@ -3,6 +3,7 @@ import type {
   User,
   Organization,
   Evaluation,
+  EvaluationOverview,
   EvaluationResponse,
   EvaluationAuditCycleEvent,
   SubcategoryComment,
@@ -123,6 +124,9 @@ export const evaluationsService = {
       `/evaluations/${evaluationId}/subcategory-comments/${subcategoryId}`,
       { comment },
     );
+  },
+  getOverview(evaluationId: string) {
+    return apiClient.get<EvaluationOverview>(`/evaluations/${evaluationId}/overview`);
   },
   getResults(evaluationId: string) {
     return apiClient.get<MaturityResult[]>(`/evaluations/${evaluationId}/results`);

@@ -528,6 +528,7 @@
     ClipboardDocumentCheckIcon,
     DocumentTextIcon,
     PencilSquareIcon,
+    RectangleStackIcon,
     PaperClipIcon,
     ShieldCheckIcon,
     ArrowTrendingUpIcon,
@@ -686,6 +687,15 @@
     if (!evaluation.value) return [];
     const s = evaluation.value.status;
     const list: FlowAction[] = [];
+
+    list.push({
+      key: 'overview',
+      label: 'Estructura',
+      to: `/evaluations/${evaluation.value.id}/overview`,
+      icon: RectangleStackIcon,
+      disabled: false,
+      hint: 'Ver subcategorías, requisitos MCU y controles por nivel.',
+    });
 
     if (canRespondRole.value) {
       list.push({
