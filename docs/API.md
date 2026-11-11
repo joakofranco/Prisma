@@ -106,7 +106,8 @@ Todos los errores de `backend-core` devuelven el mismo shape (`GlobalExceptionHa
 | DELETE | `/{id}` | `PRISMA_ADMIN`, `ORG_RESPONSIBLE` | — |
 | GET | `/{id}/responses` | cualquiera autenticado (con acceso a la organización) | — |
 | POST | `/{id}/responses` | `PRISMA_ADMIN`, `INTERNAL_EVALUATOR`, `ORG_RESPONSIBLE` | `{controlId, compliant, observations?}` — **rechaza con 400** si la evaluación no está en `DRAFT`/`IN_PROGRESS`/`RETURNED` (`Evaluation.isSelfAssessmentEditable()`) |
-| GET | `/{id}/results` | cualquiera autenticado | resultados de madurez ya calculados (vacío si nunca se calculó) |
+| GET | `/{id}/results` | cualquiera autenticado | resultados de madurez ya calculados (vacío si nunca se calculó). Cada fila trae además `nextLevel` (próximo nivel con controles del perfil pendientes, `null` si no hay brecha accionable) y `missingControls` (controles del perfil de nivel ≤ `nextLevel` sin respuesta «cumple», con `status` `NON_COMPLIANT` o `UNANSWERED`), calculados al vuelo con las respuestas actuales (RF-CALC-07) |
+| GET | `/{id}/overview` | cualquiera autenticado (con acceso a la organización) | RF-EVA-04: estructura de la evaluación (función > categoría > subcategoría) podada al perfil comunitario de la evaluación, con descripción, requisitos MCU, controles por nivel (1-4) y `priority` (`ALTA`/`MEDIA`/`BAJA`, o `null`) de cada subcategoría. La prioridad se deriva de los perfiles oficiales del catálogo: `ALTA` si la subcategoría está en el perfil Básico, `MEDIA` si solo llega al Estándar, `BAJA` si solo llega al Avanzado; `null` si esos perfiles no existen. Sin perfil en la evaluación muestra el catálogo completo |
 | POST | `/{id}/calculate` | `PRISMA_ADMIN`, `INTERNAL_EVALUATOR` | recalcula madurez/brechas — idempotente, pisa el cálculo anterior |
 
 ### Ciclo de vida — transiciones válidas
@@ -168,8 +169,9 @@ Regla de estado: crear (`POST`) y modificar (`PUT`, incluido el cambio de `statu
 | GET | `/{id}/excel` | `PRISMA_ADMIN`, `ORG_RESPONSIBLE` | reporte final; `Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`. Solo con la evaluación `APPROVED` (409 si no) |
 | GET | `/{id}/executive/pdf` | `PRISMA_ADMIN`, `ORG_RESPONSIBLE` | **reporte ejecutivo gerencial** (RF-REP-01), aparte del reporte final: 1 a 2 páginas con organización y evaluación, perfil comunitario, madurez global, radar por función, las 5 mayores brechas y las 5 acciones principales del plan de mejora (por prioridad y fecha límite; «Sin acciones registradas» si no hay). Solo con la evaluación `APPROVED` (409 si no). El auditor no lo descarga |
 | GET | `/{id}/preliminary/pdf`, `/{id}/preliminary/excel` | `PRISMA_ADMIN`, `AUDITOR` | informe preliminar de auditoría. Solo con la evaluación `IN_AUDIT` (409 si no) |
+| GET | `/{id}/improvement-plan/pdf`, `/{id}/improvement-plan/excel` | `PRISMA_ADMIN`, `ORG_RESPONSIBLE`, `AUDITOR` | **exportación del plan de mejora** (RF-PLN-05): acción, control, prioridad, estado, responsable, vencimiento y comentarios, ordenado por prioridad y fecha límite. El PDF es A4 horizontal con un resumen de avance por estado y prioridad; el Excel es una hoja «Plan de mejora» con filtros y primera fila fija. Una acción abierta con fecha vencida figura como «Vencida». No depende del estado de la evaluación. **400 si el plan no tiene acciones** |
 
-Regla de estado: el informe **preliminar** vale solo en `IN_AUDIT`; el reporte **final** y el **ejecutivo**, solo en `APPROVED`.
+Regla de estado: el informe **preliminar** vale solo en `IN_AUDIT`; el reporte **final** y el **ejecutivo**, solo en `APPROVED`. La exportación del plan de mejora no tiene restricción de estado.
 
 ## Dashboard — `/api/dashboard`
 
