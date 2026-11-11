@@ -10,27 +10,37 @@ services:
   postgres:
     restart: always
     ports: []                          # No exponer al host
-    # NOTA: sin "ssl=on" -- la imagen postgres:17-alpine no trae ningún certificado en
-    # /etc/ssl/certs/server.crt / /etc/ssl/private/server.key (ni los genera sola), y nada en
-    # este compose los monta. Con ssl=on puesto y esos archivos ausentes, Postgres no llega a
-    # arrancar ("could not load server certificate file") -- eso es lo que se veía como
-    # "container prisma-postgres is unhealthy" bloqueando todo lo que depende de él (condition:
-    # service_healthy). El tráfico a postgres no sale de la red interna `prisma-net` (ports: []
-    # más abajo, no se expone al host) -- si en algún momento se quiere TLS acá también, hay que
-    # generar y montar un certificado primero (mismo mecanismo que scripts/generate-nginx-cert.sh
-    # para nginx), no alcanza con el flag solo.
+    volumes:
+      - ./infra/tls/postgres.crt:/etc/prisma/tls/server.crt:ro
+      - ./infra/tls/postgres.key:/etc/prisma/tls/server.key.src:ro
+      - ./infra/postgres/pg_hba.tls.conf:/etc/prisma/pg_hba.conf:ro
     command:
-      - "postgres"
-      - "-c"
-      - "max_connections=200"
-      - "-c"
-      - "shared_buffers=1GB"
-      - "-c"
-      - "log_statement=none"
+      - sh
+      - -c
+      - >-
+        install -m 600 -o postgres -g postgres /etc/prisma/tls/server.key.src /var/lib/postgresql/server.key &&
+        exec docker-entrypoint.sh postgres
+        -c max_connections=200 -c shared_buffers=1GB -c log_statement=none
+        -c ssl=on -c ssl_cert_file=/etc/prisma/tls/server.crt -c ssl_key_file=/var/lib/postgresql/server.key
+        -c ssl_min_protocol_version=TLSv1.2 -c hba_file=/etc/prisma/pg_hba.conf
     deploy:
       resources:
         limits: { cpus: '2.0', memory: 4G }
         reservations: { cpus: '1.0', memory: 2G }
+
+  keycloak-db:
+    volumes:
+      - ./infra/tls/keycloak-db.crt:/etc/prisma/tls/server.crt:ro
+      - ./infra/tls/keycloak-db.key:/etc/prisma/tls/server.key.src:ro
+      - ./infra/postgres/pg_hba.tls.conf:/etc/prisma/pg_hba.conf:ro
+    command:
+      - sh
+      - -c
+      - >-
+        install -m 600 -o postgres -g postgres /etc/prisma/tls/server.key.src /var/lib/postgresql/server.key &&
+        exec docker-entrypoint.sh postgres
+        -c ssl=on -c ssl_cert_file=/etc/prisma/tls/server.crt -c ssl_key_file=/var/lib/postgresql/server.key
+        -c ssl_min_protocol_version=TLSv1.2 -c hba_file=/etc/prisma/pg_hba.conf
 
   redis:
     restart: always
@@ -51,6 +61,18 @@ services:
     environment:
       SPRING_PROFILES_ACTIVE: production
       LOGGING_LEVEL_ROOT: WARN
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}?sslmode=verify-full&sslrootcert=/etc/prisma/tls/ca.crt
+      SERVER_SSL_ENABLED: "true"
+      SERVER_SSL_CERTIFICATE: /etc/prisma/tls/backend-core.crt
+      SERVER_SSL_CERTIFICATE_PRIVATE_KEY: /etc/prisma/tls/backend-core.key
+      AI_SERVICE_URL: https://backend-ai:8000
+      S3_ENDPOINT: https://rustfs:9000
+      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-https://prisma.local:${S3_PORT_API:-9001}}
+    volumes:
+      - ./infra/tls/backend-core.crt:/etc/prisma/tls/backend-core.crt:ro
+      - ./infra/tls/backend-core.key:/etc/prisma/tls/backend-core.key:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "--cacert", "/etc/prisma/tls/ca.crt", "https://localhost:8080/actuator/health"]
     # NOTA: sin "replicas" -- container_name (fijo en docker-compose.yml) es incompatible con
     # escalar a más de una réplica vía docker compose (Compose lo rechaza al cargar el archivo).
     # Escalar horizontalmente requeriría un orquestador (ver
@@ -66,6 +88,16 @@ services:
     restart: always
     image: ghcr.io/${GHCR_ORG}/prisma-backend-ai:${TAG:-latest}
     pull_policy: always
+    environment:
+      CORE_BACKEND_URL: https://backend-core:8080
+      SSL_CERT_FILE: /etc/prisma/tls/ca.crt
+    volumes:
+      - ./infra/tls/ca.crt:/etc/prisma/tls/ca.crt:ro
+      - ./infra/tls/backend-ai.crt:/etc/prisma/tls/backend-ai.crt:ro
+      - ./infra/tls/backend-ai.key:/etc/prisma/tls/backend-ai.key:ro
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2", "--ssl-keyfile", "/etc/prisma/tls/backend-ai.key", "--ssl-certfile", "/etc/prisma/tls/backend-ai.crt"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "--cacert", "/etc/prisma/tls/ca.crt", "https://localhost:8000/health"]
     deploy:
       replicas: 1
       resources:
@@ -76,6 +108,12 @@ services:
     image: ghcr.io/${GHCR_ORG}/prisma-frontend:${TAG:-latest}
     pull_policy: always
     ports: []                          # Sólo detrás de nginx
+    volumes:
+      - ./infra/nginx/tls/frontend-listen.conf:/etc/nginx/frontend-listen.conf:ro
+      - ./infra/tls/frontend.crt:/etc/prisma/tls/frontend.crt:ro
+      - ./infra/tls/frontend.key:/etc/prisma/tls/frontend.key:ro
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "--no-check-certificate", "https://localhost:8443"]
     # NOTA: sin "replicas" -- mismo motivo que backend-core más arriba (container_name fijo).
     deploy:
       resources:
@@ -88,12 +126,117 @@ services:
     command: ["start", "--import-realm"]
     environment:
       KC_HOSTNAME_STRICT: "false"
+      KC_DB_URL: jdbc:postgresql://keycloak-db:5432/keycloak?sslmode=verify-full&sslrootcert=/opt/keycloak/conf/tls/ca.crt
+      KC_HTTP_ENABLED: "false"
+    volumes:
+      - ./infra/tls/ca.crt:/opt/keycloak/conf/tls/ca.crt:ro
     deploy:
       resources:
         limits: { cpus: '1.0', memory: 1G }
 
   nginx:
     restart: always
+    volumes:
+      - ./infra/nginx/tls/proxy-backend-core.inc:/etc/nginx/conf.d/proxy-backend-core.inc:ro
+      - ./infra/nginx/tls/proxy-backend-ai.inc:/etc/nginx/conf.d/proxy-backend-ai.inc:ro
+      - ./infra/nginx/tls/proxy-frontend.inc:/etc/nginx/conf.d/proxy-frontend.inc:ro
     deploy:
       resources:
         limits: { cpus: '1.0', memory: 512M }
+
+  postgres-exporter:
+    environment:
+      DATA_SOURCE_NAME: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=verify-full&sslrootcert=/etc/prisma/tls/ca.crt
+    volumes:
+      - ./infra/tls/ca.crt:/etc/prisma/tls/ca.crt:ro
+
+  grafana:
+    environment:
+      GRAFANA_PG_SSLMODE: verify-full
+    volumes:
+      - ./infra/tls/ca.crt:/etc/prisma/tls/ca.crt:ro
+
+  backup-runner:
+    environment:
+      PGSSLMODE: verify-full
+      PGSSLROOTCERT: /etc/prisma/tls/ca.crt
+      S3_ENDPOINT: https://rustfs:9000
+      AWS_CA_BUNDLE: /etc/prisma/tls/ca.crt
+    volumes:
+      - ./infra/tls/ca.crt:/etc/prisma/tls/ca.crt:ro
+
+  prometheus:
+    volumes:
+      - ./infra/monitoring/prometheus/prometheus.prod.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/tls/ca.crt:/etc/prisma/tls/ca.crt:ro
+
+  rustfs:
+    environment:
+      RUSTFS_TLS_PATH: /etc/prisma/tls
+    volumes:
+      - ./infra/tls/rustfs.crt:/etc/prisma/tls/rustfs_cert.pem:ro
+      - ./infra/tls/rustfs.key:/etc/prisma/tls/rustfs_key.pem:ro
+      - ./infra/tls/ca.crt:/etc/prisma/tls/ca.crt:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f --cacert /etc/prisma/tls/ca.crt https://localhost:9000/health || exit 1"]
+
+  elasticsearch:
+    environment:
+      xpack.security.http.ssl.enabled: "true"
+      xpack.security.http.ssl.key: /usr/share/elasticsearch/config/certs/elasticsearch.key
+      xpack.security.http.ssl.certificate: /usr/share/elasticsearch/config/certs/elasticsearch.crt
+      xpack.security.http.ssl.certificate_authorities: /usr/share/elasticsearch/config/certs/ca.crt
+      xpack.security.http.ssl.supported_protocols: TLSv1.3,TLSv1.2
+    volumes:
+      - ./infra/tls/elasticsearch.crt:/usr/share/elasticsearch/config/certs/elasticsearch.crt:ro
+      - ./infra/tls/elasticsearch.key:/usr/share/elasticsearch/config/certs/elasticsearch.key:ro
+      - ./infra/tls/ca.crt:/usr/share/elasticsearch/config/certs/ca.crt:ro
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - >-
+          curl -sf --cacert /usr/share/elasticsearch/config/certs/ca.crt -u elastic:${ELASTIC_PASSWORD}
+          https://localhost:9200/_cluster/health
+          | grep -qE '"status":"(green|yellow)"'
+
+  kibana-init:
+    entrypoint: >
+      /bin/sh -c "
+      curl -sf --cacert /usr/share/elasticsearch/config/certs/ca.crt -u elastic:$$ELASTIC_PASSWORD -X POST https://elasticsearch:9200/_security/user/kibana_system/_password
+      -H 'Content-Type: application/json'
+      -d '{\"password\":\"'\"$$KIBANA_SYSTEM_PASSWORD\"'\"}';
+      "
+    volumes:
+      - ./infra/tls/ca.crt:/usr/share/elasticsearch/config/certs/ca.crt:ro
+
+  kibana:
+    environment:
+      ELASTICSEARCH_HOSTS: https://elasticsearch:9200
+      ELASTICSEARCH_SSL_CERTIFICATEAUTHORITIES: /usr/share/kibana/config/certs/ca.crt
+      SERVER_SSL_ENABLED: "true"
+      SERVER_SSL_CERTIFICATE: /usr/share/kibana/config/certs/kibana.crt
+      SERVER_SSL_KEY: /usr/share/kibana/config/certs/kibana.key
+    volumes:
+      - ./infra/tls/ca.crt:/usr/share/kibana/config/certs/ca.crt:ro
+      - ./infra/nginx/certs/prisma.crt:/usr/share/kibana/config/certs/kibana.crt:ro
+      - ./infra/nginx/certs/prisma.key:/usr/share/kibana/config/certs/kibana.key:ro
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - >-
+          curl -sf --cacert /usr/share/kibana/config/certs/kibana.crt https://localhost:5601/api/status
+          | grep -q '"level":"available"'
+
+  filebeat:
+    environment:
+      ELASTICSEARCH_HOSTS: https://elasticsearch:9200
+
+  kibana-dashboards-init:
+    volumes:
+      - ./infra/nginx/certs/prisma.crt:/kibana.crt:ro
+    entrypoint: >
+      sh -c "
+      curl -sf --cacert /kibana.crt --connect-to prisma.local:5601:kibana:5601
+      -u elastic:$$ELASTIC_PASSWORD -X POST 'https://prisma.local:5601/api/saved_objects/_import?overwrite=true'
+      -H 'kbn-xsrf: true' --form file=@/dashboards.ndjson;
+      "

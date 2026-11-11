@@ -31,5 +31,7 @@ datasources:
     secureJsonData:
       password: ${POSTGRES_PASSWORD}
     jsonData:
-      sslmode: disable
+      sslmode: ${GRAFANA_PG_SSLMODE}
+      tlsConfigurationMethod: file-path
+      sslRootCertFile: /etc/prisma/tls/ca.crt
       postgresVersion: 1600

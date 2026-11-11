@@ -37,7 +37,7 @@ DC := docker compose
         test test-frontend test-core test-ai lint format \
         seed migrate backup restore health pull-llm shell-core shell-ai \
         sonar security-scan sync-knowledge-base \
-        certs certs-force restart-nginx \
+        certs certs-force internal-ca restart-nginx \
         mvp-up mvp-down mvp-logs mvp-ps mvp-seed \
         mcu50-build mcu50-validate bugasura-build \
         mfa-enable mfa-status mfa-disable mfa-reset-requires-otp auth-policy auth-policy-status
@@ -131,9 +131,7 @@ pull: ## Descargar imágenes upstream
 
 health: ## Chequear salud de los servicios
 	@echo "$(CYAN)🩺 Health check...$(RESET)"
-	@curl -sf http://localhost:8081/actuator/health && echo " backend-core OK" || echo " backend-core FAIL"
-	@curl -sf http://localhost:8000/health         && echo " backend-ai OK"   || echo " backend-ai FAIL"
-	@curl -sfI http://localhost:8080               > /dev/null && echo " frontend OK" || echo " frontend FAIL"
+	@bash scripts/health-check.sh
 
 # ---------- LIMPIEZA ----------
 clean: ## Detener y eliminar contenedores + redes (preserva volúmenes)
@@ -245,11 +243,16 @@ auth-policy-status: ## Ver la vigencia del enlace de recuperación y los paráme
 	./scripts/keycloak/apply-auth-policy.sh --status
 
 # ---------- TLS / CERTIFICADOS ----------
-certs: ## Generar el certificado autofirmado de nginx (pide confirmación si ya existe uno)
+certs: ## Generar el certificado autofirmado de nginx (pide confirmación si ya existe) + la CA interna y sus certificados (si faltan)
 	./scripts/generate-nginx-cert.sh
+	@[ -f infra/tls/ca.crt ] || ./scripts/generate-internal-ca.sh --force
 
-certs-force: ## Regenerar el certificado de nginx sin preguntar (sobreescribe el actual)
+certs-force: ## Regenerar el certificado de nginx y la CA interna sin preguntar (sobreescribe)
 	./scripts/generate-nginx-cert.sh --force
+	./scripts/generate-internal-ca.sh --force
+
+internal-ca: ## Generar la CA interna y los certificados TLS por servicio (PRI-369; pide confirmación si ya existen)
+	./scripts/generate-internal-ca.sh
 
 restart-nginx: ## Reiniciar solo nginx (para que tome un certificado nuevo)
 	$(DC) restart nginx

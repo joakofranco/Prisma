@@ -95,6 +95,7 @@ jobs:
               COMPOSE="docker compose -f docker-compose.yml -f docker-compose.prod.yml"
             fi
             export TAG="$IMAGE_TAG"
+            [ -f infra/tls/ca.crt ] || ./scripts/generate-internal-ca.sh --force
             $COMPOSE pull
             $COMPOSE --profile full up -d --remove-orphans
             docker system prune -f

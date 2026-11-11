@@ -1,0 +1,54 @@
+global:
+  scrape_interval:     15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: prisma-local
+    environment: development
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+
+scrape_configs:
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: backend-core
+    metrics_path: /actuator/prometheus
+    scheme: https
+    tls_config:
+      ca_file: /etc/prisma/tls/ca.crt
+      server_name: backend-core
+    static_configs:
+      - targets: ['backend-core:8080']
+
+  - job_name: backend-ai
+    metrics_path: /metrics
+    scheme: https
+    tls_config:
+      ca_file: /etc/prisma/tls/ca.crt
+      server_name: backend-ai
+    static_configs:
+      - targets: ['backend-ai:8000']
+
+  - job_name: node-exporter
+    static_configs:
+      - targets: ['node-exporter:9100']
+
+  - job_name: cadvisor
+    static_configs:
+      - targets: ['cadvisor:8080']
+
+  - job_name: postgres
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+
+  - job_name: redis
+    static_configs:
+      - targets: ['redis-exporter:9121']

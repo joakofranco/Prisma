@@ -129,6 +129,10 @@ jobs:
         working-directory: .
         run: cp .env.example .env
 
+      - name: Generar CA interna y certificados TLS por servicio (PRI-369)
+        working-directory: .
+        run: ./scripts/generate-internal-ca.sh --force
+
       - name: Levantar Postgres + Redis + backend-core + Keycloak
         working-directory: .
         env:
