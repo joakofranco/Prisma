@@ -702,4 +702,32 @@ describe('EvidenceView: antivirus al subir (RNF-09)', () => {
     await flushPromises();
     expect(query('[data-test="scan-progress"]')).toBeNull();
   });
+
+  it('el hash y la leyenda sin análisis de IA usan un gris con contraste suficiente (WCAG AA)', async () => {
+    evidenceService.getByEvaluation.mockResolvedValue({
+      data: [
+        {
+          id: 'e1',
+          evaluationId: 'eval-1',
+          fileName: 'imagen.png',
+          fileSize: 10,
+          fileType: 'image/png',
+          fileHash: 'a'.repeat(64),
+          uploadedAt: '2026-11-10T00:00:00Z',
+          aiIndexed: false,
+          scanStatus: 'CLEAN',
+        },
+      ],
+    });
+    mount(EvidenceView, { attachTo: document.body, global: { stubs: { RouterLink: true } } });
+    await flushPromises();
+
+    const hash = document.body.querySelector<HTMLElement>('p[title^="SHA-256"]')!;
+    const noAi = Array.from(document.body.querySelectorAll<HTMLElement>('span')).find((s) =>
+      s.textContent?.includes('Sin análisis de IA'),
+    )!;
+    expect(hash.className).toContain('text-slate-500');
+    expect(hash.className).not.toContain('text-slate-400 ');
+    expect(noAi.className).toContain('text-slate-500');
+  });
 });
