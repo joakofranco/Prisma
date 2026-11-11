@@ -114,6 +114,66 @@
       <div
         class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden"
       >
+        <div
+          class="flex items-center justify-between gap-3 px-4 py-3 border-b border-slate-100 dark:border-slate-700"
+        >
+          <p class="text-sm font-semibold text-slate-900 dark:text-white">
+            Acciones del plan
+            <span class="font-normal text-slate-500 dark:text-slate-400" data-test="plan-count"
+              >({{ plans.length }})</span
+            >
+          </p>
+          <div class="relative">
+            <button
+              type="button"
+              class="inline-flex items-center gap-2 text-sm px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              :disabled="plans.length === 0 || exporting !== null"
+              aria-haspopup="menu"
+              :aria-expanded="exportMenuOpen"
+              data-test="export-button"
+              @click="exportMenuOpen = !exportMenuOpen"
+            >
+              <ArrowDownTrayIcon class="w-4 h-4" />
+              {{ exporting ? 'Generando archivo…' : 'Exportar' }}
+              <ChevronDownIcon class="w-3 h-3" />
+            </button>
+            <div
+              v-if="exportMenuOpen"
+              class="absolute right-0 mt-1 w-56 z-10 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 shadow-lg py-1 text-sm"
+              role="menu"
+            >
+              <button
+                type="button"
+                role="menuitem"
+                class="w-full text-left px-3 py-2 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-2 text-slate-700 dark:text-slate-200"
+                data-test="export-pdf"
+                @click="exportPlan('pdf')"
+              >
+                <span class="text-red-600 dark:text-red-400 font-bold text-xs w-8">PDF</span>
+                Documento (.pdf)
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                class="w-full text-left px-3 py-2 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-2 text-slate-700 dark:text-slate-200"
+                data-test="export-excel"
+                @click="exportPlan('excel')"
+              >
+                <span class="text-emerald-700 dark:text-emerald-400 font-bold text-xs w-8"
+                  >XLS</span
+                >
+                Hoja de cálculo (.xlsx)
+              </button>
+            </div>
+          </div>
+        </div>
+        <p
+          v-if="plans.length === 0"
+          class="px-4 pt-2 text-xs text-slate-500 dark:text-slate-400"
+          data-test="export-hint"
+        >
+          Registrá al menos una acción para poder exportar el plan.
+        </p>
         <div v-if="plans.length === 0" class="p-12 text-center text-slate-500 dark:text-slate-400">
           No hay planes de mejora registrados
         </div>
@@ -355,8 +415,9 @@
 <script setup lang="ts">
   import { ref, computed, reactive, watch, onMounted } from 'vue';
   import { useRoute } from 'vue-router';
-  import { evaluationsService, improvementService } from '@/services/resources';
+  import { evaluationsService, improvementService, reportsService } from '@/services/resources';
   import { formatDate, getErrorMessage } from '@/utils/helpers';
+  import { blobErrorMessage, saveBlob } from '@/utils/files';
   import { useNotification } from '@/composables/useUtils';
   import StatsCard from '@/components/common/StatsCard.vue';
   import ProgressBar from '@/components/common/ProgressBar.vue';
@@ -371,6 +432,8 @@
   import BaseTextarea from '@/components/common/BaseTextarea.vue';
   import {
     ArrowLeftIcon,
+    ArrowDownTrayIcon,
+    ChevronDownIcon,
     PlusIcon,
     PencilSquareIcon,
     SparklesIcon,
@@ -530,6 +593,33 @@
       console.error(err);
     } finally {
       loading.value = false;
+    }
+  }
+
+  const exportMenuOpen = ref(false);
+  const exporting = ref<'pdf' | 'excel' | null>(null);
+
+  async function exportPlan(format: 'pdf' | 'excel') {
+    exportMenuOpen.value = false;
+    exporting.value = format;
+    try {
+      if (format === 'pdf') {
+        const { data } = await reportsService.exportImprovementPlanPDF(evaluationId);
+        saveBlob(new Blob([data], { type: 'application/pdf' }), `plan-mejora-${evaluationId}.pdf`);
+      } else {
+        const { data } = await reportsService.exportImprovementPlanExcel(evaluationId);
+        saveBlob(
+          new Blob([data], {
+            type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          }),
+          `plan-mejora-${evaluationId}.xlsx`,
+        );
+      }
+      notification.success(`Plan de mejora exportado a ${format === 'pdf' ? 'PDF' : 'Excel'}`);
+    } catch (err) {
+      notification.error(await blobErrorMessage(err, 'No se pudo generar el archivo'));
+    } finally {
+      exporting.value = null;
     }
   }
 

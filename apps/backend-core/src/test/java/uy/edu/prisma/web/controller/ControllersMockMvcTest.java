@@ -783,6 +783,46 @@ class ControllersMockMvcTest {
   }
 
   @Test
+  void improvementPlanExportsAreServedAsAttachments() throws Exception {
+    UUID id = UUID.randomUUID();
+    when(reportService.generateImprovementPlanPdf(id)).thenReturn("%PDF-1.4 plan".getBytes());
+    when(reportService.generateImprovementPlanExcel(id)).thenReturn("PK".getBytes());
+
+    reports
+        .perform(get("/api/reports/{id}/improvement-plan/pdf", id))
+        .andExpect(status().isOk())
+        .andExpect(content().contentType(MediaType.APPLICATION_PDF))
+        .andExpect(
+            header()
+                .string(
+                    "Content-Disposition",
+                    org.hamcrest.Matchers.containsString("plan-mejora-" + id + ".pdf")));
+    reports
+        .perform(get("/api/reports/{id}/improvement-plan/excel", id))
+        .andExpect(status().isOk())
+        .andExpect(
+            content()
+                .contentType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+        .andExpect(
+            header()
+                .string(
+                    "Content-Disposition",
+                    org.hamcrest.Matchers.containsString("plan-mejora-" + id + ".xlsx")));
+  }
+
+  @Test
+  void improvementPlanExportsAllowAdminOrgResponsibleAndAuditor() throws Exception {
+    for (String name : List.of("improvementPlanPdf", "improvementPlanExcel")) {
+      var annotation =
+          ReportsController.class
+              .getMethod(name, UUID.class)
+              .getAnnotation(org.springframework.security.access.prepost.PreAuthorize.class);
+      assertNotNull(annotation, name);
+      assertEquals("hasAnyRole('PRISMA_ADMIN','ORG_RESPONSIBLE','AUDITOR')", annotation.value());
+    }
+  }
+
+  @Test
   void userUnlockReturnsWhetherTheAccountWasLocked() throws Exception {
     UUID id = UUID.randomUUID();
     when(userService.unlock(id)).thenReturn(true);

@@ -169,8 +169,9 @@ Regla de estado: crear (`POST`) y modificar (`PUT`, incluido el cambio de `statu
 | GET | `/{id}/excel` | `PRISMA_ADMIN`, `ORG_RESPONSIBLE` | reporte final; `Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`. Solo con la evaluación `APPROVED` (409 si no) |
 | GET | `/{id}/executive/pdf` | `PRISMA_ADMIN`, `ORG_RESPONSIBLE` | **reporte ejecutivo gerencial** (RF-REP-01), aparte del reporte final: 1 a 2 páginas con organización y evaluación, perfil comunitario, madurez global, radar por función, las 5 mayores brechas y las 5 acciones principales del plan de mejora (por prioridad y fecha límite; «Sin acciones registradas» si no hay). Solo con la evaluación `APPROVED` (409 si no). El auditor no lo descarga |
 | GET | `/{id}/preliminary/pdf`, `/{id}/preliminary/excel` | `PRISMA_ADMIN`, `AUDITOR` | informe preliminar de auditoría. Solo con la evaluación `IN_AUDIT` (409 si no) |
+| GET | `/{id}/improvement-plan/pdf`, `/{id}/improvement-plan/excel` | `PRISMA_ADMIN`, `ORG_RESPONSIBLE`, `AUDITOR` | **exportación del plan de mejora** (RF-PLN-05): acción, control, prioridad, estado, responsable, vencimiento y comentarios, ordenado por prioridad y fecha límite. El PDF es A4 horizontal con un resumen de avance por estado y prioridad; el Excel es una hoja «Plan de mejora» con filtros y primera fila fija. Una acción abierta con fecha vencida figura como «Vencida». No depende del estado de la evaluación. **400 si el plan no tiene acciones** |
 
-Regla de estado: el informe **preliminar** vale solo en `IN_AUDIT`; el reporte **final** y el **ejecutivo**, solo en `APPROVED`.
+Regla de estado: el informe **preliminar** vale solo en `IN_AUDIT`; el reporte **final** y el **ejecutivo**, solo en `APPROVED`. La exportación del plan de mejora no tiene restricción de estado.
 
 ## Dashboard — `/api/dashboard`
 

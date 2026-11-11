@@ -313,6 +313,16 @@ export const reportsService = {
   generatePreliminaryExcel(evaluationId: string) {
     return apiClient.get(`/reports/${evaluationId}/preliminary/excel`, { responseType: 'blob' });
   },
+  exportImprovementPlanPDF(evaluationId: string) {
+    return apiClient.get(`/reports/${evaluationId}/improvement-plan/pdf`, {
+      responseType: 'blob',
+    });
+  },
+  exportImprovementPlanExcel(evaluationId: string) {
+    return apiClient.get(`/reports/${evaluationId}/improvement-plan/excel`, {
+      responseType: 'blob',
+    });
+  },
 };
 
 export const dashboardService = {
