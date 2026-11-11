@@ -285,6 +285,16 @@ export interface MaturityResult {
   currentLevel: number;
   targetLevel: MaturityLevel;
   gap: number;
+  nextLevel: number | null;
+  missingControls: MissingControl[];
+}
+
+export interface MissingControl {
+  id: string;
+  code: string;
+  description: string;
+  targetLevel: number;
+  status: 'NON_COMPLIANT' | 'UNANSWERED';
 }
 
 /** Reglas de carga de evidencias que define el backend (RF-EVI-02). */

@@ -571,7 +571,45 @@ public class Dto {
       String subcategoryName,
       Integer currentLevel,
       Integer targetLevel,
-      Integer gap) {}
+      Integer gap,
+      Integer nextLevel,
+      List<MissingControlDto> missingControls) {
+    public MaturityResultDto {
+      missingControls = missingControls == null ? List.of() : List.copyOf(missingControls);
+    }
+
+    public MaturityResultDto(
+        UUID functionId,
+        String functionName,
+        UUID categoryId,
+        String categoryName,
+        UUID subcategoryId,
+        String subcategoryName,
+        Integer currentLevel,
+        Integer targetLevel,
+        Integer gap) {
+      this(
+          functionId,
+          functionName,
+          categoryId,
+          categoryName,
+          subcategoryId,
+          subcategoryName,
+          currentLevel,
+          targetLevel,
+          gap,
+          null,
+          List.of());
+    }
+
+    @Override
+    public List<MissingControlDto> missingControls() {
+      return Collections.unmodifiableList(missingControls);
+    }
+  }
+
+  public record MissingControlDto(
+      UUID id, String code, String description, int targetLevel, String status) {}
 
   // ---- Dashboard ----
   public record DashboardStatsDto(
