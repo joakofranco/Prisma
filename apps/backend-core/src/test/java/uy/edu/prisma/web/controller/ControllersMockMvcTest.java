@@ -597,7 +597,7 @@ class ControllersMockMvcTest {
   void evidenceUpload() throws Exception {
     UUID evalId = UUID.randomUUID();
     when(evidenceService.upload(eq(evalId), any(), any(), any()))
-        .thenReturn(new UploadEvidenceResponseDto(UUID.randomUUID(), "doc.pdf", 10L));
+        .thenReturn(new UploadEvidenceResponseDto(UUID.randomUUID(), "doc.pdf", 10L, "CLEAN"));
 
     evidence
         .perform(
@@ -895,7 +895,8 @@ class ControllersMockMvcTest {
                 null,
                 null,
                 null,
-                true));
+                true,
+                "CLEAN"));
 
     evidence
         .perform(post("/api/evidence/{id}/index", id))

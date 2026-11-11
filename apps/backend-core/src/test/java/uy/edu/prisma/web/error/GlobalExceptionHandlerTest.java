@@ -20,6 +20,7 @@ import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import uy.edu.prisma.config.EvidenceConfig.EvidenceProperties;
 import uy.edu.prisma.domain.exception.ConflictException;
 import uy.edu.prisma.domain.exception.InvalidRequestException;
+import uy.edu.prisma.domain.exception.MalwareDetectedException;
 import uy.edu.prisma.domain.exception.PayloadTooLargeException;
 import uy.edu.prisma.domain.exception.ResourceNotFoundException;
 import uy.edu.prisma.web.dto.Dto.CreateOrganizationDto;
@@ -61,6 +62,18 @@ class GlobalExceptionHandlerTest {
         .andExpect(status().isPayloadTooLarge())
         .andExpect(jsonPath("$.code").value("PAYLOAD_TOO_LARGE"))
         .andExpect(jsonPath("$.message").value("demasiado"));
+  }
+
+  @Test
+  void malwareDetectedMapsTo422() throws Exception {
+    mockMvc
+        .perform(get("/malware"))
+        .andExpect(status().isUnprocessableEntity())
+        .andExpect(jsonPath("$.code").value("MALWARE_DETECTED"))
+        .andExpect(jsonPath("$.details.signature[0]").value("Eicar"))
+        .andExpect(
+            jsonPath("$.message")
+                .value("El archivo fue rechazado: se detectó contenido malicioso."));
   }
 
   @Test
@@ -183,6 +196,11 @@ class GlobalExceptionHandlerTest {
           "could not execute statement",
           new RuntimeException(
               "ERROR: duplicate key value violates unique constraint \"organizations_rut_key\""));
+    }
+
+    @GetMapping("/malware")
+    public String malware() {
+      throw new MalwareDetectedException("Eicar");
     }
 
     @GetMapping("/too-large")

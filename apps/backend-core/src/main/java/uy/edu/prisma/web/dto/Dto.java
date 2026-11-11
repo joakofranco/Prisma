@@ -650,7 +650,8 @@ public class Dto {
       String description,
       UUID uploadedBy,
       OffsetDateTime uploadedAt,
-      boolean aiIndexed) {}
+      boolean aiIndexed,
+      String scanStatus) {}
 
   /** Reglas de carga de evidencias: extensiones permitidas, sin punto, y tamaño máximo en bytes. */
   public record EvidenceRulesDto(List<String> allowedExtensions, long maxSizeBytes) {
@@ -659,7 +660,8 @@ public class Dto {
     }
   }
 
-  public record UploadEvidenceResponseDto(UUID id, String fileName, Long fileSize) {}
+  public record UploadEvidenceResponseDto(
+      UUID id, String fileName, Long fileSize, String scanStatus) {}
 
   // ---- Evidence RAG (citas para el auditor) ----
   // Recuperación pura: ningún campo acá representa un veredicto. location es "Página N"

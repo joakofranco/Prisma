@@ -319,6 +319,8 @@ export interface Evidence {
   description?: string;
   /** true si el asistente de IA pudo extraer e indexar el contenido para búsqueda de citas. */
   aiIndexed: boolean;
+  /** Resultado del antivirus (RNF-09): CLEAN, QUARANTINED (a la espera del análisis) o INFECTED. */
+  scanStatus?: 'CLEAN' | 'QUARANTINED' | 'INFECTED';
 }
 
 /**

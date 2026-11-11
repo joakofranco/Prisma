@@ -46,12 +46,15 @@ import uy.edu.prisma.domain.entity.Evidence;
 import uy.edu.prisma.domain.entity.Organization;
 import uy.edu.prisma.domain.entity.User;
 import uy.edu.prisma.domain.entity.UserRole;
+import uy.edu.prisma.domain.exception.ConflictException;
+import uy.edu.prisma.domain.exception.MalwareDetectedException;
 import uy.edu.prisma.domain.exception.PayloadTooLargeException;
 import uy.edu.prisma.domain.exception.ResourceNotFoundException;
 import uy.edu.prisma.domain.repository.CatalogControlRepository;
 import uy.edu.prisma.domain.repository.EvaluationRepository;
 import uy.edu.prisma.domain.repository.EvidenceRepository;
 import uy.edu.prisma.infrastructure.AiEvidenceClient;
+import uy.edu.prisma.infrastructure.ClamAvClient;
 import uy.edu.prisma.web.dto.Dto.EvidenceCitationDto;
 import uy.edu.prisma.web.dto.Dto.EvidenceDto;
 import uy.edu.prisma.web.dto.Dto.UploadEvidenceResponseDto;
@@ -67,6 +70,8 @@ class EvidenceServiceTest {
   @Mock private S3Presigner internalPresigner;
   @Mock private CurrentUserService currentUser;
   @Mock private AiEvidenceClient aiClient;
+  @Mock private ClamAvClient clamAv;
+  @Mock private AuditLogService auditLog;
 
   private final StorageProperties properties =
       new StorageProperties(
@@ -83,6 +88,7 @@ class EvidenceServiceTest {
     // Admin-bypass por defecto para no tener que stubear la autorización fina de delete()
     // (ver assertCanDelete) en cada test que no la ejercita específicamente.
     when(currentUser.hasAllOrganizationsAccess()).thenReturn(true);
+    when(clamAv.scan(any())).thenReturn(scan(ClamAvClient.Status.CLEAN, null));
     service =
         new EvidenceService(
             evidenceRepo,
@@ -93,7 +99,9 @@ class EvidenceServiceTest {
             properties,
             currentUser,
             aiClient,
-            EvidenceFileValidatorTest.validatorFor(EvidenceFileValidatorTest.DEFAULT_FORMATS));
+            EvidenceFileValidatorTest.validatorFor(EvidenceFileValidatorTest.DEFAULT_FORMATS),
+            clamAv,
+            auditLog);
     eval =
         Evaluation.builder()
             .id(UUID.randomUUID())
@@ -433,6 +441,218 @@ class EvidenceServiceTest {
     verify(aiClient, never()).ingest(any(), any(), any(), any(), any(), any());
   }
 
+  // ---- RNF-09: antivirus ----
+
+  private static ClamAvClient.ScanResult scan(ClamAvClient.Status status, String signature) {
+    return new ClamAvClient.ScanResult(
+        status, signature, status == ClamAvClient.Status.ERROR ? "caído" : null);
+  }
+
+  private MockMultipartFile pdfFile() {
+    return new MockMultipartFile(
+        "file", "reporte.pdf", "application/pdf", "%PDF-1.4".getBytes(StandardCharsets.US_ASCII));
+  }
+
+  private void readyToUpload() {
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(s3Client.headBucket(any(HeadBucketRequest.class))).thenReturn(null);
+    when(evidenceRepo.save(any(Evidence.class))).thenAnswer(EvidenceServiceTest::simulatePersist);
+  }
+
+  @Test
+  void uploadScansTheFileAndRecordsACleanResult() throws Exception {
+    readyToUpload();
+
+    service.upload(eval.getId(), null, null, pdfFile());
+
+    verify(clamAv, times(1)).scan(any());
+    verify(auditLog)
+        .recordIndependently(
+            eq("EVIDENCE_SCAN_CLEAN"), eq("evaluation:" + eval.getId()), contains("reporte.pdf"));
+    verify(s3Client, times(1)).putObject(any(PutObjectRequest.class), any(RequestBody.class));
+  }
+
+  @Test
+  void aninfectedFileIsRejectedRecordedAndNeverStored() throws Exception {
+    readyToUpload();
+    when(clamAv.scan(any())).thenReturn(scan(ClamAvClient.Status.INFECTED, "Win.Test.EICAR_HDB-1"));
+
+    MalwareDetectedException ex =
+        assertThrows(
+            MalwareDetectedException.class,
+            () -> service.upload(eval.getId(), null, null, pdfFile()));
+
+    assertEquals("Win.Test.EICAR_HDB-1", ex.getSignature());
+    verify(auditLog)
+        .recordIndependently(eq("EVIDENCE_SCAN_INFECTED"), any(), contains("Win.Test.EICAR_HDB-1"));
+    verify(s3Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));
+    verify(evidenceRepo, never()).save(any());
+  }
+
+  @Test
+  void whenTheAntivirusFailsTheFileIsStoredInQuarantineAndRecorded() throws Exception {
+    readyToUpload();
+    when(clamAv.scan(any())).thenReturn(scan(ClamAvClient.Status.ERROR, null));
+
+    UploadEvidenceResponseDto result = service.upload(eval.getId(), null, null, pdfFile());
+
+    assertEquals("QUARANTINED", result.scanStatus());
+    ArgumentCaptor<Evidence> saved = ArgumentCaptor.forClass(Evidence.class);
+    verify(evidenceRepo).save(saved.capture());
+    assertEquals(Evidence.ScanStatus.QUARANTINED, saved.getValue().getScanStatus());
+    assertFalse(saved.getValue().isAiIndexed());
+    verify(s3Client, times(1)).putObject(any(PutObjectRequest.class), any(RequestBody.class));
+    verify(aiClient, never()).ingest(any(), any(), any(), any(), any(), any());
+    verify(auditLog).recordIndependently(eq("EVIDENCE_QUARANTINED"), any(), contains("caído"));
+  }
+
+  @Test
+  void aCleanUploadIsMarkedClean() throws Exception {
+    readyToUpload();
+
+    UploadEvidenceResponseDto result = service.upload(eval.getId(), null, null, pdfFile());
+
+    assertEquals("CLEAN", result.scanStatus());
+  }
+
+  private Evidence storedEvidence(Evidence.ScanStatus status) {
+    Evidence e =
+        Evidence.builder()
+            .id(UUID.randomUUID())
+            .evaluation(eval)
+            .fileName("reporte.pdf")
+            .fileSize(8L)
+            .fileType("application/pdf")
+            .storageKey("evidence/" + UUID.randomUUID())
+            .fileHash("abc")
+            .scanStatus(status)
+            .build();
+    when(evidenceRepo.findById(e.getId())).thenReturn(Optional.of(e));
+    return e;
+  }
+
+  @Test
+  void aQuarantinedEvidenceCannotBeDownloaded() {
+    Evidence e = storedEvidence(Evidence.ScanStatus.QUARANTINED);
+    when(currentUser.hasRole(UserRole.PRISMA_ADMIN)).thenReturn(true);
+
+    ConflictException ex = assertThrows(ConflictException.class, () -> service.download(e.getId()));
+
+    assertTrue(ex.getMessage().contains("cuarentena"));
+    verify(s3Client, never()).getObject(any(GetObjectRequest.class));
+  }
+
+  @Test
+  void anInfectedEvidenceCannotBeDownloaded() {
+    Evidence e = storedEvidence(Evidence.ScanStatus.INFECTED);
+    when(currentUser.hasRole(UserRole.PRISMA_ADMIN)).thenReturn(true);
+
+    ConflictException ex = assertThrows(ConflictException.class, () -> service.download(e.getId()));
+
+    assertTrue(ex.getMessage().contains("malicioso"));
+  }
+
+  @Test
+  void aQuarantinedEvidenceCannotBeReindexed() {
+    Evidence e = storedEvidence(Evidence.ScanStatus.QUARANTINED);
+
+    assertThrows(ConflictException.class, () -> service.reindex(e.getId()));
+
+    verify(aiClient, never()).ingest(any(), any(), any(), any(), any(), any());
+  }
+
+  @Test
+  void quarantinedIdsListsOnlyTheEvidenceWaitingForTheAntivirus() {
+    Evidence e = storedEvidence(Evidence.ScanStatus.QUARANTINED);
+    when(evidenceRepo.findByScanStatusOrderByUploadedAtAsc(Evidence.ScanStatus.QUARANTINED))
+        .thenReturn(List.of(e));
+
+    assertEquals(List.of(e.getId()), service.quarantinedIds());
+  }
+
+  @Test
+  void rescanReleasesAQuarantinedEvidenceWhenItIsClean() {
+    Evidence e = storedEvidence(Evidence.ScanStatus.QUARANTINED);
+    stubObject("%PDF-1.4".getBytes(StandardCharsets.US_ASCII));
+    when(clamAv.scan(any())).thenReturn(scan(ClamAvClient.Status.CLEAN, null));
+
+    ClamAvClient.Status status = service.rescanQuarantined(e.getId());
+
+    assertEquals(ClamAvClient.Status.CLEAN, status);
+    assertEquals(Evidence.ScanStatus.CLEAN, e.getScanStatus());
+    verify(auditLog)
+        .recordSystemEvent(
+            eq("EVIDENCE_QUARANTINE_RELEASED"),
+            eq("evaluation:" + eval.getId()),
+            contains("reporte.pdf"),
+            any(),
+            eq(eval.getOrganization().getId()));
+  }
+
+  @Test
+  void rescanRejectsAnInfectedEvidenceAndDeletesTheStoredFile() {
+    Evidence e = storedEvidence(Evidence.ScanStatus.QUARANTINED);
+    stubObject("x".getBytes(StandardCharsets.US_ASCII));
+    when(clamAv.scan(any())).thenReturn(scan(ClamAvClient.Status.INFECTED, "Eicar-Test-Signature"));
+
+    ClamAvClient.Status status = service.rescanQuarantined(e.getId());
+
+    assertEquals(ClamAvClient.Status.INFECTED, status);
+    assertEquals(Evidence.ScanStatus.INFECTED, e.getScanStatus());
+    assertFalse(e.isAiIndexed());
+    ArgumentCaptor<DeleteObjectRequest> deleted =
+        ArgumentCaptor.forClass(DeleteObjectRequest.class);
+    verify(s3Client).deleteObject(deleted.capture());
+    assertEquals(e.getStorageKey(), deleted.getValue().key());
+    verify(auditLog)
+        .recordSystemEvent(
+            eq("EVIDENCE_QUARANTINE_INFECTED"),
+            any(),
+            contains("Eicar-Test-Signature"),
+            any(),
+            any());
+  }
+
+  @Test
+  void rescanLeavesTheEvidenceInQuarantineWhileTheAntivirusIsDown() {
+    Evidence e = storedEvidence(Evidence.ScanStatus.QUARANTINED);
+    stubObject("x".getBytes(StandardCharsets.US_ASCII));
+    when(clamAv.scan(any())).thenReturn(scan(ClamAvClient.Status.ERROR, null));
+
+    ClamAvClient.Status status = service.rescanQuarantined(e.getId());
+
+    assertEquals(ClamAvClient.Status.ERROR, status);
+    assertEquals(Evidence.ScanStatus.QUARANTINED, e.getScanStatus());
+    verify(auditLog, never()).recordSystemEvent(any(), any(), any(), any(), any());
+    verify(s3Client, never()).deleteObject(any(DeleteObjectRequest.class));
+  }
+
+  @Test
+  void rescanIgnoresEvidenceThatIsNotInQuarantine() {
+    Evidence e = storedEvidence(Evidence.ScanStatus.CLEAN);
+
+    assertNull(service.rescanQuarantined(e.getId()));
+    assertNull(service.rescanQuarantined(UUID.randomUUID()));
+
+    verify(clamAv, never()).scan(any());
+  }
+
+  @Test
+  void auditPayloadEscapesTheFileName() throws Exception {
+    readyToUpload();
+    MockMultipartFile tricky =
+        new MockMultipartFile(
+            "file",
+            "a\"b\\c.pdf",
+            "application/pdf",
+            "%PDF-1.4".getBytes(StandardCharsets.US_ASCII));
+
+    service.upload(eval.getId(), null, null, tricky);
+
+    verify(auditLog)
+        .recordIndependently(eq("EVIDENCE_SCAN_CLEAN"), any(), contains("a\\\"b\\\\c.pdf"));
+  }
+
   // ---- PRI-283: tamaño máximo ----
 
   private EvidenceService serviceWithMaxSize(DataSize maxSize) {
@@ -445,7 +665,9 @@ class EvidenceServiceTest {
         properties,
         currentUser,
         aiClient,
-        EvidenceFileValidatorTest.validatorWithMaxSize(maxSize));
+        EvidenceFileValidatorTest.validatorWithMaxSize(maxSize),
+        clamAv,
+        auditLog);
   }
 
   @Test

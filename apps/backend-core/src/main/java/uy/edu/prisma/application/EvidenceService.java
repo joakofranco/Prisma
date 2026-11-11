@@ -32,12 +32,15 @@ import uy.edu.prisma.domain.entity.CatalogControl;
 import uy.edu.prisma.domain.entity.Evaluation;
 import uy.edu.prisma.domain.entity.Evidence;
 import uy.edu.prisma.domain.entity.UserRole;
+import uy.edu.prisma.domain.exception.ConflictException;
 import uy.edu.prisma.domain.exception.InvalidRequestException;
+import uy.edu.prisma.domain.exception.MalwareDetectedException;
 import uy.edu.prisma.domain.exception.ResourceNotFoundException;
 import uy.edu.prisma.domain.repository.CatalogControlRepository;
 import uy.edu.prisma.domain.repository.EvaluationRepository;
 import uy.edu.prisma.domain.repository.EvidenceRepository;
 import uy.edu.prisma.infrastructure.AiEvidenceClient;
+import uy.edu.prisma.infrastructure.ClamAvClient;
 import uy.edu.prisma.web.dto.Dto.EvidenceCitationDto;
 import uy.edu.prisma.web.dto.Dto.EvidenceDto;
 import uy.edu.prisma.web.dto.Dto.UploadEvidenceResponseDto;
@@ -58,6 +61,8 @@ public class EvidenceService {
   private final CurrentUserService currentUser;
   private final AiEvidenceClient aiClient;
   private final EvidenceFileValidator fileValidator;
+  private final ClamAvClient clamAv;
+  private final AuditLogService auditLog;
 
   public EvidenceService(
       EvidenceRepository evidenceRepo,
@@ -68,7 +73,9 @@ public class EvidenceService {
       StorageProperties storageProperties,
       CurrentUserService currentUser,
       AiEvidenceClient aiClient,
-      EvidenceFileValidator fileValidator) {
+      EvidenceFileValidator fileValidator,
+      ClamAvClient clamAv,
+      AuditLogService auditLog) {
     this.evidenceRepo = evidenceRepo;
     this.evaluationRepo = evaluationRepo;
     this.controlRepo = controlRepo;
@@ -78,6 +85,8 @@ public class EvidenceService {
     this.currentUser = currentUser;
     this.aiClient = aiClient;
     this.fileValidator = fileValidator;
+    this.clamAv = clamAv;
+    this.auditLog = auditLog;
   }
 
   @Transactional(readOnly = true)
@@ -151,6 +160,7 @@ public class EvidenceService {
     // RF-EVI-05: hash SHA-256 del contenido real recibido, no de metadata declarada por el
     // cliente, para poder detectar alteraciones posteriores del archivo en el almacenamiento.
     String fileHash = sha256Hex(content);
+    boolean quarantined = scanForMalware(eval, file, fileHash, content);
     try {
       s3Client.putObject(
           PutObjectRequest.builder()
@@ -172,6 +182,7 @@ public class EvidenceService {
             .fileType(detectedType)
             .storageKey(storageKey)
             .fileHash(fileHash)
+            .scanStatus(quarantined ? Evidence.ScanStatus.QUARANTINED : Evidence.ScanStatus.CLEAN)
             .uploadedBy(currentUser.currentUser().orElse(null))
             .description(description)
             .build();
@@ -183,9 +194,155 @@ public class EvidenceService {
     // merge() sobre el mismo id revienta con StaleObjectStateException. El dirty-checking de JPA
     // ya persiste este cambio al hacer commit.
     // ZIP e imágenes no se indexan (backend-ai no los lee): quedan con aiIndexed=false a propósito.
-    saved.setAiIndexed(EvidenceFileValidator.isIndexable(detectedType) && indexInAi(saved));
+    saved.setAiIndexed(
+        !quarantined && EvidenceFileValidator.isIndexable(detectedType) && indexInAi(saved));
 
-    return new UploadEvidenceResponseDto(saved.getId(), saved.getFileName(), saved.getFileSize());
+    return new UploadEvidenceResponseDto(
+        saved.getId(), saved.getFileName(), saved.getFileSize(), saved.getScanStatus().name());
+  }
+
+  private boolean scanForMalware(
+      Evaluation eval, MultipartFile file, String fileHash, byte[] content) {
+    ClamAvClient.ScanResult result = clamAv.scan(content);
+    String resource = "evaluation:" + eval.getId();
+    switch (result.status()) {
+      case CLEAN -> {
+        auditLog.recordIndependently(
+            "EVIDENCE_SCAN_CLEAN", resource, scanPayload(file, fileHash, null, null));
+        return false;
+      }
+      case INFECTED -> {
+        auditLog.recordIndependently(
+            "EVIDENCE_SCAN_INFECTED",
+            resource,
+            scanPayload(file, fileHash, result.signature(), null));
+        throw new MalwareDetectedException(result.signature());
+      }
+      default -> {
+        auditLog.recordIndependently(
+            "EVIDENCE_QUARANTINED", resource, scanPayload(file, fileHash, null, result.detail()));
+        return true;
+      }
+    }
+  }
+
+  public List<UUID> quarantinedIds() {
+    return evidenceRepo
+        .findByScanStatusOrderByUploadedAtAsc(Evidence.ScanStatus.QUARANTINED)
+        .stream()
+        .map(Evidence::getId)
+        .toList();
+  }
+
+  public ClamAvClient.Status rescanQuarantined(UUID id) {
+    Evidence evidence = evidenceRepo.findById(id).orElse(null);
+    if (evidence == null || evidence.getScanStatus() != Evidence.ScanStatus.QUARANTINED) {
+      return null;
+    }
+    ClamAvClient.ScanResult result = clamAv.scan(readStoredContent(evidence));
+    UUID organizationId = evidence.getEvaluation().getOrganization().getId();
+    UUID uploaderId = evidence.getUploadedBy() != null ? evidence.getUploadedBy().getId() : null;
+    String resource = "evaluation:" + evidence.getEvaluation().getId();
+    String payload =
+        "{\"fileName\":"
+            + jsonString(evidence.getFileName())
+            + ",\"sha256\":"
+            + jsonString(evidence.getFileHash())
+            + (result.signature() != null ? ",\"signature\":" + jsonString(result.signature()) : "")
+            + "}";
+    switch (result.status()) {
+      case CLEAN -> {
+        evidence.setScanStatus(Evidence.ScanStatus.CLEAN);
+        evidence.setAiIndexed(
+            EvidenceFileValidator.isIndexable(evidence.getFileType()) && indexInAi(evidence));
+        auditLog.recordSystemEvent(
+            "EVIDENCE_QUARANTINE_RELEASED", resource, payload, uploaderId, organizationId);
+      }
+      case INFECTED -> {
+        evidence.setScanStatus(Evidence.ScanStatus.INFECTED);
+        evidence.setAiIndexed(false);
+        deleteStoredObject(evidence);
+        auditLog.recordSystemEvent(
+            "EVIDENCE_QUARANTINE_INFECTED", resource, payload, uploaderId, organizationId);
+      }
+      default -> log.debug("ClamAV sigue sin responder; la evidencia {} queda en cuarentena", id);
+    }
+    return result.status();
+  }
+
+  private byte[] readStoredContent(Evidence evidence) {
+    try (ResponseInputStream<GetObjectResponse> object =
+        s3Client.getObject(
+            GetObjectRequest.builder()
+                .bucket(storageProperties.bucket())
+                .key(evidence.getStorageKey())
+                .build())) {
+      return object.readAllBytes();
+    } catch (Exception e) {
+      throw new RuntimeException("No se pudo leer la evidencia en cuarentena", e);
+    }
+  }
+
+  private void deleteStoredObject(Evidence evidence) {
+    try {
+      s3Client.deleteObject(
+          DeleteObjectRequest.builder()
+              .bucket(storageProperties.bucket())
+              .key(evidence.getStorageKey())
+              .build());
+    } catch (Exception e) {
+      log.warn("No se pudo borrar el archivo infectado {}: {}", evidence.getId(), e.getMessage());
+    }
+  }
+
+  private static void assertAvailable(Evidence evidence) {
+    if (evidence.getScanStatus() == Evidence.ScanStatus.QUARANTINED) {
+      throw new ConflictException(
+          "La evidencia está en cuarentena: se podrá usar cuando el antivirus la analice.");
+    }
+    if (evidence.getScanStatus() == Evidence.ScanStatus.INFECTED) {
+      throw new ConflictException(
+          "La evidencia fue rechazada por el antivirus: contenía contenido malicioso.");
+    }
+  }
+
+  private static String scanPayload(
+      MultipartFile file, String fileHash, String signature, String detail) {
+    StringBuilder json = new StringBuilder("{");
+    json.append("\"fileName\":").append(jsonString(file.getOriginalFilename()));
+    json.append(",\"size\":").append(file.getSize());
+    json.append(",\"sha256\":").append(jsonString(fileHash));
+    if (signature != null) {
+      json.append(",\"signature\":").append(jsonString(signature));
+    }
+    if (detail != null) {
+      json.append(",\"detail\":").append(jsonString(detail));
+    }
+    return json.append('}').toString();
+  }
+
+  private static String jsonString(String value) {
+    if (value == null) {
+      return "null";
+    }
+    StringBuilder out = new StringBuilder("\"");
+    for (char c : value.toCharArray()) {
+      switch (c) {
+        case '"' -> out.append("\\\"");
+        case '\\' -> out.append("\\\\");
+        case '\n' -> out.append("\\n");
+        case '\r' -> out.append("\\r");
+        case '\t' -> out.append("\\t");
+        default -> {
+          if (c < 0x20) {
+            out.append(String.format("\\u%04x", (int) c));
+          } else {
+            out.append(c);
+          }
+        }
+      }
+    }
+    return out.append('"').toString();
   }
 
   /** Reintenta la indexación en backend-ai de una evidencia ya subida (idempotente). */
@@ -194,6 +351,7 @@ public class EvidenceService {
         evidenceRepo.findById(id).orElseThrow(() -> new ResourceNotFoundException("Evidencia", id));
     currentUser.assertOrganizationAccess(evidence.getEvaluation().getOrganization().getId());
     assertSelfAssessmentEditable(evidence.getEvaluation(), "reindexar evidencia");
+    assertAvailable(evidence);
     // `evidence` ya está administrada (viene de findById en esta misma transacción): alcanza con
     // mutarla, sin volver a llamar a save() -- ver comentario en upload().
     // Un formato que backend-ai no indexa (ZIP, imágenes) no tiene nada que reintentar.
@@ -303,6 +461,7 @@ public class EvidenceService {
     if (!canDownload()) {
       throw new AccessDeniedException("Su rol no puede descargar evidencias");
     }
+    assertAvailable(evidence);
     try {
       ResponseInputStream<GetObjectResponse> object =
           s3Client.getObject(
@@ -398,6 +557,7 @@ public class EvidenceService {
         e.getDescription(),
         e.getUploadedBy() != null ? e.getUploadedBy().getId() : null,
         e.getUploadedAt(),
-        e.isAiIndexed());
+        e.isAiIndexed(),
+        e.getScanStatus().name());
   }
 }
