@@ -164,6 +164,11 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   // lo trae LoginFailureAuditSyncService desde los eventos LOGIN_ERROR que Keycloak ya audita
   // solo (backend-core nunca ve el POST del login en sí). Ver el comentario ahí.
   LOGIN_FAILED: 'Inicio de Sesión Fallido',
+  EVIDENCE_SCAN_CLEAN: 'Evidencia sin amenazas',
+  EVIDENCE_SCAN_INFECTED: 'Evidencia rechazada por malware',
+  EVIDENCE_QUARANTINED: 'Evidencia en cuarentena',
+  EVIDENCE_QUARANTINE_RELEASED: 'Evidencia liberada de cuarentena',
+  EVIDENCE_QUARANTINE_INFECTED: 'Evidencia en cuarentena rechazada',
 };
 
 // Prefijo de tipo de uy.edu.prisma.application.AuditLogService.record -- el "resource" que

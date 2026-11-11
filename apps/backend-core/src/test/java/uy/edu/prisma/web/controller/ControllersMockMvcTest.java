@@ -30,6 +30,7 @@ class ControllersMockMvcTest {
   @Mock private CommunityProfileService communityProfileService;
   @Mock private DashboardService dashboardService;
   @Mock private EvaluationService evaluationService;
+  @Mock private EvaluationOverviewService evaluationOverviewService;
   @Mock private OrganizationService organizationService;
   @Mock private UserService userService;
   @Mock private EvidenceService evidenceService;
@@ -46,6 +47,7 @@ class ControllersMockMvcTest {
   private MockMvc communityProfiles;
   private MockMvc dashboard;
   private MockMvc evaluations;
+  private MockMvc evaluationOverview;
   private MockMvc organizations;
   private MockMvc users;
   private MockMvc evidence;
@@ -67,6 +69,9 @@ class ControllersMockMvcTest {
     dashboard = MockMvcBuilders.standaloneSetup(new DashboardController(dashboardService)).build();
     evaluations =
         MockMvcBuilders.standaloneSetup(new EvaluationController(evaluationService)).build();
+    evaluationOverview =
+        MockMvcBuilders.standaloneSetup(new EvaluationOverviewController(evaluationOverviewService))
+            .build();
     organizations =
         MockMvcBuilders.standaloneSetup(new OrganizationController(organizationService)).build();
     users = MockMvcBuilders.standaloneSetup(new UserController(userService)).build();
@@ -343,6 +348,31 @@ class ControllersMockMvcTest {
   }
 
   @Test
+  void evaluationOverview() throws Exception {
+    UUID id = UUID.randomUUID();
+    when(evaluationOverviewService.getOverview(id))
+        .thenReturn(
+            new EvaluationOverviewDto(
+                id,
+                "Eva",
+                "5.0",
+                "MCU 5.0",
+                null,
+                null,
+                0,
+                0,
+                0,
+                new OverviewPriorityCountsDto(0, 0, 0, 0),
+                List.of()));
+
+    evaluationOverview
+        .perform(get("/api/evaluations/{id}/overview", id))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.evaluationName").value("Eva"))
+        .andExpect(jsonPath("$.catalogVersion").value("5.0"));
+  }
+
+  @Test
   void evaluationSaveResponse() throws Exception {
     UUID id = UUID.randomUUID();
     UUID controlId = UUID.randomUUID();
@@ -567,7 +597,7 @@ class ControllersMockMvcTest {
   void evidenceUpload() throws Exception {
     UUID evalId = UUID.randomUUID();
     when(evidenceService.upload(eq(evalId), any(), any(), any()))
-        .thenReturn(new UploadEvidenceResponseDto(UUID.randomUUID(), "doc.pdf", 10L));
+        .thenReturn(new UploadEvidenceResponseDto(UUID.randomUUID(), "doc.pdf", 10L, "CLEAN"));
 
     evidence
         .perform(
@@ -753,6 +783,46 @@ class ControllersMockMvcTest {
   }
 
   @Test
+  void improvementPlanExportsAreServedAsAttachments() throws Exception {
+    UUID id = UUID.randomUUID();
+    when(reportService.generateImprovementPlanPdf(id)).thenReturn("%PDF-1.4 plan".getBytes());
+    when(reportService.generateImprovementPlanExcel(id)).thenReturn("PK".getBytes());
+
+    reports
+        .perform(get("/api/reports/{id}/improvement-plan/pdf", id))
+        .andExpect(status().isOk())
+        .andExpect(content().contentType(MediaType.APPLICATION_PDF))
+        .andExpect(
+            header()
+                .string(
+                    "Content-Disposition",
+                    org.hamcrest.Matchers.containsString("plan-mejora-" + id + ".pdf")));
+    reports
+        .perform(get("/api/reports/{id}/improvement-plan/excel", id))
+        .andExpect(status().isOk())
+        .andExpect(
+            content()
+                .contentType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+        .andExpect(
+            header()
+                .string(
+                    "Content-Disposition",
+                    org.hamcrest.Matchers.containsString("plan-mejora-" + id + ".xlsx")));
+  }
+
+  @Test
+  void improvementPlanExportsAllowAdminOrgResponsibleAndAuditor() throws Exception {
+    for (String name : List.of("improvementPlanPdf", "improvementPlanExcel")) {
+      var annotation =
+          ReportsController.class
+              .getMethod(name, UUID.class)
+              .getAnnotation(org.springframework.security.access.prepost.PreAuthorize.class);
+      assertNotNull(annotation, name);
+      assertEquals("hasAnyRole('PRISMA_ADMIN','ORG_RESPONSIBLE','AUDITOR')", annotation.value());
+    }
+  }
+
+  @Test
   void userUnlockReturnsWhetherTheAccountWasLocked() throws Exception {
     UUID id = UUID.randomUUID();
     when(userService.unlock(id)).thenReturn(true);
@@ -825,7 +895,8 @@ class ControllersMockMvcTest {
                 null,
                 null,
                 null,
-                true));
+                true,
+                "CLEAN"));
 
     evidence
         .perform(post("/api/evidence/{id}/index", id))

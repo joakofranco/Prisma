@@ -145,6 +145,67 @@ export interface CatalogControlFlat {
   domain: string;
 }
 
+export type OverviewPriority = 'ALTA' | 'MEDIA' | 'BAJA' | null;
+
+export interface OverviewRequirement {
+  id: string;
+  code: string;
+  description: string;
+}
+
+export interface OverviewControl {
+  id: string;
+  code: string;
+  description: string;
+  targetLevel: MaturityLevel;
+  requirementCode: string;
+}
+
+export interface OverviewSubcategory {
+  id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  priority: OverviewPriority;
+  requirements: OverviewRequirement[];
+  controls: OverviewControl[];
+}
+
+export interface OverviewCategory {
+  id: string;
+  code: string;
+  name: string;
+  subcategories: OverviewSubcategory[];
+}
+
+export interface OverviewFunction {
+  id: string;
+  code: string;
+  name: string;
+  categories: OverviewCategory[];
+}
+
+export interface OverviewPriorityCounts {
+  alta: number;
+  media: number;
+  baja: number;
+  sinPrioridad: number;
+}
+
+export interface EvaluationOverview {
+  evaluationId: string;
+  evaluationName: string;
+  catalogVersion: string;
+  catalogLabel: string;
+  communityProfileId: string | null;
+  communityProfileName: string | null;
+  subcategoryCount: number;
+  requirementCount: number;
+  controlCount: number;
+  priorityCounts: OverviewPriorityCounts;
+  functions: OverviewFunction[];
+}
+
 export type EvaluationStatus =
   'DRAFT' | 'IN_PROGRESS' | 'READY_FOR_AUDIT' | 'IN_AUDIT' | 'APPROVED' | 'RETURNED' | 'ARCHIVED';
 
@@ -224,6 +285,16 @@ export interface MaturityResult {
   currentLevel: number;
   targetLevel: MaturityLevel;
   gap: number;
+  nextLevel: number | null;
+  missingControls: MissingControl[];
+}
+
+export interface MissingControl {
+  id: string;
+  code: string;
+  description: string;
+  targetLevel: number;
+  status: 'NON_COMPLIANT' | 'UNANSWERED';
 }
 
 /** Reglas de carga de evidencias que define el backend (RF-EVI-02). */
@@ -248,6 +319,8 @@ export interface Evidence {
   description?: string;
   /** true si el asistente de IA pudo extraer e indexar el contenido para búsqueda de citas. */
   aiIndexed: boolean;
+  /** Resultado del antivirus (RNF-09): CLEAN, QUARANTINED (a la espera del análisis) o INFECTED. */
+  scanStatus?: 'CLEAN' | 'QUARANTINED' | 'INFECTED';
 }
 
 /**

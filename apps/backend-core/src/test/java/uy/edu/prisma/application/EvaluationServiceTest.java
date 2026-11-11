@@ -1052,6 +1052,40 @@ class EvaluationServiceTest {
   }
 
   @Test
+  void getResultsIncludesNextLevelAndMissingControls() {
+    SubGraph graph = buildSubgraph();
+    CatalogControl c1 = controlAtLevel(graph, 1);
+    CatalogControl c2 = controlAtLevel(graph, 2);
+    MaturityResult result =
+        MaturityResult.builder()
+            .id(UUID.randomUUID())
+            .evaluation(eval)
+            .functionId(graph.function().getId())
+            .functionName("F1")
+            .categoryId(graph.category().getId())
+            .categoryName("C1")
+            .subcategoryId(graph.subcategory().getId())
+            .subcategoryName("S1")
+            .currentLevel(1)
+            .targetLevel(2)
+            .gap(1)
+            .build();
+    EvaluationResponse answered =
+        EvaluationResponse.builder().id(UUID.randomUUID()).control(c1).compliant(true).build();
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(matRepo.findByEvaluationId(eval.getId())).thenReturn(List.of(result));
+    when(controlRepo.findByVersionOrdered("5.0")).thenReturn(List.of(c1, c2));
+    when(respRepo.findByEvaluationId(eval.getId())).thenReturn(List.of(answered));
+
+    MaturityResultDto dto = service.getResults(eval.getId()).get(0);
+
+    assertEquals(2, dto.nextLevel());
+    assertEquals(1, dto.missingControls().size());
+    assertEquals(c2.getId(), dto.missingControls().get(0).id());
+    assertEquals("UNANSWERED", dto.missingControls().get(0).status());
+  }
+
+  @Test
   void calculateMaturityComputesResultsAndGlobalMaturity() {
     // Modelo acumulativo: 4 controles nivel 1-4 en la misma subcategoría. Nivel 1 y 2 cumplidos,
     // nivel 3 no -> la subcategoría se detiene en el nivel 2 (nivel 4 ni se llega a evaluar).

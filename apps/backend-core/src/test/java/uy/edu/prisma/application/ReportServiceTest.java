@@ -634,4 +634,134 @@ class ReportServiceTest {
     }
     return labels;
   }
+
+  private List<ImprovementPlan> exportPlans() {
+    java.time.LocalDate today = java.time.LocalDate.now();
+    return List.of(
+        plan(
+            "Revisar privilegios",
+            ImprovementPlan.Priority.HIGH,
+            today.plusDays(10),
+            ImprovementPlan.PlanStatus.PENDING,
+            1),
+        plan(
+            "Inventariar datos sensibles",
+            ImprovementPlan.Priority.MEDIUM,
+            today.plusDays(30),
+            ImprovementPlan.PlanStatus.IN_PROGRESS,
+            2),
+        plan(
+            "Registrar excepciones",
+            ImprovementPlan.Priority.LOW,
+            today.minusDays(5),
+            ImprovementPlan.PlanStatus.PENDING,
+            3),
+        plan(
+            "Capacitar al personal",
+            ImprovementPlan.Priority.LOW,
+            today.minusDays(20),
+            ImprovementPlan.PlanStatus.COMPLETED,
+            4));
+  }
+
+  @Test
+  void improvementPlanPdfListsActionsAndSummary() throws Exception {
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(planRepo.findByEvaluationIdOrderByCreatedAtDesc(eval.getId())).thenReturn(exportPlans());
+
+    byte[] pdf = service.generateImprovementPlanPdf(eval.getId());
+
+    assertEquals("%PDF-", new String(pdf, 0, 5, java.nio.charset.StandardCharsets.UTF_8));
+    String text = pdfPageText(pdf, 1);
+    assertTrue(text.contains("Plan de Mejora"));
+    assertTrue(text.contains("Revisar privilegios"));
+    assertTrue(text.contains("Capacitar al personal"));
+    assertTrue(text.contains("25 %"));
+    assertTrue(text.contains("1 de 4 cerradas"));
+    assertTrue(text.contains("1 acción vencida"));
+  }
+
+  @Test
+  void improvementPlanPdfMarksOpenActionsPastDueAsOverdue() throws Exception {
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(planRepo.findByEvaluationIdOrderByCreatedAtDesc(eval.getId())).thenReturn(exportPlans());
+
+    String text = pdfPageText(service.generateImprovementPlanPdf(eval.getId()), 1);
+
+    assertTrue(text.contains("Vencida"));
+  }
+
+  @Test
+  void improvementPlanExcelHasOneFilteredSheetWithAllColumns() throws Exception {
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(planRepo.findByEvaluationIdOrderByCreatedAtDesc(eval.getId())).thenReturn(exportPlans());
+
+    try (var wb =
+        new org.apache.poi.xssf.usermodel.XSSFWorkbook(
+            new java.io.ByteArrayInputStream(service.generateImprovementPlanExcel(eval.getId())))) {
+      assertEquals(1, wb.getNumberOfSheets());
+      var sheet = wb.getSheet("Plan de mejora");
+      assertEquals(4, sheet.getLastRowNum());
+      assertEquals("Acción", sheet.getRow(0).getCell(0).getStringCellValue());
+      assertEquals("Comentarios", sheet.getRow(0).getCell(6).getStringCellValue());
+      assertNotNull(sheet.getCTWorksheet().getAutoFilter());
+      assertEquals("Revisar privilegios", sheet.getRow(1).getCell(0).getStringCellValue());
+      assertEquals("Alta", sheet.getRow(1).getCell(2).getStringCellValue());
+    }
+  }
+
+  @Test
+  void improvementPlanExcelShowsOverdueStatusAndControlCode() throws Exception {
+    ImprovementPlan overdue =
+        plan(
+            "Vieja",
+            ImprovementPlan.Priority.HIGH,
+            java.time.LocalDate.now().minusDays(3),
+            ImprovementPlan.PlanStatus.OVERDUE,
+            1);
+    overdue.setControl(
+        uy.edu.prisma.domain.entity.CatalogControl.builder().code("MCU-AA-11").build());
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(planRepo.findByEvaluationIdOrderByCreatedAtDesc(eval.getId()))
+        .thenReturn(List.of(overdue));
+
+    try (var wb =
+        new org.apache.poi.xssf.usermodel.XSSFWorkbook(
+            new java.io.ByteArrayInputStream(service.generateImprovementPlanExcel(eval.getId())))) {
+      var row = wb.getSheet("Plan de mejora").getRow(1);
+      assertEquals("MCU-AA-11", row.getCell(1).getStringCellValue());
+      assertEquals("Vencida", row.getCell(3).getStringCellValue());
+    }
+  }
+
+  @Test
+  void improvementPlanExportRejectsAnEmptyPlan() {
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(planRepo.findByEvaluationIdOrderByCreatedAtDesc(eval.getId())).thenReturn(List.of());
+
+    assertThrows(
+        uy.edu.prisma.domain.exception.InvalidRequestException.class,
+        () -> service.generateImprovementPlanPdf(eval.getId()));
+    assertThrows(
+        uy.edu.prisma.domain.exception.InvalidRequestException.class,
+        () -> service.generateImprovementPlanExcel(eval.getId()));
+  }
+
+  @Test
+  void improvementPlanExportThrowsWhenEvaluationMissing() {
+    UUID id = UUID.randomUUID();
+    when(evalRepo.findById(id)).thenReturn(Optional.empty());
+
+    assertThrows(ResourceNotFoundException.class, () -> service.generateImprovementPlanPdf(id));
+    assertThrows(ResourceNotFoundException.class, () -> service.generateImprovementPlanExcel(id));
+  }
+
+  @Test
+  void improvementPlanExportDoesNotRequireAnApprovedEvaluation() {
+    eval.setStatus(Evaluation.Status.IN_PROGRESS);
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(planRepo.findByEvaluationIdOrderByCreatedAtDesc(eval.getId())).thenReturn(exportPlans());
+
+    assertTrue(service.generateImprovementPlanPdf(eval.getId()).length > 100);
+  }
 }
