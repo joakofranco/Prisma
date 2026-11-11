@@ -41,11 +41,11 @@
             {{ row.functionName }} › {{ row.categoryName }} › {{ row.subcategoryName }}
           </span>
           <span class="text-xs shrink-0" data-test="gap-levels">
-            <b :style="{ color: getMaturityColor(row.currentLevel) }">
+            <b class="maturity-text" :style="getMaturityTextStyle(row.currentLevel)">
               Nivel {{ row.currentLevel }}
             </b>
             <span class="text-slate-500 dark:text-slate-400"> → </span>
-            <b :style="{ color: getMaturityColor(row.nextLevel ?? 0) }">
+            <b class="maturity-text" :style="getMaturityTextStyle(row.nextLevel ?? 0)">
               Nivel {{ row.nextLevel }} · {{ levelName(row.nextLevel ?? 0) }}
             </b>
           </span>
@@ -123,7 +123,7 @@
 <script setup lang="ts">
   import { computed } from 'vue';
   import type { ImprovementPlan, MaturityResult, MissingControl } from '@/types';
-  import { getMaturityColor } from '@/utils/helpers';
+  import { getMaturityColor, getMaturityTextStyle } from '@/utils/helpers';
   import { MATURITY_LEVELS } from '@/utils/constants';
   import {
     gapRows,

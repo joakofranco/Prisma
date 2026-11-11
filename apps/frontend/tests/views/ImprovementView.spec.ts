@@ -409,6 +409,18 @@ describe('ImprovementView: brechas por subcategoría (RF-CALC-07)', () => {
     expect(document.body.querySelectorAll('[data-test="gap-control"]')).toHaveLength(2);
   });
 
+  it('los niveles usan el color de texto accesible de madurez (WCAG AA)', async () => {
+    evaluationsService.getResults.mockResolvedValue({ data: [gapResult()] });
+    await mountView();
+
+    const levels = document.body.querySelectorAll('[data-test="gap-levels"] b');
+    expect(levels).toHaveLength(2);
+    levels.forEach((el) => {
+      expect(el.classList.contains('maturity-text')).toBe(true);
+      expect((el as HTMLElement).style.getPropertyValue('--maturity-fg')).not.toBe('');
+    });
+  });
+
   it('cuenta las subcategorías sin brecha y no las lista', async () => {
     evaluationsService.getResults.mockResolvedValue({
       data: [gapResult(), gapResult({ subcategoryId: 's2', nextLevel: null, missingControls: [] })],
