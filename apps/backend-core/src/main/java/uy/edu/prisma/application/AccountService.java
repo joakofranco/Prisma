@@ -99,6 +99,7 @@ public class AccountService {
             .orElseThrow(() -> new AccessDeniedException("No se pudo identificar al usuario"));
     if ("LOGIN".equals(dto.event())) {
       linkKeycloakAccountIfMissing(user);
+      markInvitationAccepted(user);
     }
     auditLog.record(dto.event(), "user:" + user.getId(), null);
   }
@@ -111,6 +112,18 @@ public class AccountService {
    * hubiera ingresado, y el cambio de contraseña fallaba con "tu cuenta todavía no tiene acceso
    * habilitado". Nunca pisa un {@code keycloakId} ya existente.
    */
+  /**
+   * RF-USR-05 (PRI-240): el primer ingreso de un usuario invitado cierra su invitación (ya creó su
+   * contraseña desde el enlace). Desde ahí deja de figurar «Invitación pendiente».
+   */
+  private void markInvitationAccepted(User user) {
+    if (!user.isInvitationPending()) {
+      return;
+    }
+    user.setInvitationAcceptedAt(java.time.OffsetDateTime.now());
+    auditLog.record("ACCEPT_INVITATION", "user:" + user.getId(), null);
+  }
+
   private void linkKeycloakAccountIfMissing(User user) {
     if (user.getKeycloakId() != null) {
       return;

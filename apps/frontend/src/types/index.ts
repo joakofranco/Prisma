@@ -17,6 +17,20 @@ export interface User {
   createdAt: string;
   /** false = todavía no tiene cuenta en Keycloak y por lo tanto no puede iniciar sesión. */
   canLogin: boolean;
+  /** RF-USR-05 (PRI-240): última invitación por correo enviada; null si se dio de alta con
+   * contraseña temporal. */
+  invitedAt?: string | null;
+  /** Primer ingreso del invitado. Con invitedAt y sin esto, la invitación está pendiente. */
+  invitationAcceptedAt?: string | null;
+}
+
+/** Alta por invitación: el rol es siempre Evaluador interno y lo fija el backend. */
+export interface InviteUserPayload {
+  email: string;
+  firstName: string;
+  lastName: string;
+  /** Solo lo elige PRISMA_ADMIN; para un responsable el backend usa su propia organización. */
+  organizationId?: string;
 }
 
 export interface Organization {

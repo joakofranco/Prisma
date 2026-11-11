@@ -141,6 +141,9 @@
     'UPDATE_PROFILE',
     'CHANGE_PASSWORD',
     'LINK_KEYCLOAK_ACCOUNT',
+    'INVITE_USER',
+    'RESEND_INVITATION',
+    'ACCEPT_INVITATION',
     'REACTIVATE',
     'SAVE_RESPONSE',
     'UPDATE_IMPROVEMENT_PLAN',
@@ -162,7 +165,7 @@
   });
 
   function actionBadgeClass(action: string): string {
-    if (action === 'CREATE' || action === 'REACTIVATE')
+    if (action === 'CREATE' || action === 'REACTIVATE' || action === 'ACCEPT_INVITATION')
       return 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300';
     if (action === 'DELETE') return 'bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300';
     if (action === 'LOGIN') return 'bg-teal-50 text-teal-700 dark:bg-teal-950 dark:text-teal-300';
@@ -174,7 +177,9 @@
       action.startsWith('UPDATE') ||
       action === 'CHANGE_PASSWORD' ||
       action === 'LINK_KEYCLOAK_ACCOUNT' ||
-      action === 'SAVE_RESPONSE'
+      action === 'SAVE_RESPONSE' ||
+      action === 'INVITE_USER' ||
+      action === 'RESEND_INVITATION'
     )
       return 'bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300';
     return 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300';

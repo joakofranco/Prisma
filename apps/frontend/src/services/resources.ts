@@ -29,6 +29,7 @@ import type {
   CatalogImportPayload,
   CatalogControlFlat,
   OrganizationReactivation,
+  InviteUserPayload,
 } from '@/types';
 
 export const usersService = {
@@ -50,6 +51,18 @@ export const usersService = {
   /** Desbloquea la cuenta bloqueada por intentos fallidos de login (solo PRISMA_ADMIN, RF-AUTH-08). */
   unlock(id: string) {
     return apiClient.post<{ wasLocked: boolean }>(`/users/${id}/unlock`);
+  },
+  /** Invita a un evaluador interno por correo (RF-USR-05). */
+  invite(data: InviteUserPayload) {
+    return apiClient.post<User>('/users/invitations', data);
+  },
+  /** Reenvía la invitación de quien todavía no ingresó. */
+  resendInvitation(id: string) {
+    return apiClient.post<User>(`/users/${id}/invitation/resend`);
+  },
+  /** Si hay servidor de correo para invitar. */
+  invitationAvailability() {
+    return apiClient.get<{ emailConfigured: boolean }>('/users/invitations/availability');
   },
 };
 

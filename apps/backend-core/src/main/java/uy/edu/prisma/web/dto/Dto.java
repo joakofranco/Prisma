@@ -104,11 +104,43 @@ public class Dto {
       // false = no tiene cuenta en Keycloak todavía y por lo tanto NO puede iniciar sesión
       // (p.ej. usuarios creados antes de que esto se corrigiera). El admin lo resuelve editando
       // el usuario y fijándole una contraseña.
-      boolean canLogin) {
+      boolean canLogin,
+      // RF-USR-05 (PRI-240): cuándo se le envió la última invitación por correo y cuándo ingresó
+      // por primera vez. invitedAt != null && invitationAcceptedAt == null = invitación pendiente.
+      // Ambos null = alta con contraseña temporal.
+      OffsetDateTime invitedAt,
+      OffsetDateTime invitationAcceptedAt) {
     public UserDto {
       organizationIds = organizationIds == null ? Set.of() : Set.copyOf(organizationIds);
       organizationNames = organizationNames == null ? List.of() : List.copyOf(organizationNames);
       roles = roles == null ? Set.of() : Set.copyOf(roles);
+    }
+
+    // Compat: firma previa a la invitación por correo (usuario no invitado).
+    public UserDto(
+        UUID id,
+        String email,
+        String firstName,
+        String lastName,
+        Set<UUID> organizationIds,
+        List<String> organizationNames,
+        Set<String> roles,
+        Boolean enabled,
+        OffsetDateTime createdAt,
+        boolean canLogin) {
+      this(
+          id,
+          email,
+          firstName,
+          lastName,
+          organizationIds,
+          organizationNames,
+          roles,
+          enabled,
+          createdAt,
+          canLogin,
+          null,
+          null);
     }
 
     // Compat (tests): firma previa con una organización (`tenantId`) y las organizaciones a auditar
@@ -207,6 +239,36 @@ public class Dto {
   // autenticarse (o justo antes de cerrar sesión) para que quede una entrada en la bitácora; ver
   // AccountService.recordSessionEvent.
   public record SessionEventDto(@NotBlank(message = "El evento es obligatorio") String event) {}
+
+  /**
+   * «Invitar evaluador» (RF-USR-05, PRI-240). El rol es siempre INTERNAL_EVALUATOR y no viaja.
+   * {@code organizationId}: solo lo elige PRISMA_ADMIN; para un ORG_RESPONSIBLE el backend usa su
+   * propia organización y rechaza cualquier otra.
+   */
+  public record InviteUserDto(
+      @NotBlank(message = "El email es obligatorio")
+          @Size(max = 254, message = "El email no puede superar los 254 caracteres")
+          @Email(message = EMAIL_MESSAGE)
+          @Pattern(regexp = EMAIL_DOMAIN_REGEX, message = EMAIL_MESSAGE)
+          String email,
+      @NotBlank(message = "El nombre es obligatorio")
+          @Size(min = 2, max = 100, message = "El nombre debe tener entre 2 y 100 caracteres")
+          @Pattern(regexp = PERSON_NAME_REGEX, message = PERSON_NAME_MESSAGE_FIRST)
+          String firstName,
+      @NotBlank(message = "El apellido es obligatorio")
+          @Size(min = 2, max = 100, message = "El apellido debe tener entre 2 y 100 caracteres")
+          @Pattern(regexp = PERSON_NAME_REGEX, message = PERSON_NAME_MESSAGE_LAST)
+          String lastName,
+      UUID organizationId) {
+    public InviteUserDto {
+      email = trimOrNull(email);
+      firstName = trimOrNull(firstName);
+      lastName = trimOrNull(lastName);
+    }
+  }
+
+  /** {@code emailConfigured}: hay servidor de correo, así que se puede invitar por email. */
+  public record InvitationAvailabilityDto(boolean emailConfigured) {}
 
   public record CreateUserDto(
       @NotBlank(message = "El email es obligatorio")

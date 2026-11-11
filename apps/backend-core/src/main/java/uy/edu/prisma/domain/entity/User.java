@@ -43,6 +43,17 @@ public class User {
   @Builder.Default
   private Boolean enabled = true;
 
+  /**
+   * Cuándo se le envió (o reenvió) la última invitación por correo (RF-USR-05). {@code null} = se
+   * dio de alta con contraseña temporal, sin invitación.
+   */
+  @Column(name = "invited_at")
+  private OffsetDateTime invitedAt;
+
+  /** Primer ingreso de un usuario invitado: desde ahí la invitación deja de estar pendiente. */
+  @Column(name = "invitation_accepted_at")
+  private OffsetDateTime invitationAcceptedAt;
+
   @ElementCollection(fetch = FetchType.EAGER)
   @CollectionTable(
       name = "user_roles",
@@ -88,6 +99,11 @@ public class User {
    */
   public UUID singleOrganizationId() {
     return organizations.size() == 1 ? organizations.iterator().next().getId() : null;
+  }
+
+  /** Se lo invitó por correo y todavía no ingresó nunca. */
+  public boolean isInvitationPending() {
+    return invitedAt != null && invitationAcceptedAt == null;
   }
 
   @PreUpdate

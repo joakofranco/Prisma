@@ -17,6 +17,7 @@ import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
 import uy.edu.prisma.config.KeycloakAdminConfig.KeycloakAdminProperties;
 import uy.edu.prisma.domain.exception.InvalidRequestException;
 
@@ -53,9 +54,66 @@ public class KeycloakAdminClient {
   public UUID createUser(
       String email, String firstName, String lastName, String password, Set<String> realmRoles) {
     CredentialRepresentation credential = new CredentialRepresentation("password", password, true);
-    UserRepresentation body =
-        new UserRepresentation(email, email, firstName, lastName, true, true, List.of(credential));
+    return provision(
+        new UserRepresentation(email, email, firstName, lastName, true, true, List.of(credential)),
+        realmRoles);
+  }
 
+  /**
+   * Crea un usuario invitado (RF-USR-05, PRI-240): sin contraseña y con el email sin verificar. No
+   * puede iniciar sesión hasta seguir el enlace de {@link #sendExecuteActionsEmail}, que le pide
+   * verificar el email y crear su contraseña: nadie más la conoce.
+   */
+  public UUID createInvitedUser(
+      String email, String firstName, String lastName, Set<String> realmRoles) {
+    return provision(
+        new UserRepresentation(email, email, firstName, lastName, true, false, null), realmRoles);
+  }
+
+  /**
+   * Pide a Keycloak que le envíe al usuario el correo de «acciones requeridas» (en PRISMA, la
+   * invitación: ver infra/keycloak/themes/prisma/email/html/executeActions.ftl). El enlace vence en
+   * {@code lifespanSeconds} y, completadas las acciones, lleva a {@code redirectUri}. Si el correo
+   * no sale (SMTP mal configurado, Keycloak caído...) lanza {@link EmailDeliveryException}: quien
+   * llama decide si deshace el alta.
+   */
+  public void sendExecuteActionsEmail(
+      UUID keycloakId,
+      List<String> actions,
+      int lifespanSeconds,
+      String clientId,
+      String redirectUri) {
+    try {
+      restClient
+          .put()
+          .uri(
+              "/admin/realms/{realm}/users/{id}/execute-actions-email"
+                  + "?lifespan={lifespan}&client_id={clientId}&redirect_uri={redirectUri}",
+              properties.realm(),
+              keycloakId,
+              lifespanSeconds,
+              clientId,
+              redirectUri)
+          .header("Authorization", "Bearer " + adminToken())
+          .contentType(MediaType.APPLICATION_JSON)
+          .body(actions)
+          .retrieve()
+          .toBodilessEntity();
+    } catch (RestClientException e) {
+      log.warn(
+          "Keycloak no pudo enviar el correo de acciones a {}: {}", keycloakId, e.getMessage());
+      throw new EmailDeliveryException(e);
+    }
+  }
+
+  /** El correo de {@link #sendExecuteActionsEmail} no se pudo enviar. */
+  public static class EmailDeliveryException extends RuntimeException {
+    public EmailDeliveryException(Throwable cause) {
+      super("Keycloak no pudo enviar el correo", cause);
+    }
+  }
+
+  private UUID provision(UserRepresentation body, Set<String> realmRoles) {
     ResponseEntity<Void> response;
     try {
       response =

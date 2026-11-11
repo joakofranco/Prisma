@@ -25,6 +25,8 @@ class EntityTest {
             null,
             null,
             false,
+            null,
+            null,
             roles,
             Set.of(),
             OffsetDateTime.now(),

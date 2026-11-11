@@ -540,6 +540,70 @@ class ControllersMockMvcTest {
   }
 
   @Test
+  void userInvite() throws Exception {
+    UUID id = UUID.randomUUID();
+    when(userService.invite(any(InviteUserDto.class)))
+        .thenReturn(
+            new UserDto(
+                id,
+                "l@test.com",
+                "Lucía",
+                "Fernández",
+                java.util.Set.of(),
+                List.of(),
+                java.util.Set.of("INTERNAL_EVALUATOR"),
+                true,
+                null,
+                true,
+                java.time.OffsetDateTime.now(),
+                null));
+
+    users
+        .perform(
+            post("/api/users/invitations")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"email\":\"l@test.com\",\"firstName\":\"Lucía\",\"lastName\":\"Fernández\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.invitedAt").exists())
+        .andExpect(jsonPath("$.roles[0]").value("INTERNAL_EVALUATOR"));
+  }
+
+  @Test
+  void userInviteValidatesTheEmail() throws Exception {
+    users
+        .perform(
+            post("/api/users/invitations")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"email\":\"no-es-email\",\"firstName\":\"Lucía\",\"lastName\":\"F\"}"))
+        .andExpect(status().isBadRequest());
+    verify(userService, never()).invite(any());
+  }
+
+  @Test
+  void userResendInvitation() throws Exception {
+    UUID id = UUID.randomUUID();
+    when(userService.resendInvitation(id))
+        .thenReturn(
+            new UserDto(id, "l@test.com", "L", "F", null, java.util.Set.of(), true, null, true));
+
+    users
+        .perform(post("/api/users/{id}/invitation/resend", id))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.email").value("l@test.com"));
+  }
+
+  @Test
+  void userInvitationAvailability() throws Exception {
+    when(userService.canSendInvitations()).thenReturn(false);
+
+    users
+        .perform(get("/api/users/invitations/availability"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.emailConfigured").value(false));
+  }
+
+  @Test
   void userUpdate() throws Exception {
     UUID id = UUID.randomUUID();
     when(userService.update(eq(id), any(CreateUserDto.class)))

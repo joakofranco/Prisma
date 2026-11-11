@@ -1,7 +1,9 @@
 package uy.edu.prisma.application;
 
+import java.time.OffsetDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -14,7 +16,9 @@ import uy.edu.prisma.domain.exception.InvalidRequestException;
 import uy.edu.prisma.domain.exception.ResourceNotFoundException;
 import uy.edu.prisma.domain.repository.*;
 import uy.edu.prisma.infrastructure.KeycloakAdminClient;
+import uy.edu.prisma.infrastructure.KeycloakAdminClient.EmailDeliveryException;
 import uy.edu.prisma.web.dto.Dto.CreateUserDto;
+import uy.edu.prisma.web.dto.Dto.InviteUserDto;
 import uy.edu.prisma.web.dto.Dto.PaginatedDto;
 import uy.edu.prisma.web.dto.Dto.UserDto;
 
@@ -28,6 +32,18 @@ public class UserService {
   private final AuditLogService auditLog;
   private final KeycloakAdminClient keycloakAdmin;
   private final CurrentUserService currentUser;
+  private final EmailSettingsService emailSettings;
+  private final String invitationClientId;
+  private final String invitationRedirectUri;
+
+  /**
+   * Vigencia del enlace de invitación: 72 horas. El correo muestra este valor (ver
+   * infra/keycloak/themes/prisma/email/html/executeActions.ftl, que lo recibe de Keycloak).
+   */
+  static final int INVITATION_LIFESPAN_SECONDS = 72 * 60 * 60;
+
+  /** Lo que el invitado hace desde el enlace: verificar su email y crear su contraseña. */
+  static final List<String> INVITATION_ACTIONS = List.of("VERIFY_EMAIL", "UPDATE_PASSWORD");
 
   public UserService(
       UserRepository userRepo,
@@ -35,13 +51,20 @@ public class UserService {
       PasswordHasher passwordHasher,
       AuditLogService auditLog,
       KeycloakAdminClient keycloakAdmin,
-      CurrentUserService currentUser) {
+      CurrentUserService currentUser,
+      EmailSettingsService emailSettings,
+      @Value("${prisma.invitations.client-id:prisma-frontend}") String invitationClientId,
+      @Value("${prisma.invitations.redirect-uri:http://localhost:8080}")
+          String invitationRedirectUri) {
     this.userRepo = userRepo;
     this.orgRepo = orgRepo;
     this.passwordHasher = passwordHasher;
     this.auditLog = auditLog;
     this.keycloakAdmin = keycloakAdmin;
     this.currentUser = currentUser;
+    this.emailSettings = emailSettings;
+    this.invitationClientId = invitationClientId;
+    this.invitationRedirectUri = invitationRedirectUri;
   }
 
   // Aislamiento multi-tenant, mismo criterio que OrganizationService.list: PRISMA_ADMIN ve todos
@@ -172,6 +195,133 @@ public class UserService {
     UserDto result = toDto(saved);
     auditLog.record("CREATE", "user:" + result.id(), "{\"email\":\"" + result.email() + "\"}");
     return result;
+  }
+
+  /**
+   * RF-USR-05 (PRI-240): invita a un evaluador interno por correo. A diferencia de {@link #create},
+   * nadie le fija una contraseña: la cuenta nace sin ella en Keycloak y la persona la crea desde el
+   * enlace del correo, que también le verifica el email.
+   *
+   * <p>El rol es siempre INTERNAL_EVALUATOR. Un ORG_RESPONSIBLE solo invita a su propia
+   * organización; PRISMA_ADMIN elige una. Sin servidor de correo configurado no se invita (no
+   * llegaría nada). Si Keycloak no logra enviar el correo se deshace todo: la cuenta de Keycloak se
+   * borra y la excepción hace rollback de la fila local.
+   */
+  public UserDto invite(InviteUserDto dto) {
+    if (userRepo.existsByEmail(dto.email())) {
+      throw new ConflictException("Ya existe un usuario con ese email: " + dto.email());
+    }
+    UUID organizationId;
+    if (currentUser.isPrismaAdmin()) {
+      if (dto.organizationId() == null) {
+        throw new InvalidRequestException("Elegí la organización a la que se invita");
+      }
+      organizationId = dto.organizationId();
+    } else {
+      organizationId = currentUser.currentTenantId();
+      currentUser.assertOrganizationAccess(organizationId);
+      assertOrganizationsWithinOwn(
+          dto.organizationId() == null ? null : Set.of(dto.organizationId()), organizationId);
+    }
+    Set<Organization> organizations = resolveOrganizations(Set.of(organizationId));
+    if (organizations.isEmpty()) {
+      throw new ResourceNotFoundException("Organización", organizationId);
+    }
+    assertOrganizationsActive(organizations);
+    assertEmailConfigured();
+
+    User user =
+        User.builder()
+            .email(dto.email())
+            .firstName(dto.firstName())
+            .lastName(dto.lastName())
+            .enabled(true)
+            .roles(new HashSet<>(Set.of(UserRole.INTERNAL_EVALUATOR)))
+            .organizations(organizations)
+            .invitedAt(OffsetDateTime.now())
+            .build();
+    User saved = userRepo.save(user);
+    // Mismo orden que create(): primero la fila local y después Keycloak, para que un fallo de
+    // Keycloak haga rollback del insert.
+    UUID keycloakId =
+        keycloakAdmin.createInvitedUser(
+            dto.email(), dto.firstName(), dto.lastName(), toRoleNames(saved.getRoles()));
+    saved.setKeycloakId(keycloakId);
+    try {
+      sendInvitationEmail(keycloakId);
+    } catch (ConflictException e) {
+      // Sin el correo la persona no tiene cómo crear su contraseña: no se deja una cuenta que nunca
+      // podría usar. El rollback deshace la fila local; la de Keycloak se borra a mano.
+      keycloakAdmin.deleteUser(keycloakId);
+      throw e;
+    }
+
+    UserDto result = toDto(saved);
+    auditLog.record(
+        "INVITE_USER",
+        "user:" + result.id(),
+        "{\"email\":\"" + result.email() + "\",\"organizationId\":\"" + organizationId + "\"}");
+    return result;
+  }
+
+  /**
+   * Reenvía la invitación de un usuario que todavía no ingresó (el enlace anterior pudo vencer o
+   * perderse). Mismo alcance que editarlo: un ORG_RESPONSIBLE solo reenvía las de su organización.
+   */
+  public UserDto resendInvitation(UUID id) {
+    User user =
+        userRepo.findById(id).orElseThrow(() -> new ResourceNotFoundException("Usuario", id));
+    if (!currentUser.isPrismaAdmin()) {
+      assertCanManage(user);
+    }
+    if (!user.isInvitationPending()) {
+      throw new ConflictException(
+          "Este usuario no tiene una invitación pendiente: ya ingresó o se dio de alta con"
+              + " contraseña temporal");
+    }
+    if (!Boolean.TRUE.equals(user.getEnabled())) {
+      throw new InvalidRequestException(
+          "El usuario está deshabilitado: habilitalo antes de reenviar la invitación");
+    }
+    if (user.getKeycloakId() == null) {
+      throw new InvalidRequestException(
+          "El usuario no tiene una cuenta de acceso: no se puede reenviar la invitación");
+    }
+    assertEmailConfigured();
+    sendInvitationEmail(user.getKeycloakId());
+    user.setInvitedAt(OffsetDateTime.now());
+    auditLog.record("RESEND_INVITATION", "user:" + id, "{\"email\":\"" + user.getEmail() + "\"}");
+    return toDto(user);
+  }
+
+  /** Si hay servidor de correo configurado: sin él no se puede invitar. */
+  @Transactional(readOnly = true)
+  public boolean canSendInvitations() {
+    return emailSettings.get().configured();
+  }
+
+  private void assertEmailConfigured() {
+    if (!canSendInvitations()) {
+      throw new ConflictException(
+          "PRISMA todavía no tiene un servidor de correo configurado: no se puede enviar la"
+              + " invitación. Configuralo en Configuración › Correo electrónico, o creá el usuario"
+              + " con contraseña temporal desde «Nuevo Usuario».");
+    }
+  }
+
+  private void sendInvitationEmail(UUID keycloakId) {
+    try {
+      keycloakAdmin.sendExecuteActionsEmail(
+          keycloakId,
+          INVITATION_ACTIONS,
+          INVITATION_LIFESPAN_SECONDS,
+          invitationClientId,
+          invitationRedirectUri);
+    } catch (EmailDeliveryException e) {
+      throw new ConflictException(
+          "No se pudo enviar el correo de invitación. Revisá la configuración de correo en"
+              + " Configuración › Correo electrónico y volvé a intentarlo.");
+    }
   }
 
   public UserDto update(UUID id, CreateUserDto dto) {
@@ -402,7 +552,9 @@ public class UserService {
         u.getRoles().stream().map(UserRole::name).collect(Collectors.toSet()),
         u.getEnabled(),
         u.getCreatedAt(),
-        u.getKeycloakId() != null);
+        u.getKeycloakId() != null,
+        u.getInvitedAt(),
+        u.getInvitationAcceptedAt());
   }
 
   private Set<String> toRoleNames(Set<UserRole> roles) {
