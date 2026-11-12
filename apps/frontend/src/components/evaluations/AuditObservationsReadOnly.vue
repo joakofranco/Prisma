@@ -64,6 +64,13 @@
         <p class="text-sm text-slate-700 dark:text-slate-200 whitespace-pre-line">
           {{ obs.description }}
         </p>
+        <p
+          v-if="obs.evidenceId"
+          class="text-xs text-slate-600 mt-1 dark:text-slate-300"
+          data-testid="auditor-observation-evidence"
+        >
+          Documento citado: {{ obs.evidenceFileName ?? 'evidencia' }}
+        </p>
         <p class="text-xs text-slate-500 mt-2 dark:text-slate-400">
           {{ formatDate(obs.createdAt) }}
           <span v-if="obs.createdByName"> — Registrada por {{ obs.createdByName }}</span>

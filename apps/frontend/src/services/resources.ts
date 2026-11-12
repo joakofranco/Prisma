@@ -12,12 +12,14 @@ import type {
   AuditVerdict,
   Evidence,
   EvidenceCitation,
+  CitationFeedbackItem,
   EvidenceRules,
   AuditObservation,
   AuditLog,
   ImprovementPlan,
   SuggestedImprovement,
   RemediationTips,
+  AiSuggestionFeedback,
   MaturityResult,
   DashboardStats,
   PaginatedResponse,
@@ -247,6 +249,10 @@ export const evidenceService = {
       `/evidence/evaluation/${evaluationId}/control/${controlId}/citations`,
     );
   },
+  /** El auditor acepta o rechaza las citas de la IA (la evaluación solo valida acceso y estado). */
+  sendCitationFeedback(evaluationId: string, items: CitationFeedbackItem[]) {
+    return apiClient.post<void>('/evidence/citations/feedback', { evaluationId, items });
+  },
 };
 
 export const auditService = {
@@ -301,6 +307,10 @@ export const improvementService = {
     targetLevel: number;
   }) {
     return apiClient.post<RemediationTips>('/improvement/suggestions/tips', data);
+  },
+  /** Registra qué se hizo con las guías de IA (usada, editada o descartada). */
+  sendSuggestionFeedback(items: AiSuggestionFeedback[]) {
+    return apiClient.post<void>('/improvement/suggestions/feedback', { items });
   },
   create(data: Partial<ImprovementPlan>) {
     return apiClient.post<ImprovementPlan>('/improvement', data);

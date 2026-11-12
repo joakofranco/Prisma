@@ -13,22 +13,37 @@ import uy.edu.prisma.domain.entity.User;
 
 public interface UserRepository extends JpaRepository<User, UUID> {
 
+  // PRI-368: :search llega como patrón ya plegado (minúsculas, sin tildes ni puntos, con los %) o
+  // null; ver uy.edu.prisma.application.SearchText. Busca en lo que muestra la tabla: email,
+  // «Nombre Apellido» y nombre de alguna de sus organizaciones. Ver SearchSql.
+  String SEARCH_CONDITION =
+      "(:search IS NULL "
+          + "OR "
+          + SearchSql.FOLD_PRE
+          + "u.email"
+          + SearchSql.FOLD_POST
+          + " LIKE CAST(:search AS string) "
+          + "OR "
+          + SearchSql.FOLD_PRE
+          + "CONCAT(u.firstName, ' ', u.lastName)"
+          + SearchSql.FOLD_POST
+          + " LIKE CAST(:search AS string) "
+          + "OR EXISTS (SELECT 1 FROM u.organizations so WHERE "
+          + SearchSql.FOLD_PRE
+          + "so.name"
+          + SearchSql.FOLD_POST
+          + " LIKE CAST(:search AS string)))";
+
   // Ver el comentario en OrganizationRepository.search: sin el CAST, un search null hace fallar
   // la query en Postgres con "function lower(bytea) does not exist".
-  @Query(
-      "SELECT u FROM User u WHERE "
-          + "(:search IS NULL OR LOWER(u.email) LIKE LOWER(CONCAT('%',CAST(:search AS string),'%')) "
-          + "OR LOWER(u.firstName) LIKE LOWER(CONCAT('%',CAST(:search AS string),'%')) "
-          + "OR LOWER(u.lastName) LIKE LOWER(CONCAT('%',CAST(:search AS string),'%')))")
+  @Query("SELECT u FROM User u WHERE " + SEARCH_CONDITION)
   Page<User> search(@Param("search") String search, Pageable pageable);
 
   // Variante acotada a un conjunto de organizaciones (aislamiento multi-tenant): usuarios que
   // pertenecen a ALGUNA de ellas. Usada por UserService.list para todo rol que no sea PRISMA_ADMIN.
   @Query(
       "SELECT DISTINCT u FROM User u JOIN u.organizations o WHERE o.id IN :orgIds AND "
-          + "(:search IS NULL OR LOWER(u.email) LIKE LOWER(CONCAT('%',CAST(:search AS string),'%')) "
-          + "OR LOWER(u.firstName) LIKE LOWER(CONCAT('%',CAST(:search AS string),'%')) "
-          + "OR LOWER(u.lastName) LIKE LOWER(CONCAT('%',CAST(:search AS string),'%')))")
+          + SEARCH_CONDITION)
   Page<User> searchByOrganizationIdIn(
       @Param("orgIds") Collection<UUID> orgIds, @Param("search") String search, Pageable pageable);
 

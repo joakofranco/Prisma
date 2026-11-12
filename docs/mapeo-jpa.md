@@ -49,6 +49,8 @@
 | [`MaturityResult`](#maturityresult) | `maturity_results` | `prisma` |
 | [`Evidence`](#evidence) | `evidence` | `prisma` |
 | [`ImprovementPlan`](#improvementplan) | `improvement_plans` | `prisma` |
+| [`AiSuggestionFeedback`](#aisuggestionfeedback) | `ai_suggestion_feedback` | `prisma` |
+| [`AiCitationFeedback`](#aicitationfeedback) | `ai_citation_feedback` | `prisma` |
 | [`AuditObservation`](#auditobservation) | `audit_observations` | `prisma` |
 | [`AuditLog`](#auditlog) | `audit_logs` | `audit` |
 
@@ -317,6 +319,36 @@ libres del ítem (RF-PLN-02, migración `V27`); los ítems anteriores quedan con
 
 ---
 
+### `AiSuggestionFeedback`
+
+```java
+@Entity @Table(name = "ai_suggestion_feedback", schema = "prisma")
+```
+
+Qué se hizo con cada guía de mejora generada por IA (PRI-370, migración `V32`); alimenta un dataset
+de fine-tuning. Enum anidado `Outcome` (`ACCEPTED_UNEDITED`/`ACCEPTED_EDITED`/`REJECTED`,
+`@Enumerated(STRING)`). `control` es `@ManyToOne(LAZY)` obligatorio: se referencia el control del
+catálogo y **a propósito no** la evaluación, la organización ni el usuario, para que el dataset no
+se pueda rastrear hasta una organización. `originalTips` es `jsonb` (`@JdbcTypeCode(SqlTypes.JSON)`,
+`List<String>`) y `editedText` solo existe en `ACCEPTED_EDITED` (lo exige un `CHECK`).
+
+---
+
+### `AiCitationFeedback`
+
+```java
+@Entity @Table(name = "ai_citation_feedback", schema = "prisma")
+```
+
+Decisión del auditor sobre una cita de la búsqueda asistida (PRI-359, migración `V33`). Enum
+anidado `Decision` (`ACCEPTED`/`REJECTED`, `@Enumerated(STRING)`). Igual que
+`AiSuggestionFeedback`, `control` es `@ManyToOne(LAZY)` obligatorio y **no** hay evaluación,
+organización ni usuario, para que el dataset no se pueda rastrear hasta una organización. Guarda el
+fragmento (`snippet`), el archivo, la ubicación y el puntaje que devolvió la IA. Es solo historial:
+cambiar de opinión agrega otra fila.
+
+---
+
 ### `AuditObservation`
 
 ```java
@@ -326,6 +358,10 @@ libres del ítem (RF-PLN-02, migración `V27`); los ítems anteriores quedan con
 Enums anidados `ObservationType` (`OBSERVATION`/`NON_CONFORMITY`/`RECOMMENDATION`) y
 `ObservationStatus` (`OPEN`/`IN_PROGRESS`/`RESOLVED`/`CLOSED`). Misma forma que `ImprovementPlan`:
 `evaluation` obligatorio, `control` y `createdBy` opcionales.
+`subcategory` es opcional (migración `V26`). `evidence` es `@ManyToOne(LAZY)` opcional (columna
+`evidence_id`, migración `V34`, `ON DELETE SET NULL`): la evidencia citada de la que sale la
+observación (RF-EVI-15, PRI-360); el servicio valida que sea de la misma evaluación. Si la evidencia
+se borra, la observación se conserva sin el vínculo.
 
 ---
 

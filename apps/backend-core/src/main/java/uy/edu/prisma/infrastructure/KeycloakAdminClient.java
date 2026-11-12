@@ -10,6 +10,7 @@ import java.util.Set;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
@@ -45,7 +46,8 @@ public class KeycloakAdminClient {
   private volatile Instant tokenExpiresAt = Instant.EPOCH;
 
   public KeycloakAdminClient(
-      RestClient keycloakAdminRestClient, KeycloakAdminProperties properties) {
+      @Qualifier("keycloakAdminRestClient") RestClient keycloakAdminRestClient,
+      KeycloakAdminProperties properties) {
     this.restClient = keycloakAdminRestClient;
     this.properties = properties;
   }

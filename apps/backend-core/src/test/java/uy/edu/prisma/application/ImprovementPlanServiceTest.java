@@ -24,6 +24,7 @@ import uy.edu.prisma.domain.entity.Evaluation;
 import uy.edu.prisma.domain.entity.EvaluationResponse;
 import uy.edu.prisma.domain.entity.ImprovementPlan;
 import uy.edu.prisma.domain.entity.Organization;
+import uy.edu.prisma.domain.exception.ConflictException;
 import uy.edu.prisma.domain.exception.InvalidRequestException;
 import uy.edu.prisma.domain.exception.ResourceNotFoundException;
 import uy.edu.prisma.domain.repository.CatalogControlRepository;
@@ -50,6 +51,7 @@ class ImprovementPlanServiceTest {
   @Mock private CurrentUserService currentUser;
   @Mock private AuditLogService auditLog;
   @Mock private PlanDeadlineSettingsService deadlines;
+  @Mock private uy.edu.prisma.domain.repository.AiSuggestionFeedbackRepository feedbackRepo;
 
   private ImprovementPlanService service;
   private Evaluation eval;
@@ -79,7 +81,8 @@ class ImprovementPlanServiceTest {
             aiClient,
             currentUser,
             auditLog,
-            deadlines);
+            deadlines,
+            feedbackRepo);
     // IN_PROGRESS: el plan está activo (en DRAFT / ARCHIVED no se puede crear ni editar).
     eval =
         Evaluation.builder()
@@ -88,6 +91,8 @@ class ImprovementPlanServiceTest {
             .catalogVersion("5.0")
             .status(Evaluation.Status.IN_PROGRESS)
             .organization(Organization.builder().id(UUID.randomUUID()).build())
+            .status(Evaluation.Status.IN_PROGRESS)
+            .globalMaturity(1)
             .build();
   }
 
@@ -710,6 +715,67 @@ class ImprovementPlanServiceTest {
   }
 
   @Test
+  void suggestRequiresCalculatedMaturity() {
+    eval.setGlobalMaturity(null);
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+
+    assertThrows(ConflictException.class, () -> service.suggest(eval.getId()));
+    verify(controlRepo, never()).findByVersionOrdered(any());
+  }
+
+  @Test
+  void suggestRejectsDraftEvaluationEvenWithMaturity() {
+    eval.setStatus(Evaluation.Status.DRAFT);
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+
+    assertThrows(ConflictException.class, () -> service.suggest(eval.getId()));
+  }
+
+  @Test
+  void suggestReturnsOneSuggestionPerControlWithAllItsSubcategories() {
+    CatalogControl control = buildControl(1);
+    CatalogCategory category = control.getRequirement().getSubcategories().get(0).getCategory();
+    CatalogSubcategory extra =
+        CatalogSubcategory.builder().id(UUID.randomUUID()).name("A0").category(category).build();
+    control.setSubcategories(
+        new java.util.HashSet<>(
+            List.of(control.getRequirement().getSubcategories().get(0), extra))); // mapeo curado
+
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(controlRepo.findByVersionOrdered("5.0")).thenReturn(List.of(control));
+    when(responseRepo.findByEvaluationId(eval.getId())).thenReturn(List.of());
+    when(repo.findByEvaluationIdOrderByCreatedAtDesc(eval.getId())).thenReturn(List.of());
+
+    List<SuggestedImprovementDto> result = service.suggest(eval.getId());
+
+    assertEquals(1, result.size());
+    assertEquals("A0", result.get(0).subcategoryName());
+    assertEquals(extra.getId(), result.get(0).subcategoryId());
+    assertEquals(List.of("A0", "S1"), result.get(0).subcategoryNames());
+  }
+
+  @Test
+  void suggestSkipsControlsOutsideTheProfile() {
+    CatalogControl inProfile = buildControl(1);
+    CatalogControl outOfProfile = buildControl(1);
+    eval.setCommunityProfile(
+        uy.edu.prisma.domain.entity.CommunityProfile.builder()
+            .id(UUID.randomUUID())
+            .controls(new java.util.HashSet<>(List.of(inProfile)))
+            .build());
+
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(controlRepo.findByVersionOrdered("5.0")).thenReturn(List.of(inProfile, outOfProfile));
+    when(responseRepo.findByEvaluationId(eval.getId())).thenReturn(List.of());
+    when(repo.findByEvaluationIdOrderByCreatedAtDesc(eval.getId())).thenReturn(List.of());
+
+    List<SuggestedImprovementDto> result = service.suggest(eval.getId());
+
+    assertEquals(1, result.size());
+    assertEquals(inProfile.getId(), result.get(0).controlId());
+  }
+
+  @Test
   void suggestSkipsCompliantControls() {
     CatalogControl met = buildControl(3);
     EvaluationResponse resp = EvaluationResponse.builder().control(met).compliant(true).build();
@@ -757,5 +823,84 @@ class ImprovementPlanServiceTest {
                 "PR.AC-1", "descripción", "Proteger", "Control de Acceso", "Identidades", 0, 1));
 
     assertEquals(expected, result);
+  }
+
+  // ---------------- PRI-370: retroalimentación de las guías de IA ----------------
+
+  private uy.edu.prisma.web.dto.Dto.AiSuggestionFeedbackDto feedback(
+      UUID controlId, String outcome, String editedText) {
+    return new uy.edu.prisma.web.dto.Dto.AiSuggestionFeedbackDto(
+        controlId, 0, 2, "Resumen", List.of("Paso 1", "Paso 2"), outcome, editedText);
+  }
+
+  @SuppressWarnings("unchecked")
+  private List<uy.edu.prisma.domain.entity.AiSuggestionFeedback> savedFeedback() {
+    org.mockito.ArgumentCaptor<List<uy.edu.prisma.domain.entity.AiSuggestionFeedback>> captor =
+        org.mockito.ArgumentCaptor.forClass(List.class);
+    org.mockito.Mockito.verify(feedbackRepo).saveAll(captor.capture());
+    return captor.getValue();
+  }
+
+  @Test
+  void recordFeedbackSavesAcceptedRejectedAndEdited() {
+    CatalogControl control = CatalogControl.builder().id(UUID.randomUUID()).build();
+    when(controlRepo.findAllById(any())).thenReturn(List.of(control));
+
+    service.recordFeedback(
+        new uy.edu.prisma.web.dto.Dto.AiSuggestionFeedbackBatchDto(
+            List.of(
+                feedback(control.getId(), "ACCEPTED_UNEDITED", null),
+                feedback(control.getId(), "ACCEPTED_EDITED", "Texto final"),
+                feedback(control.getId(), "REJECTED", null))));
+
+    var rows = savedFeedback();
+    assertEquals(3, rows.size());
+    assertEquals(control, rows.get(0).getControl());
+    assertEquals("Resumen", rows.get(0).getOriginalSummary());
+    assertEquals(List.of("Paso 1", "Paso 2"), rows.get(0).getOriginalTips());
+    assertEquals(2, rows.get(0).getTargetLevel());
+    assertNull(rows.get(0).getEditedText());
+    assertEquals("Texto final", rows.get(1).getEditedText());
+    assertEquals(
+        uy.edu.prisma.domain.entity.AiSuggestionFeedback.Outcome.REJECTED,
+        rows.get(2).getOutcome());
+  }
+
+  @Test
+  void recordFeedbackDiscardsEditedTextWhenNotEdited() {
+    CatalogControl control = CatalogControl.builder().id(UUID.randomUUID()).build();
+    when(controlRepo.findAllById(any())).thenReturn(List.of(control));
+
+    service.recordFeedback(
+        new uy.edu.prisma.web.dto.Dto.AiSuggestionFeedbackBatchDto(
+            List.of(feedback(control.getId(), "REJECTED", "no debería guardarse"))));
+
+    assertNull(savedFeedback().get(0).getEditedText());
+  }
+
+  @Test
+  void recordFeedbackEditedWithoutTextIsRejected() {
+    CatalogControl control = CatalogControl.builder().id(UUID.randomUUID()).build();
+    when(controlRepo.findAllById(any())).thenReturn(List.of(control));
+
+    assertThrows(
+        InvalidRequestException.class,
+        () ->
+            service.recordFeedback(
+                new uy.edu.prisma.web.dto.Dto.AiSuggestionFeedbackBatchDto(
+                    List.of(feedback(control.getId(), "ACCEPTED_EDITED", "  ")))));
+    org.mockito.Mockito.verify(feedbackRepo, org.mockito.Mockito.never()).saveAll(any());
+  }
+
+  @Test
+  void recordFeedbackUnknownControlIsNotFound() {
+    when(controlRepo.findAllById(any())).thenReturn(List.of());
+
+    assertThrows(
+        ResourceNotFoundException.class,
+        () ->
+            service.recordFeedback(
+                new uy.edu.prisma.web.dto.Dto.AiSuggestionFeedbackBatchDto(
+                    List.of(feedback(UUID.randomUUID(), "REJECTED", null)))));
   }
 }

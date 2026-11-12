@@ -67,7 +67,7 @@ class OrganizationServiceTest {
   @Test
   void listReturnsPaginatedResults() {
     PageRequest pr = PageRequest.of(0, 10, Sort.by("createdAt").descending());
-    when(repo.search(any(), any())).thenReturn(new PageImpl<>(List.of(org), pr, 1));
+    when(repo.search(any(), any(), any())).thenReturn(new PageImpl<>(List.of(org), pr, 1));
 
     PaginatedDto<OrganizationDto> result = service.list("acme", 0, 10);
 
@@ -90,7 +90,7 @@ class OrganizationServiceTest {
     responsible.setFirstName("Ana");
     responsible.setLastName("Pérez");
     PageRequest pr = PageRequest.of(0, 10, Sort.by("createdAt").descending());
-    when(repo.search(any(), any())).thenReturn(new PageImpl<>(List.of(org), pr, 1));
+    when(repo.search(any(), any(), any())).thenReturn(new PageImpl<>(List.of(org), pr, 1));
 
     PaginatedDto<OrganizationDto> result = service.list(null, 0, 10);
 
@@ -101,7 +101,7 @@ class OrganizationServiceTest {
   void listMapsNullResponsible() {
     Organization bare = Organization.builder().id(UUID.randomUUID()).name("X").rut("N2").build();
     PageRequest pr = PageRequest.of(0, 10, Sort.by("createdAt").descending());
-    when(repo.search(isNull(), any())).thenReturn(new PageImpl<>(List.of(bare), pr, 1));
+    when(repo.search(isNull(), any(), any())).thenReturn(new PageImpl<>(List.of(bare), pr, 1));
 
     PaginatedDto<OrganizationDto> result = service.list(null, 0, 10);
 
@@ -116,13 +116,13 @@ class OrganizationServiceTest {
     when(currentUser.isAuditor()).thenReturn(false);
     when(currentUser.organizationIds()).thenReturn(Set.of(org.getId()));
     PageRequest pr = PageRequest.of(0, 10, Sort.by("createdAt").descending());
-    when(repo.searchByIdIn(eq(Set.of(org.getId())), any(), any()))
+    when(repo.searchByIdIn(eq(Set.of(org.getId())), any(), any(), any()))
         .thenReturn(new PageImpl<>(List.of(org), pr, 1));
 
     PaginatedDto<OrganizationDto> result = service.list(null, 0, 10);
 
     assertEquals(1, result.total());
-    verify(repo, never()).search(any(), any());
+    verify(repo, never()).search(any(), any(), any());
   }
 
   @Test
@@ -135,7 +135,7 @@ class OrganizationServiceTest {
     PaginatedDto<OrganizationDto> result = service.list(null, 0, 10);
 
     assertEquals(0, result.total());
-    verify(repo, never()).searchByIdIn(any(), any(), any());
+    verify(repo, never()).searchByIdIn(any(), any(), any(), any());
   }
 
   @Test
@@ -146,7 +146,7 @@ class OrganizationServiceTest {
     when(currentUser.isAuditor()).thenReturn(true);
     when(currentUser.organizationIds()).thenReturn(Set.of(auditedId));
     PageRequest pr = PageRequest.of(0, 10, Sort.by("createdAt").descending());
-    when(repo.searchByIdIn(eq(Set.of(auditedId)), any(), any()))
+    when(repo.searchByIdIn(eq(Set.of(auditedId)), any(), any(), any()))
         .thenReturn(new PageImpl<>(List.of(org), pr, 1));
 
     PaginatedDto<OrganizationDto> result = service.list(null, 0, 10);

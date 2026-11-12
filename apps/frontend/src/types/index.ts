@@ -351,6 +351,16 @@ export interface EvidenceCitation {
   score: number;
 }
 
+/** Decisión del auditor sobre una cita de la IA (PRI-359): alimenta la medición de la búsqueda. */
+export interface CitationFeedbackItem {
+  controlId: string;
+  fileName: string | null;
+  location: string | null;
+  snippet: string;
+  score: number | null;
+  decision: 'ACCEPTED' | 'REJECTED';
+}
+
 export interface AuditObservation {
   id: string;
   evaluationId: string;
@@ -367,6 +377,9 @@ export interface AuditObservation {
   /** Código del control y de la subcategoría a los que está atada (PRI-354), si corresponde. */
   controlCode?: string | null;
   subcategoryCode?: string | null;
+  /** Evidencia citada de la que sale la observación (RF-EVI-15) y su nombre de archivo. */
+  evidenceId?: string | null;
+  evidenceFileName?: string | null;
 }
 
 /** Marca «para revisar» de un control dentro de una evaluación (PRI-352). */
@@ -410,6 +423,8 @@ export interface SuggestedImprovement {
   functionName: string;
   categoryName: string;
   subcategoryName: string;
+  /** Todas las subcategorías donde el control cuenta (la primera es subcategoryName). */
+  subcategoryNames: string[];
   controlCode: string;
   action: string;
   currentLevel: number;
@@ -422,6 +437,19 @@ export interface SuggestedImprovement {
 export interface RemediationTips {
   summary: string;
   tips: string[];
+  /** false = texto de reemplazo porque la IA falló: no se ofrece para usar ni se registra. */
+  generated?: boolean;
+}
+
+/** Qué se hizo con una guía de IA (PRI-370): alimenta el dataset de fine-tuning. */
+export interface AiSuggestionFeedback {
+  controlId: string;
+  currentLevel: number;
+  targetLevel: number;
+  originalSummary: string;
+  originalTips: string[];
+  outcome: 'ACCEPTED_UNEDITED' | 'ACCEPTED_EDITED' | 'REJECTED';
+  editedText?: string;
 }
 
 export interface DashboardStats {

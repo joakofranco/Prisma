@@ -5,6 +5,7 @@ const improvementService = vi.hoisted(() => ({
   getByEvaluation: vi.fn(),
   getSuggestions: vi.fn(),
   getRemediationTips: vi.fn(),
+  sendSuggestionFeedback: vi.fn(),
   create: vi.fn(),
   update: vi.fn(),
 }));
@@ -83,6 +84,7 @@ beforeEach(() => {
   evaluationsService.getResults.mockResolvedValue({ data: [] });
   improvementService.update.mockResolvedValue({ data: {} });
   improvementService.create.mockResolvedValue({ data: {} });
+  improvementService.sendSuggestionFeedback.mockResolvedValue({ data: undefined });
 });
 
 afterEach(() => {
@@ -838,5 +840,235 @@ describe('ImprovementView: brechas por subcategoría (RF-CALC-07)', () => {
 
     expect(document.body.textContent).toContain('Acción 1');
     expect(document.body.querySelector('[data-test="gap-empty"]')).not.toBeNull();
+  });
+});
+
+describe('ImprovementView: guías de IA en las sugerencias (PRI-370)', () => {
+  const suggestion = (controlId: string, subcategoryId: string, extra = {}) => ({
+    controlId,
+    subcategoryId,
+    functionName: 'Proteger',
+    categoryName: 'Acceso',
+    subcategoryName: `Sub ${subcategoryId}`,
+    subcategoryNames: [`Sub ${subcategoryId}`],
+    controlCode: `PR.${controlId}`,
+    action: `Implementar ${controlId}/${subcategoryId}`,
+    currentLevel: 0,
+    targetLevel: 2,
+    priority: 'HIGH',
+    suggestedDueDate: '2026-12-31',
+    ...extra,
+  });
+  const tips = { summary: 'Definir una política', tips: ['Paso A', 'Paso B'], generated: true };
+  const GUIDE_TEXT = 'Definir una política\n1. Paso A\n2. Paso B';
+
+  const byText = (text: string) =>
+    Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find((b) =>
+      b.textContent?.includes(text),
+    )!;
+  const actionBoxes = () =>
+    Array.from(document.body.querySelectorAll<HTMLTextAreaElement>('textarea'));
+  const typeInto = async (el: HTMLTextAreaElement, value: string) => {
+    el.value = value;
+    el.dispatchEvent(new Event('input'));
+    await flushPromises();
+  };
+
+  async function openSuggestions(items = [suggestion('c1', 's1')]) {
+    improvementService.getSuggestions.mockResolvedValue({ data: items });
+    improvementService.getRemediationTips.mockResolvedValue({ data: tips });
+    const wrapper = await mountView();
+    byText('Generar Sugerencias').click();
+    await flushPromises();
+    return wrapper;
+  }
+  async function generate(index = 0) {
+    const buttons = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).filter(
+      (b) => /sugerencia con IA|Regenerar/.test(b.textContent ?? ''),
+    );
+    buttons[index].click();
+    await flushPromises();
+  }
+  const sent = () => improvementService.sendSuggestionFeedback.mock.calls.flatMap((c) => c[0]);
+
+  it('«Usar en la acción» copia el resumen y los pasos al texto de la acción', async () => {
+    await openSuggestions();
+    await generate();
+    byText('Usar en la acción').click();
+    await flushPromises();
+
+    expect(actionBoxes()[0].value).toBe(GUIDE_TEXT);
+  });
+
+  it('usada sin editar y creada: queda registrada como aceptada sin editar', async () => {
+    await openSuggestions();
+    await generate();
+    byText('Usar en la acción').click();
+    await flushPromises();
+    byText('Crear seleccionadas').click();
+    await flushPromises();
+
+    expect(improvementService.create).toHaveBeenCalledWith(
+      expect.objectContaining({ controlId: 'c1', action: GUIDE_TEXT }),
+    );
+    expect(sent()).toEqual([
+      {
+        controlId: 'c1',
+        currentLevel: 0,
+        targetLevel: 2,
+        originalSummary: 'Definir una política',
+        originalTips: ['Paso A', 'Paso B'],
+        outcome: 'ACCEPTED_UNEDITED',
+      },
+    ]);
+  });
+
+  it('usada y editada: registra la original y el texto final', async () => {
+    await openSuggestions();
+    await generate();
+    byText('Usar en la acción').click();
+    await flushPromises();
+    await typeInto(actionBoxes()[0], 'Texto corregido por la persona');
+    byText('Crear seleccionadas').click();
+    await flushPromises();
+
+    expect(sent()).toHaveLength(1);
+    expect(sent()[0]).toMatchObject({
+      outcome: 'ACCEPTED_EDITED',
+      originalSummary: 'Definir una política',
+      originalTips: ['Paso A', 'Paso B'],
+      editedText: 'Texto corregido por la persona',
+    });
+  });
+
+  it('generada pero no usada: se registra como rechazada al crear', async () => {
+    await openSuggestions();
+    await generate();
+    byText('Crear seleccionadas').click();
+    await flushPromises();
+
+    expect(sent().map((f) => f.outcome)).toEqual(['REJECTED']);
+  });
+
+  it('generada y con el modal cerrado sin crear: se registra como rechazada', async () => {
+    await openSuggestions();
+    await generate();
+    byText('Cerrar').click();
+    await flushPromises();
+
+    expect(sent().map((f) => f.outcome)).toEqual(['REJECTED']);
+    expect(improvementService.create).not.toHaveBeenCalled();
+  });
+
+  it('usada pero deseleccionada: se registra como rechazada', async () => {
+    await openSuggestions();
+    await generate();
+    byText('Usar en la acción').click();
+    await flushPromises();
+    const check = document.body.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    check.checked = false;
+    check.dispatchEvent(new Event('change'));
+    await flushPromises();
+    byText('Cerrar').click();
+    await flushPromises();
+
+    expect(sent().map((f) => f.outcome)).toEqual(['REJECTED']);
+  });
+
+  it('regenerar registra la anterior como rechazada y la nueva sigue su camino', async () => {
+    await openSuggestions();
+    await generate();
+    improvementService.getRemediationTips.mockResolvedValue({
+      data: { summary: 'Otra guía', tips: ['Otro paso'], generated: true },
+    });
+    await generate();
+    byText('Usar en la acción').click();
+    await flushPromises();
+    byText('Crear seleccionadas').click();
+    await flushPromises();
+
+    expect(sent().map((f) => [f.outcome, f.originalSummary])).toEqual([
+      ['REJECTED', 'Definir una política'],
+      ['ACCEPTED_UNEDITED', 'Otra guía'],
+    ]);
+  });
+
+  it('si la IA no generó la guía (texto de reemplazo) no se ofrece usarla ni se registra nada', async () => {
+    await openSuggestions();
+    improvementService.getRemediationTips.mockResolvedValue({
+      data: { summary: '', tips: ['No se pudo generar'], generated: false },
+    });
+    await generate();
+
+    expect(
+      Array.from(document.body.querySelectorAll('button')).some((b) =>
+        b.textContent?.includes('Usar en la acción'),
+      ),
+    ).toBe(false);
+    byText('Cerrar').click();
+    await flushPromises();
+    expect(improvementService.sendSuggestionFeedback).not.toHaveBeenCalled();
+  });
+
+  it('si la guía no se pidió, no se registra nada', async () => {
+    await openSuggestions();
+    byText('Crear seleccionadas').click();
+    await flushPromises();
+
+    expect(improvementService.sendSuggestionFeedback).not.toHaveBeenCalled();
+  });
+
+  it('dos sugerencias del mismo control no mezclan su guía', async () => {
+    await openSuggestions([suggestion('c1', 's1'), suggestion('c1', 's2')]);
+    await generate(0);
+
+    const useButtons = Array.from(document.body.querySelectorAll('button')).filter((b) =>
+      b.textContent?.includes('Usar en la acción'),
+    );
+    expect(useButtons).toHaveLength(1);
+    expect(document.body.textContent?.match(/Definir una política/g)).toHaveLength(1);
+  });
+
+  it('si falla el registro no molesta a la persona', async () => {
+    improvementService.sendSuggestionFeedback.mockRejectedValue(new Error('boom'));
+    await openSuggestions();
+    await generate();
+    byText('Cerrar').click();
+    await flushPromises();
+
+    expect(notification.error).not.toHaveBeenCalled();
+  });
+  it('muestra «También cuenta en» cuando el control pertenece a más de una subcategoría', async () => {
+    await openSuggestions([
+      suggestion('c1', 's1', { subcategoryNames: ['Sub s1', 'Sub s2', 'Sub s3'] }),
+    ]);
+
+    expect(document.body.querySelector('[data-testid="also-in"]')?.textContent).toContain(
+      'Sub s2, Sub s3',
+    );
+  });
+
+  it('con una sola subcategoría no muestra «También cuenta en»', async () => {
+    await openSuggestions();
+
+    expect(document.body.querySelector('[data-testid="also-in"]')).toBeNull();
+  });
+
+  it('sin madurez calculada muestra el aviso del backend y no abre el modal', async () => {
+    improvementService.getSuggestions.mockRejectedValue({
+      response: {
+        data: {
+          message: 'Calculá la madurez de la evaluación antes de generar sugerencias de mejora',
+        },
+      },
+    });
+    await mountView();
+    byText('Generar Sugerencias').click();
+    await flushPromises();
+
+    expect(notification.error).toHaveBeenCalledWith(
+      'Calculá la madurez de la evaluación antes de generar sugerencias de mejora',
+    );
+    expect(document.body.textContent).not.toContain('Crear seleccionadas');
   });
 });

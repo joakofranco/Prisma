@@ -188,6 +188,9 @@ services:
       CLAMAV_PORT: 3310
       AI_SERVICE_URL: http://backend-ai:8000
       AI_INTERNAL_API_KEY: ${AI_INTERNAL_API_KEY}
+      AI_CONNECT_TIMEOUT: ${AI_CONNECT_TIMEOUT:-3s}
+      AI_READ_TIMEOUT: ${AI_READ_TIMEOUT:-60s}
+      AI_GUIDE_READ_TIMEOUT: ${AI_GUIDE_READ_TIMEOUT:-120s}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:8080,http://localhost:5173,https://localhost,https://prisma.local}
       JAVA_TOOL_OPTIONS: ${BACKEND_CORE_JVM_OPTS:--Xms512m -Xmx1024m}
       TZ: ${TZ}

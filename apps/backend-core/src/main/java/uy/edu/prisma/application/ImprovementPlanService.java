@@ -12,19 +12,26 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import uy.edu.prisma.domain.entity.AiSuggestionFeedback;
+import uy.edu.prisma.domain.entity.AiSuggestionFeedback.Outcome;
 import uy.edu.prisma.domain.entity.CatalogControl;
+import uy.edu.prisma.domain.entity.CatalogSubcategory;
 import uy.edu.prisma.domain.entity.Evaluation;
 import uy.edu.prisma.domain.entity.EvaluationResponse;
 import uy.edu.prisma.domain.entity.ImprovementPlan;
 import uy.edu.prisma.domain.entity.ImprovementPlan.PlanStatus;
 import uy.edu.prisma.domain.entity.ImprovementPlan.Priority;
+import uy.edu.prisma.domain.exception.ConflictException;
 import uy.edu.prisma.domain.exception.InvalidRequestException;
 import uy.edu.prisma.domain.exception.ResourceNotFoundException;
+import uy.edu.prisma.domain.repository.AiSuggestionFeedbackRepository;
 import uy.edu.prisma.domain.repository.CatalogControlRepository;
 import uy.edu.prisma.domain.repository.EvaluationRepository;
 import uy.edu.prisma.domain.repository.EvaluationResponseRepository;
 import uy.edu.prisma.domain.repository.ImprovementPlanRepository;
 import uy.edu.prisma.infrastructure.AiEvidenceClient;
+import uy.edu.prisma.web.dto.Dto.AiSuggestionFeedbackBatchDto;
+import uy.edu.prisma.web.dto.Dto.AiSuggestionFeedbackDto;
 import uy.edu.prisma.web.dto.Dto.CreateImprovementPlanDto;
 import uy.edu.prisma.web.dto.Dto.ImprovementPlanDto;
 import uy.edu.prisma.web.dto.Dto.RemediationTipsDto;
@@ -49,6 +56,7 @@ public class ImprovementPlanService {
   private final CurrentUserService currentUser;
   private final AuditLogService auditLog;
   private final PlanDeadlineSettingsService deadlines;
+  private final AiSuggestionFeedbackRepository feedbackRepo;
 
   public ImprovementPlanService(
       ImprovementPlanRepository repo,
@@ -58,7 +66,8 @@ public class ImprovementPlanService {
       AiEvidenceClient aiClient,
       CurrentUserService currentUser,
       AuditLogService auditLog,
-      PlanDeadlineSettingsService deadlines) {
+      PlanDeadlineSettingsService deadlines,
+      AiSuggestionFeedbackRepository feedbackRepo) {
     this.repo = repo;
     this.evaluationRepo = evaluationRepo;
     this.controlRepo = controlRepo;
@@ -67,6 +76,7 @@ public class ImprovementPlanService {
     this.currentUser = currentUser;
     this.auditLog = auditLog;
     this.deadlines = deadlines;
+    this.feedbackRepo = feedbackRepo;
   }
 
   // On-demand (un control a la vez, ver AiEvidenceClient.suggestRemediation): no necesita
@@ -82,6 +92,44 @@ public class ImprovementPlanService {
         dto.subcategoryName(),
         dto.currentLevel(),
         dto.targetLevel());
+  }
+
+  /**
+   * PRI-370: registra qué se hizo con cada guía de IA (usada tal cual, usada y editada, o
+   * descartada) para armar un dataset de fine-tuning. Guarda el control del catálogo y no la
+   * evaluación, la organización ni el usuario. Las guías que la IA no llegó a generar no se
+   * registran (el frontend no las envía).
+   */
+  public void recordFeedback(AiSuggestionFeedbackBatchDto batch) {
+    Map<UUID, CatalogControl> controls =
+        controlRepo
+            .findAllById(
+                batch.items().stream().map(AiSuggestionFeedbackDto::controlId).distinct().toList())
+            .stream()
+            .collect(Collectors.toMap(CatalogControl::getId, c -> c));
+    List<AiSuggestionFeedback> rows = new java.util.ArrayList<>();
+    for (AiSuggestionFeedbackDto item : batch.items()) {
+      CatalogControl control = controls.get(item.controlId());
+      if (control == null) {
+        throw new ResourceNotFoundException("Control", item.controlId());
+      }
+      Outcome outcome = Outcome.valueOf(item.outcome());
+      boolean hasText = item.editedText() != null && !item.editedText().isBlank();
+      if (outcome == Outcome.ACCEPTED_EDITED && !hasText) {
+        throw new InvalidRequestException("Una sugerencia editada debe incluir el texto final");
+      }
+      rows.add(
+          AiSuggestionFeedback.builder()
+              .control(control)
+              .currentLevel(item.currentLevel())
+              .targetLevel(item.targetLevel())
+              .originalSummary(item.originalSummary() == null ? "" : item.originalSummary())
+              .originalTips(item.originalTips())
+              .outcome(outcome)
+              .editedText(outcome == Outcome.ACCEPTED_EDITED ? item.editedText() : null)
+              .build());
+    }
+    feedbackRepo.saveAll(rows);
   }
 
   // No es readOnly a proposito: markOverdue() es un UPDATE (recalcula que planes vencieron antes
@@ -311,6 +359,11 @@ public class ImprovementPlanService {
    * sugerencias para que el usuario las revise/edite y recien ahi las cree via POST
    * /api/improvement. Los controles que ya tienen un plan de mejora asociado se excluyen para no
    * repetir sugerencias en llamadas sucesivas.
+   *
+   * <p>Precondicion (RF-PLN-01): la madurez de la evaluacion tiene que estar calculada
+   * (globalMaturity != null; «Calculada» no existe como estado) y la evaluacion no puede estar en
+   * borrador. Se arma UNA sugerencia por control, con todas las subcategorias donde cuenta para la
+   * madurez (CatalogControl.effectiveSubcategories), no una por subcategoria.
    */
   @Transactional(readOnly = true)
   public List<SuggestedImprovementDto> suggest(UUID evaluationId) {
@@ -319,6 +372,10 @@ public class ImprovementPlanService {
             .findById(evaluationId)
             .orElseThrow(() -> new ResourceNotFoundException("Evaluación", evaluationId));
     currentUser.assertOrganizationAccess(eval.getOrganization().getId());
+    if (eval.getStatus() == Evaluation.Status.DRAFT || eval.getGlobalMaturity() == null) {
+      throw new ConflictException(
+          "Calculá la madurez de la evaluación antes de generar sugerencias de mejora");
+    }
 
     Map<UUID, EvaluationResponse> responsesByControl =
         responseRepo.findByEvaluationId(evaluationId).stream()
@@ -361,27 +418,36 @@ public class ImprovementPlanService {
       // NINGUN nivel mientras falten controles de nivel 1 -- son el bloqueante de todo lo demas.
       Priority priority = suggestPriority(control.getTargetLevel());
 
-      // Un Requisito puede pertenecer a varias Subcategorias (ver CatalogRequirementSubcategory):
-      // se arma una sugerencia por cada una, mismo control con el contexto de esa subcategoria.
-      // alreadyPlanned sigue siendo por control (un plan real ya creado sobre el control descarta
-      // TODAS sus sugerencias sin importar la subcategoria).
-      for (var subcategory : control.getRequirement().getSubcategories()) {
-        var category = subcategory.getCategory();
-        var function = category.getFunction_();
-        suggestions.add(
-            new SuggestedImprovementDto(
-                control.getId(),
-                subcategory.getId(),
-                function.getName(),
-                category.getName(),
-                subcategory.getName(),
-                control.getCode(),
-                suggestAction(control, subcategory.getName()),
-                0,
-                control.getTargetLevel(),
-                priority.name(),
-                today.plusMonths(monthsByPriority.get(priority)).toString()));
+      // Una sola sugerencia por control. El control puede contar en varias subcategorias
+      // (mapeo curado control<->subcategoria o, si el catalogo no lo trae,
+      // Requisito->Subcategoria):
+      // la primera por nombre da el contexto principal y el resto viaja como informacion. Un
+      // control sin subcategoria no se puede ubicar en la jerarquia, por lo que no se sugiere.
+      // alreadyPlanned es por control: un plan real ya creado lo descarta.
+      List<CatalogSubcategory> subcategories =
+          control.effectiveSubcategories().stream()
+              .sorted(Comparator.comparing(CatalogSubcategory::getName))
+              .toList();
+      if (subcategories.isEmpty()) {
+        continue;
       }
+      CatalogSubcategory main = subcategories.get(0);
+      var category = main.getCategory();
+      var function = category.getFunction_();
+      suggestions.add(
+          new SuggestedImprovementDto(
+              control.getId(),
+              main.getId(),
+              function.getName(),
+              category.getName(),
+              main.getName(),
+              subcategories.stream().map(CatalogSubcategory::getName).toList(),
+              control.getCode(),
+              suggestAction(control, main.getName()),
+              0,
+              control.getTargetLevel(),
+              priority.name(),
+              today.plusMonths(monthsByPriority.get(priority)).toString()));
     }
 
     suggestions.sort(

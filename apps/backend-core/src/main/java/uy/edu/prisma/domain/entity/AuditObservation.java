@@ -43,6 +43,11 @@ public class AuditObservation {
   @JoinColumn(name = "subcategory_id")
   private CatalogSubcategory subcategory;
 
+  // Evidencia citada que originó la observación (RF-EVI-15); null si no viene de una cita.
+  @ManyToOne(fetch = FetchType.LAZY)
+  @JoinColumn(name = "evidence_id")
+  private Evidence evidence;
+
   @Enumerated(EnumType.STRING)
   @Column(nullable = false, length = 30)
   @Builder.Default

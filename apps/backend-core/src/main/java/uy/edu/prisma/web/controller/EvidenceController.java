@@ -94,6 +94,7 @@ public class EvidenceController {
    * control: documento, ubicación (página/fragmento) y texto, para que el auditor los revise y
    * registre su propia Observación de Auditoría.
    */
+  @PreAuthorize("hasAnyRole('PRISMA_ADMIN','AUDITOR')")
   @GetMapping("/evaluation/{evaluationId}/control/{controlId}/citations")
   public ResponseEntity<List<EvidenceCitationDto>> citations(
       @PathVariable UUID evaluationId, @PathVariable UUID controlId) {

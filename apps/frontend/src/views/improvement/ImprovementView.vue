@@ -419,7 +419,7 @@
         </p>
         <div
           v-for="s in suggestions"
-          :key="s.controlId"
+          :key="sKey(s)"
           class="border border-slate-200 dark:border-slate-700 rounded-lg p-3"
           :class="
             s.selected ? 'bg-white dark:bg-slate-800' : 'bg-slate-50 dark:bg-slate-900 opacity-60'
@@ -442,38 +442,54 @@
                   Nivel {{ s.targetLevel }}
                 </span>
               </div>
+              <p
+                v-if="s.subcategoryNames && s.subcategoryNames.length > 1"
+                class="text-xs text-slate-500 dark:text-slate-400"
+                data-testid="also-in"
+              >
+                También cuenta en: {{ s.subcategoryNames.slice(1).join(', ') }}
+              </p>
               <BaseTextarea v-model="s.action" :rows="2" />
 
               <button
                 type="button"
                 class="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-700 disabled:opacity-50 dark:text-indigo-400 dark:hover:text-indigo-300"
-                :disabled="loadingTipsFor === s.controlId"
+                :disabled="loadingTipsFor === sKey(s)"
                 @click="loadTips(s)"
               >
                 <SparklesIcon class="w-3.5 h-3.5" />
                 {{
-                  loadingTipsFor === s.controlId
+                  loadingTipsFor === sKey(s)
                     ? 'Generando sugerencia…'
-                    : tipsByControl[s.controlId]
+                    : tipsByKey[sKey(s)]
                       ? 'Regenerar sugerencia con IA'
                       : '¿Cómo puedo solucionar esto? (sugerencia con IA)'
                 }}
               </button>
               <div
-                v-if="tipsByControl[s.controlId]"
+                v-if="tipsByKey[sKey(s)]"
                 class="p-3 rounded-lg bg-indigo-50 border border-indigo-100 space-y-1.5 dark:bg-indigo-950"
               >
                 <p
-                  v-if="tipsByControl[s.controlId].summary"
+                  v-if="tipsByKey[sKey(s)].summary"
                   class="text-xs font-medium text-indigo-900 dark:text-indigo-400"
                 >
-                  {{ tipsByControl[s.controlId].summary }}
+                  {{ tipsByKey[sKey(s)].summary }}
                 </p>
                 <ul class="text-xs text-indigo-800 list-disc pl-4 space-y-0.5 dark:text-indigo-400">
-                  <li v-for="(tip, i) in tipsByControl[s.controlId].tips" :key="i">
+                  <li v-for="(tip, i) in tipsByKey[sKey(s)].tips" :key="i">
                     {{ tip }}
                   </li>
                 </ul>
+                <button
+                  v-if="tipsByKey[sKey(s)].generated !== false"
+                  type="button"
+                  class="text-xs font-medium text-indigo-700 underline hover:text-indigo-900 dark:text-indigo-300"
+                  data-testid="use-tips"
+                  @click="useTips(s)"
+                >
+                  Usar en la acción
+                </button>
               </div>
 
               <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
@@ -551,6 +567,7 @@
     MaturityResult,
     SuggestedImprovement,
     RemediationTips,
+    AiSuggestionFeedback,
   } from '@/types';
 
   interface EditableSuggestion extends SuggestedImprovement {
@@ -606,14 +623,47 @@
   const suggestions = ref<EditableSuggestion[]>([]);
   const selectedCount = computed(() => suggestions.value.filter((s) => s.selected).length);
 
-  // Sugerencia de remediación (LLM) por control, pedida on-demand -- nunca se generan para toda
-  // la lista de brechas junta (sería lento y cargaría a Ollama con generaciones que el usuario ni
-  // llegó a pedir). Se cachea por controlId dentro de esta sesión del modal.
-  const tipsByControl = reactive<Record<string, RemediationTips>>({});
+  // Sugerencia de remediación (LLM), pedida on-demand -- nunca se generan para toda la lista de
+  // brechas junta (sería lento y cargaría a Ollama con generaciones que el usuario ni llegó a
+  // pedir). Se indexa por sugerencia (control + subcategoría): un mismo control puede aparecer
+  // varias veces, una por subcategoría, y cada tarjeta lleva su propia guía.
+  const tipsByKey = reactive<Record<string, RemediationTips>>({});
   const loadingTipsFor = ref<string | null>(null);
+  // Texto que «Usar en la acción» copió a la acción de cada sugerencia: sirve de referencia para
+  // saber, al crearla, si la persona lo editó.
+  const usedText = reactive<Record<string, string>>({});
+  // Guías generadas y descartadas al regenerar, pendientes de registrar como rechazadas.
+  const discarded: AiSuggestionFeedback[] = [];
+
+  function sKey(s: SuggestedImprovement) {
+    return `${s.controlId}:${s.subcategoryId}`;
+  }
+
+  function tipsToText(t: RemediationTips) {
+    const steps = t.tips.map((tip, i) => `${i + 1}. ${tip}`).join('\n');
+    return [t.summary, steps].filter((p) => p && p.trim()).join('\n');
+  }
+
+  function feedbackOf(
+    s: SuggestedImprovement,
+    t: RemediationTips,
+    outcome: AiSuggestionFeedback['outcome'],
+    editedText?: string,
+  ): AiSuggestionFeedback {
+    return {
+      controlId: s.controlId,
+      currentLevel: s.currentLevel,
+      targetLevel: s.targetLevel,
+      originalSummary: t.summary ?? '',
+      originalTips: t.tips,
+      outcome,
+      ...(editedText !== undefined ? { editedText } : {}),
+    };
+  }
 
   async function loadTips(s: EditableSuggestion) {
-    loadingTipsFor.value = s.controlId;
+    const key = sKey(s);
+    loadingTipsFor.value = key;
     try {
       const { data } = await improvementService.getRemediationTips({
         controlCode: s.controlCode,
@@ -624,13 +674,60 @@
         currentLevel: s.currentLevel,
         targetLevel: s.targetLevel,
       });
-      tipsByControl[s.controlId] = data;
+      // Regenerar descarta la guía anterior: queda registrada como rechazada.
+      const previous = tipsByKey[key];
+      if (previous && previous.generated !== false) {
+        discarded.push(feedbackOf(s, previous, 'REJECTED'));
+      }
+      delete usedText[key];
+      tipsByKey[key] = data;
     } catch (err) {
       notification.error(getErrorMessage(err, 'No se pudo generar la sugerencia'));
     } finally {
       loadingTipsFor.value = null;
     }
   }
+
+  function useTips(s: EditableSuggestion) {
+    const key = sKey(s);
+    const text = tipsToText(tipsByKey[key]);
+    usedText[key] = text;
+    s.action = text;
+  }
+
+  // Cierra el ciclo de las guías generadas en esta sesión del modal: las de las sugerencias
+  // creadas con «Usar en la acción» quedan aceptadas (con el texto final si se editó); el resto
+  // (no usadas, deseleccionadas, regeneradas o con el modal cerrado) quedan rechazadas. Lo que no
+  // se llegó a generar (error de la IA) no se registra. Es best-effort: un fallo al registrar no
+  // debe molestar a quien usa la pantalla.
+  function finalizeFeedback(createdKeys: Set<string>) {
+    const items: AiSuggestionFeedback[] = [...discarded];
+    discarded.length = 0;
+    for (const s of suggestions.value) {
+      const key = sKey(s);
+      const t = tipsByKey[key];
+      if (!t || t.generated === false) continue;
+      const used = usedText[key];
+      if (createdKeys.has(key) && used !== undefined) {
+        items.push(
+          s.action === used
+            ? feedbackOf(s, t, 'ACCEPTED_UNEDITED')
+            : feedbackOf(s, t, 'ACCEPTED_EDITED', s.action),
+        );
+      } else {
+        items.push(feedbackOf(s, t, 'REJECTED'));
+      }
+    }
+    Object.keys(tipsByKey).forEach((k) => delete tipsByKey[k]);
+    Object.keys(usedText).forEach((k) => delete usedText[k]);
+    if (items.length > 0) {
+      improvementService.sendSuggestionFeedback(items).catch(() => undefined);
+    }
+  }
+
+  watch(showSuggestModal, (open) => {
+    if (!open) finalizeFeedback(new Set());
+  });
 
   const newPlan = reactive({
     action: '',
@@ -976,7 +1073,6 @@
   async function openSuggestModal() {
     showSuggestModal.value = true;
     loadingSuggestions.value = true;
-    Object.keys(tipsByControl).forEach((key) => delete tipsByControl[key]);
     try {
       const { data } = await improvementService.getSuggestions(evaluationId);
       suggestions.value = data.map((s) => ({ ...s, selected: true, responsible: '' }));
@@ -1010,6 +1106,10 @@
           }),
         ),
       );
+      const createdKeys = new Set(
+        selected.filter((_, i) => results[i].status === 'fulfilled').map((s) => sKey(s)),
+      );
+      finalizeFeedback(createdKeys);
       const failed = results.filter((r) => r.status === 'rejected').length;
       const created = results.length - failed;
       if (created > 0) {

@@ -478,4 +478,46 @@ class TechnicalReportServiceTest {
     assertTrue(why.startsWith("No alcanza el nivel 1 porque SO.6-1 no está cumplido"), why);
     assertTrue(why.contains("1 control de nivel superior cumplido"), why);
   }
+
+  // ---- PDF/A-1b (RNF-12) ----
+
+  private static String raw(byte[] pdf) {
+    return new String(pdf, java.nio.charset.StandardCharsets.ISO_8859_1);
+  }
+
+  @Test
+  void theTechnicalReportDeclaresItselfPdfA1bWithAnOutputIntent() {
+    String text = raw(service.generate(eval.getId()));
+
+    assertTrue(text.startsWith("%PDF-1.4"));
+    assertTrue(text.contains("<pdfaid:part>1</pdfaid:part>"));
+    assertTrue(text.contains("<pdfaid:conformance>B</pdfaid:conformance>"));
+    assertTrue(text.contains("/Metadata"));
+    assertTrue(text.contains("/OutputIntents"));
+    assertTrue(text.contains("/GTS_PDFA1"));
+    assertFalse(text.contains("/SMask"));
+    assertFalse(text.matches("(?s).*/c[aA] +[0-9.]+.*"), "sin opacidad");
+    assertFalse(text.contains("/Encrypt"));
+  }
+
+  @Test
+  void theTechnicalReportEmbedsEveryFont() {
+    String text = raw(service.generate(eval.getId()));
+
+    assertTrue(text.contains("/FontFile2"), "fuente TrueType embebida");
+    assertFalse(text.contains("/BaseFont /Helvetica"), "Helvetica sin embeber");
+    assertFalse(text.contains("/BaseFont/Helvetica"), "Helvetica sin embeber");
+    int descriptors = text.split("/Type ?/FontDescriptor", -1).length - 1;
+    int files = text.split("/FontFile2", -1).length - 1;
+    assertEquals(descriptors, files, "un FontFile2 por FontDescriptor");
+  }
+
+  /** Vuelca el reporte técnico para validarlo con veraPDF (junto con los de ReportServiceTest). */
+  @org.junit.jupiter.api.condition.EnabledIfSystemProperty(named = "pdfa.dumpDir", matches = ".+")
+  @Test
+  void dumpTechnicalReportForVeraPdfValidation() throws Exception {
+    java.nio.file.Path dir = java.nio.file.Path.of(System.getProperty("pdfa.dumpDir"));
+    java.nio.file.Files.createDirectories(dir);
+    java.nio.file.Files.write(dir.resolve("reporte-tecnico.pdf"), service.generate(eval.getId()));
+  }
 }

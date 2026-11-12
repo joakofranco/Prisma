@@ -83,7 +83,7 @@ class AuditLogServiceTest {
   void prismaAdminSeesAllTenants() {
     when(currentUser.isPrismaAdmin()).thenReturn(true);
     PageRequest pr = PageRequest.of(0, 20, Sort.by("createdAt").descending());
-    when(auditRepo.search(isNull(), isNull(), isNull(), any()))
+    when(auditRepo.search(isNull(), isNull(), isNull(), any(), any(), any()))
         .thenReturn(new PageImpl<>(List.of(logEntry), pr, 1));
     when(userRepo.findAllById(any())).thenReturn(List.of(actor));
     when(orgRepo.findAllById(any())).thenReturn(List.of(tenant));
@@ -96,7 +96,7 @@ class AuditLogServiceTest {
     assertEquals("Acme", dto.tenantName());
     assertEquals("CREATE", dto.action());
     // PRISMA_ADMIN: se consulta sin acotar por tenant.
-    verify(auditRepo).search(isNull(), isNull(), isNull(), any());
+    verify(auditRepo).search(isNull(), isNull(), isNull(), any(), any(), any());
   }
 
   @Test
@@ -104,7 +104,7 @@ class AuditLogServiceTest {
     when(currentUser.isPrismaAdmin()).thenReturn(false);
     when(currentUser.currentTenantId()).thenReturn(tenant.getId());
     PageRequest pr = PageRequest.of(0, 20, Sort.by("createdAt").descending());
-    when(auditRepo.search(eq(tenant.getId()), isNull(), isNull(), any()))
+    when(auditRepo.search(eq(tenant.getId()), isNull(), isNull(), any(), any(), any()))
         .thenReturn(new PageImpl<>(List.of(logEntry), pr, 1));
     when(userRepo.findAllById(any())).thenReturn(List.of(actor));
     when(orgRepo.findAllById(any())).thenReturn(List.of(tenant));
@@ -112,7 +112,7 @@ class AuditLogServiceTest {
     PaginatedDto<AuditLogDto> result = service.list(null, null, 0, 20);
 
     assertEquals(1, result.total());
-    verify(auditRepo).search(eq(tenant.getId()), isNull(), isNull(), any());
+    verify(auditRepo).search(eq(tenant.getId()), isNull(), isNull(), any(), any(), any());
   }
 
   @Test
@@ -131,7 +131,7 @@ class AuditLogServiceTest {
   void deletedActorOrTenantResolvesToNullNamesInsteadOfFailing() {
     when(currentUser.isPrismaAdmin()).thenReturn(true);
     PageRequest pr = PageRequest.of(0, 20, Sort.by("createdAt").descending());
-    when(auditRepo.search(isNull(), isNull(), isNull(), any()))
+    when(auditRepo.search(isNull(), isNull(), isNull(), any(), any(), any()))
         .thenReturn(new PageImpl<>(List.of(logEntry), pr, 1));
     // El usuario/organización de la acción ya no existen -- findAllById no los devuelve.
     when(userRepo.findAllById(any())).thenReturn(List.of());
@@ -149,7 +149,7 @@ class AuditLogServiceTest {
   void exportCsvIncludesHeaderAndMatchingRows() {
     when(currentUser.isPrismaAdmin()).thenReturn(true);
     PageRequest pr = PageRequest.of(0, 50_000, Sort.by("createdAt").descending());
-    when(auditRepo.search(isNull(), isNull(), isNull(), any()))
+    when(auditRepo.search(isNull(), isNull(), isNull(), any(), any(), any()))
         .thenReturn(new PageImpl<>(List.of(logEntry), pr, 1));
     when(userRepo.findAllById(any())).thenReturn(List.of(actor));
     when(orgRepo.findAllById(any())).thenReturn(List.of(tenant));
@@ -170,14 +170,14 @@ class AuditLogServiceTest {
     when(currentUser.isPrismaAdmin()).thenReturn(false);
     when(currentUser.currentTenantId()).thenReturn(tenant.getId());
     PageRequest pr = PageRequest.of(0, 50_000, Sort.by("createdAt").descending());
-    when(auditRepo.search(eq(tenant.getId()), isNull(), isNull(), any()))
+    when(auditRepo.search(eq(tenant.getId()), isNull(), isNull(), any(), any(), any()))
         .thenReturn(new PageImpl<>(List.of(logEntry), pr, 1));
     when(userRepo.findAllById(any())).thenReturn(List.of(actor));
     when(orgRepo.findAllById(any())).thenReturn(List.of(tenant));
 
     service.exportCsv(null, null);
 
-    verify(auditRepo).search(eq(tenant.getId()), isNull(), isNull(), any());
+    verify(auditRepo).search(eq(tenant.getId()), isNull(), isNull(), any(), any(), any());
   }
 
   @Test
@@ -213,7 +213,7 @@ class AuditLogServiceTest {
             .createdAt(OffsetDateTime.now())
             .build();
     PageRequest pr = PageRequest.of(0, 50_000, Sort.by("createdAt").descending());
-    when(auditRepo.search(isNull(), isNull(), isNull(), any()))
+    when(auditRepo.search(isNull(), isNull(), isNull(), any(), any(), any()))
         .thenReturn(new PageImpl<>(List.of(log), pr, 1));
     when(userRepo.findAllById(any())).thenReturn(List.of(actorWithComma));
     when(orgRepo.findAllById(any())).thenReturn(List.of(orgWithComma));
@@ -263,7 +263,7 @@ class AuditLogServiceTest {
             .build();
 
     PageRequest pr = PageRequest.of(0, 20, Sort.by("createdAt").descending());
-    when(auditRepo.search(isNull(), isNull(), isNull(), any()))
+    when(auditRepo.search(isNull(), isNull(), isNull(), any(), any(), any()))
         .thenReturn(
             new PageImpl<>(List.of(onOrg, onEvaluation, onCatalogVersion, onSingleton), pr, 4));
     when(orgRepo.findAllById(any())).thenReturn(List.of(otherOrg));
@@ -282,7 +282,7 @@ class AuditLogServiceTest {
   void resourceNameIsNullWhenReferencedEntityWasDeleted() {
     when(currentUser.isPrismaAdmin()).thenReturn(true);
     PageRequest pr = PageRequest.of(0, 20, Sort.by("createdAt").descending());
-    when(auditRepo.search(isNull(), isNull(), isNull(), any()))
+    when(auditRepo.search(isNull(), isNull(), isNull(), any(), any(), any()))
         .thenReturn(new PageImpl<>(List.of(logEntry), pr, 1));
     // logEntry.resource() es "user:<id-random>" -- ningún findAllById lo devuelve, como si el
     // usuario referenciado ya no existiera.
@@ -423,5 +423,65 @@ class AuditLogServiceTest {
     assertThrows(
         uy.edu.prisma.domain.exception.ResourceNotFoundException.class,
         () -> service.getEvaluationAuditTrail(missingId));
+  }
+
+  // ---- PRI-368: el buscador entiende lo que ve el usuario y los códigos internos ----
+
+  @Test
+  void elTextoDeBusquedaSePliegaYSeTraduceAlasEtiquetasEnEspanol() {
+    when(currentUser.isPrismaAdmin()).thenReturn(true);
+    when(auditRepo.search(any(), any(), any(), any(), any(), any()))
+        .thenReturn(new PageImpl<>(List.of()));
+
+    service.list("  Inicio de SESIÓN ", null, 0, 20);
+
+    var pattern = org.mockito.ArgumentCaptor.forClass(String.class);
+    @SuppressWarnings("unchecked")
+    var actions = org.mockito.ArgumentCaptor.forClass(java.util.Collection.class);
+    verify(auditRepo)
+        .search(isNull(), isNull(), pattern.capture(), actions.capture(), any(), any());
+    // Sin tildes ni mayúsculas, con comodines y sin los espacios de los bordes.
+    assertEquals("%inicio de sesion%", pattern.getValue());
+    // «Inicio de Sesión» y «Inicio de Sesión Fallido» contienen el texto: las dos acciones.
+    assertEquals(
+        java.util.Set.of("LOGIN", "LOGIN_FAILED"), new java.util.HashSet<>(actions.getValue()));
+  }
+
+  @Test
+  void elTipoDeRecursoEnEspanolSeTraduceAlTipoInterno() {
+    when(currentUser.isPrismaAdmin()).thenReturn(true);
+    when(auditRepo.search(any(), any(), any(), any(), any(), any()))
+        .thenReturn(new PageImpl<>(List.of()));
+
+    service.list("usuario", null, 0, 20);
+
+    @SuppressWarnings("unchecked")
+    var types = org.mockito.ArgumentCaptor.forClass(java.util.Collection.class);
+    verify(auditRepo).search(isNull(), isNull(), eq("%usuario%"), any(), types.capture(), any());
+    assertEquals(java.util.Set.of("user"), new java.util.HashSet<>(types.getValue()));
+  }
+
+  @Test
+  void unUuidNoTraduceAningunaEtiqueta() {
+    when(currentUser.isPrismaAdmin()).thenReturn(true);
+    when(auditRepo.search(any(), any(), any(), any(), any(), any()))
+        .thenReturn(new PageImpl<>(List.of()));
+    String uuid = UUID.randomUUID().toString();
+
+    service.list(uuid, null, 0, 20);
+
+    @SuppressWarnings("unchecked")
+    var actions = org.mockito.ArgumentCaptor.forClass(java.util.Collection.class);
+    verify(auditRepo)
+        .search(isNull(), isNull(), eq("%" + uuid + "%"), actions.capture(), any(), any());
+    // La lista nunca queda vacía (el IN de la consulta no la admite) y no coincide con ninguna.
+    assertEquals(1, actions.getValue().size());
+    assertFalse(actions.getValue().contains("LOGIN"));
+  }
+
+  @Test
+  void foldQuitaTildesYMayusculas() {
+    assertEquals("organizacion", AuditLogService.fold("Organización"));
+    assertEquals("nino", AuditLogService.fold("NIÑO"));
   }
 }

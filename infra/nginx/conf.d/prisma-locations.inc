@@ -29,7 +29,10 @@ location /api/ {
     # prisma.conf), así que tiene que reflejar el protocolo real de cada request -- si no,
     # backend-core recibiría siempre "https" aunque el cliente haya entrado por HTTP.
     proxy_set_header   X-Forwarded-Proto $scheme;
-    proxy_read_timeout 60s;
+    # PRI-358: tiene que ser MAYOR que las esperas de backend-core hacia backend-ai (lectura 60 s y
+    # guía de mejora 120 s, ver AiProperties): si nginx corta antes, el usuario recibe un 504 HTML en
+    # vez del 503 JSON «IA no disponible» y la guía nunca llega a usar su espera larga.
+    proxy_read_timeout 130s;
 }
 
 # ---- API IA / RAG ----

@@ -411,6 +411,15 @@ public class EvidenceService {
             .findById(evaluationId)
             .orElseThrow(() -> new ResourceNotFoundException("Evaluación", evaluationId));
     currentUser.assertOrganizationAccess(eval.getOrganization().getId());
+    // RF-EVI-14: la búsqueda asistida de citas es del auditor y solo con la evaluación en
+    // auditoría.
+    if (eval.getStatus() != Evaluation.Status.IN_AUDIT) {
+      throw new ConflictException(
+          "La búsqueda de citas solo está disponible con la evaluación en auditoría (estado"
+              + " actual: "
+              + eval.getStatus()
+              + ")");
+    }
     CatalogControl control =
         controlRepo
             .findById(controlId)
