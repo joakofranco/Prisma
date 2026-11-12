@@ -49,7 +49,7 @@ server:
   # Tras rechazar una petición demasiado grande, Tomcat intenta descartar el resto del cuerpo hasta
   # este máximo (2 MB por defecto); si lo supera corta la conexión sin responder y el cliente puede
   # ver un error de red en lugar del 413 con su mensaje (RF-EVI-04). 64 MB cubre todo lo que deja
-  # pasar el Nginx (client_max_body_size 55m) sin leer de más de peticiones que ya se rechazaron.
+  # pasar el Nginx (client_max_body_size 105m) sin leer de más de peticiones que ya se rechazaron.
   tomcat:
     max-swallow-size: 64MB
   error:
@@ -112,9 +112,14 @@ prisma:
     allowed-extensions: ${EVIDENCE_ALLOWED_EXTENSIONS:pdf,zip,docx,txt,md,markdown,png,jpg,jpeg}
     # RF-EVI-04: tamaño máximo por evidencia. Rige en Spring (límite multipart, ver EvidenceConfig),
     # en EvidenceService y en lo que valida la pantalla. Los Nginx (infra/nginx/nginx.conf y
-    # apps/frontend/nginx.conf) tienen que dejar pasar un poco más (55m) para que el rechazo lo dé
+    # apps/frontend/nginx.conf) tienen que dejar pasar un poco más (105m) para que el rechazo lo dé
     # la aplicación con su mensaje: si se sube este valor por encima, subir también esos.
-    max-size: ${EVIDENCE_MAX_SIZE:50MB}
+    max-size: ${EVIDENCE_MAX_SIZE:100MB}
+  clamav:
+    host:    ${CLAMAV_HOST:localhost}
+    port:    ${CLAMAV_PORT:3310}
+    timeout: ${CLAMAV_TIMEOUT:60s}
+    rescan-interval-ms: ${CLAMAV_RESCAN_INTERVAL_MS:60000}
   security:
     argon2:
       iterations:  ${ARGON2_ITERATIONS:3}

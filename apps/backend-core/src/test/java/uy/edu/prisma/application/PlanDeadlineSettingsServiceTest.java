@@ -33,7 +33,7 @@ class PlanDeadlineSettingsServiceTest {
 
   @BeforeEach
   void setUp() {
-    // Lo que deja la migración V28: los valores del requerimiento.
+    // Lo que deja la migración V29: los valores del requerimiento.
     rows = new ArrayList<>();
     rows.add(PlanDefaultDeadline.builder().priority(Priority.HIGH).months(3).build());
     rows.add(PlanDefaultDeadline.builder().priority(Priority.MEDIUM).months(6).build());

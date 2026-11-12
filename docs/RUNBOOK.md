@@ -381,6 +381,35 @@ por minuto por IP (`burst=2`), y los que NGINX rechaza no llegan a Keycloak, as�
 bloqueo. Para llegar a 10 hay que espaciar los intentos (unos 12 segundos entre ellos después de los
 tres primeros), o probar contra Keycloak directo (puerto 8180). No hay que cambiar el límite de NGINX.
 
+## Antivirus de evidencias (RNF-09)
+
+Toda evidencia se analiza con ClamAV antes de guardarse (servicio `clamav` de Compose, perfiles `app` y
+`full`). Variables de `backend-core`: `CLAMAV_HOST` (por defecto `localhost`; en Compose `clamav`),
+`CLAMAV_PORT` (3310) y `CLAMAV_TIMEOUT` (60s). No hay interruptor para desactivarlo.
+
+**Antivirus caído:** la evidencia no se rechaza: se guarda en cuarentena (`scan_status = QUARANTINED`) y
+la pantalla la marca "En cuarentena: pendiente de análisis". No se puede descargar ni indexar hasta que se
+analice. `EvidenceRescanScheduler` la reanaliza cada `CLAMAV_RESCAN_INTERVAL_MS` (60 s) y se libera sola
+cuando ClamAV vuelve; si el análisis detecta malware, se borra el archivo y queda `INFECTED`. Para ver
+cuáles están pendientes: `SELECT id, file_name, uploaded_at FROM prisma.evidences WHERE scan_status = 'QUARANTINED';`.
+
+**Primer arranque:** `freshclam` descarga las firmas (unos 300 MB, varios minutos) y el contenedor figura
+`starting` hasta que `clamd` carga la base. Las subidas de ese rato quedan en cuarentena y se liberan
+solas. Las firmas quedan en el volumen `prisma-clamav-data`: los reinicios siguientes son rápidos.
+
+**Límites:** `clamd` acepta hasta 105 MB (`CLAMD_CONF_StreamMaxLength`), un poco por encima de
+`EVIDENCE_MAX_SIZE` (100 MB). Si se sube `EVIDENCE_MAX_SIZE`, subir también ese valor en
+`docker-compose.yml`, o el análisis fallará justo en los archivos grandes.
+
+**Ver qué pasó con una subida:** en la bitácora de actividad, acciones `EVIDENCE_SCAN_CLEAN`,
+`EVIDENCE_SCAN_INFECTED`, `EVIDENCE_QUARANTINED`, `EVIDENCE_QUARANTINE_RELEASED` y
+`EVIDENCE_QUARANTINE_INFECTED`.
+
+**Probarlo a mano:** subir un `.txt` con la cadena de prueba EICAR
+(`X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*`): debe rechazarse. Para correr los
+tests contra un ClamAV real: `CLAMAV_HOST=clamav mvn test -Dtest='ClamAvClientRealTest,EvidenceUploadRealAntivirusTest'`
+desde un contenedor en la red `prisma-net` (sin esa variable esos tests se omiten).
+
 ## Rate limiting de login (RNF-07)
 
 NGINX limita a **5 intentos de login por minuto por IP** (zona `auth_login`, ver
@@ -434,7 +463,7 @@ evidencias más recientes; para restaurar un punto en el tiempo específico, cor
 
 Los registros de `audit.audit_logs` se retienen **al menos 365 días**. Lo garantiza el motor, no
 solo el código: el trigger `trg_audit_logs_retention` (migración
-`V30__audit_log_retention.sql`) rechaza cualquier `DELETE` de una fila con menos de 365 días,
+`V31__audit_log_retention.sql`) rechaza cualquier `DELETE` de una fila con menos de 365 días,
 venga de la aplicación, de un script o de una consola. El error que se ve es:
 
 ```

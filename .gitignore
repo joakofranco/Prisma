@@ -145,6 +145,8 @@ models/
 infra/nginx/certs/*.crt
 infra/nginx/certs/*.key
 !infra/nginx/certs/.gitkeep
+infra/tls/*
+!infra/tls/.gitkeep
 
 # ---------- RAG: copia generada por `make sync-knowledge-base` ----------
 # docs/mcu-5.0 (fuente de verdad) copiado acá para que el Dockerfile de backend-ai lo empaquete

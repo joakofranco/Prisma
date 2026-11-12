@@ -295,6 +295,17 @@ class AuditLogServiceTest {
   }
 
   @Test
+  void recordIndependentlySavesTheSameEntryAsRecord() {
+    service.recordIndependently("EVIDENCE_SCAN_CLEAN", "evaluation:1", "{\"size\":1}");
+
+    var captor = org.mockito.ArgumentCaptor.forClass(AuditLog.class);
+    verify(auditRepo).save(captor.capture());
+    assertEquals("EVIDENCE_SCAN_CLEAN", captor.getValue().getAction());
+    assertEquals("evaluation:1", captor.getValue().getResource());
+    assertEquals("{\"size\":1}", captor.getValue().getPayload());
+  }
+
+  @Test
   void recordLoginFailureLinksActorAndTenantWhenEmailBelongsToRealUser() {
     when(userRepo.findByEmail("actor@test.com")).thenReturn(java.util.Optional.of(actor));
     OffsetDateTime when = OffsetDateTime.now().minusMinutes(5);

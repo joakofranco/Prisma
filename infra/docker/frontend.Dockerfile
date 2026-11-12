@@ -57,6 +57,7 @@ RUN apk update && apk upgrade --no-cache
 
 # Copiar configuración custom de nginx
 COPY --from=builder /app/nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=builder /app/nginx-listen.conf /etc/nginx/frontend-listen.conf
 
 # Copiar el build compilado
 COPY --from=builder /app/dist /usr/share/nginx/html

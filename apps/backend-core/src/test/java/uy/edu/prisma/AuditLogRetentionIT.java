@@ -19,7 +19,7 @@ import uy.edu.prisma.infrastructure.KeycloakAdminClient;
 
 /**
  * RF-TRZ-04 (PRI-325): la retención mínima de 365 días de la bitácora la impone el MOTOR de la base
- * (trigger trg_audit_logs_retention, migración V30), no el código de la aplicación -- por eso sólo
+ * (trigger trg_audit_logs_retention, migración V31), no el código de la aplicación -- por eso sólo
  * puede verificarse contra un Postgres real: los tests unitarios con mocks no ven el trigger.
  *
  * <p>Deliberadamente SIN @Transactional y vía JdbcTemplate (autocommit por sentencia): el RAISE del

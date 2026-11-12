@@ -3,6 +3,7 @@ import type {
   User,
   Organization,
   Evaluation,
+  EvaluationOverview,
   EvaluationResponse,
   EvaluationAuditCycleEvent,
   SubcategoryComment,
@@ -137,6 +138,9 @@ export const evaluationsService = {
       `/evaluations/${evaluationId}/subcategory-comments/${subcategoryId}`,
       { comment },
     );
+  },
+  getOverview(evaluationId: string) {
+    return apiClient.get<EvaluationOverview>(`/evaluations/${evaluationId}/overview`);
   },
   getResults(evaluationId: string) {
     return apiClient.get<MaturityResult[]>(`/evaluations/${evaluationId}/results`);
@@ -327,6 +331,16 @@ export const reportsService = {
   },
   generatePreliminaryExcel(evaluationId: string) {
     return apiClient.get(`/reports/${evaluationId}/preliminary/excel`, { responseType: 'blob' });
+  },
+  exportImprovementPlanPDF(evaluationId: string) {
+    return apiClient.get(`/reports/${evaluationId}/improvement-plan/pdf`, {
+      responseType: 'blob',
+    });
+  },
+  exportImprovementPlanExcel(evaluationId: string) {
+    return apiClient.get(`/reports/${evaluationId}/improvement-plan/excel`, {
+      responseType: 'blob',
+    });
   },
 };
 

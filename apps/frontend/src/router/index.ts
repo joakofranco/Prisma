@@ -64,6 +64,12 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true, title: 'Detalle Evaluación' },
   },
   {
+    path: '/evaluations/:id/overview',
+    name: 'EvaluationOverview',
+    component: () => import('@/views/evaluations/EvaluationOverviewView.vue'),
+    meta: { requiresAuth: true, title: 'Estructura de la Evaluación' },
+  },
+  {
     path: '/evaluations/:id/respond',
     name: 'EvaluationRespond',
     component: () => import('@/views/evaluations/EvaluationRespondView.vue'),

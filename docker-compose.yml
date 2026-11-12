@@ -47,6 +47,7 @@ volumes:
   portainer-data:       { name: prisma-portainer-data }
   pgadmin-data:         { name: prisma-pgadmin-data }
   evidences-data:       { name: prisma-evidences-data }
+  clamav-data:          { name: prisma-clamav-data }
 
 # =====================================================================
 # SERVICIOS
@@ -146,7 +147,7 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       JWT_ACCESS_EXPIRATION_MINUTES: ${JWT_ACCESS_EXPIRATION_MINUTES:-15}
       JWT_REFRESH_EXPIRATION_DAYS: ${JWT_REFRESH_EXPIRATION_DAYS:-7}
-      KEYCLOAK_AUTH_SERVER_URL: http://keycloak:8080
+      KEYCLOAK_AUTH_SERVER_URL: https://keycloak:8443
       # Habilita/deshabilita el JwtDecoder de Keycloak (ver SecurityConfig.MissingIssuerCondition)
       # -- su valor concreto ya no es lo que valida el claim "iss" (eso lo hace
       # KEYCLOAK_TRUSTED_ISSUERS más abajo, que admite una lista).
@@ -182,7 +183,9 @@ services:
       S3_SECRET_KEY: ${RUSTFS_SECRET_KEY}
       S3_BUCKET: ${S3_BUCKET_EVIDENCES}
       EVIDENCE_ALLOWED_EXTENSIONS: ${EVIDENCE_ALLOWED_EXTENSIONS:-pdf,zip,docx,txt,md,markdown,png,jpg,jpeg}
-      EVIDENCE_MAX_SIZE: ${EVIDENCE_MAX_SIZE:-50MB}
+      EVIDENCE_MAX_SIZE: ${EVIDENCE_MAX_SIZE:-100MB}
+      CLAMAV_HOST: clamav
+      CLAMAV_PORT: 3310
       AI_SERVICE_URL: http://backend-ai:8000
       AI_INTERNAL_API_KEY: ${AI_INTERNAL_API_KEY}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:8080,http://localhost:5173,https://localhost,https://prisma.local}
@@ -192,6 +195,16 @@ services:
       - "${BACKEND_CORE_PORT:-8081}:8080"
     volumes:
       - evidences-data:/var/prisma/evidences
+      - ./infra/tls/ca.crt:/etc/prisma/tls/ca.crt:ro
+    command:
+      - sh
+      - -c
+      - >-
+        cp "$$JAVA_HOME/lib/security/cacerts" /tmp/truststore.jks &&
+        keytool -importcert -noprompt -alias prisma-internal-ca -file /etc/prisma/tls/ca.crt
+        -keystore /tmp/truststore.jks -storepass changeit &&
+        exec java -Djavax.net.ssl.trustStore=/tmp/truststore.jks -Djavax.net.ssl.trustStorePassword=changeit
+        -cp "/app:/app/lib/*" uy.edu.prisma.PrismaApplication
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
       interval: 30s
@@ -300,6 +313,8 @@ services:
       - backend-core
     ports:
       - "${FRONTEND_PORT:-8080}:80"
+    volumes:
+      - ./infra/tls/ca.crt:/etc/nginx/internal-ca.crt:ro
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:80"]
       interval: 30s
@@ -358,6 +373,9 @@ services:
       # host usado para loguearse.
       KC_HTTP_RELATIVE_PATH: /auth
       KC_HTTP_ENABLED: "true"
+      KC_HTTPS_PORT: "8443"
+      KC_HTTPS_CERTIFICATE_FILE: /opt/keycloak/conf/tls/keycloak.crt
+      KC_HTTPS_CERTIFICATE_KEY_FILE: /opt/keycloak/conf/tls/keycloak.key
       # "Hostname v2" (Keycloak 24+) reemplazó KC_PROXY (v1) por KC_PROXY_HEADERS: sin esto,
       # Keycloak no confía en los X-Forwarded-Host/-Proto que agrega nginx y no puede saber qué
       # host/esquema vio realmente el navegador (ver infra/nginx/conf.d/prisma.conf).
@@ -368,9 +386,12 @@ services:
       # (el arranque completo tarda ~30-60s) -- esa ventana es la que daba 502 en /auth/* al
       # levantar el stack o reiniciar este servicio (ver docs/RUNBOOK.md).
       KC_HEALTH_ENABLED: "true"
+      KC_HTTP_MANAGEMENT_SCHEME: http
     ports:
-      - "${KEYCLOAK_PORT:-8180}:8080"
+      - "127.0.0.1:${KEYCLOAK_PORT:-8180}:8080"
     volumes:
+      - ./infra/tls/keycloak.crt:/opt/keycloak/conf/tls/keycloak.crt:ro
+      - ./infra/tls/keycloak.key:/opt/keycloak/conf/tls/keycloak.key:ro
       - ./infra/keycloak/realm-prisma.json:/opt/keycloak/data/import/realm-prisma.json:ro
       # PRI-366: theme de email con la identidad visual de PRISMA (ver
       # infra/keycloak/themes/prisma/email/). emailTheme="prisma" en realm-prisma.json lo activa.
@@ -390,6 +411,32 @@ services:
       timeout: 5s
       retries: 9
       start_period: 90s
+
+  # -------------------------------------------------------------------
+  # 7b. CLAMAV (antivirus de evidencias, RNF-09)
+  # -------------------------------------------------------------------
+  # backend-core le manda cada evidencia por el puerto 3310 antes de guardarla. Los límites de
+  # clamd van un poco por encima de EVIDENCE_MAX_SIZE (100 MB) para que nunca sea clamd quien
+  # rechace un archivo permitido. La primera vez descarga las firmas (varios minutos): mientras
+  # tanto las subidas piden confirmación al usuario, igual que si el servicio estuviera caído.
+  clamav:
+    image: clamav/clamav:1.4
+    container_name: prisma-clamav
+    restart: unless-stopped
+    profiles: [app, full]
+    environment:
+      CLAMD_CONF_StreamMaxLength: 105M
+      CLAMD_CONF_MaxFileSize: 105M
+      CLAMD_CONF_MaxScanSize: 210M
+    volumes:
+      - clamav-data:/var/lib/clamav
+    healthcheck:
+      test: ["CMD", "clamdcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 300s
+    networks: [prisma-net]
 
   # -------------------------------------------------------------------
   # 8. RUSTFS (almacenamiento S3-compatible de evidencias)
@@ -499,6 +546,7 @@ services:
       # (no alcanza con que este en el .env de docker-compose). Sin esto, el datasource
       # de PostgreSQL quedaba con la contrasena vacia y fallaba al conectar.
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      GRAFANA_PG_SSLMODE: disable
     ports:
       - "${GRAFANA_PORT:-3000}:3000"
     volumes:
@@ -722,6 +770,7 @@ services:
       ELASTICSEARCH_PASSWORD: ${ELASTIC_PASSWORD}
     volumes:
       - ./infra/monitoring/filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - ./infra/tls/ca.crt:/etc/prisma/tls/ca.crt:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - filebeat-data:/usr/share/filebeat/data
@@ -796,7 +845,7 @@ services:
       S3_ENDPOINT: http://rustfs:9000
       S3_BUCKET: ${S3_BUCKET_EVIDENCES}
       EVIDENCE_ALLOWED_EXTENSIONS: ${EVIDENCE_ALLOWED_EXTENSIONS:-pdf,zip,docx,txt,md,markdown,png,jpg,jpeg}
-      EVIDENCE_MAX_SIZE: ${EVIDENCE_MAX_SIZE:-50MB}
+      EVIDENCE_MAX_SIZE: ${EVIDENCE_MAX_SIZE:-100MB}
       # El AWS CLI (ver scripts/backup/Dockerfile) exige estas variables aunque apunte a RustFS, no
       # a AWS real -- la región es un valor cualquiera, RustFS la ignora.
       AWS_ACCESS_KEY_ID: ${RUSTFS_ACCESS_KEY}
@@ -857,4 +906,5 @@ services:
       - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./infra/nginx/conf.d:/etc/nginx/conf.d:ro
       - ./infra/nginx/certs:/etc/nginx/certs:ro
+      - ./infra/tls/ca.crt:/etc/nginx/internal-ca.crt:ro
     networks: [prisma-net]

@@ -72,8 +72,9 @@ stack en tu máquina (no está expuesta a nadie más). Igual, revisá:
 - `TZ` si tu zona horaria no es `America/Montevideo`.
 
 ```bash
-# 3) Generar el certificado TLS autofirmado de nginx (una vez; sin esto el contenedor de
-#    nginx no arranca -- ver docs/Certificados-TLS.md)
+# 3) Generar el certificado TLS autofirmado de nginx y la CA interna con los certificados de
+#    cada servicio (una vez; sin esto nginx y los demas contenedores no arrancan -- ver
+#    docs/Certificados-TLS.md)
 make certs
 
 # 4) Levantar TODA la stack (frontend, backends, BD, IAM, monitoreo, etc.)
@@ -102,6 +103,8 @@ cambiarla en el primer login — es esperado) y confirmá que el dashboard carga
 
 - **nginx no arranca / `cannot load certificate prisma.crt`**: te salteaste el paso 3
   (`make certs`). Corré `make certs` y `make restart-nginx`.
+- **Un servicio no arranca por un volumen de `infra/tls/...` que no existe (Docker crea una carpeta en
+  su lugar)**: falta la CA interna. Borrá esas carpetas vacías y corré `make internal-ca`.
 - **pgAdmin en loop de reinicio, log dice `does not appear to be a valid email address`**: el
   `PGADMIN_DEFAULT_EMAIL` de tu `.env` usa un TLD reservado (`.local`, `.test`, `.example`,
   `.invalid`) — pgAdmin4 lo rechaza aunque `CHECK_EMAIL_DELIVERABILITY` esté en `False`. Usá un
@@ -192,6 +195,10 @@ cp .env.example .env
 # Certificado TLS (si tenés un dominio real, mejor un cert de una CA pública -- este autofirmado
 # es la opción rápida, igual que en local; ver docs/Certificados-TLS.md)
 scripts/generate-nginx-cert.sh --cn <tu-host> --san <tu-host>,localhost,127.0.0.1
+
+# CA interna y certificados de cada servicio (cifrado entre contenedores); el workflow de deploy la
+# genera sola si falta infra/tls/ca.crt. Para un host propio: CERT_EXTRA_SAN=DNS:<tu-host>
+scripts/generate-internal-ca.sh
 
 # Primer arranque manual (antes de que el pipeline haga esto solo)
 docker compose --profile full up -d --build

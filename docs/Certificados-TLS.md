@@ -16,16 +16,137 @@ Navegador ──HTTPS (443)──▶ nginx (infra/nginx/conf.d/prisma.conf)
                               ├─ /            → frontend (SPA Vue, HTTP interno)
                               ├─ /api/*        → backend-core:8080 (HTTP interno)
                               ├─ /ai/*         → backend-ai:8000 (HTTP interno)
-                              └─ /auth/*       → keycloak:8080 (HTTP interno)
+                              └─ /auth/*       → keycloak:8443 (HTTPS interno, CA interna — BUG-12)
 ```
 
 La SPA usa **rutas relativas** (`VITE_API_BASE_URL=/api`, `VITE_AI_API_BASE_URL=/ai/api/v1`,
 `VITE_KEYCLOAK_URL=/auth`, ver `.env.example`) — el navegador nunca sale del origen HTTPS desde el
-que se sirvió la página. Los tramos `nginx → servicio` quedan en HTTP simple porque viajan por la
-red interna de Docker (`prisma-net`), no por la red pública; es el mismo criterio que separa
+que se sirvió la página. Los tramos `nginx → frontend/backend-core/backend-ai` quedan en HTTP
+simple porque viajan por la red interna de Docker (`prisma-net`), no por la red pública; es el
+mismo criterio que separa
 "cifrado en tránsito hacia el cliente" (obligatorio, cruza una red no confiable) de "cifrado
 interno entre contenedores del mismo host" (mTLS/service mesh, una capa adicional que este
 proyecto no implementa).
+
+### Tramos hacia Keycloak: TLS interno con CA propia (BUG-12 / PRI-369)
+
+Las pruebas de cifrado en tránsito marcaron como incumplido el tramo interno hacia Keycloak
+(lleva credenciales de login, tokens y el `client-secret` de la Admin API), así que **ese tramo sí
+va cifrado y verificado**:
+
+| Tramo | Antes | Ahora |
+|---|---|---|
+| nginx principal → Keycloak | `http://keycloak:8080` | `https://keycloak:8443` + `proxy_ssl_verify on` |
+| nginx del frontend → Keycloak | `http://keycloak:8080` | `https://keycloak:8443` + `proxy_ssl_verify on` |
+| backend-core → Keycloak (JWKS y Admin API) | `http://keycloak:8080` | `https://keycloak:8443`, CA en el truststore de la JVM |
+
+- `scripts/generate-internal-ca.sh` (también lo ejecuta `make certs`; `make internal-ca` lo corre solo)
+  crea en `infra/tls/` (ignorada por git) la CA interna `ca.crt`/`ca.key` y un
+  certificado por servicio `<servicio>.crt`/`.key` (SAN: nombre del servicio, `localhost`, `127.0.0.1`).
+- Keycloak monta `keycloak.crt/.key`; nginx y el frontend montan solo `ca.crt` en
+  `/etc/nginx/internal-ca.crt`; backend-core arranca copiando el truststore por defecto del JRE,
+  importando `ca.crt` y arrancando la JVM con ese truststore (ver `command` en `docker-compose.yml`).
+- Sin generar la CA primero, `docker compose up` falla al montar los archivos: ejecutá `make certs`.
+- **Desarrollo:** Keycloak mantiene el 8080 HTTP habilitado solo para el acceso directo desde el host
+  (`http://localhost:8180`, e2e, `kcadm`); se publica ligado a `127.0.0.1` y ningún servicio interno lo
+  usa. **Producción** (`docker-compose.prod.yml`): `KC_HTTP_ENABLED=false`, solo TLS.
+- El management interface (9000, `/health`) se mantiene en HTTP (`KC_HTTP_MANAGEMENT_SCHEME=http`)
+  para el healthcheck; no se publica al host.
+- Rotación: `make internal-ca` (o `scripts/generate-internal-ca.sh --force`) y
+  `docker compose up -d --force-recreate keycloak nginx frontend backend-core`.
+
+### Postgres con TLS (PRI-369, solo producción)
+
+`docker-compose.prod.yml` activa TLS en `postgres` y `keycloak-db` (certificados `postgres.crt` y
+`keycloak-db.crt` de `infra/tls/`): `ssl=on`, TLS 1.2 mínimo y `infra/postgres/pg_hba.tls.conf`, que
+solo admite `hostssl` para conexiones por red (una conexión sin TLS se rechaza). Como Postgres exige
+que la clave sea suya y de permisos 0600, el contenedor la copia a `/var/lib/postgresql` antes de
+arrancar. Los clientes verifican el certificado (`sslmode=verify-full` + la CA interna):
+backend-core, Keycloak, postgres-exporter, Grafana y backup-runner. pgAdmin usa `prefer`, así que
+negocia TLS pero no verifica el certificado. En desarrollo Postgres sigue sin TLS.
+
+### backend-core con TLS (PRI-369, solo producción)
+
+`docker-compose.prod.yml` activa HTTPS en backend-core (`SERVER_SSL_*`, mismo puerto 8080, certificado
+`backend-core.crt`). Quienes lo consumen verifican el certificado contra la CA interna:
+- **nginx principal:** las locations `/api/` incluyen `conf.d/proxy-backend-core.inc` (HTTP en
+  desarrollo); producción monta `infra/nginx/tls/proxy-backend-core.inc` encima, con `proxy_ssl_verify on`.
+- **backend-ai** (`CORE_BACKEND_URL=https://backend-core:8080`, CA en `SSL_CERT_FILE`).
+- **Prometheus:** usa `infra/monitoring/prometheus/prometheus.prod.yml` (copia de `prometheus.yml` con
+  scrape por TLS; mantener ambos sincronizados).
+- **Healthcheck del contenedor:** `curl --cacert ... https://localhost:8080/actuator/health`.
+
+### backend-ai con TLS (PRI-369, solo producción)
+
+En producción backend-ai arranca uvicorn con `--ssl-keyfile/--ssl-certfile` (mismo puerto 8000,
+certificado `backend-ai.crt`). Verifican el certificado: nginx (`conf.d/proxy-backend-ai.inc`, que en
+producción se reemplaza por `infra/nginx/tls/proxy-backend-ai.inc`), backend-core
+(`AI_SERVICE_URL=https://backend-ai:8000`, usa el truststore de la JVM con la CA interna), Prometheus
+(`prometheus.prod.yml`) y el healthcheck del contenedor.
+
+### frontend con TLS (PRI-369, solo producción)
+
+El nginx del contenedor frontend toma su listener de `/etc/nginx/frontend-listen.conf`
+(`apps/frontend/nginx-listen.conf`: HTTP en el 80). Producción monta
+`infra/nginx/tls/frontend-listen.conf` encima, que sirve HTTPS en el 8443 con `frontend.crt`.
+El nginx principal usa `infra/nginx/tls/proxy-frontend.inc` (`proxy_pass https://frontend:8443` con
+`proxy_ssl_verify on`) en lugar de `conf.d/proxy-frontend.inc`. Las rutas `/api`, `/ai` y `/auth` del
+nginx del frontend solo se usan al entrar directo al contenedor (desarrollo); en producción todo pasa
+por el nginx principal.
+
+### RustFS (S3) con TLS (PRI-369, solo producción)
+
+RustFS sirve HTTPS (API en el 9000 y consola en el 9001) con `RUSTFS_TLS_PATH`; el certificado
+`rustfs.crt/.key` se monta como `rustfs_cert.pem`/`rustfs_key.pem`. Lo consumen por TLS verificado:
+backend-core (`S3_ENDPOINT=https://rustfs:9000`, truststore de la JVM), backend-ai (descarga
+evidencias con URLs firmadas contra ese endpoint; `SSL_CERT_FILE`) y backup-runner (`AWS_CA_BUNDLE`).
+
+**`S3_PUBLIC_ENDPOINT`:** es el host con el que backend-core firma las URLs de descarga que abre el
+navegador (`window.open`, directo contra RustFS). En producción vale por defecto
+`https://prisma.local:${S3_PORT_API:-9001}` y se puede cambiar con la variable de entorno
+`S3_PUBLIC_ENDPOINT`. El certificado de RustFS lo firma la CA interna, así que el navegador muestra la
+advertencia de certificado autofirmado: se acepta una vez por navegador, igual que con nginx y Kibana,
+y la descarga sigue. Los certificados incluyen como SAN `prisma.local`, `localhost` y `127.0.0.1`; para
+otro host se agrega al generarlos, por ejemplo
+`CERT_EXTRA_SAN=DNS:s3.midominio.com scripts/generate-internal-ca.sh --only rustfs`, y se usa ese host en
+`S3_PUBLIC_ENDPOINT`.
+
+### Elasticsearch con TLS (PRI-369, solo producción)
+
+Elasticsearch sirve HTTPS en el 9200 (`xpack.security.http.ssl.*`, certificado `elasticsearch.crt`,
+TLS 1.2 mínimo). Verifican el certificado contra la CA interna: el healthcheck, `kibana-init`, Kibana
+(`ELASTICSEARCH_SSL_CERTIFICATEAUTHORITIES`) y Filebeat (`ssl.certificate_authorities` en
+`filebeat.yml`, que solo se aplica cuando `ELASTICSEARCH_HOSTS` es `https://`). Los certificados deben
+ser legibles por el usuario `elasticsearch` del contenedor.
+
+### Kibana con el certificado autofirmado de nginx (PRI-369, solo producción)
+
+Kibana sirve HTTPS hacia el navegador en el 5601 (`SERVER_SSL_*`) con el **mismo certificado
+autofirmado de nginx** (`infra/nginx/certs/prisma.crt/.key`, el que genera `make certs`), así que el
+navegador pide aceptar la excepción una sola vez, igual que con `https://prisma.local`. El SAN del
+certificado incluye `prisma.local`, `localhost` y `127.0.0.1`: entrar a Kibana por otro nombre mostrará
+la advertencia de nombre. El healthcheck lo verifica contra el propio certificado y
+`kibana-dashboards-init` se conecta con `--connect-to prisma.local:5601:kibana:5601` para poder
+verificarlo sin desactivar la validación.
+
+### Scripts del entorno y la CA interna
+
+- `scripts/generate-internal-ca.sh` (también `make certs` / `make internal-ca`) crea la CA y los certificados; el
+  workflow `deploy.yml` lo ejecuta en el servidor si falta `infra/tls/ca.crt`, y `ci.yml` lo ejecuta antes de
+  levantar compose.
+- `scripts/keycloak/enable-mfa.sh` y `apply-auth-policy.sh` entran a Keycloak por HTTP (8080) y, si está
+  deshabilitado como en producción, por HTTPS (8443) con un truststore creado con la CA interna.
+- `scripts/health-check.sh` (y `make health`) prueba cada servicio por HTTP y, si no responde, por HTTPS
+  verificando con la CA o aceptando el certificado autofirmado.
+- `scripts/backup/backup.sh` y `restore.sh` no cambian: `docker-compose.prod.yml` le da a `backup-runner`
+  `PGSSLMODE`, `PGSSLROOTCERT`, `S3_ENDPOINT` y `AWS_CA_BUNDLE`.
+
+### Resumen de lo que queda sin TLS
+
+En producción ya no queda ningún tramo entre servicios de PRISMA ni hacia el navegador sin cifrar,
+salvo el management interface de Keycloak (9000, solo `/health`, sin publicar) y el TLS de transporte
+entre nodos de Elasticsearch (no aplica: nodo único). En desarrollo todo lo anterior sigue en HTTP
+salvo los tramos hacia Keycloak.
 
 El contenedor del propio frontend (`apps/frontend/nginx.conf`) tiene la **misma** definición de
 `/api`, `/ai`, `/auth` que el reverse-proxy principal, así que acceder directo a

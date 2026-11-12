@@ -14,6 +14,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
@@ -378,6 +379,25 @@ public class AuditLogService {
             .resource(attemptedUsername != null ? attemptedUsername : "desconocido")
             .ipAddress(ip)
             .createdAt(occurredAt != null ? occurredAt : OffsetDateTime.now())
+            .build();
+    auditRepo.save(log);
+  }
+
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public void recordIndependently(String action, String resource, String payloadJson) {
+    record(action, resource, payloadJson);
+  }
+
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public void recordSystemEvent(
+      String action, String resource, String payloadJson, UUID userId, UUID tenantId) {
+    AuditLog log =
+        AuditLog.builder()
+            .userId(userId)
+            .tenantId(tenantId)
+            .action(action)
+            .resource(resource)
+            .payload(payloadJson)
             .build();
     auditRepo.save(log);
   }

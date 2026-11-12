@@ -17,6 +17,7 @@ import com.lowagie.text.pdf.PdfPageEventHelper;
 import com.lowagie.text.pdf.PdfWriter;
 import java.awt.Color;
 import java.io.ByteArrayOutputStream;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Comparator;
@@ -48,6 +49,7 @@ import uy.edu.prisma.domain.entity.ImprovementPlan;
 import uy.edu.prisma.domain.entity.MaturityResult;
 import uy.edu.prisma.domain.entity.User;
 import uy.edu.prisma.domain.exception.ConflictException;
+import uy.edu.prisma.domain.exception.InvalidRequestException;
 import uy.edu.prisma.domain.exception.ResourceNotFoundException;
 import uy.edu.prisma.domain.repository.AuditControlVerdictRepository;
 import uy.edu.prisma.domain.repository.AuditObservationRepository;
@@ -972,6 +974,330 @@ public class ReportService {
       case COMPLETED -> "Realizado";
       case OVERDUE -> "Vencida";
     };
+  }
+
+  private static final Color STATUS_DONE = new Color(22, 163, 74);
+  private static final Color STATUS_PROGRESS = new Color(37, 99, 235);
+  private static final Color STATUS_PENDING = new Color(148, 163, 184);
+  private static final Color OVERDUE_ROW = new Color(254, 242, 242);
+  private static final String[] PLAN_COLUMNS = {
+    "Acción", "Control", "Prioridad", "Estado", "Responsable", "Vencimiento", "Comentarios"
+  };
+
+  public byte[] generateImprovementPlanPdf(UUID evaluationId) {
+    Evaluation eval = load(evaluationId);
+    List<ImprovementPlan> plans = exportablePlans(evaluationId);
+    PlanStats stats = planStats(plans);
+    List<String> auditors = auditorNames(evaluationId);
+
+    try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+      Document document = new Document(PageSize.A4.rotate(), 36, 36, 54, 54);
+      PdfWriter writer = PdfWriter.getInstance(document, out);
+      writer.setPageEvent(new PageEvent(eval, auditors));
+      document.open();
+
+      addPdfBanner(
+          document, "Plan de Mejora — Acciones correctivas basadas en las brechas detectadas");
+      addPlanInfoLine(document, eval);
+      addPlanSummary(document, stats);
+      addPlanTable(document, plans);
+
+      document.close();
+      return out.toByteArray();
+    } catch (Exception e) {
+      throw new RuntimeException("No se pudo generar el PDF del plan de mejora", e);
+    }
+  }
+
+  public byte[] generateImprovementPlanExcel(UUID evaluationId) {
+    Evaluation eval = load(evaluationId);
+    List<ImprovementPlan> plans = exportablePlans(evaluationId);
+    List<String> auditors = auditorNames(evaluationId);
+
+    try (XSSFWorkbook workbook = new XSSFWorkbook();
+        ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+      var props = workbook.getProperties().getCoreProperties();
+      props.setTitle("Plan de Mejora PRISMA - " + eval.getName());
+      props.setCreator("PRISMA");
+
+      Sheet sheet = workbook.createSheet("Plan de mejora");
+      addPlanSheet(workbook, sheet, plans);
+      sheet.getHeader().setLeft(printHeader(eval, auditors));
+      sheet.getPrintSetup().setLandscape(true);
+
+      workbook.write(out);
+      return out.toByteArray();
+    } catch (Exception e) {
+      throw new RuntimeException("No se pudo generar el Excel del plan de mejora", e);
+    }
+  }
+
+  private List<ImprovementPlan> exportablePlans(UUID evaluationId) {
+    List<ImprovementPlan> plans =
+        planRepo.findByEvaluationIdOrderByCreatedAtDesc(evaluationId).stream()
+            .sorted(
+                Comparator.comparing(ImprovementPlan::getPriority, Comparator.reverseOrder())
+                    .thenComparing(
+                        ImprovementPlan::getDueDate,
+                        Comparator.nullsLast(Comparator.naturalOrder()))
+                    .thenComparing(ImprovementPlan::getCreatedAt))
+            .toList();
+    if (plans.isEmpty()) {
+      throw new InvalidRequestException(
+          "El plan de mejora no tiene acciones registradas para exportar");
+    }
+    return plans;
+  }
+
+  private static ImprovementPlan.PlanStatus effectiveStatus(ImprovementPlan plan) {
+    boolean open =
+        plan.getStatus() == ImprovementPlan.PlanStatus.PENDING
+            || plan.getStatus() == ImprovementPlan.PlanStatus.IN_PROGRESS;
+    if (open && plan.getDueDate() != null && plan.getDueDate().isBefore(LocalDate.now())) {
+      return ImprovementPlan.PlanStatus.OVERDUE;
+    }
+    return plan.getStatus();
+  }
+
+  private record PlanStats(
+      int total,
+      int completed,
+      int inProgress,
+      int pending,
+      int overdue,
+      int high,
+      int medium,
+      int low) {
+    int percent() {
+      return total == 0 ? 0 : (int) Math.round(completed * 100.0 / total);
+    }
+  }
+
+  private static PlanStats planStats(List<ImprovementPlan> plans) {
+    int completed = 0;
+    int inProgress = 0;
+    int pending = 0;
+    int overdue = 0;
+    int high = 0;
+    int medium = 0;
+    int low = 0;
+    for (ImprovementPlan plan : plans) {
+      switch (effectiveStatus(plan)) {
+        case COMPLETED -> completed++;
+        case IN_PROGRESS -> inProgress++;
+        case PENDING -> pending++;
+        case OVERDUE -> overdue++;
+      }
+      switch (plan.getPriority()) {
+        case HIGH -> high++;
+        case MEDIUM -> medium++;
+        case LOW -> low++;
+      }
+    }
+    return new PlanStats(plans.size(), completed, inProgress, pending, overdue, high, medium, low);
+  }
+
+  private void addPlanInfoLine(Document document, Evaluation eval) throws DocumentException {
+    PdfPTable info = new PdfPTable(4);
+    info.setWidthPercentage(100);
+    info.setSpacingBefore(12);
+    info.setSpacingAfter(10);
+    addInfoCell(info, "ORGANIZACIÓN", eval.getOrganization().getName());
+    addInfoCell(info, "EVALUACIÓN", eval.getName());
+    addInfoCell(
+        info,
+        "PERFIL",
+        eval.getCommunityProfile() != null ? eval.getCommunityProfile().getName() : "—");
+    addInfoCell(info, "GENERADO", OffsetDateTime.now().format(DATE_FMT));
+    document.add(info);
+  }
+
+  private void addPlanSummary(Document document, PlanStats stats) throws DocumentException {
+    PdfPTable summary = new PdfPTable(2);
+    summary.setWidthPercentage(100);
+    summary.setWidths(new float[] {1f, 3f});
+    summary.setSpacingAfter(14);
+
+    PdfPCell progress = kpiCard("AVANCE DEL PLAN", stats.percent() + " %", BRAND);
+    Paragraph closed =
+        new Paragraph(
+            stats.completed() + " de " + stats.total() + " cerradas",
+            FontFactory.getFont(FontFactory.HELVETICA_BOLD, 9, SLATE_900));
+    closed.setSpacingBefore(3);
+    progress.addElement(closed);
+    if (stats.overdue() > 0) {
+      progress.addElement(
+          new Paragraph(
+              stats.overdue() + (stats.overdue() == 1 ? " acción vencida" : " acciones vencidas"),
+              FontFactory.getFont(FontFactory.HELVETICA_BOLD, 8, DANGER)));
+    }
+    summary.addCell(progress);
+
+    PdfPCell breakdown = new PdfPCell();
+    breakdown.setBackgroundColor(Color.WHITE);
+    breakdown.setBorder(Rectangle.BOX);
+    breakdown.setBorderColor(SLATE_200);
+    breakdown.setBorderWidth(0.5f);
+    breakdown.setPadding(10);
+    breakdown.addElement(
+        new Paragraph(
+            "ACCIONES POR ESTADO", FontFactory.getFont(FontFactory.HELVETICA, 7, SLATE_500)));
+    breakdown.addElement(statusBar(stats));
+    breakdown.addElement(statusCounts(stats));
+    Paragraph priorities =
+        new Paragraph(
+            "POR PRIORIDAD   Alta "
+                + stats.high()
+                + "   ·   Media "
+                + stats.medium()
+                + "   ·   Baja "
+                + stats.low(),
+            FontFactory.getFont(FontFactory.HELVETICA, 8, SLATE_500));
+    priorities.setSpacingBefore(6);
+    breakdown.addElement(priorities);
+    summary.addCell(breakdown);
+    document.add(summary);
+  }
+
+  private PdfPTable statusBar(PlanStats stats) {
+    int[] counts = {stats.completed(), stats.inProgress(), stats.pending(), stats.overdue()};
+    Color[] colors = {STATUS_DONE, STATUS_PROGRESS, STATUS_PENDING, DANGER};
+    List<Integer> used = new java.util.ArrayList<>();
+    for (int i = 0; i < counts.length; i++) {
+      if (counts[i] > 0) {
+        used.add(i);
+      }
+    }
+    PdfPTable bar = new PdfPTable(used.size());
+    bar.setWidthPercentage(100);
+    bar.setSpacingBefore(4);
+    bar.setSpacingAfter(6);
+    float[] widths = new float[used.size()];
+    for (int i = 0; i < used.size(); i++) {
+      widths[i] = counts[used.get(i)];
+    }
+    try {
+      bar.setWidths(widths);
+    } catch (DocumentException e) {
+      throw new IllegalStateException(e);
+    }
+    for (int idx : used) {
+      PdfPCell cell = new PdfPCell(new Phrase(" ", FontFactory.getFont(FontFactory.HELVETICA, 4)));
+      cell.setBackgroundColor(colors[idx]);
+      cell.setBorder(Rectangle.NO_BORDER);
+      cell.setFixedHeight(7);
+      bar.addCell(cell);
+    }
+    return bar;
+  }
+
+  private PdfPTable statusCounts(PlanStats stats) {
+    PdfPTable counts = new PdfPTable(4);
+    counts.setWidthPercentage(100);
+    addStatusCount(counts, stats.completed(), "Completadas", STATUS_DONE);
+    addStatusCount(counts, stats.inProgress(), "En progreso", STATUS_PROGRESS);
+    addStatusCount(counts, stats.pending(), "Pendientes", SLATE_500);
+    addStatusCount(counts, stats.overdue(), "Vencidas", DANGER);
+    return counts;
+  }
+
+  private void addStatusCount(PdfPTable table, int value, String label, Color color) {
+    PdfPCell cell = new PdfPCell();
+    cell.setBorder(Rectangle.NO_BORDER);
+    Paragraph number =
+        new Paragraph(
+            String.valueOf(value), FontFactory.getFont(FontFactory.HELVETICA_BOLD, 16, color));
+    number.setAlignment(Element.ALIGN_CENTER);
+    Paragraph text = new Paragraph(label, FontFactory.getFont(FontFactory.HELVETICA, 7, SLATE_500));
+    text.setAlignment(Element.ALIGN_CENTER);
+    cell.addElement(number);
+    cell.addElement(text);
+    table.addCell(cell);
+  }
+
+  private void addPlanTable(Document document, List<ImprovementPlan> plans)
+      throws DocumentException {
+    PdfPTable table = new PdfPTable(PLAN_COLUMNS.length);
+    table.setWidthPercentage(100);
+    table.setWidths(new float[] {4f, 1.4f, 1f, 1.2f, 1.7f, 1.3f, 3f});
+    table.setHeaderRows(1);
+    addTableHeader(table, PLAN_COLUMNS);
+
+    boolean shaded = false;
+    for (ImprovementPlan plan : plans) {
+      ImprovementPlan.PlanStatus status = effectiveStatus(plan);
+      boolean overdue = status == ImprovementPlan.PlanStatus.OVERDUE;
+      Color bg = overdue ? OVERDUE_ROW : (shaded ? SLATE_50 : Color.WHITE);
+      addBodyCell(table, plan.getAction(), bg, Element.ALIGN_LEFT, SLATE_900);
+      addBodyCell(table, controlCode(plan), bg, Element.ALIGN_CENTER, SLATE_900);
+      addBodyCell(table, priorityLabel(plan.getPriority()), bg, Element.ALIGN_CENTER, SLATE_900);
+      addBodyCell(
+          table, planStatusLabel(status), bg, Element.ALIGN_CENTER, overdue ? DANGER : SLATE_900);
+      addBodyCell(table, orEmpty(plan.getResponsible()), bg, Element.ALIGN_LEFT, SLATE_900);
+      addBodyCell(table, dueDateLabel(plan), bg, Element.ALIGN_CENTER, SLATE_900);
+      addBodyCell(table, orEmpty(plan.getComments()), bg, Element.ALIGN_LEFT, SLATE_900);
+      shaded = !shaded;
+    }
+    document.add(table);
+  }
+
+  private void addPlanSheet(XSSFWorkbook workbook, Sheet sheet, List<ImprovementPlan> plans) {
+    XSSFCellStyle headerStyle =
+        xlStyle(workbook, BRAND, Color.WHITE, true, 10, HorizontalAlignment.CENTER);
+    Row header = sheet.createRow(0);
+    header.setHeightInPoints(20);
+    for (int i = 0; i < PLAN_COLUMNS.length; i++) {
+      setCell(header, i, PLAN_COLUMNS[i], headerStyle);
+    }
+
+    Color[] backgrounds = {Color.WHITE, SLATE_50, OVERDUE_ROW};
+    XSSFCellStyle[] wrapStyles = new XSSFCellStyle[backgrounds.length];
+    XSSFCellStyle[] centerStyles = new XSSFCellStyle[backgrounds.length];
+    XSSFCellStyle overdueStatus =
+        xlStyle(workbook, OVERDUE_ROW, DANGER, true, 10, HorizontalAlignment.CENTER);
+    for (int i = 0; i < backgrounds.length; i++) {
+      wrapStyles[i] =
+          xlStyle(workbook, backgrounds[i], SLATE_900, false, 10, HorizontalAlignment.LEFT);
+      wrapStyles[i].setWrapText(true);
+      centerStyles[i] =
+          xlStyle(workbook, backgrounds[i], SLATE_900, false, 10, HorizontalAlignment.CENTER);
+    }
+
+    int rowIdx = 1;
+    boolean shaded = false;
+    for (ImprovementPlan plan : plans) {
+      ImprovementPlan.PlanStatus status = effectiveStatus(plan);
+      boolean overdue = status == ImprovementPlan.PlanStatus.OVERDUE;
+      int style = overdue ? 2 : (shaded ? 1 : 0);
+      Row row = sheet.createRow(rowIdx++);
+      setCell(row, 0, plan.getAction(), wrapStyles[style]);
+      setCell(row, 1, controlCode(plan), centerStyles[style]);
+      setCell(row, 2, priorityLabel(plan.getPriority()), centerStyles[style]);
+      setCell(row, 3, planStatusLabel(status), overdue ? overdueStatus : centerStyles[style]);
+      setCell(row, 4, orEmpty(plan.getResponsible()), wrapStyles[style]);
+      setCell(row, 5, dueDateLabel(plan), centerStyles[style]);
+      setCell(row, 6, orEmpty(plan.getComments()), wrapStyles[style]);
+      shaded = !shaded;
+    }
+
+    int[] widths = {60, 16, 12, 14, 24, 14, 50};
+    for (int i = 0; i < widths.length; i++) {
+      sheet.setColumnWidth(i, widths[i] * 256);
+    }
+    sheet.createFreezePane(0, 1);
+    sheet.setAutoFilter(new CellRangeAddress(0, plans.size(), 0, PLAN_COLUMNS.length - 1));
+  }
+
+  private static String controlCode(ImprovementPlan plan) {
+    return plan.getControl() != null ? orEmpty(plan.getControl().getCode()) : "—";
+  }
+
+  private static String dueDateLabel(ImprovementPlan plan) {
+    return plan.getDueDate() != null ? plan.getDueDate().format(DATE_ONLY) : "—";
+  }
+
+  private static String orEmpty(String value) {
+    return value == null ? "" : value;
   }
 
   public byte[] generatePreliminaryPdf(UUID evaluationId) {

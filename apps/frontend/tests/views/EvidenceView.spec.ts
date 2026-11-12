@@ -11,7 +11,7 @@ const evidenceService = vi.hoisted(() => ({
 }));
 const evaluationsService = vi.hoisted(() => ({ getById: vi.fn(), getResponses: vi.fn() }));
 const catalogService = vi.hoisted(() => ({ getByVersion: vi.fn() }));
-const notification = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
+const notification = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn() }));
 const authState = vi.hoisted(() => ({ roles: ['PRISMA_ADMIN'] as string[] }));
 
 vi.mock('@/services/resources', () => ({ evidenceService, evaluationsService, catalogService }));
@@ -543,5 +543,191 @@ describe('EvidenceView: vista previa (PRI-290)', () => {
 
     expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:preview-1');
     expect(document.body.querySelector('iframe')).toBeNull();
+  });
+});
+
+describe('EvidenceView: antivirus al subir (RNF-09)', () => {
+  const apiError = (status: number, body: Record<string, unknown>) => ({
+    response: { status, data: body },
+  });
+  const query = (selector: string) => document.body.querySelector<HTMLElement>(selector);
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    document.body.innerHTML = '';
+    authState.roles = ['PRISMA_ADMIN'];
+    evidenceService.getAllowedFormats.mockResolvedValue(FORMATS);
+    evidenceService.getByEvaluation.mockResolvedValue({ data: [] });
+    evidenceService.upload.mockResolvedValue({ data: {} });
+    evaluationsService.getById.mockResolvedValue({ data: { catalogVersion: '5.0' } });
+    evaluationsService.getResponses.mockResolvedValue({ data: [] });
+    catalogService.getByVersion.mockResolvedValue({ data: { functions: [] } });
+  });
+
+  it('un archivo con malware muestra el rechazo en el modal y no lo cierra', async () => {
+    evidenceService.upload.mockRejectedValue(
+      apiError(422, {
+        code: 'MALWARE_DETECTED',
+        message: 'El archivo fue rechazado: se detectó contenido malicioso.',
+        details: { signature: ['Win.Test.EICAR_HDB-1'] },
+      }),
+    );
+    await openUploadWithFile();
+    confirmButton().click();
+    await flushPromises();
+
+    const alert = query('[data-test="malware-alert"]')!;
+    expect(alert.textContent).toContain('se detectó contenido malicioso');
+    expect(alert.textContent).toContain('Win.Test.EICAR_HDB-1');
+    expect(alert.textContent).toContain('No se guardó');
+    expect(query('[data-test="unscanned-confirm"]')).toBeNull();
+    expect(notification.error).not.toHaveBeenCalled();
+    expect(query('input[type="file"]')).not.toBeNull();
+  });
+
+  it('el aviso de malware se limpia al elegir otro archivo', async () => {
+    evidenceService.upload.mockRejectedValue(
+      apiError(422, { code: 'MALWARE_DETECTED', message: 'rechazado' }),
+    );
+    const { input } = await openUploadWithFile();
+    confirmButton().click();
+    await flushPromises();
+    expect(query('[data-test="malware-alert"]')).not.toBeNull();
+
+    input.dispatchEvent(new Event('change'));
+    await flushPromises();
+
+    expect(query('[data-test="malware-alert"]')).toBeNull();
+  });
+
+  it('con el antivirus caído la evidencia queda en cuarentena y se avisa', async () => {
+    evidenceService.upload.mockResolvedValue({ data: { scanStatus: 'QUARANTINED' } });
+    await openUploadWithFile();
+    confirmButton().click();
+    await flushPromises();
+
+    expect(notification.warning).toHaveBeenCalledWith(expect.stringContaining('cuarentena'));
+    expect(notification.success).not.toHaveBeenCalled();
+    expect(notification.error).not.toHaveBeenCalled();
+    expect(evidenceService.getByEvaluation).toHaveBeenCalledTimes(2);
+  });
+
+  it('una subida normal sigue avisando que salió bien', async () => {
+    evidenceService.upload.mockResolvedValue({ data: { scanStatus: 'CLEAN' } });
+    await openUploadWithFile();
+    confirmButton().click();
+    await flushPromises();
+
+    expect(notification.success).toHaveBeenCalledWith('Evidencia subida correctamente');
+    expect(notification.warning).not.toHaveBeenCalled();
+  });
+
+  const listWith = async (scanStatus?: string) => {
+    evidenceService.getByEvaluation.mockResolvedValue({
+      data: [
+        {
+          id: 'e1',
+          evaluationId: 'eval-1',
+          fileName: 'politica.pdf',
+          fileSize: 10,
+          fileType: 'application/pdf',
+          uploadedAt: '2026-11-10T00:00:00Z',
+          aiIndexed: false,
+          scanStatus,
+        },
+      ],
+    });
+    mount(EvidenceView, { attachTo: document.body, global: { stubs: { RouterLink: true } } });
+    await flushPromises();
+  };
+  const downloadButton = () => query('button[title="Descargar evidencia"]');
+  const viewButton = () => query('button[title="Ver evidencia"]');
+
+  it('una evidencia en cuarentena muestra su etiqueta y no se puede descargar ni ver', async () => {
+    await listWith('QUARANTINED');
+
+    expect(query('[data-test="quarantine-badge"]')!.textContent).toContain('En cuarentena');
+    expect(downloadButton()).toBeNull();
+    expect(viewButton()).toBeNull();
+    expect(query('button[title="Eliminar evidencia"]')).not.toBeNull();
+  });
+
+  it('una evidencia rechazada por malware muestra su etiqueta y no se puede descargar', async () => {
+    await listWith('INFECTED');
+
+    expect(query('[data-test="infected-badge"]')!.textContent).toContain('contenido malicioso');
+    expect(downloadButton()).toBeNull();
+  });
+
+  it('una evidencia limpia se puede descargar y no lleva etiquetas', async () => {
+    await listWith('CLEAN');
+
+    expect(downloadButton()).not.toBeNull();
+    expect(query('[data-test="quarantine-badge"]')).toBeNull();
+    expect(query('[data-test="infected-badge"]')).toBeNull();
+  });
+
+  it('una evidencia anterior al antivirus (sin estado) se trata como limpia', async () => {
+    await listWith(undefined);
+
+    expect(downloadButton()).not.toBeNull();
+  });
+
+  it('un error cualquiera sigue mostrando el mensaje genérico', async () => {
+    evidenceService.upload.mockRejectedValue(apiError(500, { message: 'falló' }));
+    await openUploadWithFile();
+    confirmButton().click();
+    await flushPromises();
+
+    expect(notification.error).toHaveBeenCalledWith('falló');
+    expect(query('[data-test="malware-alert"]')).toBeNull();
+    expect(query('[data-test="unscanned-confirm"]')).toBeNull();
+  });
+
+  it('mientras sube muestra que está analizando con el antivirus', async () => {
+    let release: (v: unknown) => void = () => {};
+    evidenceService.upload.mockReturnValue(
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+    );
+    await openUploadWithFile();
+    confirmButton().click();
+    await flushPromises();
+
+    expect(query('[data-test="scan-progress"]')!.textContent).toContain(
+      'Analizando el archivo con el antivirus',
+    );
+    release({ data: {} });
+    await flushPromises();
+    expect(query('[data-test="scan-progress"]')).toBeNull();
+  });
+
+  it('el hash y la leyenda sin análisis de IA usan un gris con contraste suficiente (WCAG AA)', async () => {
+    evidenceService.getByEvaluation.mockResolvedValue({
+      data: [
+        {
+          id: 'e1',
+          evaluationId: 'eval-1',
+          fileName: 'imagen.png',
+          fileSize: 10,
+          fileType: 'image/png',
+          fileHash: 'a'.repeat(64),
+          uploadedAt: '2026-11-10T00:00:00Z',
+          aiIndexed: false,
+          scanStatus: 'CLEAN',
+        },
+      ],
+    });
+    mount(EvidenceView, { attachTo: document.body, global: { stubs: { RouterLink: true } } });
+    await flushPromises();
+
+    const hash = document.body.querySelector<HTMLElement>('p[title^="SHA-256"]')!;
+    const noAi = Array.from(document.body.querySelectorAll<HTMLElement>('span')).find((s) =>
+      s.textContent?.includes('Sin análisis de IA'),
+    )!;
+    expect(hash.className).toContain('text-slate-500');
+    expect(hash.className).not.toContain('text-slate-400 ');
+    expect(noAi.className).toContain('text-slate-500');
   });
 });

@@ -24,11 +24,11 @@ public class EvidenceConfig {
    * @param allowedExtensions extensiones permitidas, sin punto (por ejemplo {@code pdf}). Cada una
    *     tiene que existir en el catálogo de formatos de {@code EvidenceFileValidator}: una
    *     extensión desconocida hace fallar el arranque en lugar de ignorarse en silencio.
-   * @param maxSize tamaño máximo de una evidencia (por defecto 50 MB, RF-EVI-04)
+   * @param maxSize tamaño máximo de una evidencia (por defecto 100 MB, RF-EVI-04)
    */
   @ConfigurationProperties(prefix = "prisma.evidence")
   public record EvidenceProperties(
-      List<String> allowedExtensions, @DefaultValue("50MB") DataSize maxSize) {
+      List<String> allowedExtensions, @DefaultValue("100MB") DataSize maxSize) {
 
     // Copia inmutable: la lista que se expone no se puede modificar desde afuera.
     public EvidenceProperties {
@@ -38,7 +38,7 @@ public class EvidenceConfig {
               : List.copyOf(allowedExtensions.stream().filter(Objects::nonNull).toList());
     }
 
-    /** El límite en palabras para los mensajes: «50 MB», «512 KB» o «1500 bytes». */
+    /** El límite en palabras para los mensajes: «100 MB», «512 KB» o «1500 bytes». */
     public String maxSizeDescription() {
       long bytes = maxSize.toBytes();
       long megabyte = DataSize.ofMegabytes(1).toBytes();

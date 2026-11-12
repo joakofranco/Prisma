@@ -93,6 +93,28 @@ public class ReportsController {
         .body(content);
   }
 
+  @GetMapping("/{id}/improvement-plan/pdf")
+  @PreAuthorize("hasAnyRole('PRISMA_ADMIN','ORG_RESPONSIBLE','AUDITOR')")
+  public ResponseEntity<byte[]> improvementPlanPdf(@PathVariable UUID id) {
+    byte[] content = service.generateImprovementPlanPdf(id);
+    return ResponseEntity.ok()
+        .headers(fileHeaders("plan-mejora-" + id + ".pdf"))
+        .contentType(MediaType.APPLICATION_PDF)
+        .body(content);
+  }
+
+  @GetMapping("/{id}/improvement-plan/excel")
+  @PreAuthorize("hasAnyRole('PRISMA_ADMIN','ORG_RESPONSIBLE','AUDITOR')")
+  public ResponseEntity<byte[]> improvementPlanExcel(@PathVariable UUID id) {
+    byte[] content = service.generateImprovementPlanExcel(id);
+    return ResponseEntity.ok()
+        .headers(fileHeaders("plan-mejora-" + id + ".xlsx"))
+        .contentType(
+            MediaType.parseMediaType(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+        .body(content);
+  }
+
   private HttpHeaders fileHeaders(String filename) {
     HttpHeaders headers = new HttpHeaders();
     headers.setContentDisposition(ContentDisposition.attachment().filename(filename).build());
