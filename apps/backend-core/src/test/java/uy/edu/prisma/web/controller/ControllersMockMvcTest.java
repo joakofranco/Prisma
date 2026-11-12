@@ -901,6 +901,24 @@ class ControllersMockMvcTest {
   }
 
   @Test
+  void improvementAiGuideAndFeedbackAreOnlyForAdminAndOrgResponsible() throws Exception {
+    // La guía de IA y su retroalimentación se usan al crear acciones del plan: mismos roles que
+    // POST /api/improvement.
+    String expected = "hasAnyRole('PRISMA_ADMIN','ORG_RESPONSIBLE')";
+    for (var name : List.of("suggestionTips", "suggestionFeedback")) {
+      var method =
+          java.util.Arrays.stream(ImprovementPlanController.class.getMethods())
+              .filter(m -> m.getName().equals(name))
+              .findFirst()
+              .orElseThrow();
+      var annotation =
+          method.getAnnotation(org.springframework.security.access.prepost.PreAuthorize.class);
+      assertNotNull(annotation, name);
+      assertEquals(expected, annotation.value(), name);
+    }
+  }
+
+  @Test
   void userUnlockReturnsWhetherTheAccountWasLocked() throws Exception {
     UUID id = UUID.randomUUID();
     when(userService.unlock(id)).thenReturn(true);
@@ -1072,6 +1090,35 @@ class ControllersMockMvcTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.summary").value("Resumen"))
         .andExpect(jsonPath("$.tips[0]").value("Paso 1"));
+  }
+
+  @Test
+  void improvementSuggestionFeedbackReturnsNoContent() throws Exception {
+    improvement
+        .perform(
+            post("/api/improvement/suggestions/feedback")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"items\":[{\"controlId\":\""
+                        + UUID.randomUUID()
+                        + "\",\"currentLevel\":0,\"targetLevel\":1,"
+                        + "\"originalSummary\":\"R\",\"originalTips\":[\"a\"],"
+                        + "\"outcome\":\"REJECTED\"}]}"))
+        .andExpect(status().isNoContent());
+    org.mockito.Mockito.verify(improvementPlanService).recordFeedback(any());
+  }
+
+  @Test
+  void improvementSuggestionFeedbackRejectsInvalidOutcome() throws Exception {
+    improvement
+        .perform(
+            post("/api/improvement/suggestions/feedback")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"items\":[{\"controlId\":\""
+                        + UUID.randomUUID()
+                        + "\",\"currentLevel\":0,\"targetLevel\":1,\"outcome\":\"X\"}]}"))
+        .andExpect(status().isBadRequest());
   }
 
   @Test

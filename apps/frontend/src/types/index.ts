@@ -410,6 +410,8 @@ export interface SuggestedImprovement {
   functionName: string;
   categoryName: string;
   subcategoryName: string;
+  /** Todas las subcategorías donde el control cuenta (la primera es subcategoryName). */
+  subcategoryNames: string[];
   controlCode: string;
   action: string;
   currentLevel: number;
@@ -422,6 +424,19 @@ export interface SuggestedImprovement {
 export interface RemediationTips {
   summary: string;
   tips: string[];
+  /** false = texto de reemplazo porque la IA falló: no se ofrece para usar ni se registra. */
+  generated?: boolean;
+}
+
+/** Qué se hizo con una guía de IA (PRI-370): alimenta el dataset de fine-tuning. */
+export interface AiSuggestionFeedback {
+  controlId: string;
+  currentLevel: number;
+  targetLevel: number;
+  originalSummary: string;
+  originalTips: string[];
+  outcome: 'ACCEPTED_UNEDITED' | 'ACCEPTED_EDITED' | 'REJECTED';
+  editedText?: string;
 }
 
 export interface DashboardStats {

@@ -182,6 +182,7 @@ class AiEvidenceClientTest {
 
     assertEquals("Definir una política", result.summary());
     assertEquals(List.of("Paso 1", "Paso 2"), result.tips());
+    assertTrue(result.generated());
     server.verify();
   }
 
@@ -195,5 +196,6 @@ class AiEvidenceClientTest {
 
     assertEquals("", result.summary());
     assertEquals(1, result.tips().size());
+    assertFalse(result.generated());
   }
 }

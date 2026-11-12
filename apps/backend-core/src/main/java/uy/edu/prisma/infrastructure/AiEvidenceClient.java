@@ -104,7 +104,8 @@ public class AiEvidenceClient {
           "",
           List.of(
               "No se pudo generar una sugerencia automática en este momento -- intentá de nuevo"
-                  + " más tarde."));
+                  + " más tarde."),
+          false);
 
   /**
    * Pide una guía práctica (resumen + pasos concretos) para cerrar una brecha puntual. On-demand,

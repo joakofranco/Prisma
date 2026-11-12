@@ -49,6 +49,7 @@
 | [`MaturityResult`](#maturityresult) | `maturity_results` | `prisma` |
 | [`Evidence`](#evidence) | `evidence` | `prisma` |
 | [`ImprovementPlan`](#improvementplan) | `improvement_plans` | `prisma` |
+| [`AiSuggestionFeedback`](#aisuggestionfeedback) | `ai_suggestion_feedback` | `prisma` |
 | [`AuditObservation`](#auditobservation) | `audit_observations` | `prisma` |
 | [`AuditLog`](#auditlog) | `audit_logs` | `audit` |
 
@@ -314,6 +315,21 @@ Enums anidados `Priority` (`LOW`/`MEDIUM`/`HIGH`) y `PlanStatus`
 `@ManyToOne(LAZY)` nullable (una acción de mejora puede ser general, no atada a un control).
 `comments` (`TEXT`, nullable, hasta 2000 caracteres validados en el DTO) guarda los comentarios
 libres del ítem (RF-PLN-02, migración `V27`); los ítems anteriores quedan con `null`.
+
+---
+
+### `AiSuggestionFeedback`
+
+```java
+@Entity @Table(name = "ai_suggestion_feedback", schema = "prisma")
+```
+
+Qué se hizo con cada guía de mejora generada por IA (PRI-370, migración `V32`); alimenta un dataset
+de fine-tuning. Enum anidado `Outcome` (`ACCEPTED_UNEDITED`/`ACCEPTED_EDITED`/`REJECTED`,
+`@Enumerated(STRING)`). `control` es `@ManyToOne(LAZY)` obligatorio: se referencia el control del
+catálogo y **a propósito no** la evaluación, la organización ni el usuario, para que el dataset no
+se pueda rastrear hasta una organización. `originalTips` es `jsonb` (`@JdbcTypeCode(SqlTypes.JSON)`,
+`List<String>`) y `editedText` solo existe en `ACCEPTED_EDITED` (lo exige un `CHECK`).
 
 ---
 

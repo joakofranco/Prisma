@@ -18,6 +18,7 @@ import type {
   ImprovementPlan,
   SuggestedImprovement,
   RemediationTips,
+  AiSuggestionFeedback,
   MaturityResult,
   DashboardStats,
   PaginatedResponse,
@@ -301,6 +302,10 @@ export const improvementService = {
     targetLevel: number;
   }) {
     return apiClient.post<RemediationTips>('/improvement/suggestions/tips', data);
+  },
+  /** Registra qué se hizo con las guías de IA (usada, editada o descartada). */
+  sendSuggestionFeedback(items: AiSuggestionFeedback[]) {
+    return apiClient.post<void>('/improvement/suggestions/feedback', { items });
   },
   create(data: Partial<ImprovementPlan>) {
     return apiClient.post<ImprovementPlan>('/improvement', data);

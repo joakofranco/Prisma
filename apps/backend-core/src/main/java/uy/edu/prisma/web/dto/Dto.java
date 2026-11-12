@@ -842,12 +842,22 @@ public class Dto {
       String functionName,
       String categoryName,
       String subcategoryName,
+      List<String> subcategoryNames,
       String controlCode,
       String action,
       int currentLevel,
       int targetLevel,
       String priority,
-      String suggestedDueDate) {}
+      String suggestedDueDate) {
+    public SuggestedImprovementDto {
+      subcategoryNames = subcategoryNames == null ? List.of() : List.copyOf(subcategoryNames);
+    }
+
+    @Override
+    public List<String> subcategoryNames() {
+      return Collections.unmodifiableList(subcategoryNames);
+    }
+  }
 
   // Pedido on-demand (un click por brecha, no se genera para toda la lista de sugerencias de
   // una) de una guía práctica para cerrarla -- ver ImprovementPlanController/AiEvidenceClient.
@@ -862,14 +872,58 @@ public class Dto {
       @Min(0) @Max(4) int currentLevel,
       @Min(0) @Max(4) int targetLevel) {}
 
-  public record RemediationTipsDto(String summary, List<String> tips) {
+  // generated=false es el texto de reemplazo cuando la IA falla: el frontend no lo ofrece para
+  // usar en la acción ni lo registra como retroalimentación (PRI-370).
+  public record RemediationTipsDto(String summary, List<String> tips, boolean generated) {
     public RemediationTipsDto {
       tips = tips == null ? List.of() : List.copyOf(tips);
+    }
+
+    public RemediationTipsDto(String summary, List<String> tips) {
+      this(summary, tips, true);
     }
 
     @Override
     public List<String> tips() {
       return Collections.unmodifiableList(tips);
+    }
+  }
+
+  // Qué se hizo con una guía de IA (PRI-370). Sin evaluación ni organización a propósito: es
+  // material para fine-tuning y se referencia solo el control del catálogo.
+  public record AiSuggestionFeedbackDto(
+      @NotNull(message = "El control es obligatorio") UUID controlId,
+      @Min(0) @Max(4) int currentLevel,
+      @Min(0) @Max(4) int targetLevel,
+      String originalSummary,
+      List<String> originalTips,
+      @NotNull(message = "El resultado es obligatorio")
+          @Pattern(
+              regexp = "ACCEPTED_UNEDITED|ACCEPTED_EDITED|REJECTED",
+              message = "Resultado inválido")
+          String outcome,
+      @Size(max = 20000, message = "El texto editado es demasiado largo") String editedText) {
+    public AiSuggestionFeedbackDto {
+      originalTips = originalTips == null ? List.of() : List.copyOf(originalTips);
+    }
+
+    @Override
+    public List<String> originalTips() {
+      return Collections.unmodifiableList(originalTips);
+    }
+  }
+
+  public record AiSuggestionFeedbackBatchDto(
+      @NotEmpty(message = "Debe enviar al menos un registro")
+          @Size(max = 200, message = "Demasiados registros")
+          List<@Valid AiSuggestionFeedbackDto> items) {
+    public AiSuggestionFeedbackBatchDto {
+      items = items == null ? List.of() : List.copyOf(items);
+    }
+
+    @Override
+    public List<AiSuggestionFeedbackDto> items() {
+      return Collections.unmodifiableList(items);
     }
   }
 

@@ -7,6 +7,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import uy.edu.prisma.application.ImprovementPlanService;
+import uy.edu.prisma.web.dto.Dto.AiSuggestionFeedbackBatchDto;
 import uy.edu.prisma.web.dto.Dto.CreateImprovementPlanDto;
 import uy.edu.prisma.web.dto.Dto.ImprovementPlanDto;
 import uy.edu.prisma.web.dto.Dto.RemediationTipsDto;
@@ -37,9 +38,18 @@ public class ImprovementPlanController {
   }
 
   @PostMapping("/suggestions/tips")
+  @PreAuthorize("hasAnyRole('PRISMA_ADMIN','ORG_RESPONSIBLE')")
   public ResponseEntity<RemediationTipsDto> suggestionTips(
       @Valid @RequestBody RemediationTipsRequestDto dto) {
     return ResponseEntity.ok(service.tips(dto));
+  }
+
+  @PostMapping("/suggestions/feedback")
+  @PreAuthorize("hasAnyRole('PRISMA_ADMIN','ORG_RESPONSIBLE')")
+  public ResponseEntity<Void> suggestionFeedback(
+      @Valid @RequestBody AiSuggestionFeedbackBatchDto dto) {
+    service.recordFeedback(dto);
+    return ResponseEntity.noContent().build();
   }
 
   @PostMapping
