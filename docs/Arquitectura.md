@@ -36,7 +36,7 @@ Responsabilidades:
 - Máquina de estados del workflow de auditoría
 - Almacenamiento seguro de evidencias (RustFS + URLs firmadas)
 - Bitácora inmutable de auditoría (append-only)
-- Generación de reportes PDF/Excel
+- Generación de reportes PDF/Excel (los PDF cumplen PDF/A-1b, RNF-12; ver [`Codigo.md`](Codigo.md#pdfa-1b-rnf-12))
 
 ### 3. Backend AI (FastAPI + RAG)
 

@@ -30,7 +30,7 @@ uy.edu.prisma
 | `ImprovementPlanService` | CRUD del plan de mejora (acciones correctivas por control) + motor de sugerencias automáticas a partir de los controles con mayor `gap`. |
 | `AuditObservationService` | Observaciones/no conformidades/recomendaciones que un `AUDITOR` registra sobre una evaluación en estado `IN_AUDIT`. |
 | `DashboardService` | Agregados de solo lectura para el panel: totales, madurez promedio, distribución por estado/función — acotados por organización salvo rol global. |
-| `ReportService` | Genera el reporte de una evaluación en PDF (OpenPDF) y Excel (Apache POI). |
+| `ReportService` | Genera el reporte de una evaluación en PDF (OpenPDF) y Excel (Apache POI). Sus cuatro PDF (final, preliminar, ejecutivo y plan de mejora) cumplen **PDF/A-1b** (RNF-12) gracias a `PdfA` — ver [PDF/A-1b](#pdfa-1b-rnf-12) más abajo. |
 | `AuditLogService` | Escribe la bitácora de auditoría técnica (`audit.audit_logs`) — append-only, desacoplada del modelo de dominio (ver [`diagramas/normalizacion-bd.md`](diagramas/normalizacion-bd.md)). `list()` la consulta (acotado por tenant como el resto de la app) y resuelve en batch (sin N+1) el nombre real de la entidad detrás de cada `resource` (`resolveResourceName` — usuario, organización, evaluación o versión de catálogo). `recordLoginFailure()` es la única escritura que no viene de un request HTTP interactivo, la llama `LoginFailureAuditSyncService`. |
 | `LoginFailureAuditSyncService` | `@Scheduled` (cada 15s por defecto) — trae desde Keycloak (`KeycloakAdminClient.fetchLoginFailures`) los eventos `LOGIN_ERROR` que Keycloak ya audita solo y los refleja en `AuditLog` como `LOGIN_FAILED`. Necesario porque el login lo maneja Keycloak directamente (Authorization Code + PKCE): `backend-core` nunca ve ese POST. Ver [`SECURITY.md`](SECURITY.md#registro-de-intentos-de-login-fallidos). |
 
@@ -75,6 +75,47 @@ uy.edu.prisma
 - `error/GlobalExceptionHandler.java` — traduce excepciones de dominio y de validación a
   `ApiErrorDto` con mensajes en español, incluyendo el fallback de `HttpStatus.getReasonPhrase()`
   (en inglés) para los pocos casos sin mensaje explícito.
+
+### PDF/A-1b (RNF-12)
+
+Todos los PDF del sistema cumplen **PDF/A-1b**: los cuatro de `ReportService` (reporte final,
+informe preliminar, reporte ejecutivo y plan de mejora) y el reporte técnico detallado de
+`TechnicalReportService`. Lo resuelve `application/PdfA.java` con OpenPDF, sin dependencias nuevas.
+**Todo PDF nuevo tiene que pasar por `PdfA`**: se llama a `PdfA.prepare(...)` antes de
+`document.open()` y a `PdfA.addOutputIntent(...)` justo después. Con el modo PDF/A activo, OpenPDF
+falla al generar el documento si queda alguna fuente sin embeber:
+
+- **Fuentes:** Liberation Sans (Regular y Bold, licencia SIL OFL 1.1, métricas compatibles con
+  Helvetica) en `src/main/resources/fonts/`, embebidas en subconjunto con codificación Identity-H.
+  Todo texto sale con `PdfA.font(...)`, `PdfA.regularBase()` o `PdfA.boldBase()`: **no usar
+  `FontFactory.HELVETICA*` ni `BaseFont.HELVETICA`** (no se embeben y rompen la conformidad).
+- **Metadatos:** PDF 1.4, `PdfWriter.PDFA1B`, XMP con `pdfaid:part=1` / `pdfaid:conformance=B` y el
+  mismo título, autor, creador, productor y fechas que el diccionario Info (veraPDF los compara).
+- **Color:** intención de salida con el perfil sRGB del JDK (`PdfA.addOutputIntent`, se llama justo
+  después de `document.open()`).
+- **Trampa de los elementos vacíos:** un `Paragraph()` o un `Chunk(new LineSeparator(...))` sin texto
+  traen Helvetica por defecto y la usan igual para su salto de línea. Crearlos con la fuente
+  embebida (`new Paragraph("", PdfA.font(...))`, `chunk.setFont(PdfA.font(...))`).
+- **Sin transparencia:** PDF/A-1 la prohíbe. El radar rellena el área del nivel actual con un color
+  sólido claro (`RadarChart.CURRENT_FILL`) en lugar de opacidad. No usar `PdfGState` con opacidad,
+  máscaras suaves, cifrado ni JavaScript.
+- **Sellado (PRI-314):** una firma criptográfica debe agregarse como actualización incremental
+  sobre el PDF ya generado; reescribirlo invalidaría la conformidad.
+
+Cómo validarlo con [veraPDF](https://verapdf.org) (Docker, un contenedor a la vez):
+
+```bash
+cd apps/backend-core
+mvn -o test -Dtest='ReportServiceTest,TechnicalReportServiceTest' -Dpdfa.dumpDir=/ruta/pdfs
+docker run --rm -v /ruta/pdfs:/data verapdf/cli --flavour 1b --format text /data/final.pdf
+# también preliminar.pdf, ejecutivo.pdf, plan-de-mejora.pdf y reporte-tecnico.pdf; cada uno debe
+# responder "PASS"
+```
+
+`ReportServiceTest` y `TechnicalReportServiceTest` además comprueban sobre los bytes la declaración
+`pdfaid`, las fuentes embebidas, la intención de salida y la ausencia de transparencia; si se define
+`VERAPDF_CLI` con el ejecutable de veraPDF, `veraPdfValidatesEveryReportPdfAsPdfA1b` los valida de
+punta a punta.
 
 ## backend-ai (FastAPI + LangChain + Ollama + ChromaDB)
 

@@ -4,7 +4,6 @@ import com.lowagie.text.Document;
 import com.lowagie.text.DocumentException;
 import com.lowagie.text.Element;
 import com.lowagie.text.Font;
-import com.lowagie.text.FontFactory;
 import com.lowagie.text.PageSize;
 import com.lowagie.text.Paragraph;
 import com.lowagie.text.Phrase;
@@ -123,8 +122,13 @@ public class ReportService {
       // repite PageEvent (organizacion, evaluacion, version del MCU, fecha y auditor).
       Document document = new Document(PageSize.A4, 36, 36, 54, 54);
       PdfWriter writer = PdfWriter.getInstance(document, out);
+      PdfA.prepare(
+          writer,
+          "Reporte de Madurez en Ciberseguridad — " + eval.getName(),
+          OffsetDateTime.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS));
       writer.setPageEvent(new PageEvent(eval, auditors));
       document.open();
+      PdfA.addOutputIntent(writer);
 
       addPdfBanner(document);
       addPdfInfoBox(document, eval, auditors);
@@ -154,11 +158,9 @@ public class ReportService {
     cell.setBorder(Rectangle.NO_BORDER);
     cell.setPadding(16);
 
-    Paragraph title =
-        new Paragraph("PRISMA", FontFactory.getFont(FontFactory.HELVETICA_BOLD, 22, Color.WHITE));
+    Paragraph title = new Paragraph("PRISMA", PdfA.font(true, 22, Color.WHITE));
     title.setSpacingAfter(2);
-    Paragraph subtitle =
-        new Paragraph(subtitleText, FontFactory.getFont(FontFactory.HELVETICA, 10, BRAND_LIGHT));
+    Paragraph subtitle = new Paragraph(subtitleText, PdfA.font(false, 10, BRAND_LIGHT));
     cell.addElement(title);
     cell.addElement(subtitle);
     banner.addCell(cell);
@@ -209,10 +211,8 @@ public class ReportService {
     cell.setPaddingTop(2);
     cell.setPaddingBottom(8);
     cell.setPaddingLeft(2);
-    Paragraph labelP =
-        new Paragraph(label, FontFactory.getFont(FontFactory.HELVETICA, 7, SLATE_500));
-    Paragraph valueP =
-        new Paragraph(value, FontFactory.getFont(FontFactory.HELVETICA_BOLD, 10, SLATE_900));
+    Paragraph labelP = new Paragraph(label, PdfA.font(false, 7, SLATE_500));
+    Paragraph valueP = new Paragraph(value, PdfA.font(true, 10, SLATE_900));
     valueP.setSpacingBefore(1);
     cell.addElement(labelP);
     cell.addElement(valueP);
@@ -250,10 +250,8 @@ public class ReportService {
     cell.setBorderColor(SLATE_200);
     cell.setBorderWidth(0.5f);
     cell.setPadding(10);
-    Paragraph labelP =
-        new Paragraph(label, FontFactory.getFont(FontFactory.HELVETICA, 7, SLATE_500));
-    Paragraph valueP =
-        new Paragraph(value, FontFactory.getFont(FontFactory.HELVETICA_BOLD, 16, valueColor));
+    Paragraph labelP = new Paragraph(label, PdfA.font(false, 7, SLATE_500));
+    Paragraph valueP = new Paragraph(value, PdfA.font(true, 16, valueColor));
     valueP.setSpacingBefore(3);
     cell.addElement(labelP);
     cell.addElement(valueP);
@@ -262,9 +260,7 @@ public class ReportService {
 
   private void addPdfTopGaps(Document document, List<MaturityResult> topGaps)
       throws DocumentException {
-    Paragraph heading =
-        new Paragraph(
-            "Principales Brechas", FontFactory.getFont(FontFactory.HELVETICA_BOLD, 12, SLATE_900));
+    Paragraph heading = new Paragraph("Principales Brechas", PdfA.font(true, 12, SLATE_900));
     heading.setSpacingAfter(6);
     document.add(heading);
 
@@ -293,9 +289,7 @@ public class ReportService {
   private void addPdfResultsTable(Document document, List<MaturityResult> results)
       throws DocumentException {
     Paragraph heading =
-        new Paragraph(
-            "Detalle de Resultados por Subcategoría",
-            FontFactory.getFont(FontFactory.HELVETICA_BOLD, 12, SLATE_900));
+        new Paragraph("Detalle de Resultados por Subcategoría", PdfA.font(true, 12, SLATE_900));
     heading.setSpacingAfter(6);
     document.add(heading);
 
@@ -324,7 +318,7 @@ public class ReportService {
   }
 
   private void addTableHeader(PdfPTable table, String... labels) {
-    Font font = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 9, Color.WHITE);
+    Font font = PdfA.font(true, 9, Color.WHITE);
     for (String label : labels) {
       PdfPCell cell = new PdfPCell(new Phrase(label, font));
       cell.setBackgroundColor(BRAND);
@@ -337,8 +331,7 @@ public class ReportService {
 
   private void addBodyCell(
       PdfPTable table, String text, Color background, int align, Color textColor) {
-    PdfPCell cell =
-        new PdfPCell(new Phrase(text, FontFactory.getFont(FontFactory.HELVETICA, 9, textColor)));
+    PdfPCell cell = new PdfPCell(new Phrase(text, PdfA.font(false, 9, textColor)));
     cell.setBackgroundColor(background);
     cell.setBorderColor(SLATE_200);
     cell.setBorderWidth(0.5f);
@@ -360,10 +353,7 @@ public class ReportService {
     PdfPTable badge = new PdfPTable(1);
     badge.setWidthPercentage(60);
     PdfPCell badgeCell =
-        new PdfPCell(
-            new Phrase(
-                String.valueOf(level),
-                FontFactory.getFont(FontFactory.HELVETICA_BOLD, 9, Color.WHITE)));
+        new PdfPCell(new Phrase(String.valueOf(level), PdfA.font(true, 9, Color.WHITE)));
     badgeCell.setBackgroundColor(maturityColor(level));
     badgeCell.setBorder(Rectangle.NO_BORDER);
     badgeCell.setHorizontalAlignment(Element.ALIGN_CENTER);
@@ -386,14 +376,8 @@ public class ReportService {
     private final String detail;
 
     PageEvent(Evaluation eval, List<String> auditors) {
-      try {
-        this.baseFont =
-            BaseFont.createFont(BaseFont.HELVETICA, BaseFont.CP1252, BaseFont.NOT_EMBEDDED);
-        this.boldFont =
-            BaseFont.createFont(BaseFont.HELVETICA_BOLD, BaseFont.CP1252, BaseFont.NOT_EMBEDDED);
-      } catch (Exception e) {
-        throw new RuntimeException(e);
-      }
+      this.baseFont = PdfA.regularBase();
+      this.boldFont = PdfA.boldBase();
       this.headline = eval.getOrganization().getName() + " · " + eval.getName();
       this.detail =
           "MCU "
@@ -735,8 +719,13 @@ public class ReportService {
     try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
       Document document = new Document(PageSize.A4, 36, 36, 54, 54);
       PdfWriter writer = PdfWriter.getInstance(document, out);
+      PdfA.prepare(
+          writer,
+          "Informe preliminar de auditoría — " + eval.getName(),
+          OffsetDateTime.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS));
       writer.setPageEvent(new PageEvent(eval, auditors));
       document.open();
+      PdfA.addOutputIntent(writer);
 
       addPdfBanner(
           document, "Reporte Ejecutivo de Madurez en Ciberseguridad — Marco AGESIC MCU 5.0");
@@ -827,9 +816,7 @@ public class ReportService {
   private void addFunctionMaturity(
       Document document, PdfWriter writer, List<MaturityResult> results)
       throws DocumentException, java.io.IOException {
-    Paragraph heading =
-        new Paragraph(
-            "Madurez por Función", FontFactory.getFont(FontFactory.HELVETICA_BOLD, 12, SLATE_900));
+    Paragraph heading = new Paragraph("Madurez por Función", PdfA.font(true, 12, SLATE_900));
     heading.setSpacingAfter(6);
     document.add(heading);
 
@@ -837,8 +824,7 @@ public class ReportService {
     if (axes.isEmpty()) {
       document.add(
           new Paragraph(
-              "Sin resultados de madurez para graficar.",
-              FontFactory.getFont(FontFactory.HELVETICA, 9, SLATE_500)));
+              "Sin resultados de madurez para graficar.", PdfA.font(false, 9, SLATE_500)));
       return;
     }
     if (axes.size() < 3) {
@@ -894,9 +880,7 @@ public class ReportService {
     table.setKeepTogether(true);
     PdfPCell title =
         new PdfPCell(
-            new Phrase(
-                "Acciones Principales del Plan de Mejora",
-                FontFactory.getFont(FontFactory.HELVETICA_BOLD, 12, SLATE_900)));
+            new Phrase("Acciones Principales del Plan de Mejora", PdfA.font(true, 12, SLATE_900)));
     title.setColspan(5);
     title.setBorder(Rectangle.NO_BORDER);
     title.setPaddingLeft(0);
@@ -906,10 +890,7 @@ public class ReportService {
     if (actions.isEmpty()) {
       // La sección no se omite: quien lee el reporte tiene que ver que no hay plan, no suponerlo.
       PdfPCell none =
-          new PdfPCell(
-              new Phrase(
-                  "Sin acciones registradas.",
-                  FontFactory.getFont(FontFactory.HELVETICA, 9, SLATE_500)));
+          new PdfPCell(new Phrase("Sin acciones registradas.", PdfA.font(false, 9, SLATE_500)));
       none.setColspan(5);
       none.setBorder(Rectangle.NO_BORDER);
       none.setPaddingLeft(0);
@@ -993,8 +974,13 @@ public class ReportService {
     try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
       Document document = new Document(PageSize.A4.rotate(), 36, 36, 54, 54);
       PdfWriter writer = PdfWriter.getInstance(document, out);
+      PdfA.prepare(
+          writer,
+          "Plan de Mejora — " + eval.getName(),
+          OffsetDateTime.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS));
       writer.setPageEvent(new PageEvent(eval, auditors));
       document.open();
+      PdfA.addOutputIntent(writer);
 
       addPdfBanner(
           document, "Plan de Mejora — Acciones correctivas basadas en las brechas detectadas");
@@ -1122,14 +1108,14 @@ public class ReportService {
     Paragraph closed =
         new Paragraph(
             stats.completed() + " de " + stats.total() + " cerradas",
-            FontFactory.getFont(FontFactory.HELVETICA_BOLD, 9, SLATE_900));
+            PdfA.font(true, 9, SLATE_900));
     closed.setSpacingBefore(3);
     progress.addElement(closed);
     if (stats.overdue() > 0) {
       progress.addElement(
           new Paragraph(
               stats.overdue() + (stats.overdue() == 1 ? " acción vencida" : " acciones vencidas"),
-              FontFactory.getFont(FontFactory.HELVETICA_BOLD, 8, DANGER)));
+              PdfA.font(true, 8, DANGER)));
     }
     summary.addCell(progress);
 
@@ -1139,9 +1125,7 @@ public class ReportService {
     breakdown.setBorderColor(SLATE_200);
     breakdown.setBorderWidth(0.5f);
     breakdown.setPadding(10);
-    breakdown.addElement(
-        new Paragraph(
-            "ACCIONES POR ESTADO", FontFactory.getFont(FontFactory.HELVETICA, 7, SLATE_500)));
+    breakdown.addElement(new Paragraph("ACCIONES POR ESTADO", PdfA.font(false, 7, SLATE_500)));
     breakdown.addElement(statusBar(stats));
     breakdown.addElement(statusCounts(stats));
     Paragraph priorities =
@@ -1152,7 +1136,7 @@ public class ReportService {
                 + stats.medium()
                 + "   ·   Baja "
                 + stats.low(),
-            FontFactory.getFont(FontFactory.HELVETICA, 8, SLATE_500));
+            PdfA.font(false, 8, SLATE_500));
     priorities.setSpacingBefore(6);
     breakdown.addElement(priorities);
     summary.addCell(breakdown);
@@ -1182,7 +1166,7 @@ public class ReportService {
       throw new IllegalStateException(e);
     }
     for (int idx : used) {
-      PdfPCell cell = new PdfPCell(new Phrase(" ", FontFactory.getFont(FontFactory.HELVETICA, 4)));
+      PdfPCell cell = new PdfPCell(new Phrase(" ", PdfA.font(false, 4, Color.BLACK)));
       cell.setBackgroundColor(colors[idx]);
       cell.setBorder(Rectangle.NO_BORDER);
       cell.setFixedHeight(7);
@@ -1204,11 +1188,9 @@ public class ReportService {
   private void addStatusCount(PdfPTable table, int value, String label, Color color) {
     PdfPCell cell = new PdfPCell();
     cell.setBorder(Rectangle.NO_BORDER);
-    Paragraph number =
-        new Paragraph(
-            String.valueOf(value), FontFactory.getFont(FontFactory.HELVETICA_BOLD, 16, color));
+    Paragraph number = new Paragraph(String.valueOf(value), PdfA.font(true, 16, color));
     number.setAlignment(Element.ALIGN_CENTER);
-    Paragraph text = new Paragraph(label, FontFactory.getFont(FontFactory.HELVETICA, 7, SLATE_500));
+    Paragraph text = new Paragraph(label, PdfA.font(false, 7, SLATE_500));
     text.setAlignment(Element.ALIGN_CENTER);
     cell.addElement(number);
     cell.addElement(text);
@@ -1313,8 +1295,13 @@ public class ReportService {
       // Igual que el reporte final (PRI-311): encabezado institucional en todas las paginas.
       Document document = new Document(PageSize.A4, 36, 36, 54, 54);
       PdfWriter writer = PdfWriter.getInstance(document, out);
+      PdfA.prepare(
+          writer,
+          "Reporte Ejecutivo de Madurez en Ciberseguridad — " + eval.getName(),
+          OffsetDateTime.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS));
       writer.setPageEvent(new PageEvent(eval, auditors));
       document.open();
+      PdfA.addOutputIntent(writer);
 
       addPdfBanner(document);
       addPdfInfoBox(document, eval, auditors);
@@ -1430,18 +1417,13 @@ public class ReportService {
 
   private void addPdfObservations(Document document, List<AuditObservation> observations)
       throws DocumentException {
-    Paragraph heading =
-        new Paragraph(
-            "Observaciones de Auditoría",
-            FontFactory.getFont(FontFactory.HELVETICA_BOLD, 12, SLATE_900));
+    Paragraph heading = new Paragraph("Observaciones de Auditoría", PdfA.font(true, 12, SLATE_900));
     heading.setSpacingAfter(6);
     document.add(heading);
 
     if (observations.isEmpty()) {
       Paragraph empty =
-          new Paragraph(
-              "Sin observaciones registradas.",
-              FontFactory.getFont(FontFactory.HELVETICA, 9, SLATE_500));
+          new Paragraph("Sin observaciones registradas.", PdfA.font(false, 9, SLATE_500));
       empty.setSpacingAfter(16);
       document.add(empty);
       return;
@@ -1471,9 +1453,7 @@ public class ReportService {
 
   private void addPdfMissingEvidence(Document document, List<MaturityResult> missingEvidence)
       throws DocumentException {
-    Paragraph heading =
-        new Paragraph(
-            "Evidencias Faltantes", FontFactory.getFont(FontFactory.HELVETICA_BOLD, 12, SLATE_900));
+    Paragraph heading = new Paragraph("Evidencias Faltantes", PdfA.font(true, 12, SLATE_900));
     heading.setSpacingAfter(6);
     document.add(heading);
 
@@ -1481,7 +1461,7 @@ public class ReportService {
       Paragraph empty =
           new Paragraph(
               "No se detectaron subcategorías con brecha sin evidencia asociada.",
-              FontFactory.getFont(FontFactory.HELVETICA, 9, SLATE_500));
+              PdfA.font(false, 9, SLATE_500));
       empty.setSpacingAfter(16);
       document.add(empty);
       return;

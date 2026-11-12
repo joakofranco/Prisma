@@ -824,4 +824,160 @@ class ReportServiceTest {
 
     assertTrue(service.generateImprovementPlanPdf(eval.getId()).length > 100);
   }
+
+  // ---- PDF/A-1b (RNF-12, PRI-338) ----
+
+  private java.util.Map<String, byte[]> allReportPdfs() {
+    eval.setStatus(Evaluation.Status.IN_AUDIT);
+    withExecutiveData(functionResults(6, 5), List.of());
+    when(obsRepo.findByEvaluationIdOrderByCreatedAtDesc(eval.getId())).thenReturn(List.of());
+    when(evidenceRepo.findByEvaluationIdOrderByUploadedAtDesc(eval.getId())).thenReturn(List.of());
+    var pdfs = new java.util.LinkedHashMap<String, byte[]>();
+    pdfs.put("preliminar", service.generatePreliminaryPdf(eval.getId()));
+    eval.setStatus(Evaluation.Status.APPROVED);
+    pdfs.put("final", service.generatePdf(eval.getId()));
+    pdfs.put("ejecutivo", service.generateExecutivePdf(eval.getId()));
+    when(planRepo.findByEvaluationIdOrderByCreatedAtDesc(eval.getId())).thenReturn(exportPlans());
+    pdfs.put("plan-de-mejora", service.generateImprovementPlanPdf(eval.getId()));
+    return pdfs;
+  }
+
+  private static String raw(byte[] pdf) {
+    return new String(pdf, java.nio.charset.StandardCharsets.ISO_8859_1);
+  }
+
+  @Test
+  void allReportPdfsDeclareThemselvesPdfA1b() {
+    allReportPdfs()
+        .forEach(
+            (name, pdf) -> {
+              String text = raw(pdf);
+              assertTrue(text.startsWith("%PDF-1.4"), name + ": versión PDF 1.4");
+              assertTrue(text.contains("<pdfaid:part>1</pdfaid:part>"), name + ": pdfaid:part");
+              assertTrue(
+                  text.contains("<pdfaid:conformance>B</pdfaid:conformance>"),
+                  name + ": pdfaid:conformance");
+              assertTrue(text.contains("/Metadata"), name + ": referencia a /Metadata");
+            });
+  }
+
+  @Test
+  void allReportPdfsEmbedEveryFontAndUseNoStandardOnes() {
+    allReportPdfs()
+        .forEach(
+            (name, pdf) -> {
+              String text = raw(pdf);
+              int fonts = text.split("/Type ?/Font(?![A-Za-z])", -1).length - 1;
+              assertTrue(text.contains("/FontFile2"), name + ": fuente TrueType embebida");
+              assertFalse(text.contains("/BaseFont /Helvetica"), name + ": Helvetica sin embeber");
+              assertFalse(text.contains("/BaseFont/Helvetica"), name + ": Helvetica sin embeber");
+              assertTrue(fonts > 0, name + ": tiene fuentes");
+              // Cada descriptor de fuente apunta a un archivo de fuente embebido.
+              int descriptors = text.split("/Type ?/FontDescriptor", -1).length - 1;
+              int files = text.split("/FontFile2", -1).length - 1;
+              assertEquals(descriptors, files, name + ": un FontFile2 por FontDescriptor");
+            });
+  }
+
+  @Test
+  void allReportPdfsHaveAnOutputIntentAndNoTransparency() {
+    allReportPdfs()
+        .forEach(
+            (name, pdf) -> {
+              String text = raw(pdf);
+              assertTrue(text.contains("/OutputIntents"), name + ": OutputIntents");
+              assertTrue(text.contains("/GTS_PDFA1"), name + ": intención GTS_PDFA1");
+              assertTrue(text.contains("/DestOutputProfile"), name + ": perfil ICC");
+              assertFalse(text.contains("/SMask"), name + ": sin máscaras suaves");
+              assertFalse(text.matches("(?s).*/ca +[0-9.]+.*"), name + ": sin opacidad /ca");
+              assertFalse(text.matches("(?s).*/CA +[0-9.]+.*"), name + ": sin opacidad /CA");
+              assertFalse(text.contains("/Encrypt"), name + ": sin cifrado");
+              assertFalse(text.contains("/JavaScript"), name + ": sin JavaScript");
+            });
+  }
+
+  @Test
+  void theInfoDictionaryAndTheXmpAgreeOnTheTitle() {
+    byte[] pdf = allReportPdfs().get("final");
+    String text = raw(pdf);
+    // El diccionario Info lleva el título en UTF-16 (BOM); el XMP en texto plano. Basta con el
+    // fragmento ASCII del nombre de la evaluación en el XMP y la presencia de /Title.
+    assertTrue(text.contains("/Title"));
+    assertTrue(text.contains("Evaluacion 2026</rdf:li>"));
+  }
+
+  /**
+   * Validación con veraPDF si está disponible: define {@code VERAPDF_CLI} con el ejecutable (por
+   * ejemplo {@code verapdf}). Se omite si no está definido (ver docs/Codigo.md para correrlo con
+   * Docker).
+   */
+  @org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable(
+      named = "VERAPDF_CLI",
+      matches = ".+")
+  @Test
+  void veraPdfValidatesEveryReportPdfAsPdfA1b() throws Exception {
+    for (var entry : allReportPdfs().entrySet()) {
+      java.nio.file.Path file =
+          java.nio.file.Files.createTempFile("pdfa-" + entry.getKey(), ".pdf");
+      try {
+        java.nio.file.Files.write(file, entry.getValue());
+        Process process =
+            new ProcessBuilder(
+                    System.getenv("VERAPDF_CLI"),
+                    "--flavour",
+                    "1b",
+                    "--format",
+                    "text",
+                    file.toString())
+                .redirectErrorStream(true)
+                .start();
+        String output = new String(process.getInputStream().readAllBytes());
+        assertEquals(0, process.waitFor(), entry.getKey() + ": " + output);
+        assertTrue(output.startsWith("PASS"), entry.getKey() + ": " + output);
+      } finally {
+        java.nio.file.Files.deleteIfExists(file);
+      }
+    }
+  }
+
+  /**
+   * Vuelca los PDF de reportes a un directorio para validarlos con veraPDF (ver docs/Codigo.md).
+   * Solo corre con {@code -Dpdfa.dumpDir=<directorio>}; en el CI normal se omite.
+   */
+  @org.junit.jupiter.api.condition.EnabledIfSystemProperty(named = "pdfa.dumpDir", matches = ".+")
+  @Test
+  void dumpPdfsForVeraPdfValidation() throws Exception {
+    java.nio.file.Path dir = java.nio.file.Path.of(System.getProperty("pdfa.dumpDir"));
+    java.nio.file.Files.createDirectories(dir);
+    eval.setStatus(Evaluation.Status.IN_AUDIT);
+    withExecutiveData(
+        functionResults(6, 5),
+        List.of(
+            plan(
+                "Definir la política de respaldo",
+                ImprovementPlan.Priority.HIGH,
+                java.time.LocalDate.of(2026, 12, 15),
+                ImprovementPlan.PlanStatus.PENDING,
+                1)));
+    when(obsRepo.findByEvaluationIdOrderByCreatedAtDesc(eval.getId()))
+        .thenReturn(
+            List.of(
+                AuditObservation.builder()
+                    .type(AuditObservation.ObservationType.OBSERVATION)
+                    .description("Falta política documentada — ñandú")
+                    .status(AuditObservation.ObservationStatus.OPEN)
+                    .createdAt(OffsetDateTime.now())
+                    .build()));
+    when(evidenceRepo.findByEvaluationIdOrderByUploadedAtDesc(eval.getId())).thenReturn(List.of());
+
+    java.nio.file.Files.write(
+        dir.resolve("preliminar.pdf"), service.generatePreliminaryPdf(eval.getId()));
+    eval.setStatus(Evaluation.Status.APPROVED);
+    java.nio.file.Files.write(dir.resolve("final.pdf"), service.generatePdf(eval.getId()));
+    java.nio.file.Files.write(
+        dir.resolve("ejecutivo.pdf"), service.generateExecutivePdf(eval.getId()));
+    when(planRepo.findByEvaluationIdOrderByCreatedAtDesc(eval.getId())).thenReturn(exportPlans());
+    java.nio.file.Files.write(
+        dir.resolve("plan-de-mejora.pdf"), service.generateImprovementPlanPdf(eval.getId()));
+  }
 }

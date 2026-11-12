@@ -140,8 +140,13 @@ public class TechnicalReportService {
     try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
       Document doc = new Document(PageSize.A4, 40, 40, 60, 52);
       PdfWriter writer = PdfWriter.getInstance(doc, out);
+      PdfA.prepare(
+          writer,
+          "Reporte técnico detallado — " + eval.getName(),
+          OffsetDateTime.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS));
       writer.setPageEvent(new PageDecorator(eval));
       doc.open();
+      PdfA.addOutputIntent(writer);
       writeCover(doc, eval, data);
       writeFunctionMaturity(doc, data);
       writeDetail(doc, data);
@@ -591,7 +596,8 @@ public class TechnicalReportService {
 
   private void writeHowToRead(Document doc) throws DocumentException {
     sectionTitle(doc, "2. Cómo leer este reporte");
-    Paragraph p = new Paragraph();
+    // Un Paragraph vacío trae Helvetica (sin embeber) para su salto de línea: PDF/A lo rechaza.
+    Paragraph p = new Paragraph("", font(FontFactory.HELVETICA, 9.5f, SLATE_700));
     p.add(new Chunk("Nivel acumulativo. ", font(FontFactory.HELVETICA_BOLD, 9.5f, SLATE_700)));
     p.add(
         new Chunk(
@@ -852,7 +858,7 @@ public class TechnicalReportService {
     cell.setBorderColor(bg);
     cell.setBorderWidth(1);
     cell.setPadding(7);
-    Paragraph head = new Paragraph();
+    Paragraph head = new Paragraph("", font(FontFactory.HELVETICA, 7.5f, SLATE_700));
     head.add(
         new Chunk(
             typeLabel(o.getType()).toUpperCase(), font(FontFactory.HELVETICA_BOLD, 7.5f, fg)));
@@ -1048,8 +1054,17 @@ public class TechnicalReportService {
   // Helpers de maquetado
   // =====================================================================================
 
+  // PDF/A-1b (RNF-12): las fuentes tienen que ir embebidas, así que no se usan las Helvetica
+  // estándar de FontFactory. El nombre sigue siendo el de FontFactory para no tocar los ~60
+  // llamados:
+  // «Bold» elige la negrita embebida y «Oblique» simula la cursiva (la familia embebida no la
+  // trae).
   private static Font font(String name, float size, Color color) {
-    return FontFactory.getFont(name, size, color);
+    Font font = PdfA.font(name.contains("Bold"), size, color);
+    if (name.contains("Oblique")) {
+      font.setStyle(Font.ITALIC);
+    }
+    return font;
   }
 
   private static Font italic(float size) {
@@ -1073,8 +1088,11 @@ public class TechnicalReportService {
     Paragraph p = new Paragraph(text, font(FontFactory.HELVETICA_BOLD, 12.5f, BRAND));
     p.setSpacingBefore(14);
     doc.add(p);
-    Paragraph line =
-        new Paragraph(new Chunk(new LineSeparator(1.5f, 100, BRAND, Element.ALIGN_LEFT, -3)));
+    // El Chunk de una línea trae la fuente por defecto (Helvetica sin embeber), que PDF/A rechaza:
+    // aunque solo dibuje una línea, se le asigna la fuente embebida.
+    Chunk rule = new Chunk(new LineSeparator(1.5f, 100, BRAND, Element.ALIGN_LEFT, -3));
+    rule.setFont(PdfA.font(false, 8, Color.BLACK));
+    Paragraph line = new Paragraph(rule);
     line.setSpacingAfter(6);
     doc.add(line);
   }
@@ -1300,11 +1318,9 @@ public class TechnicalReportService {
 
     PageDecorator(Evaluation eval) {
       try {
-        this.regular =
-            BaseFont.createFont(BaseFont.HELVETICA, BaseFont.CP1252, BaseFont.NOT_EMBEDDED);
-        this.bold =
-            BaseFont.createFont(BaseFont.HELVETICA_BOLD, BaseFont.CP1252, BaseFont.NOT_EMBEDDED);
-      } catch (DocumentException | IOException e) {
+        this.regular = PdfA.regularBase();
+        this.bold = PdfA.boldBase();
+      } catch (RuntimeException e) {
         throw new IllegalStateException(e);
       }
       this.headerRight =

@@ -4,7 +4,6 @@ import com.lowagie.text.DocumentException;
 import com.lowagie.text.Image;
 import com.lowagie.text.pdf.BaseFont;
 import com.lowagie.text.pdf.PdfContentByte;
-import com.lowagie.text.pdf.PdfGState;
 import com.lowagie.text.pdf.PdfTemplate;
 import com.lowagie.text.pdf.PdfWriter;
 import java.awt.Color;
@@ -30,6 +29,8 @@ final class RadarChart {
   private static final Color MUTED = new Color(100, 116, 139); // slate-500
   private static final Color CURRENT = new Color(30, 64, 175); // blue-800
   private static final Color TARGET = new Color(22, 163, 74); // green-600
+  // CURRENT al 25 % sobre blanco: el relleno del área sin transparencia (PDF/A-1).
+  private static final Color CURRENT_FILL = new Color(199, 207, 235);
 
   private RadarChart() {}
 
@@ -44,9 +45,8 @@ final class RadarChart {
     if (axes.size() < 3) {
       throw new IllegalArgumentException("Un radar necesita al menos 3 ejes");
     }
-    BaseFont font = BaseFont.createFont(BaseFont.HELVETICA, BaseFont.CP1252, BaseFont.NOT_EMBEDDED);
-    BaseFont bold =
-        BaseFont.createFont(BaseFont.HELVETICA_BOLD, BaseFont.CP1252, BaseFont.NOT_EMBEDDED);
+    BaseFont font = PdfA.regularBase();
+    BaseFont bold = PdfA.boldBase();
     PdfTemplate template = writer.getDirectContent().createTemplate(width, height);
 
     float cx = width / 2;
@@ -55,10 +55,13 @@ final class RadarChart {
     float radius = Math.min(width / 2 - 135, height / 2 - 26);
     int n = axes.size();
 
+    // PDF/A-1 prohíbe la transparencia: el área del nivel actual se rellena con un color sólido
+    // claro (CURRENT mezclado con blanco al 25 %), por eso va primero y la grilla se dibuja encima.
+    drawPolygon(template, axes, cx, cy, radius, true, true);
     drawRings(template, font, cx, cy, radius, n);
     drawAxes(template, cx, cy, radius, n);
-    drawPolygon(template, axes, cx, cy, radius, true);
-    drawPolygon(template, axes, cx, cy, radius, false);
+    drawPolygon(template, axes, cx, cy, radius, true, false);
+    drawPolygon(template, axes, cx, cy, radius, false, false);
     drawLabels(template, font, bold, axes, cx, cy, radius);
     drawLegend(template, font, height);
     return Image.getInstance(template);
@@ -123,14 +126,17 @@ final class RadarChart {
   }
 
   private static void drawPolygon(
-      PdfTemplate t, List<Axis> axes, float cx, float cy, float radius, boolean current) {
+      PdfTemplate t,
+      List<Axis> axes,
+      float cx,
+      float cy,
+      float radius,
+      boolean current,
+      boolean fillOnly) {
     int n = axes.size();
     t.saveState();
-    if (current) {
-      PdfGState translucent = new PdfGState();
-      translucent.setFillOpacity(0.25f);
-      t.setGState(translucent);
-      t.setColorFill(CURRENT);
+    if (fillOnly) {
+      t.setColorFill(CURRENT_FILL);
     }
     t.setColorStroke(current ? CURRENT : TARGET);
     t.setLineWidth(current ? 1.6f : 1.4f);
@@ -148,8 +154,9 @@ final class RadarChart {
         t.lineTo(x, y);
       }
     }
-    if (current) {
-      t.closePathFillStroke();
+    if (fillOnly) {
+      t.closePath();
+      t.fill();
     } else {
       t.closePathStroke();
     }
@@ -206,10 +213,9 @@ final class RadarChart {
     float x = 4;
     float y = height - 12;
     t.saveState();
-    t.setColorFill(CURRENT);
-    PdfGState translucent = new PdfGState();
-    translucent.setFillOpacity(0.25f);
-    t.setGState(translucent);
+    t.setColorFill(CURRENT_FILL);
+    t.setColorStroke(CURRENT);
+    t.setLineWidth(1f);
     t.rectangle(x, y - 1, 12, 7);
     t.fillStroke();
     t.restoreState();
