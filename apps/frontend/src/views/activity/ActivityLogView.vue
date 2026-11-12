@@ -19,8 +19,8 @@
         <input
           v-model="searchTerm"
           type="text"
-          placeholder="Buscar por acción o recurso..."
-          aria-label="Buscar por acción o recurso"
+          placeholder="Buscar por usuario, organización, acción, recurso o ID..."
+          aria-label="Buscar por usuario, organización, acción, recurso o ID"
           class="w-full pl-10 pr-4 py-2 rounded-lg border border-slate-300 dark:border-slate-500 bg-white dark:bg-slate-700 text-slate-900 dark:text-white placeholder:text-slate-500 dark:placeholder:text-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           @input="debouncedSearch"
         />

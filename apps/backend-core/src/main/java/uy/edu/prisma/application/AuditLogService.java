@@ -1,8 +1,10 @@
 package uy.edu.prisma.application;
 
+import java.text.Normalizer;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -77,11 +79,73 @@ public class AuditLogService {
       }
     }
     PageRequest pageable = PageRequest.of(page, pageSize, Sort.by("createdAt").descending());
-    Page<AuditLog> result =
-        auditRepo.search(tenantId, blankToNull(action), blankToNull(search), pageable);
+    Page<AuditLog> result = searchLogs(tenantId, action, search, pageable);
 
     return new PaginatedDto<>(
         toDtos(result.getContent()), result.getTotalElements(), page, pageSize);
+  }
+
+  // PRI-368: etiquetas en español que la bitácora muestra en pantalla. Se repiten acá (están en
+  // apps/frontend/src/utils/constants.ts: AUDIT_ACTION_LABELS y AUDIT_RESOURCE_TYPE_LABELS) para
+  // que quien busque pueda escribir lo que ve («Inicio de Sesión», «Usuario») además del código
+  // interno («LOGIN», «user»). Si se agrega una acción o un tipo nuevo, sumarlo en los dos lados.
+  private static final Map<String, String> ACTION_LABELS =
+      Map.ofEntries(
+          Map.entry("CREATE", "Creación"),
+          Map.entry("UPDATE", "Actualización"),
+          Map.entry("DELETE", "Eliminación"),
+          Map.entry("UPDATE_STATUS", "Cambio de Estado"),
+          Map.entry("UPDATE_PROFILE", "Actualización de Perfil"),
+          Map.entry("CHANGE_PASSWORD", "Cambio de Contraseña"),
+          Map.entry("LINK_KEYCLOAK_ACCOUNT", "Vinculación de Cuenta"),
+          Map.entry("REACTIVATE", "Reactivación"),
+          Map.entry("SAVE_RESPONSE", "Respuesta Guardada"),
+          Map.entry("LOGIN", "Inicio de Sesión"),
+          Map.entry("LOGOUT", "Cierre de Sesión"),
+          Map.entry("LOGIN_FAILED", "Inicio de Sesión Fallido"));
+
+  private static final Map<String, String> RESOURCE_TYPE_LABELS =
+      Map.of(
+          "user", "Usuario",
+          "organization", "Organización",
+          "evaluation", "Evaluación",
+          "catalog_version", "Versión de Catálogo",
+          "email-settings", "Configuración de Email");
+
+  // Marcador que no coincide con ninguna acción ni tipo real: el IN de la consulta no admite una
+  // lista vacía.
+  private static final List<String> NO_MATCH = List.of("__sin_coincidencia__");
+
+  /** Minúsculas y sin tildes: «Sesión» y «sesion» comparan igual (la consulta pliega lo mismo). */
+  static String fold(String text) {
+    return Normalizer.normalize(text, Normalizer.Form.NFD)
+        .replaceAll("\\p{M}", "")
+        .toLowerCase(Locale.ROOT);
+  }
+
+  private Page<AuditLog> searchLogs(
+      UUID tenantId, String action, String search, PageRequest pageable) {
+    String term = blankToNull(search == null ? null : search.trim());
+    if (term == null) {
+      return auditRepo.search(tenantId, blankToNull(action), null, NO_MATCH, NO_MATCH, pageable);
+    }
+    String folded = fold(term);
+    return auditRepo.search(
+        tenantId,
+        blankToNull(action),
+        "%" + folded + "%",
+        codesWhoseLabelContains(ACTION_LABELS, folded),
+        codesWhoseLabelContains(RESOURCE_TYPE_LABELS, folded),
+        pageable);
+  }
+
+  private static List<String> codesWhoseLabelContains(Map<String, String> labels, String folded) {
+    List<String> codes =
+        labels.entrySet().stream()
+            .filter(e -> fold(e.getValue()).contains(folded))
+            .map(Map.Entry::getKey)
+            .toList();
+    return codes.isEmpty() ? NO_MATCH : codes;
   }
 
   // Tope de filas de un export CSV: evita cargar en memoria una bitácora de años sin paginar. Para
@@ -104,8 +168,7 @@ public class AuditLogService {
       }
     }
     PageRequest pageable = PageRequest.of(0, EXPORT_MAX_ROWS, Sort.by("createdAt").descending());
-    Page<AuditLog> result =
-        auditRepo.search(tenantId, blankToNull(action), blankToNull(search), pageable);
+    Page<AuditLog> result = searchLogs(tenantId, action, search, pageable);
 
     StringBuilder csv = new StringBuilder(CSV_HEADER);
     for (AuditLogDto dto : toDtos(result.getContent())) {

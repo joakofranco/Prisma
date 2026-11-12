@@ -57,15 +57,18 @@ public class OrganizationService {
   @Transactional(readOnly = true)
   public PaginatedDto<OrganizationDto> list(String search, int page, int pageSize) {
     PageRequest pageable = PageRequest.of(page, pageSize, Sort.by("createdAt").descending());
+    // PRI-368: sin tildes, mayúsculas ni puntos; el RUT además sin guiones ni espacios.
+    String pattern = SearchText.pattern(search);
+    String idPattern = SearchText.idPattern(search);
     Page<Organization> result;
     if (currentUser.hasAllOrganizationsAccess()) {
-      result = repo.search(search, pageable);
+      result = repo.search(pattern, idPattern, pageable);
     } else {
       Set<UUID> allowedIds = currentUser.organizationIds();
       result =
           allowedIds.isEmpty()
               ? Page.empty(pageable)
-              : repo.searchByIdIn(allowedIds, search, pageable);
+              : repo.searchByIdIn(allowedIds, pattern, idPattern, pageable);
     }
     return new PaginatedDto<>(
         result.getContent().stream().map(this::toDto).toList(),

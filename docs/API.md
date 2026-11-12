@@ -58,7 +58,7 @@ Todos los errores de `backend-core` devuelven el mismo shape (`GlobalExceptionHa
 
 | Método | Path | Rol | Notas |
 |---|---|---|---|
-| GET | `/` | cualquiera autenticado | `PRISMA_ADMIN` ve todas; `AUDITOR` sólo las que audita; el resto sólo la propia (paginado, `page` 1-indexed) |
+| GET | `/` | cualquiera autenticado | `PRISMA_ADMIN` ve todas; `AUDITOR` sólo las que audita; el resto sólo la propia (paginado, `page` 1-indexed). `?search=` busca en el nombre y en el RUT, sin distinguir mayúsculas, tildes ni puntos; en el RUT además ignora guiones y espacios (`1.234.567-8`, `1234567-8` y `12345678` son lo mismo) |
 | GET | `/{id}` | cualquiera autenticado | 403 si la organización no es la propia (ni auditada, salvo `PRISMA_ADMIN`) |
 | POST | `/` | `PRISMA_ADMIN` | `{name, rut?, sector, size, responsibleId?}` — `rut` es **opcional** (Uruguay usa "RUT", no "NIT"); en blanco se normaliza a `NULL` en el backend |
 | PUT | `/{id}` | `PRISMA_ADMIN` | mismo shape que POST |
@@ -68,7 +68,7 @@ Todos los errores de `backend-core` devuelven el mismo shape (`GlobalExceptionHa
 
 | Método | Path | Rol | Notas |
 |---|---|---|---|
-| GET | `/` | cualquiera autenticado | mismo criterio de scoping que Organizaciones (por tenant/auditadas/todas) |
+| GET | `/` | cualquiera autenticado | mismo criterio de scoping que Organizaciones (por tenant/auditadas/todas). `?search=` busca en el email, en «Nombre Apellido» y en el nombre de cualquiera de sus organizaciones, sin distinguir mayúsculas, tildes ni puntos (`ana.perez` y `anaperez` coinciden) |
 | GET | `/{id}` | cualquiera autenticado | un usuario siempre puede ver su propia ficha aunque esté fuera de su tenant |
 | POST | `/` | `PRISMA_ADMIN`, `ORG_RESPONSIBLE` | `{email, firstName, lastName, organizationIds?, roles[], password, enabled?}` — provisiona la cuenta en Keycloak (sin `password` no puede loguearse nunca). `organizationIds` es la membresía M:N usuario↔organización y su cantidad depende del rol: `ORG_RESPONSIBLE`/`VIEWER` exactamente **1**, `AUDITOR` **≥1**, `INTERNAL_EVALUATOR` cualquier cantidad (con **0** es un evaluador *general* que accede a todas las organizaciones), `PRISMA_ADMIN` ninguna (global; si lo tiene, no se validan los demás roles). Incumplirlo → **400**. `ORG_RESPONSIBLE`: solo puede asignar su propia organización (**403** si pide otra u otorga `PRISMA_ADMIN`) y nunca crea evaluadores generales. En `PUT`, `organizationIds` omitido = sin cambios y `[]` = quitarle todas (solo `PRISMA_ADMIN` las cambia). `enabled` es opcional, `true` si se omite |
 | PUT | `/{id}` | `PRISMA_ADMIN`, `ORG_RESPONSIBLE` | mismo shape; si trae `password`, la resetea (permanente) también en Keycloak. `enabled: false` **deshabilita** al usuario (sincronizado a Keycloak: no puede autenticarse) sin borrarlo — conserva historial, a diferencia de `DELETE`; `enabled` ausente/`null` deja el estado como estaba. **400** si se intenta deshabilitar la propia cuenta o al administrador global sembrado. `ORG_RESPONSIBLE`: **403** si el usuario destino no es de su organización, si intenta reubicarlo en otra, o si intenta otorgar `PRISMA_ADMIN` |
@@ -205,7 +205,7 @@ qué, cuándo, desde qué IP) — ver [`Arquitectura.md`](Arquitectura.md#trazab
 
 | Método | Path | Rol | Notas |
 |---|---|---|---|
-| GET | `/` | `PRISMA_ADMIN`, `ORG_RESPONSIBLE` | `?search=` (texto libre sobre acción/recurso), `?action=` (exacto, ej. `LOGIN_FAILED`), paginado (`page` 1-indexed). `PRISMA_ADMIN` ve todos los tenants; `ORG_RESPONSIBLE` sólo el propio (mismo criterio de aislamiento que el resto de la API) — **no** acepta filtrar por `tenantId` en el body/query, lo decide el rol del token |
+| GET | `/` | `PRISMA_ADMIN`, `ORG_RESPONSIBLE` | `?search=` (texto libre, sin distinguir mayúsculas ni tildes; ver «Qué busca `?search=`» abajo), `?action=` (exacto, ej. `LOGIN_FAILED`), paginado (`page` 1-indexed). `PRISMA_ADMIN` ve todos los tenants; `ORG_RESPONSIBLE` sólo el propio (mismo criterio de aislamiento que el resto de la API) — **no** acepta filtrar por `tenantId` en el body/query, lo decide el rol del token |
 
 Cada fila incluye `resource` (crudo, `"tipo:id"`, ej. `"user:38dab301-..."`) y `resourceName`
 (nombre real resuelto de la entidad — `null` si el tipo no tiene entidad propia o ya no existe).
@@ -213,6 +213,24 @@ Las acciones registradas hoy: `CREATE`/`UPDATE`/`DELETE`/`UPDATE_STATUS` (por ca
 `UPDATE_PROFILE`/`CHANGE_PASSWORD` (cuenta propia), `SAVE_RESPONSE` (autoevaluación), `LOGIN`/
 `LOGOUT` (ver `POST /account/session-event` arriba) y `LOGIN_FAILED` (traído desde Keycloak por
 `LoginFailureAuditSyncService`, no por un request HTTP — ver [`SECURITY.md`](SECURITY.md)).
+
+**Qué busca `?search=`** (PRI-368) — lo que muestra la pantalla **y** los códigos internos, así quien
+administra puede escribir lo que ve o pegar un identificador:
+
+- Usuario que hizo la acción: email o «Nombre Apellido».
+- Organización: nombre.
+- Acción: código (`LOGIN`) o etiqueta en español (`Inicio de Sesión`). Es búsqueda por contenido:
+  «Inicio de Sesión» también incluye «Inicio de Sesión Fallido»; para una acción exacta usar `?action=`.
+- Recurso afectado: el texto crudo (`user:<uuid>`, o el email intentado en un `LOGIN_FAILED`), el
+  tipo en español (`Usuario`, `Evaluación`, …) y el nombre de la entidad referenciada (usuario,
+  organización, evaluación, versión de catálogo).
+- IP y los `uuid` del usuario y de la organización de la fila. Como se comparan contra la propia
+  bitácora, un `uuid` sigue encontrando filas **aunque el usuario o el recurso ya se hayan eliminado**
+  (la bitácora es append-only).
+
+El mismo filtro vale para el export CSV. Las etiquetas en español están duplicadas en
+`AuditLogService` (backend) y `apps/frontend/src/utils/constants.ts`: si se agrega una acción o un
+tipo nuevo, sumarlo en los dos lados.
 
 ## backend-ai — `/api/v1/*` (sólo llamado por backend-core, requiere `X-Internal-Api-Key`)
 

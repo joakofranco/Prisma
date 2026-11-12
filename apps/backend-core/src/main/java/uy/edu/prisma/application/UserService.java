@@ -74,15 +74,17 @@ public class UserService {
   @Transactional(readOnly = true)
   public PaginatedDto<UserDto> list(String search, int page, int pageSize) {
     PageRequest pageable = PageRequest.of(page, pageSize, Sort.by("createdAt").descending());
+    // PRI-368: sin tildes, mayúsculas ni puntos; busca email, nombre completo y organización.
+    String pattern = SearchText.pattern(search);
     Page<User> result;
     if (currentUser.isPrismaAdmin()) {
-      result = userRepo.search(search, pageable);
+      result = userRepo.search(pattern, pageable);
     } else {
       Set<UUID> allowedOrgIds = currentUser.organizationIds();
       result =
           allowedOrgIds.isEmpty()
               ? Page.empty(pageable)
-              : userRepo.searchByOrganizationIdIn(allowedOrgIds, search, pageable);
+              : userRepo.searchByOrganizationIdIn(allowedOrgIds, pattern, pageable);
     }
     return new PaginatedDto<>(
         result.getContent().stream().map(this::toDto).toList(),
