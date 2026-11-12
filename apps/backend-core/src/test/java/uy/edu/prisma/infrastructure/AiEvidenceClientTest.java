@@ -83,13 +83,15 @@ class AiEvidenceClientTest {
   }
 
   @Test
-  void citationsReturnsEmptyListWhenBackendAiFails() {
+  void citationsThrowsAiUnavailableWhenBackendAiFailsInsteadOfReturningEmpty() {
+    // PRI-359: «IA caída» no se puede confundir con «sin resultados».
     server.expect(requestTo(BASE_URL + "/api/v1/evidence/citations")).andRespond(withServerError());
 
-    List<EvidenceCitationDto> result =
-        client.citations(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), "backup policy");
-
-    assertTrue(result.isEmpty());
+    assertThrows(
+        uy.edu.prisma.domain.exception.AiUnavailableException.class,
+        () ->
+            client.citations(
+                UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), "backup policy"));
   }
 
   @Test

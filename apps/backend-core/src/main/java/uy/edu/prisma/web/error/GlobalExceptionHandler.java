@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import uy.edu.prisma.application.OrganizationMessages;
 import uy.edu.prisma.config.EvidenceConfig.EvidenceProperties;
+import uy.edu.prisma.domain.exception.AiUnavailableException;
 import uy.edu.prisma.domain.exception.ConflictException;
 import uy.edu.prisma.domain.exception.InvalidRequestException;
 import uy.edu.prisma.domain.exception.MalwareDetectedException;
@@ -47,6 +48,12 @@ public class GlobalExceptionHandler {
     Map<String, List<String>> details =
         ex.getField() == null ? null : Map.of(ex.getField(), List.of(ex.getMessage()));
     return build(HttpStatus.CONFLICT, "CONFLICT", ex.getMessage(), details);
+  }
+
+  @ExceptionHandler(AiUnavailableException.class)
+  public ResponseEntity<ApiErrorDto> handleAiUnavailable(AiUnavailableException ex) {
+    log.warn("Asistente de IA no disponible: {}", ex.getCause() != null ? ex.getCause() : ex);
+    return build(HttpStatus.SERVICE_UNAVAILABLE, "AI_UNAVAILABLE", ex.getMessage(), null);
   }
 
   @ExceptionHandler(InvalidRequestException.class)

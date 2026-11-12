@@ -140,6 +140,11 @@ prisma:
     # Compartida con backend-ai (X-Internal-Api-Key): sin ella, backend-ai queda alcanzable por
     # cualquiera que le pegue directo al puerto expuesto. Vacía en dev local == sin chequeo.
     internal-api-key: ${AI_INTERNAL_API_KEY:}
+    # Timeouts hacia backend-ai (PRI-358): conexión, lectura de ingesta/citas y lectura de la guía
+    # de mejora (la guía genera con el LLM y tarda cerca de un minuto con Ollama local).
+    connect-timeout: ${AI_CONNECT_TIMEOUT:3s}
+    read-timeout: ${AI_READ_TIMEOUT:60s}
+    guide-read-timeout: ${AI_GUIDE_READ_TIMEOUT:120s}
   # RF-USR-05 (PRI-240): adónde vuelve quien acepta una invitación, después de crear su contraseña
   # en Keycloak (la URL pública del frontend). client-id = el client público del frontend.
   invitations:

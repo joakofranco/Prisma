@@ -12,6 +12,7 @@ import type {
   AuditVerdict,
   Evidence,
   EvidenceCitation,
+  CitationFeedbackItem,
   EvidenceRules,
   AuditObservation,
   AuditLog,
@@ -247,6 +248,10 @@ export const evidenceService = {
     return apiClient.get<EvidenceCitation[]>(
       `/evidence/evaluation/${evaluationId}/control/${controlId}/citations`,
     );
+  },
+  /** El auditor acepta o rechaza las citas de la IA (la evaluación solo valida acceso y estado). */
+  sendCitationFeedback(evaluationId: string, items: CitationFeedbackItem[]) {
+    return apiClient.post<void>('/evidence/citations/feedback', { evaluationId, items });
   },
 };
 

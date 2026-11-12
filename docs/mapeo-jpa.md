@@ -50,6 +50,7 @@
 | [`Evidence`](#evidence) | `evidence` | `prisma` |
 | [`ImprovementPlan`](#improvementplan) | `improvement_plans` | `prisma` |
 | [`AiSuggestionFeedback`](#aisuggestionfeedback) | `ai_suggestion_feedback` | `prisma` |
+| [`AiCitationFeedback`](#aicitationfeedback) | `ai_citation_feedback` | `prisma` |
 | [`AuditObservation`](#auditobservation) | `audit_observations` | `prisma` |
 | [`AuditLog`](#auditlog) | `audit_logs` | `audit` |
 
@@ -333,6 +334,21 @@ se pueda rastrear hasta una organización. `originalTips` es `jsonb` (`@JdbcType
 
 ---
 
+### `AiCitationFeedback`
+
+```java
+@Entity @Table(name = "ai_citation_feedback", schema = "prisma")
+```
+
+Decisión del auditor sobre una cita de la búsqueda asistida (PRI-359, migración `V33`). Enum
+anidado `Decision` (`ACCEPTED`/`REJECTED`, `@Enumerated(STRING)`). Igual que
+`AiSuggestionFeedback`, `control` es `@ManyToOne(LAZY)` obligatorio y **no** hay evaluación,
+organización ni usuario, para que el dataset no se pueda rastrear hasta una organización. Guarda el
+fragmento (`snippet`), el archivo, la ubicación y el puntaje que devolvió la IA. Es solo historial:
+cambiar de opinión agrega otra fila.
+
+---
+
 ### `AuditObservation`
 
 ```java
@@ -342,6 +358,10 @@ se pueda rastrear hasta una organización. `originalTips` es `jsonb` (`@JdbcType
 Enums anidados `ObservationType` (`OBSERVATION`/`NON_CONFORMITY`/`RECOMMENDATION`) y
 `ObservationStatus` (`OPEN`/`IN_PROGRESS`/`RESOLVED`/`CLOSED`). Misma forma que `ImprovementPlan`:
 `evaluation` obligatorio, `control` y `createdBy` opcionales.
+`subcategory` es opcional (migración `V26`). `evidence` es `@ManyToOne(LAZY)` opcional (columna
+`evidence_id`, migración `V34`, `ON DELETE SET NULL`): la evidencia citada de la que sale la
+observación (RF-EVI-15, PRI-360); el servicio valida que sea de la misma evaluación. Si la evidencia
+se borra, la observación se conserva sin el vínculo.
 
 ---
 

@@ -77,6 +77,15 @@
               </BaseButton>
             </div>
 
+            <p
+              v-if="citationsError[c.controlId]"
+              class="mt-3 text-xs text-amber-700 dark:text-amber-400"
+              role="alert"
+              data-testid="citations-ai-unavailable"
+            >
+              {{ citationsError[c.controlId] }}
+            </p>
+
             <div v-if="citationsByControl[c.controlId]" class="mt-3 space-y-2">
               <p
                 v-if="citationsByControl[c.controlId].length === 0"
@@ -102,13 +111,43 @@
                   </button>
                 </div>
                 <p class="text-xs text-slate-600 dark:text-slate-300 mt-1">{{ cit.snippet }}</p>
-                <button
-                  v-if="canWriteObservations"
-                  class="mt-2 text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400"
-                  @click="openObservationForCitation(c, cit)"
-                >
-                  Registrar validación
-                </button>
+                <div v-if="canWriteObservations" class="mt-2 flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    class="text-xs font-medium px-2 py-1 rounded border"
+                    :class="
+                      citationDecision[citationKey(c, i)] === 'ACCEPTED'
+                        ? 'bg-green-600 text-white border-green-600'
+                        : 'text-green-700 border-green-300 hover:bg-green-50 dark:text-green-400 dark:border-green-700 dark:hover:bg-green-950'
+                    "
+                    :aria-pressed="citationDecision[citationKey(c, i)] === 'ACCEPTED'"
+                    data-testid="accept-citation"
+                    @click="decideCitation(c, cit, i, 'ACCEPTED')"
+                  >
+                    Aceptar cita
+                  </button>
+                  <button
+                    type="button"
+                    class="text-xs font-medium px-2 py-1 rounded border"
+                    :class="
+                      citationDecision[citationKey(c, i)] === 'REJECTED'
+                        ? 'bg-red-600 text-white border-red-600'
+                        : 'text-red-700 border-red-300 hover:bg-red-50 dark:text-red-400 dark:border-red-700 dark:hover:bg-red-950'
+                    "
+                    :aria-pressed="citationDecision[citationKey(c, i)] === 'REJECTED'"
+                    data-testid="reject-citation"
+                    @click="decideCitation(c, cit, i, 'REJECTED')"
+                  >
+                    Rechazar cita
+                  </button>
+                  <button
+                    type="button"
+                    class="text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400"
+                    @click="openObservationForCitation(c, cit)"
+                  >
+                    Registrar validación
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -302,6 +341,24 @@
                 <p class="text-sm text-slate-700 dark:text-slate-200">
                   {{ obs.description }}
                 </p>
+                <p
+                  v-if="obs.evidenceId"
+                  class="text-xs text-slate-600 mt-1 dark:text-slate-300"
+                  data-testid="observation-evidence"
+                >
+                  Documento citado: {{ obs.evidenceFileName ?? 'evidencia' }}
+                  <button
+                    v-if="canViewDocument"
+                    type="button"
+                    class="ml-1 text-blue-600 hover:underline dark:text-blue-400"
+                    data-testid="observation-open-document"
+                    @click="
+                      openDocument({ evidenceId: obs.evidenceId, location: observationPage(obs) })
+                    "
+                  >
+                    Ver documento
+                  </button>
+                </p>
                 <p class="text-xs text-slate-500 mt-2 dark:text-slate-400">
                   {{ formatDate(obs.createdAt) }}
                   <span v-if="obs.createdByName"> — Registrada por {{ obs.createdByName }}</span>
@@ -444,6 +501,8 @@
     description: '',
     controlId: undefined as string | undefined,
     subcategoryId: '',
+    // Evidencia citada de la que sale la observación (RF-EVI-15): solo al registrarla desde una cita.
+    evidenceId: undefined as string | undefined,
   });
 
   // RF-AUD-05: además de por control, el auditor puede atar una observación a una subcategoría
@@ -471,6 +530,39 @@
   const controlsWithEvidence = ref<ControlWithEvidence[]>([]);
   const searchingControlId = ref<string | null>(null);
   const citationsByControl = reactive<Record<string, EvidenceCitation[]>>({});
+  // «La IA no está disponible» es distinto de «sin resultados» (PRI-359).
+  const citationsError = reactive<Record<string, string>>({});
+  // Decisión del auditor sobre cada cita (aceptar/rechazar), por control y posición en la lista.
+  const citationDecision = reactive<Record<string, 'ACCEPTED' | 'REJECTED'>>({});
+
+  function citationKey(control: ControlWithEvidence, index: number) {
+    return `${control.controlId}:${index}`;
+  }
+
+  async function decideCitation(
+    control: ControlWithEvidence,
+    citation: EvidenceCitation,
+    index: number,
+    decision: 'ACCEPTED' | 'REJECTED',
+  ) {
+    const key = citationKey(control, index);
+    if (citationDecision[key] === decision) return;
+    try {
+      await evidenceService.sendCitationFeedback(evaluationId, [
+        {
+          controlId: control.controlId,
+          fileName: citation.fileName,
+          location: citation.location,
+          snippet: citation.snippet,
+          score: citation.score ?? null,
+          decision,
+        },
+      ]);
+      citationDecision[key] = decision;
+    } catch (err) {
+      notification.error(getErrorMessage(err, 'No se pudo registrar la decisión sobre la cita'));
+    }
+  }
 
   async function loadControlsWithEvidence() {
     try {
@@ -524,11 +616,22 @@
 
   async function searchCitations(control: ControlWithEvidence) {
     searchingControlId.value = control.controlId;
+    delete citationsError[control.controlId];
     try {
       const { data } = await evidenceService.getCitations(evaluationId, control.controlId);
       citationsByControl[control.controlId] = data;
+      // Una búsqueda nueva trae otra lista: las decisiones anteriores ya no corresponden.
+      Object.keys(citationDecision)
+        .filter((k) => k.startsWith(`${control.controlId}:`))
+        .forEach((k) => delete citationDecision[k]);
     } catch (err) {
-      notification.error('No se pudieron obtener citas de evidencia para este control');
+      if ((err as { response?: { status?: number } }).response?.status === 503) {
+        delete citationsByControl[control.controlId];
+        citationsError[control.controlId] =
+          'El asistente de IA no está disponible en este momento. Probá de nuevo más tarde.';
+      } else {
+        notification.error(getErrorMessage(err, 'No se pudieron obtener citas de evidencia'));
+      }
       console.error(err);
     } finally {
       searchingControlId.value = null;
@@ -539,7 +642,15 @@
   // aparece y se trabaja con el fragmento citado.
   const canViewDocument = authStore.hasAnyRole('PRISMA_ADMIN', 'ORG_RESPONSIBLE', 'AUDITOR');
 
-  async function openDocument(citation: EvidenceCitation) {
+  // La ubicación («Página N») de la cita viaja en la descripción de la observación (el vínculo
+  // estructurado es solo con la evidencia): se recupera de ahí para abrir el documento en esa
+  // página.
+  function observationPage(obs: AuditObservation): string | null {
+    const match = obs.description.match(/\(Página \d+\)/);
+    return match ? match[0].slice(1, -1) : null;
+  }
+
+  async function openDocument(citation: Pick<EvidenceCitation, 'evidenceId' | 'location'>) {
     if (!citation.evidenceId) return;
     try {
       const { data } = await evidenceService.download(citation.evidenceId);
@@ -557,6 +668,7 @@
     newObs.type = 'OBSERVATION';
     newObs.controlId = control.controlId;
     newObs.subcategoryId = '';
+    newObs.evidenceId = citation.evidenceId ?? undefined;
     newObs.description =
       `Revisión de evidencia para ${control.code} — "${citation.fileName ?? 'evidencia'}"` +
       `${citation.location ? ` (${citation.location})` : ''}: ${citation.snippet}`;
@@ -570,6 +682,7 @@
     newObs.type = 'OBSERVATION';
     newObs.controlId = undefined;
     newObs.subcategoryId = '';
+    newObs.evidenceId = undefined;
     newObs.description = '';
     showCreateModal.value = true;
   }
@@ -688,6 +801,7 @@
         evaluationId,
         controlId: newObs.controlId,
         subcategoryId: newObs.subcategoryId || undefined,
+        evidenceId: newObs.evidenceId,
         type: newObs.type,
         description: newObs.description,
       });
@@ -696,6 +810,7 @@
       newObs.type = 'OBSERVATION';
       newObs.controlId = undefined;
       newObs.subcategoryId = '';
+      newObs.evidenceId = undefined;
       newObs.description = '';
       await fetchObservations();
     } catch (err) {

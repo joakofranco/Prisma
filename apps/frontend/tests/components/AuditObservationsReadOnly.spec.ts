@@ -96,4 +96,17 @@ describe('AuditObservationsReadOnly (PRI-354)', () => {
     expect(items[0].classes().join(' ')).toContain('amber');
     expect(items[1].classes().join(' ')).toContain('blue');
   });
+  it('muestra el documento citado cuando la observación viene de una cita (PRI-360)', async () => {
+    auditService.getObservations.mockResolvedValue({
+      data: [obs('1', { evidenceId: 'ev-1', evidenceFileName: 'politica.pdf' }), obs('2')],
+    });
+    const wrapper = await factory();
+
+    const evidence = wrapper.findAll('[data-testid="auditor-observation-evidence"]');
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0].text()).toContain('politica.pdf');
+    expect(wrapper.findAll('[data-testid="auditor-observation"]')[1].text()).not.toContain(
+      'Documento citado',
+    );
+  });
 });

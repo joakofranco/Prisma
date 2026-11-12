@@ -727,6 +727,7 @@ class EvidenceServiceTest {
 
   @Test
   void getCitationsDelegatesToAiClientWithControlQuery() {
+    eval.setStatus(Evaluation.Status.IN_AUDIT);
     UUID controlId = UUID.randomUUID();
     CatalogControl control =
         CatalogControl.builder().id(controlId).code("PR.AA-01").description("Control X").build();
@@ -744,7 +745,44 @@ class EvidenceServiceTest {
   }
 
   @Test
+  void getCitationsOnlyWorksWhileTheEvaluationIsInAudit() {
+    UUID controlId = UUID.randomUUID();
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+
+    for (Evaluation.Status status : Evaluation.Status.values()) {
+      if (status == Evaluation.Status.IN_AUDIT) {
+        continue;
+      }
+      eval.setStatus(status);
+      var ex =
+          assertThrows(
+              uy.edu.prisma.domain.exception.ConflictException.class,
+              () -> service.getCitations(eval.getId(), controlId),
+              status.name());
+      assertTrue(ex.getMessage().contains(status.name()), "el mensaje trae el estado actual");
+    }
+    verify(aiClient, never()).citations(any(), any(), any(), any());
+  }
+
+  @Test
+  void getCitationsPropagatesAiUnavailableInsteadOfPretendingThereAreNoResults() {
+    eval.setStatus(Evaluation.Status.IN_AUDIT);
+    UUID controlId = UUID.randomUUID();
+    CatalogControl control =
+        CatalogControl.builder().id(controlId).code("PR.AA-01").description("Control X").build();
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(controlRepo.findById(controlId)).thenReturn(Optional.of(control));
+    when(aiClient.citations(any(), any(), any(), any()))
+        .thenThrow(new uy.edu.prisma.domain.exception.AiUnavailableException("IA caída", null));
+
+    assertThrows(
+        uy.edu.prisma.domain.exception.AiUnavailableException.class,
+        () -> service.getCitations(eval.getId(), controlId));
+  }
+
+  @Test
   void getCitationsThrowsWhenControlMissing() {
+    eval.setStatus(Evaluation.Status.IN_AUDIT);
     UUID controlId = UUID.randomUUID();
     when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
     when(controlRepo.findById(controlId)).thenReturn(Optional.empty());
@@ -923,6 +961,75 @@ class EvidenceServiceTest {
 
     verify(aiClient, times(1))
         .ingest(any(), any(), any(), isNull(), any(), eq("http://rustfs:9000/internal-signed"));
+  }
+
+  // ---- PRI-357 · RF-EVI-12: indexación automática al subir (CP219) ----
+
+  private static byte[] docxBytes() throws Exception {
+    ByteArrayOutputStream out = new ByteArrayOutputStream();
+    try (ZipOutputStream zip = new ZipOutputStream(out)) {
+      zip.putNextEntry(new ZipEntry("word/document.xml"));
+      zip.write("<w:document/>".getBytes(StandardCharsets.UTF_8));
+      zip.closeEntry();
+    }
+    return out.toByteArray();
+  }
+
+  /**
+   * Sube un archivo con backend-ai disponible y comprueba que se indexó acotado a la organización y
+   * la evaluación, con el control asociado, y que la evidencia quedó con aiIndexed = true.
+   */
+  private void assertUploadIsIndexed(String fileName, String contentType, byte[] content)
+      throws Exception {
+    UUID controlId = UUID.randomUUID();
+    CatalogControl control = CatalogControl.builder().id(controlId).build();
+    MockMultipartFile file = new MockMultipartFile("file", fileName, contentType, content);
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(controlRepo.findById(controlId)).thenReturn(Optional.of(control));
+    when(s3Client.headBucket(any(HeadBucketRequest.class))).thenReturn(null);
+    when(internalPresigner.presignGetObject(any(GetObjectPresignRequest.class)))
+        .thenAnswer(inv -> signed("http://rustfs:9000/internal-signed"));
+    when(evidenceRepo.save(any(Evidence.class))).thenAnswer(EvidenceServiceTest::simulatePersist);
+    when(aiClient.ingest(any(), any(), any(), any(), any(), any())).thenReturn(true);
+
+    UploadEvidenceResponseDto result = service.upload(eval.getId(), controlId, null, file);
+
+    verify(aiClient, times(1))
+        .ingest(
+            eq(eval.getOrganization().getId()),
+            eq(eval.getId()),
+            eq(result.id()),
+            eq(controlId),
+            eq(fileName),
+            eq("http://rustfs:9000/internal-signed"));
+    ArgumentCaptor<Evidence> captor = ArgumentCaptor.forClass(Evidence.class);
+    verify(evidenceRepo, times(1)).save(captor.capture());
+    assertTrue(captor.getValue().isAiIndexed(), fileName + " debería quedar indexada");
+  }
+
+  @Test
+  void uploadedPdfIsIndexedForTheOrganizationAndEvaluation() throws Exception {
+    assertUploadIsIndexed("politica.pdf", "application/pdf", "%PDF-1.4 contenido".getBytes());
+  }
+
+  @Test
+  void uploadedDocxIsIndexedForTheOrganizationAndEvaluation() throws Exception {
+    assertUploadIsIndexed(
+        "politica.docx",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        docxBytes());
+  }
+
+  @Test
+  void uploadedTxtIsIndexedForTheOrganizationAndEvaluation() throws Exception {
+    assertUploadIsIndexed(
+        "politica.txt", "text/plain", "Política de accesos".getBytes(StandardCharsets.UTF_8));
+  }
+
+  @Test
+  void uploadedMarkdownIsIndexedForTheOrganizationAndEvaluation() throws Exception {
+    assertUploadIsIndexed(
+        "politica.md", "text/markdown", "# Política".getBytes(StandardCharsets.UTF_8));
   }
 
   @Test

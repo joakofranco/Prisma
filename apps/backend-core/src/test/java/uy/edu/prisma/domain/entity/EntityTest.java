@@ -500,6 +500,7 @@ class EntityTest {
             null,
             null,
             null,
+            null,
             AuditObservation.ObservationType.NON_CONFORMITY,
             "d",
             AuditObservation.ObservationStatus.CLOSED,
@@ -508,6 +509,7 @@ class EntityTest {
     assertEquals(id, all.getId());
     assertNull(all.getEvaluation());
     assertNull(all.getControl());
+    assertNull(all.getEvidence());
     assertNull(all.getSubcategory());
     assertEquals(AuditObservation.ObservationType.NON_CONFORMITY, all.getType());
     assertEquals("d", all.getDescription());

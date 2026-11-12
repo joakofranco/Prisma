@@ -751,7 +751,12 @@ public class Dto {
       // Código del control y de la subcategoría a los que está atada (null si no lo está): la
       // organización que lee las observaciones al volver la evaluación no tiene el catálogo a mano.
       String controlCode,
-      String subcategoryCode) {
+      String subcategoryCode,
+      // Evidencia citada de la que sale la observación (RF-EVI-15) y su nombre de archivo: la
+      // organización que la lee al volver la evaluación ve de qué documento habla (null si no
+      // viene de una cita o si la evidencia se borró).
+      UUID evidenceId,
+      String evidenceFileName) {
     // Compat: firma previa sin subcategoryId ni createdByName (usada en tests existentes).
     public AuditObservationDto(
         UUID id,
@@ -774,6 +779,8 @@ public class Dto {
           createdAt,
           null,
           null,
+          null,
+          null,
           null);
     }
   }
@@ -784,10 +791,35 @@ public class Dto {
       UUID subcategoryId,
       String type,
       @NotBlank(message = "La descripción es obligatoria") String description,
-      String status) {}
+      String status,
+      // Evidencia citada de la que sale la observación (opcional, RF-EVI-15): tiene que ser de la
+      // misma evaluación.
+      UUID evidenceId) {
+
+    public CreateAuditObservationDto(
+        UUID evaluationId,
+        UUID controlId,
+        UUID subcategoryId,
+        String type,
+        String description,
+        String status) {
+      this(evaluationId, controlId, subcategoryId, type, description, status, null);
+    }
+  }
 
   public record UpdateAuditObservationDto(
-      UUID controlId, UUID subcategoryId, String type, String description, String status) {}
+      UUID controlId,
+      UUID subcategoryId,
+      String type,
+      String description,
+      String status,
+      UUID evidenceId) {
+
+    public UpdateAuditObservationDto(
+        UUID controlId, UUID subcategoryId, String type, String description, String status) {
+      this(controlId, subcategoryId, type, description, status, null);
+    }
+  }
 
   // ---- Audit control verdicts (dictamen) ----
   // verdict: VALIDATED | NOT_VALIDATED | NEEDS_MORE_EVIDENCE.
@@ -923,6 +955,35 @@ public class Dto {
 
     @Override
     public List<AiSuggestionFeedbackDto> items() {
+      return Collections.unmodifiableList(items);
+    }
+  }
+
+  // Decisión del auditor sobre una cita de la IA (PRI-359). La evaluación solo sirve para validar
+  // acceso y estado (IN_AUDIT): no se guarda, a propósito, igual que la organización y el usuario.
+  public record CitationFeedbackItemDto(
+      @NotNull(message = "El control es obligatorio") UUID controlId,
+      @Size(max = 255, message = "El nombre del archivo es demasiado largo") String fileName,
+      @Size(max = 255, message = "La ubicación es demasiado larga") String location,
+      @NotBlank(message = "El fragmento es obligatorio")
+          @Size(max = 20000, message = "El fragmento es demasiado largo")
+          String snippet,
+      Double score,
+      @NotNull(message = "La decisión es obligatoria")
+          @Pattern(regexp = "ACCEPTED|REJECTED", message = "Decisión inválida")
+          String decision) {}
+
+  public record CitationFeedbackBatchDto(
+      @NotNull(message = "La evaluación es obligatoria") UUID evaluationId,
+      @NotEmpty(message = "Debe enviar al menos un registro")
+          @Size(max = 100, message = "Demasiados registros")
+          List<@Valid CitationFeedbackItemDto> items) {
+    public CitationFeedbackBatchDto {
+      items = items == null ? List.of() : List.copyOf(items);
+    }
+
+    @Override
+    public List<CitationFeedbackItemDto> items() {
       return Collections.unmodifiableList(items);
     }
   }

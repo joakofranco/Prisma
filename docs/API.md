@@ -25,6 +25,12 @@ Los endpoints de `backend-ai` (`/api/v1/rag/*`, `/api/v1/evidence/*`) no los lla
 `backend-core`, autenticado con el header interno `X-Internal-Api-Key` (`AI_INTERNAL_API_KEY`).
 Llamarlos sin ese header da `401`.
 
+`backend-core` no espera para siempre a `backend-ai` (RF-EVI-13): conexión 3 s (`AI_CONNECT_TIMEOUT`),
+lectura 60 s para la ingesta y las citas (`AI_READ_TIMEOUT`) y 120 s para la guía de mejora, que
+genera con el LLM y tarda cerca de un minuto con Ollama local (`AI_GUIDE_READ_TIMEOUT`). Si se
+agotan o `backend-ai` está caído, la evidencia se guarda igual con `aiIndexed = false` y se puede
+reintentar con `POST /api/evidence/{id}/index` («Analizar con IA»), sin volver a subirla.
+
 ## Convención de errores
 
 Todos los errores de `backend-core` devuelven el mismo shape (`GlobalExceptionHandler`):
@@ -140,7 +146,8 @@ importar el rol que normalmente le correspondería.
 | DELETE | `/{id}` | `PRISMA_ADMIN`, `INTERNAL_EVALUATOR` | mismo bloqueo por estado |
 | GET | `/{id}/download` | `PRISMA_ADMIN`, `ORG_RESPONSIBLE`, `AUDITOR` | sirve el archivo por streaming con el JWT, la organización y el rol validados en cada descarga |
 | POST | `/{id}/index` | `PRISMA_ADMIN`, `INTERNAL_EVALUATOR`, `ORG_RESPONSIBLE` | reintenta la indexación RAG; mismo bloqueo por estado; no hace nada con ZIP e imágenes |
-| GET | `/evaluation/{evaluationId}/control/{controlId}/citations` | cualquiera autenticado | fragmentos relevantes de la evidencia YA cargada para ese control, vía `backend-ai` |
+| GET | `/evaluation/{evaluationId}/control/{controlId}/citations` | `PRISMA_ADMIN`, `AUDITOR` | fragmentos relevantes de la evidencia YA cargada para ese control, vía `backend-ai` (RF-EVI-14). **Solo con la evaluación `IN_AUDIT`**: en otro estado responde `409` con el estado actual. Si `backend-ai` no responde (caído, colgado o con error) responde `503` con `code: AI_UNAVAILABLE`; una lista vacía significa «sin resultados» |
+| POST | `/citations/feedback` | `PRISMA_ADMIN`, `AUDITOR` | el auditor acepta o rechaza citas de la IA: `{evaluationId, items:[{controlId, fileName?, location?, snippet, score?, decision}]}` (hasta 100). `decision` ∈ `ACCEPTED`/`REJECTED`. La evaluación solo valida acceso y estado (`409` fuera de `IN_AUDIT`) y **no se guarda**: se registra el control y el fragmento, para medir la búsqueda y un futuro fine-tuning. Cada decisión es una fila nueva (vale la más reciente). Responde `204`; `404` si un control no existe
 
 ## Auditoría — `/api/audit/observations`
 
@@ -149,6 +156,8 @@ importar el rol que normalmente le correspondería.
 | GET | `/{evaluationId}` | `PRISMA_ADMIN`, `AUDITOR`, `ORG_RESPONSIBLE`, `INTERNAL_EVALUATOR` | el administrador y el auditor las ven siempre; la **organización** (responsable o evaluador interno, de esa organización) solo desde que la evaluación vuelve (`RETURNED`, `APPROVED` o `ARCHIVED`) — antes responde `200` con lista vacía, no un error. El `VIEWER` recibe `403`. Cada una trae `controlCode` y `subcategoryCode` (`null` si no está atada a ninguno) |
 | POST | `/` | `PRISMA_ADMIN`, `AUDITOR` | `{evaluationId, controlId?, type, description, status?}` — `type` ∈ `OBSERVATION`/`NON_CONFORMITY`/`RECOMMENDATION`, `status` ∈ `OPEN`/`IN_PROGRESS`/`RESOLVED`/`CLOSED` (default `OPEN`) |
 | PUT | `/{id}` | `PRISMA_ADMIN`, `AUDITOR` | actualización parcial (sólo los campos presentes); una `description` vacía responde `400` |
+
+**Evidencia citada (RF-EVI-15):** `POST` y `PUT` aceptan un `evidenceId` opcional, la evidencia de la que sale la observación (se manda al registrarla desde una cita de la IA). Tiene que ser de **la misma evaluación**: si es de otra responde `400`, y `404` si no existe. En `PUT`, si no se manda se conserva el vínculo. Las observaciones devuelven `evidenceId` y `evidenceFileName` (la organización ve de qué documento habla; son `null` si no viene de una cita o si la evidencia se borró). La ubicación y el fragmento citados siguen viajando en la descripción.
 
 Regla de estado: crear (`POST`) y modificar (`PUT`, incluido el cambio de `status`) solo se puede **mientras la evaluación está en `IN_AUDIT`**; en cualquier otro estado responde `409` con el estado actual en el mensaje (igual que el dictamen por control). Escribir es solo del administrador y el auditor: la organización las lee, nunca las edita.
 

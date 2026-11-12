@@ -38,6 +38,7 @@ class ControllersMockMvcTest {
   @Mock private AuditVerdictService auditVerdictService;
   @Mock private EvaluationFlagService evaluationFlagService;
   @Mock private ImprovementPlanService improvementPlanService;
+  @Mock private AiCitationFeedbackService aiCitationFeedbackService;
   @Mock private ReportService reportService;
   @Mock private uy.edu.prisma.application.TechnicalReportService technicalReportService;
   @Mock private EmailSettingsService emailSettingsService;
@@ -53,6 +54,7 @@ class ControllersMockMvcTest {
   private MockMvc organizations;
   private MockMvc users;
   private MockMvc evidence;
+  private MockMvc citationFeedback;
   private MockMvc audit;
   private MockMvc verdicts;
   private MockMvc flags;
@@ -79,6 +81,9 @@ class ControllersMockMvcTest {
         MockMvcBuilders.standaloneSetup(new OrganizationController(organizationService)).build();
     users = MockMvcBuilders.standaloneSetup(new UserController(userService)).build();
     evidence = MockMvcBuilders.standaloneSetup(new EvidenceController(evidenceService)).build();
+    citationFeedback =
+        MockMvcBuilders.standaloneSetup(new CitationFeedbackController(aiCitationFeedbackService))
+            .build();
     audit =
         MockMvcBuilders.standaloneSetup(new AuditObservationController(auditObservationService))
             .build();
@@ -998,6 +1003,60 @@ class ControllersMockMvcTest {
         .perform(post("/api/evidence/{id}/index", id))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.aiIndexed").value(true));
+  }
+
+  @Test
+  void citationFeedbackReturnsNoContent() throws Exception {
+    citationFeedback
+        .perform(
+            post("/api/evidence/citations/feedback")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"evaluationId\":\""
+                        + UUID.randomUUID()
+                        + "\",\"items\":[{\"controlId\":\""
+                        + UUID.randomUUID()
+                        + "\",\"fileName\":\"a.pdf\",\"location\":\"Página 1\","
+                        + "\"snippet\":\"texto\",\"score\":0.7,\"decision\":\"ACCEPTED\"}]}"))
+        .andExpect(status().isNoContent());
+    verify(aiCitationFeedbackService).record(any());
+  }
+
+  @Test
+  void citationFeedbackRejectsAnInvalidDecisionOrAnEmptyFragment() throws Exception {
+    String base =
+        "{\"evaluationId\":\""
+            + UUID.randomUUID()
+            + "\",\"items\":[{\"controlId\":\""
+            + UUID.randomUUID()
+            + "\",";
+    citationFeedback
+        .perform(
+            post("/api/evidence/citations/feedback")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(base + "\"snippet\":\"texto\",\"decision\":\"MAYBE\"}]}"))
+        .andExpect(status().isBadRequest());
+    citationFeedback
+        .perform(
+            post("/api/evidence/citations/feedback")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(base + "\"snippet\":\"\",\"decision\":\"ACCEPTED\"}]}"))
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
+  void citationSearchAndFeedbackAreOnlyForAuditorAndAdmin() throws Exception {
+    String expected = "hasAnyRole('PRISMA_ADMIN','AUDITOR')";
+    var search = EvidenceController.class.getMethod("citations", UUID.class, UUID.class);
+    var feedback =
+        CitationFeedbackController.class.getMethod(
+            "feedback", uy.edu.prisma.web.dto.Dto.CitationFeedbackBatchDto.class);
+    for (var method : List.of(search, feedback)) {
+      var annotation =
+          method.getAnnotation(org.springframework.security.access.prepost.PreAuthorize.class);
+      assertNotNull(annotation, method.getName());
+      assertEquals(expected, annotation.value(), method.getName());
+    }
   }
 
   @Test

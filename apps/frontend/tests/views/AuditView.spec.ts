@@ -11,6 +11,7 @@ const auditService = vi.hoisted(() => ({
 const evidenceService = vi.hoisted(() => ({
   getByEvaluation: vi.fn(),
   getCitations: vi.fn(),
+  sendCitationFeedback: vi.fn(),
   download: vi.fn(),
 }));
 const evaluationsService = vi.hoisted(() => ({ getById: vi.fn(), getFlags: vi.fn() }));
@@ -371,5 +372,286 @@ describe('AuditView: observaciones (PRI-354)', () => {
 
     expect(wrapper.text()).toContain('Hallazgo o1');
     expect(wrapper.text()).toContain('Hallazgo o2');
+  });
+});
+
+describe('AuditView: citas de la IA (PRI-359)', () => {
+  const citation = (n: number) => ({
+    evidenceId: `ev-${n}`,
+    fileName: `politica-${n}.pdf`,
+    location: `Página ${n}`,
+    snippet: `fragmento ${n}`,
+    score: 0.7,
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    document.body.innerHTML = '';
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    auditService.getObservations.mockResolvedValue({ data: [] });
+    auditService.getVerdicts.mockResolvedValue({ data: [] });
+    evaluationsService.getFlags.mockResolvedValue({ data: [] });
+    evidenceService.getByEvaluation.mockResolvedValue({
+      data: [{ id: 'ev-1', controlId: 'ctl-1', fileName: 'politica-1.pdf' }],
+    });
+    evidenceService.getCitations.mockResolvedValue({ data: [citation(1), citation(2)] });
+    evidenceService.sendCitationFeedback.mockResolvedValue({ data: undefined });
+    catalogService.getByVersion.mockResolvedValue({ data: catalog });
+  });
+
+  async function searchCitations(status = 'IN_AUDIT') {
+    const wrapper = await mountView(status);
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Buscar citas'))!
+      .trigger('click');
+    await flushPromises();
+    return wrapper;
+  }
+
+  it('cada cita tiene «Aceptar cita» y «Rechazar cita», además de «Registrar validación»', async () => {
+    const wrapper = await searchCitations();
+
+    expect(wrapper.findAll('[data-testid="accept-citation"]')).toHaveLength(2);
+    expect(wrapper.findAll('[data-testid="reject-citation"]')).toHaveLength(2);
+    expect(wrapper.text()).toContain('Registrar validación');
+  });
+
+  it('aceptar una cita la envía con el control y el fragmento, y queda marcada', async () => {
+    const wrapper = await searchCitations();
+
+    await wrapper.findAll('[data-testid="accept-citation"]')[0].trigger('click');
+    await flushPromises();
+
+    expect(evidenceService.sendCitationFeedback).toHaveBeenCalledWith('eval-1', [
+      {
+        controlId: 'ctl-1',
+        fileName: 'politica-1.pdf',
+        location: 'Página 1',
+        snippet: 'fragmento 1',
+        score: 0.7,
+        decision: 'ACCEPTED',
+      },
+    ]);
+    expect(wrapper.findAll('[data-testid="accept-citation"]')[0].attributes('aria-pressed')).toBe(
+      'true',
+    );
+    expect(wrapper.findAll('[data-testid="accept-citation"]')[1].attributes('aria-pressed')).toBe(
+      'false',
+    );
+  });
+
+  it('rechazar una cita la envía como REJECTED', async () => {
+    const wrapper = await searchCitations();
+
+    await wrapper.findAll('[data-testid="reject-citation"]')[1].trigger('click');
+    await flushPromises();
+
+    expect(evidenceService.sendCitationFeedback.mock.calls[0][1][0]).toMatchObject({
+      snippet: 'fragmento 2',
+      decision: 'REJECTED',
+    });
+    expect(wrapper.findAll('[data-testid="reject-citation"]')[1].attributes('aria-pressed')).toBe(
+      'true',
+    );
+  });
+
+  it('cambiar de opinión envía la nueva decisión; repetir la misma no envía nada', async () => {
+    const wrapper = await searchCitations();
+    const accept = () => wrapper.findAll('[data-testid="accept-citation"]')[0];
+    const reject = () => wrapper.findAll('[data-testid="reject-citation"]')[0];
+
+    await accept().trigger('click');
+    await flushPromises();
+    await accept().trigger('click');
+    await flushPromises();
+    expect(evidenceService.sendCitationFeedback).toHaveBeenCalledTimes(1);
+
+    await reject().trigger('click');
+    await flushPromises();
+    expect(evidenceService.sendCitationFeedback).toHaveBeenCalledTimes(2);
+    expect(reject().attributes('aria-pressed')).toBe('true');
+    expect(accept().attributes('aria-pressed')).toBe('false');
+  });
+
+  it('si el backend rechaza la decisión avisa y la cita no queda marcada', async () => {
+    evidenceService.sendCitationFeedback.mockRejectedValue({
+      response: { data: { message: 'Solo se pueden evaluar citas en auditoría' } },
+    });
+    const wrapper = await searchCitations();
+
+    await wrapper.findAll('[data-testid="accept-citation"]')[0].trigger('click');
+    await flushPromises();
+
+    expect(notification.error).toHaveBeenCalledWith('Solo se pueden evaluar citas en auditoría');
+    expect(wrapper.findAll('[data-testid="accept-citation"]')[0].attributes('aria-pressed')).toBe(
+      'false',
+    );
+  });
+
+  it('fuera de IN_AUDIT no se puede aceptar ni rechazar', async () => {
+    const wrapper = await searchCitations('RETURNED');
+
+    expect(wrapper.findAll('[data-testid="accept-citation"]')).toHaveLength(0);
+    expect(wrapper.findAll('[data-testid="reject-citation"]')).toHaveLength(0);
+  });
+
+  it('una búsqueda nueva descarta las decisiones de la anterior', async () => {
+    const wrapper = await searchCitations();
+    await wrapper.findAll('[data-testid="accept-citation"]')[0].trigger('click');
+    await flushPromises();
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Buscar citas'))!
+      .trigger('click');
+    await flushPromises();
+
+    expect(wrapper.findAll('[data-testid="accept-citation"]')[0].attributes('aria-pressed')).toBe(
+      'false',
+    );
+  });
+
+  it('con la IA caída (503) dice que no está disponible y no «sin resultados»', async () => {
+    evidenceService.getCitations.mockRejectedValue({
+      response: { status: 503, data: { code: 'AI_UNAVAILABLE' } },
+    });
+    const wrapper = await searchCitations();
+
+    expect(wrapper.find('[data-testid="citations-ai-unavailable"]').text()).toContain(
+      'asistente de IA no está disponible',
+    );
+    expect(wrapper.text()).not.toContain('No se encontraron fragmentos relevantes');
+    expect(notification.error).not.toHaveBeenCalled();
+  });
+
+  it('una búsqueda sin resultados sigue diciendo que no se encontraron fragmentos', async () => {
+    evidenceService.getCitations.mockResolvedValue({ data: [] });
+    const wrapper = await searchCitations();
+
+    expect(wrapper.text()).toContain('No se encontraron fragmentos relevantes');
+    expect(wrapper.find('[data-testid="citations-ai-unavailable"]').exists()).toBe(false);
+  });
+
+  it('otro error (por ejemplo 409 fuera de auditoría) avisa con el mensaje del backend', async () => {
+    evidenceService.getCitations.mockRejectedValue({
+      response: { status: 409, data: { message: 'La búsqueda de citas solo está disponible' } },
+    });
+    const wrapper = await searchCitations();
+
+    expect(notification.error).toHaveBeenCalledWith('La búsqueda de citas solo está disponible');
+    expect(wrapper.find('[data-testid="citations-ai-unavailable"]').exists()).toBe(false);
+  });
+
+  it('tras una búsqueda con IA caída, reintentar y tener éxito limpia el aviso', async () => {
+    evidenceService.getCitations.mockRejectedValueOnce({ response: { status: 503 } });
+    const wrapper = await searchCitations();
+    expect(wrapper.find('[data-testid="citations-ai-unavailable"]').exists()).toBe(true);
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Buscar citas'))!
+      .trigger('click');
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="citations-ai-unavailable"]').exists()).toBe(false);
+    expect(wrapper.findAll('[data-testid="accept-citation"]')).toHaveLength(2);
+  });
+  // ---- PRI-360 · RF-EVI-15: la observación queda ligada a la evidencia citada ----
+
+  async function openObservationFromCitation(wrapper: Awaited<ReturnType<typeof searchCitations>>) {
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Registrar validación'))!
+      .trigger('click');
+    await flushPromises();
+  }
+
+  it('«Registrar validación» precarga el texto y al guardar envía el evidenceId de la cita', async () => {
+    auditService.createObservation.mockResolvedValue({ data: {} });
+    const wrapper = await searchCitations();
+
+    await openObservationFromCitation(wrapper);
+    const textarea = document.body.querySelector<HTMLTextAreaElement>('textarea')!;
+    expect(textarea.value).toContain('politica-1.pdf');
+    expect(textarea.value).toContain('Página 1');
+    expect(textarea.value).toContain('fragmento 1');
+    await Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+      .find((b) => b.textContent?.trim() === 'Crear')!
+      .click();
+    await flushPromises();
+
+    expect(auditService.createObservation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        evaluationId: 'eval-1',
+        controlId: 'ctl-1',
+        evidenceId: 'ev-1',
+      }),
+    );
+  });
+
+  it('una observación nueva (sin cita) no arrastra el evidenceId de la anterior', async () => {
+    auditService.createObservation.mockResolvedValue({ data: {} });
+    const wrapper = await searchCitations();
+    await openObservationFromCitation(wrapper);
+    // Cierra sin guardar y abre «Nueva Observación».
+    await Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+      .find((b) => b.textContent?.trim() === 'Cancelar')!
+      .click();
+    await flushPromises();
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Nueva Observación'))!
+      .trigger('click');
+    await flushPromises();
+    const textarea = document.body.querySelector<HTMLTextAreaElement>('textarea')!;
+    textarea.value = 'Hallazgo general';
+    textarea.dispatchEvent(new Event('input'));
+    await Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+      .find((b) => b.textContent?.trim() === 'Crear')!
+      .click();
+    await flushPromises();
+
+    expect(auditService.createObservation.mock.calls[0][0].evidenceId).toBeUndefined();
+  });
+
+  it('la lista muestra el documento citado de la observación y permite abrirlo', async () => {
+    auditService.getObservations.mockResolvedValue({
+      data: [
+        {
+          id: 'o1',
+          evaluationId: 'eval-1',
+          type: 'OBSERVATION',
+          description: 'Revisión de evidencia para AD.1 — "politica-1.pdf" (Página 2): texto',
+          status: 'OPEN',
+          createdBy: 'u',
+          createdAt: '2026-11-03T10:00:00Z',
+          evidenceId: 'ev-1',
+          evidenceFileName: 'politica-1.pdf',
+        },
+        {
+          id: 'o2',
+          evaluationId: 'eval-1',
+          type: 'OBSERVATION',
+          description: 'General',
+          status: 'OPEN',
+          createdBy: 'u',
+          createdAt: '2026-11-03T10:00:00Z',
+        },
+      ],
+    });
+    evidenceService.download.mockResolvedValue({ data: new Blob(['x']) });
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
+    URL.createObjectURL = vi.fn(() => 'blob:doc');
+    const wrapper = await mountView('IN_AUDIT');
+
+    const cited = wrapper.findAll('[data-testid="observation-evidence"]');
+    expect(cited).toHaveLength(1);
+    expect(cited[0].text()).toContain('politica-1.pdf');
+    await wrapper.find('[data-testid="observation-open-document"]').trigger('click');
+    await flushPromises();
+
+    expect(evidenceService.download).toHaveBeenCalledWith('ev-1');
+    expect(openSpy).toHaveBeenCalledWith('blob:doc#page=2', '_blank');
   });
 });

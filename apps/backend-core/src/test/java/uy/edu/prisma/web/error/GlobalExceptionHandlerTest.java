@@ -56,6 +56,15 @@ class GlobalExceptionHandlerTest {
   }
 
   @Test
+  void aiUnavailableMapsTo503WithItsOwnCode() throws Exception {
+    mockMvc
+        .perform(get("/ai-unavailable"))
+        .andExpect(status().isServiceUnavailable())
+        .andExpect(jsonPath("$.code").value("AI_UNAVAILABLE"))
+        .andExpect(jsonPath("$.message").value("IA caída"));
+  }
+
+  @Test
   void payloadTooLargeMapsTo413WithItsMessage() throws Exception {
     mockMvc
         .perform(get("/too-large"))
@@ -178,6 +187,11 @@ class GlobalExceptionHandlerTest {
     @GetMapping("/notfound")
     public String notFound() {
       throw new ResourceNotFoundException("nope");
+    }
+
+    @GetMapping("/ai-unavailable")
+    public String aiUnavailable() {
+      throw new uy.edu.prisma.domain.exception.AiUnavailableException("IA caída", null);
     }
 
     @GetMapping("/conflict")

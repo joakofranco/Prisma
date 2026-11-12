@@ -39,6 +39,7 @@ class AuditObservationServiceTest {
   @Mock private EvaluationRepository evaluationRepo;
   @Mock private CatalogControlRepository controlRepo;
   @Mock private CatalogSubcategoryRepository subcategoryRepo;
+  @Mock private uy.edu.prisma.domain.repository.EvidenceRepository evidenceRepo;
   @Mock private CurrentUserService currentUser;
 
   private AuditObservationService service;
@@ -52,7 +53,7 @@ class AuditObservationServiceTest {
     when(currentUser.isPrismaAdmin()).thenReturn(true);
     service =
         new AuditObservationService(
-            repo, evaluationRepo, controlRepo, subcategoryRepo, currentUser);
+            repo, evaluationRepo, controlRepo, subcategoryRepo, evidenceRepo, currentUser);
     eval =
         Evaluation.builder()
             .id(UUID.randomUUID())
@@ -516,5 +517,148 @@ class AuditObservationServiceTest {
     UpdateAuditObservationDto dto = new UpdateAuditObservationDto(null, null, null, null, "NOPE");
 
     assertThrows(InvalidRequestException.class, () -> service.update(obs.getId(), dto));
+  }
+
+  // ---- PRI-360 · RF-EVI-15: la observación queda ligada a la evidencia citada ----
+
+  private uy.edu.prisma.domain.entity.Evidence evidenceOf(Evaluation evaluation) {
+    return uy.edu.prisma.domain.entity.Evidence.builder()
+        .id(UUID.randomUUID())
+        .evaluation(evaluation)
+        .fileName("politica.pdf")
+        .build();
+  }
+
+  @Test
+  void createLinksTheObservationToTheCitedEvidence() {
+    var evidence = evidenceOf(eval);
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(evidenceRepo.findById(evidence.getId())).thenReturn(Optional.of(evidence));
+    when(currentUser.currentUser()).thenReturn(Optional.empty());
+    when(repo.save(any(AuditObservation.class))).thenAnswer(inv -> inv.getArgument(0));
+
+    AuditObservationDto result =
+        service.create(
+            new CreateAuditObservationDto(
+                eval.getId(), null, null, null, "Revisión de evidencia", null, evidence.getId()));
+
+    assertEquals(evidence.getId(), result.evidenceId());
+    assertEquals("politica.pdf", result.evidenceFileName());
+  }
+
+  @Test
+  void createWithoutEvidenceLeavesItNull() {
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(currentUser.currentUser()).thenReturn(Optional.empty());
+    when(repo.save(any(AuditObservation.class))).thenAnswer(inv -> inv.getArgument(0));
+
+    AuditObservationDto result =
+        service.create(
+            new CreateAuditObservationDto(eval.getId(), null, null, null, "general", null));
+
+    assertNull(result.evidenceId());
+    assertNull(result.evidenceFileName());
+    verifyNoInteractions(evidenceRepo);
+  }
+
+  @Test
+  void createRejectsEvidenceFromAnotherEvaluation() {
+    Evaluation other =
+        Evaluation.builder()
+            .id(UUID.randomUUID())
+            .organization(Organization.builder().id(UUID.randomUUID()).build())
+            .build();
+    var foreign = evidenceOf(other);
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(evidenceRepo.findById(foreign.getId())).thenReturn(Optional.of(foreign));
+
+    assertThrows(
+        InvalidRequestException.class,
+        () ->
+            service.create(
+                new CreateAuditObservationDto(
+                    eval.getId(), null, null, null, "x", null, foreign.getId())));
+    verify(repo, never()).save(any());
+  }
+
+  @Test
+  void createRejectsUnknownEvidence() {
+    UUID missing = UUID.randomUUID();
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(evidenceRepo.findById(missing)).thenReturn(Optional.empty());
+
+    assertThrows(
+        ResourceNotFoundException.class,
+        () ->
+            service.create(
+                new CreateAuditObservationDto(eval.getId(), null, null, null, "x", null, missing)));
+  }
+
+  @Test
+  void updateCanLinkEvidenceAndRejectsAnotherEvaluationsOne() {
+    AuditObservation obs =
+        AuditObservation.builder().id(UUID.randomUUID()).evaluation(eval).description("d").build();
+    var own = evidenceOf(eval);
+    var foreign =
+        evidenceOf(
+            Evaluation.builder()
+                .id(UUID.randomUUID())
+                .organization(Organization.builder().id(UUID.randomUUID()).build())
+                .build());
+    when(repo.findById(obs.getId())).thenReturn(Optional.of(obs));
+    when(evidenceRepo.findById(own.getId())).thenReturn(Optional.of(own));
+    when(evidenceRepo.findById(foreign.getId())).thenReturn(Optional.of(foreign));
+    when(repo.save(any(AuditObservation.class))).thenAnswer(inv -> inv.getArgument(0));
+
+    AuditObservationDto linked =
+        service.update(
+            obs.getId(), new UpdateAuditObservationDto(null, null, null, null, null, own.getId()));
+    assertEquals(own.getId(), linked.evidenceId());
+
+    assertThrows(
+        InvalidRequestException.class,
+        () ->
+            service.update(
+                obs.getId(),
+                new UpdateAuditObservationDto(null, null, null, null, null, foreign.getId())));
+  }
+
+  @Test
+  void updateWithoutEvidenceIdKeepsTheExistingLink() {
+    var own = evidenceOf(eval);
+    AuditObservation obs =
+        AuditObservation.builder()
+            .id(UUID.randomUUID())
+            .evaluation(eval)
+            .description("d")
+            .evidence(own)
+            .build();
+    when(repo.findById(obs.getId())).thenReturn(Optional.of(obs));
+    when(repo.save(any(AuditObservation.class))).thenAnswer(inv -> inv.getArgument(0));
+
+    AuditObservationDto result =
+        service.update(obs.getId(), new UpdateAuditObservationDto(null, null, null, "nuevo", null));
+
+    assertEquals(own.getId(), result.evidenceId());
+    verifyNoInteractions(evidenceRepo);
+  }
+
+  @Test
+  void listShowsTheEvidenceFileNameToWhoeverReadsTheObservation() {
+    var evidence = evidenceOf(eval);
+    AuditObservation obs =
+        AuditObservation.builder()
+            .id(UUID.randomUUID())
+            .evaluation(eval)
+            .description("obs")
+            .evidence(evidence)
+            .build();
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(repo.findByEvaluationIdOrderByCreatedAtDesc(eval.getId())).thenReturn(List.of(obs));
+    when(currentUser.isPrismaAdmin()).thenReturn(true);
+
+    List<AuditObservationDto> result = service.listByEvaluation(eval.getId());
+
+    assertEquals("politica.pdf", result.get(0).evidenceFileName());
   }
 }
