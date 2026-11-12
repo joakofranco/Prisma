@@ -25,10 +25,12 @@ import type {
   CommunityProfileSummary,
   EmailSettings,
   UpdateEmailSettings,
+  PlanDeadlines,
   ChangePasswordPayload,
   CatalogImportPayload,
   CatalogControlFlat,
   OrganizationReactivation,
+  InviteUserPayload,
 } from '@/types';
 
 export const usersService = {
@@ -50,6 +52,18 @@ export const usersService = {
   /** Desbloquea la cuenta bloqueada por intentos fallidos de login (solo PRISMA_ADMIN, RF-AUTH-08). */
   unlock(id: string) {
     return apiClient.post<{ wasLocked: boolean }>(`/users/${id}/unlock`);
+  },
+  /** Invita a un evaluador interno por correo (RF-USR-05). */
+  invite(data: InviteUserPayload) {
+    return apiClient.post<User>('/users/invitations', data);
+  },
+  /** Reenvía la invitación de quien todavía no ingresó. */
+  resendInvitation(id: string) {
+    return apiClient.post<User>(`/users/${id}/invitation/resend`);
+  },
+  /** Si hay servidor de correo para invitar. */
+  invitationAvailability() {
+    return apiClient.get<{ emailConfigured: boolean }>('/users/invitations/availability');
   },
 };
 
@@ -307,6 +321,11 @@ export const reportsService = {
   generateExecutivePDF(evaluationId: string) {
     return apiClient.get(`/reports/${evaluationId}/executive/pdf`, { responseType: 'blob' });
   },
+  /** Reporte técnico detallado (RF-REP-02): control por control, con veredictos, observaciones y
+   * evidencias. Mismos estados que el reporte final (aprobada, o archivada que fue aprobada). */
+  generateTechnicalPDF(evaluationId: string) {
+    return apiClient.get(`/reports/${evaluationId}/technical/pdf`, { responseType: 'blob' });
+  },
   generatePreliminaryPDF(evaluationId: string) {
     return apiClient.get(`/reports/${evaluationId}/preliminary/pdf`, { responseType: 'blob' });
   },
@@ -328,6 +347,17 @@ export const reportsService = {
 export const dashboardService = {
   getStats(tenantId?: string) {
     return apiClient.get<DashboardStats>('/dashboard/stats', { params: { tenantId } });
+  },
+};
+
+// RF-PLN-03: leerlos puede cualquier usuario autenticado (el alta de una acción precarga la fecha);
+// cambiarlos, solo PRISMA_ADMIN.
+export const planDeadlinesService = {
+  get() {
+    return apiClient.get<PlanDeadlines>('/settings/plan-deadlines');
+  },
+  update(data: PlanDeadlines) {
+    return apiClient.put<PlanDeadlines>('/settings/plan-deadlines', data);
   },
 };
 

@@ -459,6 +459,32 @@ evidencias más recientes; para restaurar un punto en el tiempo específico, cor
 > mano) y el bucket de evidencias no tenía backup en absoluto — ver el historial de este archivo
 > si hace falta el contexto completo de esa brecha.
 
+## Retención de la bitácora (RF-TRZ-04)
+
+Los registros de `audit.audit_logs` se retienen **al menos 365 días**. Lo garantiza el motor, no
+solo el código: el trigger `trg_audit_logs_retention` (migración
+`V31__audit_log_retention.sql`) rechaza cualquier `DELETE` de una fila con menos de 365 días,
+venga de la aplicación, de un script o de una consola. El error que se ve es:
+
+```
+ERROR:  RF-TRZ-04: los registros de la bitácora se retienen al menos 365 días (registro <id> del <fecha>)
+```
+
+Los backups diarios (30 días, ver arriba) no cubren por sí solos este período: la copia de los 12
+meses vive en la propia base.
+
+**Purga de registros vencidos (opcional, solo si el volumen lo justifica).** La aplicación nunca
+purga sola. Si hace falta liberar espacio, borrar únicamente lo que ya cumplió el período, tras un
+`make backup`:
+
+```sql
+DELETE FROM audit.audit_logs WHERE created_at < now() - INTERVAL '365 days';
+```
+
+Si la condición alcanzara alguna fila más nueva, el trigger aborta el `DELETE` completo y no se
+borra nada. `TRUNCATE` no pasa por el trigger: no usarlo sobre esta tabla salvo en mantenimiento
+deliberado (p. ej. reinicializar un ambiente de pruebas).
+
 ## Identidad visual de los correos de Keycloak (PRI-366)
 
 Los correos que envía Keycloak (recuperación de contraseña, verificación de email, etc.) usan

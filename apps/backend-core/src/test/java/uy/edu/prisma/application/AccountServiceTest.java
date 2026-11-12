@@ -130,6 +130,48 @@ class AccountServiceTest {
     verify(auditLog, times(1)).record(eq("LOGOUT"), eq("user:" + user.getId()), isNull());
   }
 
+  // ---- Invitación (RF-USR-05, PRI-240) ----
+
+  @Test
+  void theFirstLoginOfAnInvitedUserAcceptsTheInvitation() {
+    user.setInvitedAt(java.time.OffsetDateTime.now().minusDays(1));
+
+    service.recordSessionEvent(new SessionEventDto("LOGIN"));
+
+    assertNotNull(user.getInvitationAcceptedAt());
+    assertFalse(user.isInvitationPending());
+    verify(auditLog, times(1)).record(eq("ACCEPT_INVITATION"), eq("user:" + user.getId()), any());
+  }
+
+  @Test
+  void aLaterLoginKeepsTheOriginalAcceptanceDate() {
+    java.time.OffsetDateTime accepted = java.time.OffsetDateTime.now().minusDays(3);
+    user.setInvitedAt(accepted.minusDays(1));
+    user.setInvitationAcceptedAt(accepted);
+
+    service.recordSessionEvent(new SessionEventDto("LOGIN"));
+
+    assertEquals(accepted, user.getInvitationAcceptedAt());
+    verify(auditLog, never()).record(eq("ACCEPT_INVITATION"), any(), any());
+  }
+
+  @Test
+  void aUserThatWasNotInvitedHasNoInvitationToAccept() {
+    service.recordSessionEvent(new SessionEventDto("LOGIN"));
+
+    assertNull(user.getInvitationAcceptedAt());
+    verify(auditLog, never()).record(eq("ACCEPT_INVITATION"), any(), any());
+  }
+
+  @Test
+  void aLogoutDoesNotAcceptTheInvitation() {
+    user.setInvitedAt(java.time.OffsetDateTime.now().minusDays(1));
+
+    service.recordSessionEvent(new SessionEventDto("LOGOUT"));
+
+    assertTrue(user.isInvitationPending());
+  }
+
   // ---- Vinculación con la cuenta de Keycloak (C4) ----
 
   @Test

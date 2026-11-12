@@ -261,7 +261,18 @@ public class OrganizationService {
         o.getSector(),
         o.getSize(),
         o.getResponsible() != null ? o.getResponsible().getId() : null,
+        responsibleName(o.getResponsible()),
         o.getEnabled(),
         o.getCreatedAt());
+  }
+
+  private static String responsibleName(User responsible) {
+    if (responsible == null) {
+      return null;
+    }
+    String first = responsible.getFirstName() != null ? responsible.getFirstName() : "";
+    String last = responsible.getLastName() != null ? responsible.getLastName() : "";
+    String name = (first + " " + last).trim();
+    return name.isEmpty() ? responsible.getEmail() : name;
   }
 }

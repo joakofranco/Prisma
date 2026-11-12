@@ -234,6 +234,66 @@ class ReportServiceTest {
     assertThrows(ConflictException.class, () -> service.generatePdf(eval.getId()));
   }
 
+  // ---- PRI-367: reportes de evaluaciones archivadas ----
+
+  private void archivedAfterApproval() {
+    eval.setStatus(Evaluation.Status.ARCHIVED);
+    eval.setApprovedAt(OffsetDateTime.of(2025, 10, 15, 10, 0, 0, 0, java.time.ZoneOffset.UTC));
+  }
+
+  @Test
+  void anArchivedEvaluationThatWasApprovedGetsTheFinalAndExecutiveReports() {
+    archivedAfterApproval();
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(matRepo.findByEvaluationId(eval.getId())).thenReturn(results());
+
+    assertTrue(service.generatePdf(eval.getId()).length > 100);
+    assertTrue(service.generateExcel(eval.getId()).length > 100);
+    assertTrue(service.generateExecutivePdf(eval.getId()).length > 100);
+  }
+
+  @Test
+  void anArchivedEvaluationDiscardedWithoutApprovalHasNoReport() {
+    eval.setStatus(Evaluation.Status.ARCHIVED);
+    eval.setApprovedAt(null);
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+
+    ConflictException error =
+        assertThrows(ConflictException.class, () -> service.generatePdf(eval.getId()));
+
+    assertTrue(error.getMessage().contains("Archivada"), error.getMessage());
+  }
+
+  @Test
+  void theReportsOfAnArchivedEvaluationShowWhenItWasApproved() throws Exception {
+    archivedAfterApproval();
+    withExecutiveData(results(), List.of());
+
+    String finalReport = allText(service.generatePdf(eval.getId()));
+    String executive = allText(service.generateExecutivePdf(eval.getId()));
+
+    for (String text : List.of(finalReport, executive)) {
+      assertTrue(text.contains("APROBADA"), text);
+      assertTrue(text.contains("15/10/2025"), text);
+      assertTrue(text.contains("Archivada"), text);
+    }
+  }
+
+  @Test
+  void generatingAReportDoesNotModifyTheEvaluation() {
+    archivedAfterApproval();
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(matRepo.findByEvaluationId(eval.getId())).thenReturn(results());
+
+    service.generatePdf(eval.getId());
+    service.generateExcel(eval.getId());
+    service.generateExecutivePdf(eval.getId());
+
+    assertEquals(Evaluation.Status.ARCHIVED, eval.getStatus());
+    verify(evalRepo, never()).save(any());
+    verify(planRepo, never()).markOverdue();
+  }
+
   // ---- PRI-309: reporte ejecutivo ----
 
   private static final String[] FUNCTIONS = {
@@ -446,7 +506,7 @@ class ReportServiceTest {
     String text = allText(service.generateExecutivePdf(eval.getId()));
 
     assertTrue(text.contains("Vencida"));
-    assertTrue(text.contains("Completada"));
+    assertTrue(text.contains("Realizado"));
     assertTrue(text.contains("05/01/2026"));
   }
 

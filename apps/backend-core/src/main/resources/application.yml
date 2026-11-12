@@ -140,6 +140,11 @@ prisma:
     # Compartida con backend-ai (X-Internal-Api-Key): sin ella, backend-ai queda alcanzable por
     # cualquiera que le pegue directo al puerto expuesto. Vacía en dev local == sin chequeo.
     internal-api-key: ${AI_INTERNAL_API_KEY:}
+  # RF-USR-05 (PRI-240): adónde vuelve quien acepta una invitación, después de crear su contraseña
+  # en Keycloak (la URL pública del frontend). client-id = el client público del frontend.
+  invitations:
+    client-id: ${PRISMA_INVITATIONS_CLIENT_ID:prisma-frontend}
+    redirect-uri: ${PRISMA_APP_URL:http://localhost:8080}
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:8080,http://localhost:5173,https://localhost,https://prisma.local}
   keycloak:

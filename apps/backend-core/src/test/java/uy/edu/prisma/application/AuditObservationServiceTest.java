@@ -422,7 +422,40 @@ class AuditObservationServiceTest {
   }
 
   @Test
-  void theOrganizationGetsAnEmptyListWhileTheEvaluationIsNotReturned() {
+  void afterResumingTheOrganizationKeepsSeeingTheObservationsWhileItCorrects() {
+    // RF-AUD-08 (PRI-298): «Reanudar» la pasa a IN_PROGRESS y, al reenviarla, a READY_FOR_AUDIT;
+    // la organización tiene que seguir viendo qué le pidió corregir el auditor.
+    asOrganizationUser();
+    AuditObservation obs =
+        AuditObservation.builder()
+            .id(UUID.randomUUID())
+            .evaluation(eval)
+            .description("corregir la política de retención")
+            .build();
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(repo.findByEvaluationIdOrderByCreatedAtDesc(eval.getId())).thenReturn(List.of(obs));
+
+    for (Evaluation.Status status :
+        List.of(Evaluation.Status.IN_PROGRESS, Evaluation.Status.READY_FOR_AUDIT)) {
+      eval.setStatus(status);
+      List<AuditObservationDto> visible = service.listByEvaluation(eval.getId());
+      assertEquals(1, visible.size(), status.name());
+      assertEquals("corregir la política de retención", visible.get(0).description());
+    }
+  }
+
+  @Test
+  void inTheFirstCycleThereIsNothingToShowBecauseObservationsOnlyExistAfterAnAudit() {
+    asOrganizationUser();
+    eval.setStatus(Evaluation.Status.IN_PROGRESS);
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(repo.findByEvaluationIdOrderByCreatedAtDesc(eval.getId())).thenReturn(List.of());
+
+    assertTrue(service.listByEvaluation(eval.getId()).isEmpty());
+  }
+
+  @Test
+  void theOrganizationGetsAnEmptyListWhileTheAuditorIsWorkingOrBeforeAnyAudit() {
     asOrganizationUser();
     AuditObservation draft =
         AuditObservation.builder()
@@ -433,12 +466,8 @@ class AuditObservationServiceTest {
     when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
     when(repo.findByEvaluationIdOrderByCreatedAtDesc(eval.getId())).thenReturn(List.of(draft));
 
-    for (Evaluation.Status status :
-        List.of(
-            Evaluation.Status.DRAFT,
-            Evaluation.Status.IN_PROGRESS,
-            Evaluation.Status.READY_FOR_AUDIT,
-            Evaluation.Status.IN_AUDIT)) {
+    // IN_AUDIT: el auditor está trabajando y sus observaciones son un borrador (PRI-354).
+    for (Evaluation.Status status : List.of(Evaluation.Status.DRAFT, Evaluation.Status.IN_AUDIT)) {
       eval.setStatus(status);
       assertTrue(service.listByEvaluation(eval.getId()).isEmpty(), status.name());
     }

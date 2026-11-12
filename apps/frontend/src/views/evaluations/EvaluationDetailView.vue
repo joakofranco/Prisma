@@ -38,6 +38,10 @@
       </div>
     </div>
 
+    <!-- RF-AUD-08 (PRI-298): tras «Reanudar» una evaluación devuelta, el aviso explica por qué está
+    otra vez En curso y lleva a las observaciones del auditor. Solo se ve si hay observaciones. -->
+    <ReopenedNotice v-if="showReopenedNotice && evaluation" :evaluation-id="evaluation.id" />
+
     <BaseModal v-model="showProfileModal" title="Cambiar perfil comunitario" size="md">
       <p class="text-sm text-slate-600 dark:text-slate-300 mb-4">
         El perfil define qué controles se responden en esta evaluación. Solo se puede cambiar
@@ -192,7 +196,11 @@
       <!-- PRI-354: observaciones del auditor, de solo lectura, para la organización (responsable
       y evaluador interno) desde que la evaluación vuelve. Es la forma en que el auditor le explica
       por qué la devuelve. El VIEWER no las ve; el backend lo exige igual. -->
-      <AuditObservationsReadOnly v-if="showAuditorObservations" :evaluation-id="evaluation.id" />
+      <AuditObservationsReadOnly
+        v-if="showAuditorObservations"
+        :evaluation-id="evaluation.id"
+        :hide-when-empty="['IN_PROGRESS', 'READY_FOR_AUDIT'].includes(evaluation.status)"
+      />
 
       <!-- RF-AUD-10: historial de ciclos de auditoría (envíos/devoluciones) de esta evaluación --
       cualquiera con acceso a la organización puede verlo, incluido el AUDITOR. -->
@@ -521,6 +529,7 @@
   import MaturitySummaryTables from '@/components/evaluations/MaturitySummaryTables.vue';
   import EvaluationLifecycleStepper from '@/components/evaluations/EvaluationLifecycleStepper.vue';
   import AuditObservationsReadOnly from '@/components/evaluations/AuditObservationsReadOnly.vue';
+  import ReopenedNotice from '@/components/evaluations/ReopenedNotice.vue';
   import {
     ArrowLeftIcon,
     ChartBarIcon,
@@ -647,13 +656,30 @@
     }
   }
 
-  // PRI-354: las observaciones del auditor las lee la organización desde la devolución.
-  const OBSERVATION_VISIBLE_STATUSES = ['RETURNED', 'APPROVED', 'ARCHIVED'];
+  // PRI-354: las observaciones del auditor las lee la organización desde la devolución. PRI-298
+  // (RF-AUD-08): también mientras corrige tras «Reanudar» (En curso) y al reenviarla (Lista para
+  // auditoría). Siguen ocultas En auditoría, cuando son el borrador del auditor. Mismo criterio que
+  // AuditObservationService en el backend.
+  const OBSERVATION_VISIBLE_STATUSES = [
+    'RETURNED',
+    'IN_PROGRESS',
+    'READY_FOR_AUDIT',
+    'APPROVED',
+    'ARCHIVED',
+  ];
+  const isOrganizationUser = computed(() =>
+    authStore.hasAnyRole('ORG_RESPONSIBLE', 'INTERNAL_EVALUATOR'),
+  );
   const showAuditorObservations = computed(
     () =>
       !!evaluation.value &&
       OBSERVATION_VISIBLE_STATUSES.includes(evaluation.value.status) &&
-      authStore.hasAnyRole('ORG_RESPONSIBLE', 'INTERNAL_EVALUATOR'),
+      isOrganizationUser.value,
+  );
+  // El aviso de reapertura: En curso (el componente decide mostrarse solo si hay observaciones,
+  // que en ese estado solo existen si una auditoría anterior la devolvió).
+  const showReopenedNotice = computed(
+    () => evaluation.value?.status === 'IN_PROGRESS' && isOrganizationUser.value,
   );
 
   const canRespondRole = computed(() => authStore.hasAnyRole('PRISMA_ADMIN', 'INTERNAL_EVALUATOR'));

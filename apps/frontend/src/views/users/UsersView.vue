@@ -7,11 +7,29 @@
           Gestión de usuarios del sistema
         </p>
       </div>
-      <BaseButton variant="primary" @click="openCreateModal">
-        <PlusIcon class="w-4 h-4" />
-        Nuevo Usuario
-      </BaseButton>
+      <div class="flex flex-wrap items-center gap-2">
+        <BaseButton variant="secondary" @click="openCreateModal">
+          <PlusIcon class="w-4 h-4" />
+          Nuevo Usuario
+        </BaseButton>
+        <!-- RF-USR-05 (PRI-240): alta por invitación, sin contraseña que pasar a mano. -->
+        <BaseButton variant="primary" data-testid="open-invite" @click="showInviteModal = true">
+          <EnvelopeIcon class="w-4 h-4" />
+          Invitar evaluador
+        </BaseButton>
+      </div>
     </div>
+
+    <BaseAlert
+      v-if="inviteSentTo"
+      variant="success"
+      dismissible
+      data-testid="invite-sent"
+      @dismiss="inviteSentTo = ''"
+    >
+      <strong>Invitación enviada a {{ inviteSentTo }}.</strong> Le llega un correo para crear su
+      contraseña; el enlace vence en 72 horas.
+    </BaseAlert>
 
     <div class="flex items-center gap-3">
       <div class="relative flex-1 max-w-md">
@@ -74,15 +92,40 @@
           {{ value ? 'Activo' : 'Inactivo' }}
         </span>
       </template>
-      <template #cell-canLogin="{ value }">
+      <template #cell-canLogin="{ value, row }">
+        <div v-if="isInvitationPending(row as User)" data-testid="invitation-pending">
+          <span
+            class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
+          >
+            Invitación pendiente
+          </span>
+          <span class="block mt-1 text-xs text-slate-500 dark:text-slate-400">
+            Enviada el {{ formatDate((row as User).invitedAt as string) }}
+          </span>
+          <button
+            type="button"
+            class="mt-1 text-xs font-semibold text-amber-700 hover:text-amber-900 hover:underline disabled:opacity-50 dark:text-amber-300 dark:hover:text-amber-200"
+            data-testid="resend-invitation"
+            :disabled="resendingId === (row as User).id"
+            @click="resendInvitation(row as User)"
+          >
+            {{ resendingId === (row as User).id ? 'Reenviando…' : 'Reenviar invitación' }}
+          </button>
+        </div>
         <span
-          v-if="value"
+          v-else-if="value"
           class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
         >
           Puede iniciar sesión
         </span>
         <span
-          v-else
+          v-if="(row as User).invitationAcceptedAt"
+          class="block mt-1 text-xs text-slate-500 dark:text-slate-400"
+        >
+          Aceptó la invitación el {{ formatDate((row as User).invitationAcceptedAt as string) }}
+        </span>
+        <span
+          v-else-if="!value"
           class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
           title="Todavía no tiene cuenta para loguearse: edite el usuario y fíjele una contraseña"
         >
@@ -312,6 +355,15 @@
         </BaseButton>
       </template>
     </BaseModal>
+
+    <InviteEvaluatorModal
+      v-model="showInviteModal"
+      :is-platform-admin="isPlatformAdmin"
+      :own-organization-name="ownOrganizationName"
+      :organization-options="inviteOrganizationOptions"
+      :email-configured="emailConfigured"
+      @invited="onInvited"
+    />
   </div>
 </template>
 
@@ -326,7 +378,7 @@
   import { usersService } from '@/services/resources';
   import { useNotification } from '@/composables/useUtils';
   import { ROLE_LABELS } from '@/utils/constants';
-  import { getErrorMessage } from '@/utils/helpers';
+  import { formatDate, getErrorMessage } from '@/utils/helpers';
   import { emailSchema, personNameSchema } from '@/utils/validators';
   import { getOrgMode, validateOrganizationCount } from '@/utils/organizationRules';
   import { assignableOrganizationOptions } from '@/utils/organizationOptions';
@@ -336,6 +388,7 @@
   import BaseAlert from '@/components/common/BaseAlert.vue';
   import BaseModal from '@/components/common/BaseModal.vue';
   import BaseInput from '@/components/common/BaseInput.vue';
+  import InviteEvaluatorModal from '@/components/users/InviteEvaluatorModal.vue';
   import {
     PlusIcon,
     MagnifyingGlassIcon,
@@ -346,6 +399,7 @@
     CheckCircleIcon,
     ClipboardDocumentIcon,
     ArrowPathIcon,
+    EnvelopeIcon,
   } from '@heroicons/vue/24/outline';
   import type { User, UserRole } from '@/types';
 
@@ -532,6 +586,58 @@
   function isRoleLocked(roleValue: string): boolean {
     if (!RESPONSIBLE_GATED_ROLES.includes(roleValue)) return false;
     return needsResponsibleFirst.value && !form.roles.includes(roleValue);
+  }
+
+  // ---- RF-USR-05 (PRI-240): invitación por correo ----
+  const showInviteModal = ref(false);
+  const inviteSentTo = ref('');
+  const resendingId = ref('');
+  // null = no se pudo consultar: se deja intentar y el backend responde si falta el correo.
+  const emailConfigured = ref<boolean | null>(null);
+  // El responsable solo ve (y solo puede invitar a) su propia organización.
+  const ownOrganizationName = computed(() => orgOptions.value[0]?.label ?? '');
+  const inviteOrganizationOptions = computed(() =>
+    assignableOrganizationOptions(orgStore.organizations, []),
+  );
+
+  function isInvitationPending(user: User): boolean {
+    return !!user.invitedAt && !user.invitationAcceptedAt;
+  }
+
+  async function loadInvitationAvailability() {
+    try {
+      const { data } = await usersService.invitationAvailability();
+      emailConfigured.value = data.emailConfigured;
+    } catch {
+      emailConfigured.value = null;
+    }
+  }
+
+  async function onInvited(user: User) {
+    inviteSentTo.value = user.email;
+    currentPage.value = 1;
+    await store.fetchUsers(1, pageSize, searchTerm.value);
+  }
+
+  async function resendInvitation(user: User) {
+    if (
+      !confirm(
+        `¿Reenviar la invitación a ${user.email}? Le llega un correo nuevo con un enlace que vence en 72 horas.`,
+      )
+    ) {
+      return;
+    }
+    resendingId.value = user.id;
+    try {
+      const { data } = await usersService.resendInvitation(user.id);
+      const index = users.value.findIndex((u) => u.id === user.id);
+      if (index !== -1) users.value[index] = data;
+      notification.success(`Invitación reenviada a ${user.email}`);
+    } catch (err) {
+      notification.error(getErrorMessage(err, 'No se pudo reenviar la invitación'));
+    } finally {
+      resendingId.value = '';
+    }
   }
 
   function openCreateModal() {
@@ -743,6 +849,7 @@
   }
 
   onMounted(async () => {
+    loadInvitationAvailability();
     await Promise.all([store.fetchUsers(1, pageSize), orgStore.fetchOrganizations(1, 100)]);
 
     // Llegada guiada desde "Nueva Organización": pre-cargamos el formulario para crear

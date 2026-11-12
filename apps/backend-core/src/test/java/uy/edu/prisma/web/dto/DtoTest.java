@@ -17,7 +17,8 @@ class DtoTest {
 
   @Test
   void organizationRecords() {
-    OrganizationDto dto = new OrganizationDto(id, "Acme", "NIT", "TECH", "SMALL", null, true, now);
+    OrganizationDto dto =
+        new OrganizationDto(id, "Acme", "NIT", "TECH", "SMALL", null, null, true, now);
     assertEquals(id, dto.id());
     assertEquals("Acme", dto.name());
     assertEquals("NIT", dto.rut());

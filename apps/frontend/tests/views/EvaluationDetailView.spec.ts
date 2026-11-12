@@ -7,6 +7,7 @@ const evaluationsService = vi.hoisted(() => ({
   getResponses: vi.fn(),
   getResults: vi.fn(),
   getDeletable: vi.fn(),
+  getAuditTrail: vi.fn(),
 }));
 const catalogService = vi.hoisted(() => ({ getByVersion: vi.fn() }));
 const auditService = vi.hoisted(() => ({ getObservations: vi.fn() }));
@@ -220,8 +221,10 @@ describe('EvaluationDetailView: observaciones del auditor para la organización 
     }
   });
 
-  it('no se muestran mientras la evaluación no volvió (ni siquiera se piden)', async () => {
-    for (const status of ['DRAFT', 'IN_PROGRESS', 'READY_FOR_AUDIT', 'IN_AUDIT']) {
+  // PRI-298: En curso y Lista para auditoría pasaron a mostrarlas (si las hay); ver el bloque de
+  // PRI-298 más abajo. En Borrador no hay auditoría y En auditoría son el borrador del auditor.
+  it('no se muestran en borrador ni mientras el auditor trabaja (ni siquiera se piden)', async () => {
+    for (const status of ['DRAFT', 'IN_AUDIT']) {
       const wrapper = await mountWithStatus(status);
       expect(wrapper.find(OBS).exists(), status).toBe(false);
     }
@@ -250,5 +253,161 @@ describe('EvaluationDetailView: observaciones del auditor para la organización 
     const block = wrapper.find(OBS);
     expect(block.findAll('button')).toHaveLength(0);
     expect(block.findAll('textarea, input, select')).toHaveLength(0);
+  });
+});
+
+describe('EvaluationDetailView: reapertura por observaciones (PRI-298, RF-AUD-08)', () => {
+  const OBS = '[data-testid="auditor-observations"]';
+  const NOTICE = '[data-testid="reopened-notice"]';
+
+  const observation = (id: string, status: string, type = 'NON_CONFORMITY') => ({
+    id,
+    evaluationId: 'eval-1',
+    type,
+    description: `Observación ${id}`,
+    status,
+    createdBy: 'u',
+    createdAt: '2026-10-21T10:00:00Z',
+    createdByName: 'Ana Auditora',
+  });
+
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    vi.clearAllMocks();
+    document.body.innerHTML = '';
+    authState.roles = ['ORG_RESPONSIBLE'];
+    evaluationsService.getResponses.mockResolvedValue({ data: [] });
+    evaluationsService.getDeletable.mockResolvedValue({ data: [] });
+    evaluationsService.getResults.mockResolvedValue({ data: [] });
+    catalogService.getByVersion.mockResolvedValue({ data: { functions: [] } });
+    communityProfilesService.getAll.mockResolvedValue({ data: [] });
+    auditService.getObservations.mockResolvedValue({
+      data: [
+        observation('o1', 'OPEN'),
+        observation('o2', 'IN_PROGRESS', 'OBSERVATION'),
+        observation('o3', 'RESOLVED', 'RECOMMENDATION'),
+      ],
+    });
+    evaluationsService.getAuditTrail.mockResolvedValue({
+      data: [
+        {
+          id: 'e1',
+          action: 'UPDATE_STATUS',
+          status: 'IN_AUDIT',
+          occurredAt: '2026-10-15T10:00:00Z',
+          cycleNumber: 1,
+        },
+        {
+          id: 'e2',
+          action: 'UPDATE_STATUS',
+          status: 'RETURNED',
+          occurredAt: '2026-10-21T12:00:00Z',
+          cycleNumber: 1,
+        },
+        {
+          id: 'e3',
+          action: 'UPDATE_STATUS',
+          status: 'IN_PROGRESS',
+          occurredAt: '2026-10-22T09:00:00Z',
+          cycleNumber: 1,
+        },
+      ],
+    });
+  });
+
+  afterEach(() => {
+    authState.roles = null;
+  });
+
+  async function mountWithStatus(status: string) {
+    evaluationsService.getById.mockResolvedValue({
+      data: {
+        id: 'eval-1',
+        name: 'E',
+        status,
+        catalogVersion: '5.0',
+        communityProfileId: null,
+        organizationName: 'Org',
+      },
+    });
+    return mountView();
+  }
+
+  it('después de «Reanudar» (En curso) la organización sigue viendo las observaciones', async () => {
+    const wrapper = await mountWithStatus('IN_PROGRESS');
+
+    expect(wrapper.find(OBS).exists()).toBe(true);
+    expect(wrapper.find(OBS).text()).toContain('Observación o1');
+    expect(wrapper.findAll('[data-testid="auditor-observation"]')).toHaveLength(3);
+  });
+
+  it('muestra el aviso de reapertura con la fecha de devolución y el conteo', async () => {
+    const wrapper = await mountWithStatus('IN_PROGRESS');
+
+    const notice = wrapper.find(NOTICE);
+    expect(notice.exists()).toBe(true);
+    expect(notice.text()).toContain('Evaluación reabierta para corregir lo que observó el auditor');
+    expect(notice.text()).toContain('21/10/2026');
+    expect(notice.text()).toContain('3 observaciones');
+    expect(notice.text()).toContain('2 abiertas');
+    expect(notice.text()).toContain('enviarla a auditoría');
+  });
+
+  it('«Ver observaciones» lleva al bloque de observaciones', async () => {
+    const wrapper = await mountWithStatus('IN_PROGRESS');
+    const block = document.getElementById('auditor-observations')!;
+    const scroll = vi.fn();
+    block.scrollIntoView = scroll;
+
+    await wrapper.find('[data-testid="reopened-notice-go"]').trigger('click');
+
+    expect(scroll).toHaveBeenCalledTimes(1);
+  });
+
+  it('al reenviarla (Lista para auditoría) siguen visibles, sin el aviso', async () => {
+    const wrapper = await mountWithStatus('READY_FOR_AUDIT');
+
+    expect(wrapper.find(OBS).exists()).toBe(true);
+    expect(wrapper.find(NOTICE).exists()).toBe(false);
+  });
+
+  it('en el primer ciclo (sin observaciones) no hay aviso ni bloque vacío', async () => {
+    auditService.getObservations.mockResolvedValue({ data: [] });
+    const wrapper = await mountWithStatus('IN_PROGRESS');
+
+    expect(wrapper.find(NOTICE).exists()).toBe(false);
+    expect(wrapper.find(OBS).exists()).toBe(false);
+    expect(document.body.textContent).not.toContain('El auditor no registró observaciones');
+  });
+
+  it('si no se puede leer el historial, el aviso sale igual sin la fecha', async () => {
+    evaluationsService.getAuditTrail.mockRejectedValue(new Error('offline'));
+    const wrapper = await mountWithStatus('IN_PROGRESS');
+
+    expect(wrapper.find(NOTICE).exists()).toBe(true);
+    expect(wrapper.find(NOTICE).text()).toContain('El auditor la devolvió con');
+  });
+
+  it('una sola observación se nombra en singular', async () => {
+    auditService.getObservations.mockResolvedValue({ data: [observation('o1', 'OPEN')] });
+    const wrapper = await mountWithStatus('IN_PROGRESS');
+
+    expect(wrapper.find(NOTICE).text()).toContain('1 observación');
+    expect(wrapper.find(NOTICE).text()).toContain('1 abierta');
+  });
+
+  it('el aviso es para la organización: el VIEWER no lo ve', async () => {
+    authState.roles = ['VIEWER'];
+    const wrapper = await mountWithStatus('IN_PROGRESS');
+
+    expect(wrapper.find(NOTICE).exists()).toBe(false);
+    expect(auditService.getObservations).not.toHaveBeenCalled();
+  });
+
+  it('en Devuelta el bloque sigue igual y sin el aviso', async () => {
+    const wrapper = await mountWithStatus('RETURNED');
+
+    expect(wrapper.find(OBS).exists()).toBe(true);
+    expect(wrapper.find(NOTICE).exists()).toBe(false);
   });
 });

@@ -48,21 +48,45 @@ class ImprovementPlanServiceTest {
   @Mock private EvaluationResponseRepository responseRepo;
   @Mock private AiEvidenceClient aiClient;
   @Mock private CurrentUserService currentUser;
+  @Mock private AuditLogService auditLog;
+  @Mock private PlanDeadlineSettingsService deadlines;
 
   private ImprovementPlanService service;
   private Evaluation eval;
 
+  private static final java.util.Map<ImprovementPlan.Priority, Integer> MONTHS =
+      java.util.Map.of(
+          ImprovementPlan.Priority.HIGH, 3,
+          ImprovementPlan.Priority.MEDIUM, 6,
+          ImprovementPlan.Priority.LOW, 12);
+
   @BeforeEach
   void setUp() {
     when(currentUser.isGlobalRole()).thenReturn(true);
+    // Plazos por defecto del requerimiento (RF-PLN-03): Alta 3, Media 6, Baja 12 meses.
+    when(deadlines.currentMonths()).thenReturn(MONTHS);
+    when(deadlines.defaultDueDate(any(), any()))
+        .thenAnswer(
+            inv ->
+                ((LocalDate) inv.getArgument(1))
+                    .plusMonths(MONTHS.get((ImprovementPlan.Priority) inv.getArgument(0))));
     service =
         new ImprovementPlanService(
-            repo, evaluationRepo, controlRepo, responseRepo, aiClient, currentUser);
+            repo,
+            evaluationRepo,
+            controlRepo,
+            responseRepo,
+            aiClient,
+            currentUser,
+            auditLog,
+            deadlines);
+    // IN_PROGRESS: el plan está activo (en DRAFT / ARCHIVED no se puede crear ni editar).
     eval =
         Evaluation.builder()
             .id(UUID.randomUUID())
             .name("E")
             .catalogVersion("5.0")
+            .status(Evaluation.Status.IN_PROGRESS)
             .organization(Organization.builder().id(UUID.randomUUID()).build())
             .build();
   }
@@ -139,7 +163,39 @@ class ImprovementPlanServiceTest {
     assertEquals(eval.getId(), result.evaluationId());
     assertEquals("MEDIUM", result.priority());
     assertEquals("PENDING", result.status());
-    assertNull(result.dueInDays());
+    // RF-PLN-03: sin fecha, se estampa el plazo por defecto de la prioridad (Media = 6 meses).
+    assertEquals(LocalDate.now().plusMonths(6).toString(), result.dueDate());
+  }
+
+  @Test
+  void createWithoutADueDateStampsTheDefaultOfItsPriority() {
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(repo.save(any(ImprovementPlan.class))).thenAnswer(inv -> inv.getArgument(0));
+
+    CreateImprovementPlanDto highDto =
+        new CreateImprovementPlanDto(eval.getId(), null, "A", "R", "HIGH", "", null);
+    CreateImprovementPlanDto lowDto =
+        new CreateImprovementPlanDto(eval.getId(), null, "A", "R", "LOW", null, null);
+
+    ImprovementPlanDto high = service.create(highDto);
+    ImprovementPlanDto low = service.create(lowDto);
+
+    assertEquals(LocalDate.now().plusMonths(3).toString(), high.dueDate());
+    assertEquals(LocalDate.now().plusMonths(12).toString(), low.dueDate());
+  }
+
+  @Test
+  void createKeepsTheDueDateTheUserChose() {
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(repo.save(any(ImprovementPlan.class))).thenAnswer(inv -> inv.getArgument(0));
+    String chosen = LocalDate.now().plusDays(10).toString();
+
+    ImprovementPlanDto result =
+        service.create(
+            new CreateImprovementPlanDto(eval.getId(), null, "A", "R", "HIGH", chosen, null));
+
+    assertEquals(chosen, result.dueDate());
+    verify(deadlines, never()).defaultDueDate(any(), any());
   }
 
   @Test
@@ -343,6 +399,264 @@ class ImprovementPlanServiceTest {
     assertEquals("ahora sí", after.comments());
   }
 
+  // ---- RF-PLN-04 (PRI-305): gestión operativa del plan ----
+
+  private ImprovementPlan existingPlan(ImprovementPlan.PlanStatus status, LocalDate dueDate) {
+    ImprovementPlan plan =
+        ImprovementPlan.builder()
+            .id(UUID.randomUUID())
+            .evaluation(eval)
+            .action("Definir la política")
+            .responsible("Ana")
+            .priority(ImprovementPlan.Priority.HIGH)
+            .status(status)
+            .dueDate(dueDate)
+            .build();
+    when(repo.findById(plan.getId())).thenReturn(Optional.of(plan));
+    when(repo.save(any(ImprovementPlan.class))).thenAnswer(inv -> inv.getArgument(0));
+    return plan;
+  }
+
+  private static UpdateImprovementPlanDto statusOnly(String status) {
+    return new UpdateImprovementPlanDto(null, null, null, null, status, null);
+  }
+
+  private static UpdateImprovementPlanDto dueDateOnly(LocalDate dueDate) {
+    return new UpdateImprovementPlanDto(null, null, null, dueDate.toString(), null, null);
+  }
+
+  @Test
+  void createIsRejectedWhileTheEvaluationIsADraftOrArchived() {
+    for (Evaluation.Status closed : List.of(Evaluation.Status.DRAFT, Evaluation.Status.ARCHIVED)) {
+      eval.setStatus(closed);
+      when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+
+      CreateImprovementPlanDto dto =
+          new CreateImprovementPlanDto(eval.getId(), null, "A", "R", null, null, null);
+
+      assertThrows(InvalidRequestException.class, () -> service.create(dto), closed.name());
+    }
+    verify(repo, never()).save(any());
+  }
+
+  @Test
+  void createIsRejectedOnceTheEvaluationIsApproved() {
+    eval.setStatus(Evaluation.Status.APPROVED);
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+
+    CreateImprovementPlanDto dto =
+        new CreateImprovementPlanDto(eval.getId(), null, "A", "R", null, null, null);
+
+    assertThrows(InvalidRequestException.class, () -> service.create(dto));
+    verify(repo, never()).save(any());
+  }
+
+  @Test
+  void createRejectsADueDateBeforeTodayButAcceptsToday() {
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(repo.save(any(ImprovementPlan.class))).thenAnswer(inv -> inv.getArgument(0));
+    String yesterday = LocalDate.now().minusDays(1).toString();
+    String today = LocalDate.now().toString();
+    CreateImprovementPlanDto past =
+        new CreateImprovementPlanDto(eval.getId(), null, "A", "R", null, yesterday, null);
+    CreateImprovementPlanDto current =
+        new CreateImprovementPlanDto(eval.getId(), null, "A", "R", null, today, null);
+
+    assertThrows(InvalidRequestException.class, () -> service.create(past));
+    ImprovementPlanDto created = service.create(current);
+
+    assertEquals(today, created.dueDate());
+  }
+
+  @Test
+  void updateIsRejectedWhileTheEvaluationIsADraftOrArchived() {
+    ImprovementPlan plan =
+        existingPlan(ImprovementPlan.PlanStatus.PENDING, LocalDate.now().plusDays(10));
+    for (Evaluation.Status closed : List.of(Evaluation.Status.DRAFT, Evaluation.Status.ARCHIVED)) {
+      eval.setStatus(closed);
+
+      assertThrows(
+          InvalidRequestException.class,
+          () -> service.update(plan.getId(), statusOnly("IN_PROGRESS")),
+          closed.name());
+    }
+    verify(repo, never()).save(any());
+  }
+
+  @Test
+  void withTheEvaluationApprovedOnlyTheStatusCanChange() {
+    ImprovementPlan plan =
+        existingPlan(ImprovementPlan.PlanStatus.PENDING, LocalDate.now().plusDays(10));
+    eval.setStatus(Evaluation.Status.APPROVED);
+
+    ImprovementPlanDto result = service.update(plan.getId(), statusOnly("COMPLETED"));
+
+    assertEquals("COMPLETED", result.status());
+  }
+
+  @Test
+  void withTheEvaluationApprovedResponsibleDateActionAndCommentsAreLocked() {
+    ImprovementPlan plan =
+        existingPlan(ImprovementPlan.PlanStatus.PENDING, LocalDate.now().plusDays(10));
+    eval.setStatus(Evaluation.Status.APPROVED);
+    String newDate = LocalDate.now().plusDays(20).toString();
+
+    for (UpdateImprovementPlanDto dto :
+        List.of(
+            new UpdateImprovementPlanDto(null, "Otro", null, null, null, null),
+            new UpdateImprovementPlanDto(null, null, null, newDate, null, null),
+            new UpdateImprovementPlanDto("Otra acción", null, null, null, null, null),
+            new UpdateImprovementPlanDto(null, null, "LOW", null, null, null),
+            new UpdateImprovementPlanDto(null, null, null, null, null, "nota"))) {
+      assertThrows(InvalidRequestException.class, () -> service.update(plan.getId(), dto));
+    }
+    assertEquals("Ana", plan.getResponsible());
+    verify(repo, never()).save(any());
+  }
+
+  @Test
+  void withTheEvaluationApprovedResendingTheSameValuesIsNotAChange() {
+    ImprovementPlan plan =
+        existingPlan(ImprovementPlan.PlanStatus.PENDING, LocalDate.now().plusDays(10));
+    eval.setStatus(Evaluation.Status.APPROVED);
+
+    ImprovementPlanDto result =
+        service.update(
+            plan.getId(),
+            new UpdateImprovementPlanDto(
+                "Definir la política",
+                "Ana",
+                "HIGH",
+                plan.getDueDate().toString(),
+                "IN_PROGRESS",
+                null));
+
+    assertEquals("IN_PROGRESS", result.status());
+  }
+
+  @Test
+  void withTheEvaluationApprovedAnOverdueActionCanOnlyBeCompleted() {
+    ImprovementPlan plan =
+        existingPlan(ImprovementPlan.PlanStatus.OVERDUE, LocalDate.now().minusDays(5));
+    eval.setStatus(Evaluation.Status.APPROVED);
+
+    assertThrows(
+        InvalidRequestException.class, () -> service.update(plan.getId(), statusOnly("PENDING")));
+    assertThrows(
+        InvalidRequestException.class,
+        () -> service.update(plan.getId(), statusOnly("IN_PROGRESS")));
+    ImprovementPlanDto result = service.update(plan.getId(), statusOnly("COMPLETED"));
+
+    assertEquals("COMPLETED", result.status());
+  }
+
+  @Test
+  void updateRejectsANewDueDateBeforeTodayButAcceptsToday() {
+    ImprovementPlan plan =
+        existingPlan(ImprovementPlan.PlanStatus.PENDING, LocalDate.now().plusDays(10));
+
+    assertThrows(
+        InvalidRequestException.class,
+        () -> service.update(plan.getId(), dueDateOnly(LocalDate.now().minusDays(1))));
+    ImprovementPlanDto result = service.update(plan.getId(), dueDateOnly(LocalDate.now()));
+
+    assertEquals(LocalDate.now().toString(), result.dueDate());
+  }
+
+  @Test
+  void anOverdueActionCanBeEditedWithoutTouchingItsPastDueDate() {
+    LocalDate past = LocalDate.now().minusDays(5);
+    ImprovementPlan plan = existingPlan(ImprovementPlan.PlanStatus.OVERDUE, past);
+
+    ImprovementPlanDto result =
+        service.update(
+            plan.getId(),
+            new UpdateImprovementPlanDto(null, "Beto", null, past.toString(), null, null));
+
+    assertEquals("Beto", result.responsible());
+    assertEquals("OVERDUE", result.status());
+  }
+
+  @Test
+  void overdueCannotBeSetByHand() {
+    ImprovementPlan plan =
+        existingPlan(ImprovementPlan.PlanStatus.PENDING, LocalDate.now().plusDays(10));
+
+    assertThrows(
+        InvalidRequestException.class, () -> service.update(plan.getId(), statusOnly("OVERDUE")));
+    assertEquals(ImprovementPlan.PlanStatus.PENDING, plan.getStatus());
+  }
+
+  @Test
+  void anOverdueActionWithANewDueDateGoesBackToPending() {
+    ImprovementPlan plan =
+        existingPlan(ImprovementPlan.PlanStatus.OVERDUE, LocalDate.now().minusDays(5));
+
+    ImprovementPlanDto result =
+        service.update(plan.getId(), dueDateOnly(LocalDate.now().plusDays(15)));
+
+    assertEquals("PENDING", result.status());
+  }
+
+  @Test
+  void anOverdueActionWithANewDueDateKeepsTheStatusTheUserPicked() {
+    ImprovementPlan plan =
+        existingPlan(ImprovementPlan.PlanStatus.OVERDUE, LocalDate.now().minusDays(5));
+    String newDate = LocalDate.now().plusDays(15).toString();
+    UpdateImprovementPlanDto dto =
+        new UpdateImprovementPlanDto(null, null, null, newDate, "IN_PROGRESS", null);
+
+    ImprovementPlanDto result = service.update(plan.getId(), dto);
+
+    assertEquals("IN_PROGRESS", result.status());
+  }
+
+  @Test
+  void anOverdueActionCannotBeReopenedWithoutAValidDueDate() {
+    ImprovementPlan plan =
+        existingPlan(ImprovementPlan.PlanStatus.OVERDUE, LocalDate.now().minusDays(5));
+
+    assertThrows(
+        InvalidRequestException.class,
+        () -> service.update(plan.getId(), statusOnly("IN_PROGRESS")));
+    assertEquals(ImprovementPlan.PlanStatus.OVERDUE, plan.getStatus());
+  }
+
+  @Test
+  void updateRecordsTheChangesInTheAuditLog() {
+    LocalDate oldDate = LocalDate.now().plusDays(10);
+    LocalDate newDate = LocalDate.now().plusDays(20);
+    ImprovementPlan plan = existingPlan(ImprovementPlan.PlanStatus.PENDING, oldDate);
+
+    service.update(
+        plan.getId(),
+        new UpdateImprovementPlanDto(
+            null, "Equipo \"TI\"", null, newDate.toString(), "IN_PROGRESS", null));
+
+    verify(auditLog)
+        .record(
+            "UPDATE_IMPROVEMENT_PLAN",
+            "improvement_plan:" + plan.getId(),
+            "{\"changes\":{"
+                + "\"responsible\":{\"from\":\"Ana\",\"to\":\"Equipo \\\"TI\\\"\"},"
+                + "\"dueDate\":{\"from\":\""
+                + oldDate
+                + "\",\"to\":\""
+                + newDate
+                + "\"},"
+                + "\"status\":{\"from\":\"PENDING\",\"to\":\"IN_PROGRESS\"}}}");
+  }
+
+  @Test
+  void updateWithoutRealChangesIsNotRecorded() {
+    ImprovementPlan plan =
+        existingPlan(ImprovementPlan.PlanStatus.PENDING, LocalDate.now().plusDays(10));
+
+    service.update(plan.getId(), statusOnly("PENDING"));
+
+    verify(auditLog, never()).record(anyString(), anyString(), any());
+  }
+
   // ---- suggest() — RF-PLN-01, generacion automatica de plan por brechas ----
 
   @Test
@@ -371,6 +685,28 @@ class ImprovementPlanServiceTest {
     assertEquals("MEDIUM", result.get(1).priority());
     assertEquals(level3.getId(), result.get(2).controlId());
     assertEquals("LOW", result.get(2).priority());
+  }
+
+  @Test
+  void suggestionsUseTheConfiguredDeadlinesInMonths() {
+    CatalogControl level1 = buildControl(1); // HIGH
+    CatalogControl level3 = buildControl(3); // LOW
+    when(deadlines.currentMonths())
+        .thenReturn(
+            java.util.Map.of(
+                ImprovementPlan.Priority.HIGH, 1,
+                ImprovementPlan.Priority.MEDIUM, 2,
+                ImprovementPlan.Priority.LOW, 4));
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(controlRepo.findByVersionOrdered("5.0")).thenReturn(List.of(level1, level3));
+    when(responseRepo.findByEvaluationId(eval.getId())).thenReturn(List.of());
+    when(repo.findByEvaluationIdOrderByCreatedAtDesc(eval.getId())).thenReturn(List.of());
+
+    List<SuggestedImprovementDto> result = service.suggest(eval.getId());
+
+    assertEquals(LocalDate.now().plusMonths(1).toString(), result.get(0).suggestedDueDate());
+    assertEquals(LocalDate.now().plusMonths(4).toString(), result.get(1).suggestedDueDate());
+    verify(deadlines, times(1)).currentMonths();
   }
 
   @Test

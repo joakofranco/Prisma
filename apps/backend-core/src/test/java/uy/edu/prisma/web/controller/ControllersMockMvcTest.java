@@ -39,7 +39,9 @@ class ControllersMockMvcTest {
   @Mock private EvaluationFlagService evaluationFlagService;
   @Mock private ImprovementPlanService improvementPlanService;
   @Mock private ReportService reportService;
+  @Mock private uy.edu.prisma.application.TechnicalReportService technicalReportService;
   @Mock private EmailSettingsService emailSettingsService;
+  @Mock private PlanDeadlineSettingsService planDeadlineSettingsService;
   @Mock private AccountService accountService;
   @Mock private AuditLogService auditLogService;
 
@@ -57,6 +59,7 @@ class ControllersMockMvcTest {
   private MockMvc improvement;
   private MockMvc reports;
   private MockMvc emailSettings;
+  private MockMvc planDeadlines;
   private MockMvc account;
   private MockMvc auditLogs;
 
@@ -87,9 +90,16 @@ class ControllersMockMvcTest {
     improvement =
         MockMvcBuilders.standaloneSetup(new ImprovementPlanController(improvementPlanService))
             .build();
-    reports = MockMvcBuilders.standaloneSetup(new ReportsController(reportService)).build();
+    reports =
+        MockMvcBuilders.standaloneSetup(
+                new ReportsController(reportService, technicalReportService))
+            .build();
     emailSettings =
         MockMvcBuilders.standaloneSetup(new EmailSettingsController(emailSettingsService)).build();
+    planDeadlines =
+        MockMvcBuilders.standaloneSetup(
+                new PlanDeadlineSettingsController(planDeadlineSettingsService))
+            .build();
     account = MockMvcBuilders.standaloneSetup(new AccountController(accountService)).build();
     auditLogs = MockMvcBuilders.standaloneSetup(new AuditLogController(auditLogService)).build();
   }
@@ -440,7 +450,8 @@ class ControllersMockMvcTest {
   void organizationGetById() throws Exception {
     UUID id = UUID.randomUUID();
     when(organizationService.getById(id))
-        .thenReturn(new OrganizationDto(id, "Acme", "NIT-1", "TECH", "SMALL", null, true, null));
+        .thenReturn(
+            new OrganizationDto(id, "Acme", "NIT-1", "TECH", "SMALL", null, null, true, null));
 
     organizations
         .perform(get("/api/organizations/{id}", id))
@@ -452,7 +463,8 @@ class ControllersMockMvcTest {
   void organizationCreate() throws Exception {
     UUID id = UUID.randomUUID();
     when(organizationService.create(any(CreateOrganizationDto.class)))
-        .thenReturn(new OrganizationDto(id, "NewCo", "NIT-9", "FIN", "LARGE", null, true, null));
+        .thenReturn(
+            new OrganizationDto(id, "NewCo", "NIT-9", "FIN", "LARGE", null, null, true, null));
 
     organizations
         .perform(
@@ -468,7 +480,8 @@ class ControllersMockMvcTest {
     UUID id = UUID.randomUUID();
     when(organizationService.update(eq(id), any(CreateOrganizationDto.class)))
         .thenReturn(
-            new OrganizationDto(id, "Renamed", "NIT-X", "HEALTH", "MEDIUM", null, true, null));
+            new OrganizationDto(
+                id, "Renamed", "NIT-X", "HEALTH", "MEDIUM", null, null, true, null));
 
     organizations
         .perform(
@@ -485,7 +498,8 @@ class ControllersMockMvcTest {
     when(organizationService.enable(id))
         .thenReturn(
             new OrganizationReactivationDto(
-                new OrganizationDto(id, "Acme", "NIT-1", "TECH", "SMALL", null, true, null), 3));
+                new OrganizationDto(id, "Acme", "NIT-1", "TECH", "SMALL", null, null, true, null),
+                3));
 
     organizations
         .perform(put("/api/organizations/{id}/enable", id))
@@ -553,6 +567,70 @@ class ControllersMockMvcTest {
                     "{\"email\":\"n@test.com\",\"firstName\":\"Nora\",\"lastName\":\"Lopez\",\"roles\":[\"AUDITOR\"]}"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.email").value("n@test.com"));
+  }
+
+  @Test
+  void userInvite() throws Exception {
+    UUID id = UUID.randomUUID();
+    when(userService.invite(any(InviteUserDto.class)))
+        .thenReturn(
+            new UserDto(
+                id,
+                "l@test.com",
+                "Lucía",
+                "Fernández",
+                java.util.Set.of(),
+                List.of(),
+                java.util.Set.of("INTERNAL_EVALUATOR"),
+                true,
+                null,
+                true,
+                java.time.OffsetDateTime.now(),
+                null));
+
+    users
+        .perform(
+            post("/api/users/invitations")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"email\":\"l@test.com\",\"firstName\":\"Lucía\",\"lastName\":\"Fernández\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.invitedAt").exists())
+        .andExpect(jsonPath("$.roles[0]").value("INTERNAL_EVALUATOR"));
+  }
+
+  @Test
+  void userInviteValidatesTheEmail() throws Exception {
+    users
+        .perform(
+            post("/api/users/invitations")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"email\":\"no-es-email\",\"firstName\":\"Lucía\",\"lastName\":\"F\"}"))
+        .andExpect(status().isBadRequest());
+    verify(userService, never()).invite(any());
+  }
+
+  @Test
+  void userResendInvitation() throws Exception {
+    UUID id = UUID.randomUUID();
+    when(userService.resendInvitation(id))
+        .thenReturn(
+            new UserDto(id, "l@test.com", "L", "F", null, java.util.Set.of(), true, null, true));
+
+    users
+        .perform(post("/api/users/{id}/invitation/resend", id))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.email").value("l@test.com"));
+  }
+
+  @Test
+  void userInvitationAvailability() throws Exception {
+    when(userService.canSendInvitations()).thenReturn(false);
+
+    users
+        .perform(get("/api/users/invitations/availability"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.emailConfigured").value(false));
   }
 
   @Test
@@ -1175,13 +1253,58 @@ class ControllersMockMvcTest {
 
   @Test
   void reportDownloadsAreRestrictedToAdminAndOrgResponsible() throws Exception {
-    for (String name : List.of("pdf", "excel")) {
+    for (String name : List.of("pdf", "excel", "technicalPdf")) {
       var method = ReportsController.class.getMethod(name, UUID.class);
       var annotation =
           method.getAnnotation(org.springframework.security.access.prepost.PreAuthorize.class);
       assertNotNull(annotation, name);
       assertEquals("hasAnyRole('PRISMA_ADMIN','ORG_RESPONSIBLE')", annotation.value());
     }
+  }
+
+  @Test
+  void reportsPreliminaryPdfAndExcel() throws Exception {
+    UUID id = UUID.randomUUID();
+    when(reportService.generatePreliminaryPdf(id)).thenReturn("%PDF-1.4".getBytes());
+    when(reportService.generatePreliminaryExcel(id)).thenReturn("PK".getBytes());
+
+    reports
+        .perform(get("/api/reports/{id}/preliminary/pdf", id))
+        .andExpect(status().isOk())
+        .andExpect(content().contentType(MediaType.APPLICATION_PDF));
+    reports
+        .perform(get("/api/reports/{id}/preliminary/excel", id))
+        .andExpect(status().isOk())
+        .andExpect(
+            content()
+                .contentType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"));
+  }
+
+  @Test
+  void thePreliminaryReportIsForTheAdminAndTheAuditor() throws Exception {
+    for (String name : List.of("preliminaryPdf", "preliminaryExcel")) {
+      var annotation =
+          ReportsController.class
+              .getMethod(name, UUID.class)
+              .getAnnotation(org.springframework.security.access.prepost.PreAuthorize.class);
+      assertEquals("hasAnyRole('PRISMA_ADMIN','AUDITOR')", annotation.value(), name);
+    }
+  }
+
+  @Test
+  void reportsTechnicalPdf() throws Exception {
+    UUID id = UUID.randomUUID();
+    when(technicalReportService.generate(id)).thenReturn("%PDF-1.4".getBytes());
+
+    reports
+        .perform(get("/api/reports/{id}/technical/pdf", id))
+        .andExpect(status().isOk())
+        .andExpect(content().contentType(MediaType.APPLICATION_PDF))
+        .andExpect(
+            header()
+                .string(
+                    "Content-Disposition",
+                    org.hamcrest.Matchers.containsString("reporte-tecnico-" + id + ".pdf")));
   }
 
   @Test
@@ -1239,6 +1362,48 @@ class ControllersMockMvcTest {
         .andExpect(jsonPath("$.host").value("mailhog"));
 
     verify(emailSettingsService, times(1)).update(any(UpdateEmailSettingsDto.class));
+  }
+
+  // ---------------- Plazos por defecto del plan de mejora (RF-PLN-03, PRI-304) ----------------
+
+  @Test
+  void planDeadlinesGet() throws Exception {
+    when(planDeadlineSettingsService.get()).thenReturn(new PlanDeadlinesDto(3, 6, 12));
+
+    planDeadlines
+        .perform(get("/api/settings/plan-deadlines"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.highMonths").value(3))
+        .andExpect(jsonPath("$.mediumMonths").value(6))
+        .andExpect(jsonPath("$.lowMonths").value(12));
+  }
+
+  @Test
+  void planDeadlinesUpdate() throws Exception {
+    when(planDeadlineSettingsService.update(any(PlanDeadlinesDto.class)))
+        .thenReturn(new PlanDeadlinesDto(1, 6, 12));
+
+    planDeadlines
+        .perform(
+            put("/api/settings/plan-deadlines")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"highMonths\":1,\"mediumMonths\":6,\"lowMonths\":12}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.highMonths").value(1));
+
+    verify(planDeadlineSettingsService).update(new PlanDeadlinesDto(1, 6, 12));
+  }
+
+  @Test
+  void planDeadlinesAreReadableByAnyoneButOnlyTheAdminChangesThem() throws Exception {
+    var get = PlanDeadlineSettingsController.class.getMethod("get");
+    var update = PlanDeadlineSettingsController.class.getMethod("update", PlanDeadlinesDto.class);
+    var preAuthorize = org.springframework.security.access.prepost.PreAuthorize.class;
+
+    // Leerlos lo necesita el alta de una acción (cualquier usuario autenticado).
+    assertNull(get.getAnnotation(preAuthorize));
+    assertNull(PlanDeadlineSettingsController.class.getAnnotation(preAuthorize));
+    assertEquals("hasRole('PRISMA_ADMIN')", update.getAnnotation(preAuthorize).value());
   }
 
   // ---------------- Account (autoservicio) ----------------

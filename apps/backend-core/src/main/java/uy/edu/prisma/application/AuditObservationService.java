@@ -35,9 +35,18 @@ public class AuditObservationService {
 
   // Estados en los que la organización puede leer las observaciones del auditor: cuando la
   // evaluación vuelve (RETURNED) y después. Las observaciones son la forma en que el auditor le
-  // comunica por qué la devuelve; antes de eso son su borrador de trabajo (PRI-354).
+  // comunica por qué la devuelve; mientras audita (IN_AUDIT) son su borrador de trabajo (PRI-354).
+  // RF-AUD-08 (PRI-298): también en IN_PROGRESS y READY_FOR_AUDIT, que es cuando la organización
+  // corrige tras «Reanudar» y la reenvía. Es seguro porque las observaciones solo se crean con la
+  // evaluación IN_AUDIT: en esos estados solo existen si una auditoría anterior la devolvió (en el
+  // primer ciclo no hay ninguna).
   private static final Set<Evaluation.Status> VISIBLE_TO_ORGANIZATION =
-      Set.of(Evaluation.Status.RETURNED, Evaluation.Status.APPROVED, Evaluation.Status.ARCHIVED);
+      Set.of(
+          Evaluation.Status.RETURNED,
+          Evaluation.Status.IN_PROGRESS,
+          Evaluation.Status.READY_FOR_AUDIT,
+          Evaluation.Status.APPROVED,
+          Evaluation.Status.ARCHIVED);
 
   public AuditObservationService(
       AuditObservationRepository repo,

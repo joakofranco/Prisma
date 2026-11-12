@@ -17,6 +17,20 @@ export interface User {
   createdAt: string;
   /** false = todavía no tiene cuenta en Keycloak y por lo tanto no puede iniciar sesión. */
   canLogin: boolean;
+  /** RF-USR-05 (PRI-240): última invitación por correo enviada; null si se dio de alta con
+   * contraseña temporal. */
+  invitedAt?: string | null;
+  /** Primer ingreso del invitado. Con invitedAt y sin esto, la invitación está pendiente. */
+  invitationAcceptedAt?: string | null;
+}
+
+/** Alta por invitación: el rol es siempre Evaluador interno y lo fija el backend. */
+export interface InviteUserPayload {
+  email: string;
+  firstName: string;
+  lastName: string;
+  /** Solo lo elige PRISMA_ADMIN; para un responsable el backend usa su propia organización. */
+  organizationId?: string;
 }
 
 export interface Organization {
@@ -28,6 +42,8 @@ export interface Organization {
   sector: string;
   size: string;
   responsibleId?: string;
+  /** Nombre (o email) del responsable; null si no tiene (PRI-367, lo muestra Reportes). */
+  responsibleName?: string | null;
   enabled: boolean;
   createdAt: string;
 }
@@ -443,6 +459,14 @@ export interface EmailSettings {
   starttls: boolean;
   ssl: boolean;
   configured: boolean;
+}
+
+/** RF-PLN-03: plazos por defecto (en meses) con los que se sugiere la fecha límite de una acción
+ * del plan de mejora según su prioridad. Los configura PRISMA_ADMIN (1–60, Alta ≤ Media ≤ Baja). */
+export interface PlanDeadlines {
+  highMonths: number;
+  mediumMonths: number;
+  lowMonths: number;
 }
 
 /** Body de actualización: `password` es obligatorio si `authEnabled` es true (Keycloak nunca

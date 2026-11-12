@@ -14,16 +14,38 @@
           Acciones correctivas basadas en las brechas detectadas
         </p>
       </div>
-      <div class="flex items-center gap-2">
-        <BaseButton variant="secondary" :loading="loadingSuggestions" @click="openSuggestModal">
+      <div v-if="canManage" class="flex items-center gap-2">
+        <BaseButton
+          variant="secondary"
+          :loading="loadingSuggestions"
+          :disabled="!canEditFully"
+          @click="openSuggestModal"
+        >
           <SparklesIcon class="w-4 h-4" />
           Generar Sugerencias
         </BaseButton>
-        <BaseButton variant="primary" @click="showCreateModal = true">
+        <BaseButton variant="primary" :disabled="!canEditFully" @click="openCreateModal">
           <PlusIcon class="w-4 h-4" />
           Nueva Acción
         </BaseButton>
       </div>
+    </div>
+
+    <div
+      v-if="isApproved"
+      class="px-4 py-3 rounded-lg bg-amber-50 border border-amber-200 text-sm text-amber-900 dark:bg-amber-950 dark:border-amber-800 dark:text-amber-200"
+      role="status"
+      data-test="approved-banner"
+    >
+      Evaluación <strong>Aprobada</strong>: solo se puede actualizar el estado de cada acción.
+    </div>
+    <div
+      v-else-if="isClosed"
+      class="px-4 py-3 rounded-lg bg-slate-100 border border-slate-200 text-sm text-slate-700 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300"
+      role="status"
+      data-test="closed-banner"
+    >
+      El plan de mejora no está activo: la evaluación está en borrador o archivada.
     </div>
 
     <div v-if="loading" class="flex items-center justify-center py-12">
@@ -40,14 +62,14 @@
           icon-color-class="text-slate-600 dark:text-slate-300"
         />
         <StatsCard
-          title="En Progreso"
+          title="En curso"
           :value="plansByStatus('IN_PROGRESS')"
           :icon="PlayIcon"
           icon-bg-class="bg-blue-50 dark:bg-blue-950"
           icon-color-class="text-blue-600 dark:text-blue-400"
         />
         <StatsCard
-          title="Completadas"
+          title="Realizadas"
           :value="plansByStatus('COMPLETED')"
           :icon="CheckCircleIcon"
           icon-bg-class="bg-emerald-50 dark:bg-emerald-950"
@@ -220,18 +242,19 @@
                   <span class="font-medium">Comentarios:</span> {{ plan.comments }}
                 </p>
               </div>
-              <div class="flex items-center gap-1 shrink-0">
+              <div v-if="canEditStatus" class="flex items-center gap-1 shrink-0">
                 <button
+                  type="button"
                   class="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 hover:text-blue-600 dark:hover:text-blue-300 dark:text-slate-400"
-                  :title="plan.comments ? 'Editar comentarios' : 'Agregar comentarios'"
-                  :aria-label="plan.comments ? 'Editar comentarios' : 'Agregar comentarios'"
-                  @click="openCommentEditor(plan)"
+                  title="Editar acción"
+                  aria-label="Editar acción"
+                  @click="openEditor(plan)"
                 >
                   <PencilSquareIcon class="w-4 h-4" />
                 </button>
                 <BaseSelect
                   :model-value="plan.status"
-                  :options="planStatusOptions"
+                  :options="statusOptionsFor(plan.status, plan.dueDate)"
                   :searchable="false"
                   size="sm"
                   aria-label="Estado del plan de mejora"
@@ -273,9 +296,19 @@
           v-model="newPlan.dueDate"
           label="Fecha Límite"
           type="date"
+          :min="today"
           :error="formErrors.dueDate"
           required
+          @update:model-value="dueDateTouched = true"
         />
+        <p
+          v-if="!dueDateTouched && !formErrors.dueDate"
+          class="-mt-3 text-xs text-slate-500 dark:text-slate-400"
+          data-test="due-date-hint"
+        >
+          Sugerida: {{ suggestedMonths }} meses por ser prioridad
+          {{ getPriorityLabel(newPlan.priority) }}. Podés cambiarla.
+        </p>
         <BaseTextarea
           v-model="newPlan.comments"
           label="Comentarios (opcional)"
@@ -289,21 +322,81 @@
       </template>
     </BaseModal>
 
-    <BaseModal v-model="showCommentModal" title="Comentarios de la acción">
-      <p v-if="commentPlan" class="mb-3 text-sm text-slate-600 dark:text-slate-300">
-        {{ commentPlan.action }}
-      </p>
-      <BaseTextarea
-        v-model="commentText"
-        label="Comentarios"
-        placeholder="Vacío para borrar el comentario"
-        :rows="5"
-        :error="commentError"
-      />
+    <!-- RF-PLN-04: edición de la acción (plazo, responsable, estado...). Con la evaluación aprobada
+         solo el estado queda habilitado. -->
+    <BaseModal v-model="showEditModal" title="Editar acción" size="lg">
+      <form class="space-y-4" data-test="edit-form" @submit.prevent="saveEdit">
+        <p
+          v-if="isApproved"
+          class="px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-sm text-amber-900 dark:bg-amber-950 dark:border-amber-800 dark:text-amber-200"
+        >
+          La evaluación está aprobada: el resto de los campos queda bloqueado.
+        </p>
+        <BaseTextarea
+          v-model="editForm.action"
+          label="Acción"
+          :rows="2"
+          :disabled="isApproved"
+          :error="editErrors.action"
+          required
+        />
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <BaseInput
+            v-model="editForm.responsible"
+            label="Responsable"
+            placeholder="Nombre del responsable"
+            :disabled="isApproved"
+            :error="editErrors.responsible"
+            required
+          />
+          <BaseSelect
+            v-model="editForm.priority"
+            label="Prioridad"
+            :options="priorityOptions"
+            :searchable="false"
+            :disabled="isApproved"
+          />
+          <BaseInput
+            v-model="editForm.dueDate"
+            label="Fecha límite"
+            type="date"
+            :min="today"
+            :disabled="isApproved"
+            :error="editErrors.dueDate"
+            required
+          />
+          <BaseSelect
+            v-model="editForm.status"
+            label="Estado"
+            :options="statusOptionsFor(editForm.status, editForm.dueDate)"
+            :searchable="false"
+          />
+        </div>
+        <p
+          v-if="overdueReset"
+          class="px-3 py-2 rounded-lg bg-blue-50 border border-blue-200 text-sm text-blue-900 dark:bg-blue-950 dark:border-blue-800 dark:text-blue-200"
+          data-test="overdue-reset"
+        >
+          La acción estaba <strong>Vencida</strong>. Con la nueva fecha pasa a
+          <strong>{{ planStatusLabel(editForm.status) }}</strong
+          >.
+        </p>
+        <BaseTextarea
+          v-model="editForm.comments"
+          label="Comentarios (opcional)"
+          placeholder="Vacío para borrar el comentario"
+          :rows="3"
+          :disabled="isApproved"
+          :error="editErrors.comments"
+        />
+        <p v-if="editError" class="text-sm text-red-600 dark:text-red-400" role="alert">
+          {{ editError }}
+        </p>
+      </form>
       <template #footer>
-        <BaseButton variant="secondary" @click="showCommentModal = false"> Cancelar </BaseButton>
-        <BaseButton variant="primary" :loading="savingComment" @click="saveComment">
-          Guardar
+        <BaseButton variant="secondary" @click="showEditModal = false"> Cancelar </BaseButton>
+        <BaseButton variant="primary" :loading="savingEdit" @click="saveEdit">
+          {{ isApproved ? 'Guardar estado' : 'Guardar cambios' }}
         </BaseButton>
       </template>
     </BaseModal>
@@ -389,6 +482,8 @@
                 <input
                   v-model="s.suggestedDueDate"
                   type="date"
+                  :min="today"
+                  aria-label="Fecha límite"
                   class="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
@@ -413,9 +508,17 @@
 </template>
 
 <script setup lang="ts">
-  import { ref, computed, reactive, watch, onMounted } from 'vue';
+  import { ref, computed, reactive, onMounted, watch } from 'vue';
   import { useRoute } from 'vue-router';
-  import { evaluationsService, improvementService, reportsService } from '@/services/resources';
+  import { format } from 'date-fns';
+  import {
+    improvementService,
+    evaluationsService,
+    planDeadlinesService,
+    reportsService,
+  } from '@/services/resources';
+  import { DEFAULT_PLAN_DEADLINES, defaultDueDate, monthsFor } from '@/utils/planDeadlines';
+  import { useAuthStore } from '@/stores/auth';
   import { formatDate, getErrorMessage } from '@/utils/helpers';
   import { blobErrorMessage, saveBlob } from '@/utils/files';
   import { useNotification } from '@/composables/useUtils';
@@ -444,6 +547,7 @@
   } from '@heroicons/vue/24/outline';
   import type {
     ImprovementPlan,
+    PlanDeadlines,
     MaturityResult,
     SuggestedImprovement,
     RemediationTips,
@@ -456,8 +560,36 @@
 
   const route = useRoute();
   const notification = useNotification();
+  const authStore = useAuthStore();
 
   const evaluationId = route.params.evaluationId as string;
+
+  // Fecha local de hoy (AAAA-MM-DD): no se aceptan fechas límite anteriores (RF-PLN-04).
+  const today = format(new Date(), 'yyyy-MM-dd');
+
+  // Mismos roles que el @PreAuthorize de crear/editar en ImprovementPlanController: el resto ve el
+  // plan en solo lectura (antes veía los botones y recibía un 403 sin aviso).
+  const canManage = computed(() => authStore.hasAnyRole('PRISMA_ADMIN', 'ORG_RESPONSIBLE'));
+
+  // Estado de la evaluación: en DRAFT / ARCHIVED el plan no está activo; en APPROVED solo se cambia
+  // el estado de cada acción (mismas reglas que ImprovementPlanService). Si no se pudo cargar, la
+  // vista no bloquea nada y el backend sigue validando.
+  const evaluationStatus = ref<string | null>(null);
+  const isApproved = computed(() => evaluationStatus.value === 'APPROVED');
+  const isClosed = computed(
+    () => evaluationStatus.value === 'DRAFT' || evaluationStatus.value === 'ARCHIVED',
+  );
+  const canEditStatus = computed(() => canManage.value && !isClosed.value);
+  const canEditFully = computed(() => canEditStatus.value && !isApproved.value);
+
+  async function fetchEvaluationStatus() {
+    try {
+      const { data } = await evaluationsService.getById(evaluationId);
+      evaluationStatus.value = data.status;
+    } catch (err) {
+      console.error(err);
+    }
+  }
   const loading = ref(true);
   const saving = ref(false);
   const showCreateModal = ref(false);
@@ -508,6 +640,37 @@
     comments: '',
   });
 
+  // RF-PLN-03: la fecha límite se precarga con el plazo por defecto de la prioridad y se recalcula
+  // al cambiarla, mientras el usuario no la haya editado a mano. Si no se pudieron leer los plazos
+  // configurados, se usan los del requerimiento (el backend aplica los vigentes igual).
+  const planDeadlines = ref<PlanDeadlines>({ ...DEFAULT_PLAN_DEADLINES });
+  const dueDateTouched = ref(false);
+  const suggestedMonths = computed(() => monthsFor(newPlan.priority, planDeadlines.value));
+
+  async function fetchPlanDeadlines() {
+    try {
+      const { data } = await planDeadlinesService.get();
+      planDeadlines.value = data;
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  function openCreateModal() {
+    dueDateTouched.value = false;
+    newPlan.dueDate = defaultDueDate(newPlan.priority, planDeadlines.value);
+    showCreateModal.value = true;
+  }
+
+  watch(
+    () => newPlan.priority,
+    (priority) => {
+      if (!dueDateTouched.value) {
+        newPlan.dueDate = defaultDueDate(priority, planDeadlines.value);
+      }
+    },
+  );
+
   const formErrors = reactive({
     action: '',
     responsible: '',
@@ -519,11 +682,21 @@
   const MAX_COMMENTS = 2000;
   const commentsTooLong = `Los comentarios no pueden superar los ${MAX_COMMENTS} caracteres`;
 
-  const planStatusOptions = [
-    { value: 'PENDING', label: 'Pendiente' },
-    { value: 'IN_PROGRESS', label: 'En Progreso' },
-    { value: 'COMPLETED', label: 'Completada' },
-  ];
+  // Estados que el usuario puede elegir (RF-PLN-04). «Vencida» la asigna el sistema: aparece solo
+  // como valor actual, deshabilitada. Con la fecha ya vencida no se puede volver a Pendiente / En
+  // curso (la próxima carga la marcaría vencida otra vez): queda Realizado o cambiar la fecha.
+  function statusOptionsFor(current: string, dueDate: string | null | undefined) {
+    const expired = !!dueDate && dueDate < today;
+    const options: { value: string; label: string; disabled?: boolean }[] = [
+      { value: 'PENDING', label: 'Pendiente', disabled: expired && current !== 'PENDING' },
+      { value: 'IN_PROGRESS', label: 'En curso', disabled: expired && current !== 'IN_PROGRESS' },
+      { value: 'COMPLETED', label: 'Realizado' },
+    ];
+    if (current === 'OVERDUE') {
+      options.push({ value: 'OVERDUE', label: 'Vencida', disabled: true });
+    }
+    return options;
+  }
 
   const priorityOptions = [
     { value: 'HIGH', label: 'Alta' },
@@ -566,8 +739,8 @@
     return (
       {
         PENDING: 'Pendiente',
-        IN_PROGRESS: 'En Progreso',
-        COMPLETED: 'Completada',
+        IN_PROGRESS: 'En curso',
+        COMPLETED: 'Realizado',
         OVERDUE: 'Vencida',
       }[s] || s
     );
@@ -658,6 +831,10 @@
       formErrors.dueDate = 'La fecha es requerida';
       return;
     }
+    if (newPlan.dueDate < today) {
+      formErrors.dueDate = PAST_DATE;
+      return;
+    }
     if (newPlan.comments.length > MAX_COMMENTS) {
       formErrors.comments = commentsTooLong;
       return;
@@ -689,45 +866,110 @@
   async function updatePlanStatus(id: string, status: ImprovementPlan['status']) {
     try {
       await improvementService.update(id, { status });
-      await fetchPlans();
     } catch (err) {
-      console.error(err);
+      notification.error(getErrorMessage(err, 'No se pudo cambiar el estado'));
     }
+    // Se recarga también si falló: el selector vuelve a mostrar el estado real.
+    await fetchPlans();
   }
 
-  // RF-PLN-02: editar o borrar los comentarios de una acción ya creada. Un texto vacío borra el
-  // comentario (el backend toma «sin cambios» solo cuando el campo no viaja).
-  const showCommentModal = ref(false);
-  const commentPlan = ref<ImprovementPlan | null>(null);
-  const commentText = ref('');
-  const commentError = ref('');
-  const savingComment = ref(false);
+  // RF-PLN-04 (y RF-PLN-02 para los comentarios): modal «Editar acción». Solo viajan los campos
+  // que cambiaron; un comentario vacío viaja como '' y borra el comentario (null = sin cambios).
+  const PAST_DATE = 'La fecha límite no puede ser anterior a hoy';
+  const showEditModal = ref(false);
+  const editPlan = ref<ImprovementPlan | null>(null);
+  const editForm = reactive({
+    action: '',
+    responsible: '',
+    priority: 'MEDIUM' as ImprovementPlan['priority'],
+    dueDate: '',
+    status: 'PENDING' as ImprovementPlan['status'],
+    comments: '',
+  });
+  const editErrors = reactive({ action: '', responsible: '', dueDate: '', comments: '' });
+  const editError = ref('');
+  const savingEdit = ref(false);
 
-  function openCommentEditor(plan: ImprovementPlan) {
-    commentPlan.value = plan;
-    commentText.value = plan.comments ?? '';
-    commentError.value = '';
-    showCommentModal.value = true;
+  function openEditor(plan: ImprovementPlan) {
+    editPlan.value = plan;
+    editForm.action = plan.action ?? '';
+    editForm.responsible = plan.responsible ?? '';
+    editForm.priority = plan.priority;
+    editForm.dueDate = plan.dueDate ?? '';
+    editForm.status = plan.status;
+    editForm.comments = plan.comments ?? '';
+    Object.keys(editErrors).forEach((k) => (editErrors[k as keyof typeof editErrors] = ''));
+    editError.value = '';
+    showEditModal.value = true;
   }
 
-  async function saveComment() {
-    if (!commentPlan.value) return;
-    if (commentText.value.length > MAX_COMMENTS) {
-      commentError.value = commentsTooLong;
+  // Una acción vencida a la que se le pone una fecha vigente vuelve a Pendiente (el usuario puede
+  // elegir En curso antes de guardar); si la fecha vuelve a la original, recupera «Vencida».
+  watch(
+    () => editForm.dueDate,
+    (dueDate) => {
+      if (editPlan.value?.status !== 'OVERDUE') return;
+      if (dueDate !== editPlan.value.dueDate && dueDate >= today) {
+        if (editForm.status === 'OVERDUE') editForm.status = 'PENDING';
+      } else if (editForm.status === 'PENDING') {
+        editForm.status = 'OVERDUE';
+      }
+    },
+  );
+
+  const overdueReset = computed(
+    () =>
+      editPlan.value?.status === 'OVERDUE' &&
+      editForm.dueDate !== editPlan.value.dueDate &&
+      editForm.status !== 'OVERDUE',
+  );
+
+  function editChanges(plan: ImprovementPlan): Partial<ImprovementPlan> {
+    const changes: Partial<ImprovementPlan> = {};
+    if (editForm.status !== plan.status) changes.status = editForm.status;
+    if (isApproved.value) return changes;
+    if (editForm.action.trim() !== (plan.action ?? '')) changes.action = editForm.action.trim();
+    if (editForm.responsible.trim() !== (plan.responsible ?? '')) {
+      changes.responsible = editForm.responsible.trim();
+    }
+    if (editForm.priority !== plan.priority) changes.priority = editForm.priority;
+    if (editForm.dueDate !== (plan.dueDate ?? '')) changes.dueDate = editForm.dueDate;
+    if (editForm.comments !== (plan.comments ?? '')) changes.comments = editForm.comments;
+    return changes;
+  }
+
+  function validateEdit(plan: ImprovementPlan): boolean {
+    Object.keys(editErrors).forEach((k) => (editErrors[k as keyof typeof editErrors] = ''));
+    if (isApproved.value) return true;
+    if (!editForm.action.trim()) editErrors.action = 'La acción es requerida';
+    if (!editForm.responsible.trim()) editErrors.responsible = 'El responsable es requerido';
+    if (!editForm.dueDate) editErrors.dueDate = 'La fecha es requerida';
+    else if (editForm.dueDate !== plan.dueDate && editForm.dueDate < today) {
+      editErrors.dueDate = PAST_DATE;
+    }
+    if (editForm.comments.length > MAX_COMMENTS) editErrors.comments = commentsTooLong;
+    return !Object.values(editErrors).some(Boolean);
+  }
+
+  async function saveEdit() {
+    const plan = editPlan.value;
+    if (!plan || !validateEdit(plan)) return;
+    const changes = editChanges(plan);
+    if (Object.keys(changes).length === 0) {
+      showEditModal.value = false;
       return;
     }
-    savingComment.value = true;
+    savingEdit.value = true;
+    editError.value = '';
     try {
-      await improvementService.update(commentPlan.value.id, { comments: commentText.value });
-      notification.success(
-        commentText.value.trim() ? 'Comentarios guardados' : 'Comentarios eliminados',
-      );
-      showCommentModal.value = false;
+      await improvementService.update(plan.id, changes);
+      notification.success('Acción actualizada');
+      showEditModal.value = false;
       await fetchPlans();
     } catch (err) {
-      commentError.value = getErrorMessage(err, 'No se pudieron guardar los comentarios');
+      editError.value = getErrorMessage(err, 'No se pudo guardar la acción');
     } finally {
-      savingComment.value = false;
+      savingEdit.value = false;
     }
   }
 
@@ -749,6 +991,10 @@
   async function acceptSuggestions() {
     const selected = suggestions.value.filter((s) => s.selected);
     if (selected.length === 0) return;
+    if (selected.some((s) => s.suggestedDueDate && s.suggestedDueDate < today)) {
+      notification.error(PAST_DATE);
+      return;
+    }
 
     creatingSuggestions.value = true;
     try {
@@ -782,6 +1028,8 @@
 
   onMounted(() => {
     fetchPlans();
+    fetchEvaluationStatus();
+    fetchPlanDeadlines();
     fetchResults();
   });
 </script>

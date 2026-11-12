@@ -1,6 +1,8 @@
 <template>
   <section
-    class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6"
+    v-if="visible"
+    id="auditor-observations"
+    class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6 scroll-mt-6"
     aria-labelledby="auditor-observations-title"
     data-testid="auditor-observations"
   >
@@ -72,7 +74,7 @@
 </template>
 
 <script setup lang="ts">
-  import { ref, onMounted } from 'vue';
+  import { ref, computed, onMounted } from 'vue';
   import { auditService } from '@/services/resources';
   import { formatDate } from '@/utils/helpers';
   import type { AuditObservation } from '@/types';
@@ -80,11 +82,21 @@
   // Observaciones del auditor para la organización (PRI-354). Solo lectura: no hay botones de
   // edición. El backend decide cuándo se pueden ver (desde que la evaluación vuelve) y para qué
   // roles; este componente solo se monta cuando la pantalla ya sabe que corresponde.
-  const props = defineProps<{ evaluationId: string }>();
+  // hideWhenEmpty (PRI-298): En curso / Lista para auditoría el bloque solo tiene sentido si una
+  // auditoría anterior dejó observaciones; en el primer ciclo no hay ninguna y no se muestra (ni el
+  // «El auditor no registró observaciones», que confundiría antes de cualquier auditoría).
+  const props = withDefaults(defineProps<{ evaluationId: string; hideWhenEmpty?: boolean }>(), {
+    hideWhenEmpty: false,
+  });
 
   const observations = ref<AuditObservation[]>([]);
   const loading = ref(true);
   const failed = ref(false);
+
+  const visible = computed(
+    () =>
+      !props.hideWhenEmpty || (!loading.value && (failed.value || observations.value.length > 0)),
+  );
 
   const TYPE_LABELS: Record<string, string> = {
     OBSERVATION: 'Observación',

@@ -207,7 +207,11 @@ public class AuditLogService {
     return dtos;
   }
 
-  private static final Pattern STATUS_PAYLOAD_PATTERN = Pattern.compile("\"status\":\"(\\w+)\"");
+  // Tolera espacios alrededor de «:»: el payload es JSONB y Postgres lo devuelve normalizado como
+  // {"status": "X"} (con espacio), no como se guardó. Sin esto el estado quedaba null y el reporte
+  // técnico, el aviso de reapertura y el historial de ciclos mostraban «UPDATE_STATUS».
+  private static final Pattern STATUS_PAYLOAD_PATTERN =
+      Pattern.compile("\"status\"\\s*:\\s*\"(\\w+)\"");
 
   /**
    * RF-AUD-10: historial completo de ciclos de auditoría de UNA evaluación puntual -- todas sus

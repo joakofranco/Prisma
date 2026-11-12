@@ -156,8 +156,12 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   UPDATE_PROFILE: 'Actualización de Perfil',
   CHANGE_PASSWORD: 'Cambio de Contraseña',
   LINK_KEYCLOAK_ACCOUNT: 'Vinculación de Cuenta',
+  INVITE_USER: 'Invitación Enviada',
+  RESEND_INVITATION: 'Invitación Reenviada',
+  ACCEPT_INVITATION: 'Invitación Aceptada',
   REACTIVATE: 'Reactivación',
   SAVE_RESPONSE: 'Respuesta Guardada',
+  UPDATE_IMPROVEMENT_PLAN: 'Edición de Plan de Mejora',
   LOGIN: 'Inicio de Sesión',
   LOGOUT: 'Cierre de Sesión',
   // A diferencia del resto, esto NO lo registra AuditLogService.record desde un request HTTP --
@@ -180,7 +184,9 @@ export const AUDIT_RESOURCE_TYPE_LABELS: Record<string, string> = {
   organization: 'Organización',
   evaluation: 'Evaluación',
   catalog_version: 'Versión de Catálogo',
+  improvement_plan: 'Acción del Plan de Mejora',
   'email-settings': 'Configuración de Email',
+  'plan-deadline-settings': 'Plazos del Plan de Mejora',
 };
 
 export const PRIORITY_CONFIG: Record<string, { label: string; color: string }> = {

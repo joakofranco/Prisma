@@ -126,6 +126,99 @@ class KeycloakAdminClientTest {
     server.verify();
   }
 
+  // ---- Invitación (RF-USR-05, PRI-240) ----
+
+  @Test
+  void createInvitedUserSendsNoPasswordAndAnUnverifiedEmail() {
+    UUID keycloakId = UUID.randomUUID();
+    expectAdminToken();
+    server
+        .expect(requestTo(BASE_URL + "/admin/realms/prisma/users"))
+        .andExpect(method(HttpMethod.POST))
+        .andExpect(jsonPath("$.emailVerified").value(false))
+        .andExpect(jsonPath("$.enabled").value(true))
+        .andExpect(jsonPath("$.credentials").doesNotExist())
+        .andRespond(
+            withStatus(HttpStatus.CREATED)
+                .location(
+                    java.net.URI.create(BASE_URL + "/admin/realms/prisma/users/" + keycloakId)));
+    server
+        .expect(
+            requestTo(
+                BASE_URL + "/admin/realms/prisma/users/" + keycloakId + "/role-mappings/realm"))
+        .andExpect(method(HttpMethod.GET))
+        .andRespond(withSuccess("[]", MediaType.APPLICATION_JSON));
+    server
+        .expect(requestTo(BASE_URL + "/admin/realms/prisma/roles/INTERNAL_EVALUATOR"))
+        .andExpect(method(HttpMethod.GET))
+        .andRespond(
+            withSuccess(
+                "{\"id\":\"role-2\",\"name\":\"INTERNAL_EVALUATOR\"}", MediaType.APPLICATION_JSON));
+    server
+        .expect(
+            requestTo(
+                BASE_URL + "/admin/realms/prisma/users/" + keycloakId + "/role-mappings/realm"))
+        .andExpect(method(HttpMethod.POST))
+        .andRespond(withSuccess());
+
+    UUID result =
+        client.createInvitedUser("l@test.com", "Lucía", "Fernández", Set.of("INTERNAL_EVALUATOR"));
+
+    assertEquals(keycloakId, result);
+    server.verify();
+  }
+
+  @Test
+  void sendExecuteActionsEmailAsksForTheActionsWithLifespanAndRedirect() {
+    UUID keycloakId = UUID.randomUUID();
+    expectAdminToken();
+    server
+        .expect(
+            requestTo(
+                org.hamcrest.Matchers.startsWith(
+                    BASE_URL
+                        + "/admin/realms/prisma/users/"
+                        + keycloakId
+                        + "/execute-actions-email")))
+        .andExpect(method(HttpMethod.PUT))
+        .andExpect(queryParam("lifespan", "259200"))
+        .andExpect(queryParam("client_id", "prisma-frontend"))
+        // La URL viaja codificada como valor de query (Keycloak la decodifica).
+        .andExpect(queryParam("redirect_uri", "https%3A%2F%2Fprisma.test"))
+        .andExpect(content().json("[\"VERIFY_EMAIL\",\"UPDATE_PASSWORD\"]"))
+        .andRespond(withNoContent());
+
+    client.sendExecuteActionsEmail(
+        keycloakId,
+        List.of("VERIFY_EMAIL", "UPDATE_PASSWORD"),
+        259200,
+        "prisma-frontend",
+        "https://prisma.test");
+
+    server.verify();
+  }
+
+  @Test
+  void sendExecuteActionsEmailFailureIsReportedAsEmailDelivery() {
+    UUID keycloakId = UUID.randomUUID();
+    expectAdminToken();
+    server
+        .expect(
+            requestTo(
+                org.hamcrest.Matchers.startsWith(
+                    BASE_URL
+                        + "/admin/realms/prisma/users/"
+                        + keycloakId
+                        + "/execute-actions-email")))
+        .andRespond(withServerError());
+
+    assertThrows(
+        KeycloakAdminClient.EmailDeliveryException.class,
+        () ->
+            client.sendExecuteActionsEmail(
+                keycloakId, List.of("UPDATE_PASSWORD"), 60, "prisma-frontend", "https://x.test"));
+  }
+
   @Test
   void updateProfileSendsEnabledFlag() {
     UUID keycloakId = UUID.randomUUID();
