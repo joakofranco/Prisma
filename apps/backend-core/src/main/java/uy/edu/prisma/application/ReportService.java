@@ -940,10 +940,10 @@ public class ReportService {
       byFunction
           .computeIfAbsent(
               r.getFunctionName() != null ? r.getFunctionName() : "Sin función",
-              k -> new java.util.ArrayList<>())
+              k -> new ArrayList<>())
           .add(r);
     }
-    List<RadarChart.Axis> axes = new java.util.ArrayList<>();
+    List<RadarChart.Axis> axes = new ArrayList<>();
     byFunction.forEach(
         (name, items) ->
             axes.add(
@@ -1287,7 +1287,7 @@ public class ReportService {
   private PdfPTable statusBar(PlanStats stats) {
     int[] counts = {stats.completed(), stats.inProgress(), stats.pending(), stats.overdue()};
     Color[] colors = {STATUS_DONE, STATUS_PROGRESS, STATUS_PENDING, DANGER};
-    List<Integer> used = new java.util.ArrayList<>();
+    List<Integer> used = new ArrayList<>();
     for (int i = 0; i < counts.length; i++) {
       if (counts[i] > 0) {
         used.add(i);

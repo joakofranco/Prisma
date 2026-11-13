@@ -20,7 +20,7 @@ import uy.edu.prisma.web.dto.Dto.AppVersionDto;
  * APP_BUILD_TIME}, los inyecta el CI al construir la imagen).
  */
 @Service
-public class AppVersionService {
+public final class AppVersionService {
 
   static final String APPLICATION = "prisma-backend-core";
   static final String UNKNOWN_VERSION = "unknown";
