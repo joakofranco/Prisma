@@ -33,6 +33,12 @@ ENV VITE_KEYCLOAK_URL=${VITE_KEYCLOAK_URL}
 ENV VITE_KEYCLOAK_REALM=${VITE_KEYCLOAK_REALM}
 ENV VITE_KEYCLOAK_CLIENT_ID=${VITE_KEYCLOAK_CLIENT_ID}
 
+# Commit y fecha de construcción que muestra el detalle de la versión (los pasa el CI; opcionales).
+ARG VITE_APP_COMMIT=""
+ARG VITE_APP_BUILD_TIME=""
+ENV VITE_APP_COMMIT=${VITE_APP_COMMIT}
+ENV VITE_APP_BUILD_TIME=${VITE_APP_BUILD_TIME}
+
 RUN npm run build
 
 # ---------- Stage 2: DEV (Vite HMR) ----------

@@ -51,6 +51,12 @@ COPY --from=builder ${DEPENDENCY}/BOOT-INF/classes /app
 # Directorio para evidencias
 RUN mkdir -p /var/prisma/evidences && chown -R prisma:prisma /var/prisma /app
 
+# Commit y fecha de construcción que informa /api/version a quien tiene sesión (los pasa el CI; sin
+# ellos quedan vacíos). Van al final para no invalidar el caché de las capas pesadas.
+ARG APP_COMMIT=""
+ARG APP_BUILD_TIME=""
+ENV APP_COMMIT=${APP_COMMIT}     APP_BUILD_TIME=${APP_BUILD_TIME}
+
 USER prisma
 EXPOSE 8080
 

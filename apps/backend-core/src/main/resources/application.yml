@@ -87,6 +87,12 @@ springdoc:
     tryItOutEnabled: true
 
 prisma:
+  # Versión/entorno de esta instancia (ver AppVersionService). APP_ENV: development | staging |
+  # production; sin la variable se asume development (un olvido en producción es visible).
+  app:
+    environment: ${APP_ENV:development}
+    commit: ${APP_COMMIT:}
+    build-time: ${APP_BUILD_TIME:}
   jwt:
     secret: ${JWT_SECRET:change-me-in-production-at-least-256-bits}
     access-expiration-minutes: ${JWT_ACCESS_EXPIRATION_MINUTES:15}
@@ -127,7 +133,7 @@ prisma:
       parallelism: ${ARGON2_PARALLELISM:4}
     login-failure-sync:
       # El bloqueo en sí (cuántos intentos fallidos antes de bloquear la cuenta) lo hace Keycloak,
-      # no esto -- ver "failureFactor" en infra/keycloak/realm-prisma.json (5 por defecto),
+      # no esto -- ver "failureFactor" en infra/keycloak/realm-prisma.json (10),
       # configurable también en vivo desde la consola de Keycloak (Realm Settings > Security
       # Defenses > Brute Force Detection) sin redeploy. Esto sólo trae a la bitácora propia
       # (AuditLog, ver LoginFailureAuditSyncService) los eventos LOGIN_ERROR que Keycloak ya

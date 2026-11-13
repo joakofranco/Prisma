@@ -105,6 +105,13 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.app }}
           cache-to:   type=gha,scope=${{ matrix.app }},mode=max
+          # Commit y fecha de construcción: los muestra /api/version a quien tiene sesión y el
+          # detalle de la versión del frontend. La versión sale de pom.xml / package.json.
+          build-args: |
+            APP_COMMIT=${{ github.sha }}
+            APP_BUILD_TIME=${{ github.event.head_commit.timestamp || github.run_started_at }}
+            VITE_APP_COMMIT=${{ github.sha }}
+            VITE_APP_BUILD_TIME=${{ github.event.head_commit.timestamp || github.run_started_at }}
           provenance: true
           sbom: true
 

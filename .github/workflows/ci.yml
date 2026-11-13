@@ -318,6 +318,18 @@ jobs:
           path: apps/backend-ai/htmlcov/
 
   # -------------------------------------------------------------------
+  # 3.5. VERSIÓN: pom.xml, package.json, version.py y sonar tienen que coincidir
+  # -------------------------------------------------------------------
+  version-sync:
+    name: Versión consistente
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Comprobar que la versión coincide en los cuatro archivos
+        run: bash scripts/version.sh check
+
+  # -------------------------------------------------------------------
   # 4. VALIDACIÓN DE INFRA (docker-compose, Dockerfiles)
   # -------------------------------------------------------------------
   infra-validation:
@@ -357,7 +369,7 @@ jobs:
   ci-summary:
     name: CI Summary
     runs-on: ubuntu-latest
-    needs: [frontend, e2e-a11y, backend-core, backend-ai, infra-validation]
+    needs: [frontend, e2e-a11y, backend-core, backend-ai, infra-validation, version-sync]
     if: always()
     steps:
       - name: Comprobar resultados
@@ -367,10 +379,12 @@ jobs:
           echo "Backend Core:   ${{ needs.backend-core.result }}"
           echo "Backend AI:     ${{ needs.backend-ai.result }}"
           echo "Infra:          ${{ needs.infra-validation.result }}"
+          echo "Versión:        ${{ needs.version-sync.result }}"
           if [[ "${{ needs.frontend.result }}"       == "failure" ]] || \
              [[ "${{ needs.e2e-a11y.result }}"       == "failure" ]] || \
              [[ "${{ needs.backend-core.result }}"   == "failure" ]] || \
              [[ "${{ needs.backend-ai.result }}"     == "failure" ]] || \
+             [[ "${{ needs.version-sync.result }}"   == "failure" ]] || \
              [[ "${{ needs.infra-validation.result }}" == "failure" ]]; then
             echo "❌ CI failed"; exit 1
           fi

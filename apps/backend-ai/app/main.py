@@ -20,6 +20,7 @@ from app.core.config import get_settings
 from app.core.logging import setup_logging
 from app.rag.evidence_store import EvidenceStore
 from app.rag.vector_store import VectorStore
+from app.version import __version__, normalize_environment
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -46,7 +47,7 @@ settings = get_settings()
 app = FastAPI(
     title="PRISMA — AI Service",
     description="Servicio de IA y RAG sobre el Marco de Ciberseguridad 5.0.",
-    version="0.1.0",
+    version=__version__,
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url="/openapi.json",
@@ -73,7 +74,13 @@ Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_sch
 
 @app.get("/health", tags=["Health"])
 async def health() -> dict[str, str]:
-    return {"status": "ok", "service": "backend-ai", "ollama": settings.ollama_host}
+    return {
+        "status": "ok",
+        "service": "backend-ai",
+        "ollama": settings.ollama_host,
+        "version": __version__,
+        "environment": normalize_environment(get_settings().app_env),
+    }
 
 
 if __name__ == "__main__":
