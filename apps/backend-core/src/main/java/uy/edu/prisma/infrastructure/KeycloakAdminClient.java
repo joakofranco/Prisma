@@ -290,7 +290,7 @@ public class KeycloakAdminClient {
             .header("Authorization", "Bearer " + adminToken())
             .retrieve()
             .body(LoginFailureStatus.class);
-    return status != null ? status : new LoginFailureStatus(false, 0);
+    return status != null ? status : new LoginFailureStatus(false, 0, 0);
   }
 
   /**
@@ -513,10 +513,17 @@ public class KeycloakAdminClient {
 
   /**
    * Lo que Keycloak informa del bloqueo de un usuario: {@code disabled} es {@code true} mientras la
-   * cuenta está bloqueada, y {@code numFailures} los intentos fallidos seguidos que lleva.
+   * cuenta está bloqueada, {@code numFailures} los intentos fallidos seguidos que lleva y {@code
+   * failedLoginNotBefore} hasta cuándo (segundos desde 1970) no la deja iniciar sesión; 0 si no hay
+   * bloqueo.
    */
   @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
-  public record LoginFailureStatus(boolean disabled, int numFailures) {}
+  public record LoginFailureStatus(boolean disabled, int numFailures, long failedLoginNotBefore) {
+
+    public LoginFailureStatus(boolean disabled, int numFailures) {
+      this(disabled, numFailures, 0);
+    }
+  }
 
   // Representación PARCIAL del evento de Keycloak -- sólo los campos que se usan. "details" trae
   // el username tal cual se escribió en el formulario de login (existe o no la cuenta), que es

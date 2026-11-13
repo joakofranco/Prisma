@@ -16,7 +16,7 @@ si algo existe. Los DTOs completos (todos los campos, cuáles son opcionales) es
 
 ## Autenticación
 
-Todos los endpoints de `backend-core` (salvo `/actuator/**` y `/swagger-ui/**`) requieren un JWT de
+Todos los endpoints de `backend-core` (salvo `/actuator/**`, `/swagger-ui/**` y `/api/version`) requieren un JWT de
 Keycloak: `Authorization: Bearer <token>`. El token se obtiene vía el flujo normal de Keycloak
 (la SPA usa `keycloak-js` con PKCE); para probar por API directo, ver el flujo ROPC documentado en
 [`Testing.md`](Testing.md#obtener-un-token-para-probar-la-api-a-mano).
@@ -58,17 +58,22 @@ Todos los errores de `backend-core` devuelven el mismo shape (`GlobalExceptionHa
 
 | Método | Path | Rol | Notas |
 |---|---|---|---|
-| GET | `/` | cualquiera autenticado | `PRISMA_ADMIN` ve todas; `AUDITOR` sólo las que audita; el resto sólo la propia (paginado, `page` 1-indexed). `?search=` busca en el nombre y en el RUT, sin distinguir mayúsculas, tildes ni puntos; en el RUT además ignora guiones y espacios (`1.234.567-8`, `1234567-8` y `12345678` son lo mismo) |
+| GET | `/` | cualquiera autenticado | `PRISMA_ADMIN` ve todas; `AUDITOR` sólo las que audita; el resto sólo la propia (paginado, `page` 1-indexed). `?search=` busca en el nombre y en el identificador, sin distinguir mayúsculas, tildes ni puntos; en el identificador además ignora guiones y espacios (`1.234.567-8`, `1234567-8` y `12345678` son lo mismo) |
 | GET | `/{id}` | cualquiera autenticado | 403 si la organización no es la propia (ni auditada, salvo `PRISMA_ADMIN`) |
-| POST | `/` | `PRISMA_ADMIN` | `{name, rut?, sector, size, responsibleId?}` — `rut` es **opcional** (Uruguay usa "RUT", no "NIT"); en blanco se normaliza a `NULL` en el backend |
+| POST | `/` | `PRISMA_ADMIN` | `{name, identifier?, identifierIsRut?, sector, size, responsibleId?}` — `identifier` es **opcional** (RUT u otro identificador); en blanco se normaliza a `NULL`. Con `identifierIsRut: true` el backend valida el RUT uruguayo (12 dígitos `AA-BBBBBB-001-D`, dígito verificador módulo 11) y lo guarda normalizado; sin la marca exige al menos 8 caracteres (máximo 20). Siempre se rechaza (409) un identificador ya usado por otra organización, comparando sin puntos, guiones ni espacios, sea o no un RUT. Los errores vienen en `details.identifier` (400 inválido, 409 duplicado). La respuesta trae `identifier` e `identifierIsRut` |
 | PUT | `/{id}` | `PRISMA_ADMIN` | mismo shape que POST |
 | DELETE | `/{id}` | `PRISMA_ADMIN` | **Baja lógica** (`enabled=false`), no borra la fila — preserva histórico de evaluaciones/usuarios |
+
+> **El perfil comunitario no es un atributo de la organización.** Estos endpoints no reciben ni
+> devuelven un perfil: se elige **por evaluación**, al crearla (`communityProfileId` en
+> `POST /api/evaluations`) y se puede cambiar después con `PATCH /api/evaluations/{id}/profile`
+> (sujeto a las reglas de `EvaluationService.changeProfile`).
 
 ## Usuarios — `/api/users`
 
 | Método | Path | Rol | Notas |
 |---|---|---|---|
-| GET | `/` | cualquiera autenticado | mismo criterio de scoping que Organizaciones (por tenant/auditadas/todas). `?search=` busca en el email, en «Nombre Apellido» y en el nombre de cualquiera de sus organizaciones, sin distinguir mayúsculas, tildes ni puntos (`ana.perez` y `anaperez` coinciden) |
+| GET | `/` | cualquiera autenticado | mismo criterio de scoping que Organizaciones (por tenant/auditadas/todas). `?search=` busca en el email, en «Nombre Apellido» y en el nombre de cualquiera de sus organizaciones, sin distinguir mayúsculas, tildes ni puntos (`ana.perez` y `anaperez` coinciden). Cada usuario trae `locked` (`true` = su cuenta está bloqueada por intentos fallidos ahora; `false` = no; `null` = sin cuenta en Keycloak o Keycloak no respondió) y `lockedUntil` (hasta cuándo, solo si `locked`) |
 | GET | `/{id}` | cualquiera autenticado | un usuario siempre puede ver su propia ficha aunque esté fuera de su tenant |
 | POST | `/` | `PRISMA_ADMIN`, `ORG_RESPONSIBLE` | `{email, firstName, lastName, organizationIds?, roles[], password, enabled?}` — provisiona la cuenta en Keycloak (sin `password` no puede loguearse nunca). `organizationIds` es la membresía M:N usuario↔organización y su cantidad depende del rol: `ORG_RESPONSIBLE`/`VIEWER` exactamente **1**, `AUDITOR` **≥1**, `INTERNAL_EVALUATOR` cualquier cantidad (con **0** es un evaluador *general* que accede a todas las organizaciones), `PRISMA_ADMIN` ninguna (global; si lo tiene, no se validan los demás roles). Incumplirlo → **400**. `ORG_RESPONSIBLE`: solo puede asignar su propia organización (**403** si pide otra u otorga `PRISMA_ADMIN`) y nunca crea evaluadores generales. En `PUT`, `organizationIds` omitido = sin cambios y `[]` = quitarle todas (solo `PRISMA_ADMIN` las cambia). `enabled` es opcional, `true` si se omite |
 | PUT | `/{id}` | `PRISMA_ADMIN`, `ORG_RESPONSIBLE` | mismo shape; si trae `password`, la resetea (permanente) también en Keycloak. `enabled: false` **deshabilita** al usuario (sincronizado a Keycloak: no puede autenticarse) sin borrarlo — conserva historial, a diferencia de `DELETE`; `enabled` ausente/`null` deja el estado como estaba. **400** si se intenta deshabilitar la propia cuenta o al administrador global sembrado. `ORG_RESPONSIBLE`: **403** si el usuario destino no es de su organización, si intenta reubicarlo en otra, o si intenta otorgar `PRISMA_ADMIN` |
@@ -184,6 +189,16 @@ Regla de estado: crear (`POST`) y modificar (`PUT`, incluido el cambio de `statu
 
 Regla de estado: el informe **preliminar** vale solo en `IN_AUDIT`; el reporte **final** y el **ejecutivo**, solo en `APPROVED`. La exportación del plan de mejora no tiene restricción de estado.
 
+## Versión y entorno — `/api/version`
+
+| Método | Path | Rol | Notas |
+|---|---|---|---|
+| GET | `/` | **público** (lo muestra la pantalla de login) | `{application, version, environment, development, commit?, buildTime?}`. Sin sesión trae solo `version` (la del `pom.xml`) y `environment` (`development`, `staging` o `production`, de `APP_ENV`; `development` también si no está definida, para que un olvido en producción se note); con sesión suma `commit` y `buildTime` si el CI los pasó al construir la imagen. `development: true` cuando el entorno es de desarrollo. También está en `/actuator/info` (red interna). |
+
+`backend-ai` informa lo mismo (solo `version` y `environment`) en `GET /health`. La versión es una sola
+para todos los servicios y se cambia con `scripts/version.sh bump X.Y.Z`
+(ver [`Ambientes-Despliegue.md`](Ambientes-Despliegue.md#versión-y-entorno)).
+
 ## Dashboard — `/api/dashboard`
 
 | Método | Path | Rol | Notas |
@@ -237,6 +252,7 @@ tipo nuevo, sumarlo en los dos lados.
 | Método | Path | Notas |
 |---|---|---|
 | GET | `/ping` | health check simple, sin auth |
+| GET | `/health` (fuera de `/api/v1`) | estado del servicio, más `version` y `environment` |
 | GET | `/rag/status` | estado del índice del catálogo MCU 5.0 (`ready`, `collection`, `documents`) |
 | POST | `/rag/query` | `{question, k?}` — pregunta libre sobre el catálogo (Llama 3 vía Ollama) |
 | POST | `/rag/ingest` | agrega texto a la colección del catálogo |
