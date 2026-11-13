@@ -244,6 +244,31 @@ confirmarlo contra la documentación oficial del proyecto antes de activarlo, en
 mitigación real disponible hoy es el cifrado de volumen del punto anterior, que cubre tanto a
 Postgres como a RustFS por igual.
 
+## Vulnerabilidades conocidas en dependencias (deuda abierta)
+
+Detectadas el 2026-11-13 con el escaneo local previo al PR de la rama `predef-joaquin-S6` (Trivy
+sobre las imágenes, mismos parámetros que el job `trivy-images` de `security.yml`:
+`CRITICAL,HIGH` con `ignore-unfixed`). No las introdujo ese PR (no toca dependencias): son CVEs
+publicados después de la última corrida verde del CI y afectan igual a `dev`, así que el job de
+imágenes de `security.yml` falla para backend-core y backend-ai hasta que se resuelvan. La imagen
+del frontend, gitleaks y Trivy fs salieron limpios.
+
+| Imagen | Dependencia | CVE | Severidad | Instalada | Corregida en |
+|---|---|---|---|---|---|
+| backend-core | `org.springframework:spring-webmvc` | CVE-2026-47884 (ejecución de código por limitación incorrecta de ruta) | CRÍTICA | 6.2.19 | 7.0.9 |
+| backend-core | `org.springframework:spring-webmvc` | CVE-2026-47890 (corrupción de datos en Server-Sent Events) | CRÍTICA | 6.2.19 | 7.0.9 |
+| backend-ai | `langchain-core` | CVE-2026-34070 (path traversal en las funciones heredadas `load_prompt`) | ALTA | 0.3.86 | 1.2.22 |
+
+**Estado:** abierta, sin corregir. Ambos arreglos son saltos de versión mayor, no parches: Spring
+Framework 6.2 → 7.0 (en la práctica, migrar Spring Boot 3.5 → 4) y `langchain-core` 0.3 → 1.x
+(puede romper el código de backend-ai). Antes de migrar conviene comprobar si Spring 6.2.x o
+`langchain-core` 0.3.x publican un parche menor.
+
+**Mientras tanto:** para los de Spring, la superficie es la de `spring-webmvc` (la API detrás de
+NGINX); para `langchain-core`, el código de PRISMA no usa `load_prompt` (verificado con `grep` en
+`apps/backend-ai` el 2026-11-13: sin coincidencias), por lo que no es explotable hoy. Revisar este apartado al cerrar cada sprint y borrar cada fila
+cuando su versión corregida esté desplegada.
+
 ## Cumplimiento MCU 5.0
 
 PRISMA implementa los controles necesarios para ser AUDITADA por sí misma:
