@@ -18,19 +18,21 @@ class DtoTest {
   @Test
   void organizationRecords() {
     OrganizationDto dto =
-        new OrganizationDto(id, "Acme", "NIT", "TECH", "SMALL", null, null, true, now);
+        new OrganizationDto(id, "Acme", "NIT", true, "TECH", "SMALL", null, null, true, now);
     assertEquals(id, dto.id());
     assertEquals("Acme", dto.name());
-    assertEquals("NIT", dto.rut());
+    assertEquals("NIT", dto.identifier());
+    assertTrue(dto.identifierIsRut());
     assertEquals("TECH", dto.sector());
     assertEquals("SMALL", dto.size());
     assertNull(dto.responsibleId());
     assertTrue(dto.enabled());
     assertEquals(now, dto.createdAt());
 
-    CreateOrganizationDto create = new CreateOrganizationDto("Acme", "NIT", null, null, id);
+    CreateOrganizationDto create = new CreateOrganizationDto("Acme", "NIT", true, null, null, id);
     assertEquals("Acme", create.name());
-    assertEquals("NIT", create.rut());
+    assertEquals("NIT", create.identifier());
+    assertEquals(Boolean.TRUE, create.identifierIsRut());
     assertEquals(id, create.responsibleId());
   }
 

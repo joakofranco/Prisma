@@ -57,7 +57,7 @@ class AuditLogServiceTest {
         Organization.builder()
             .id(UUID.randomUUID())
             .name("Acme")
-            .rut("NIT-1")
+            .identifier("NIT-1")
             .enabled(true)
             .build();
     actor =

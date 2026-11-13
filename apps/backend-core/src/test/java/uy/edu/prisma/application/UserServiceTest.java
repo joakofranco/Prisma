@@ -69,7 +69,7 @@ class UserServiceTest {
         Organization.builder()
             .id(UUID.randomUUID())
             .name("Acme")
-            .rut("NIT-1")
+            .identifier("NIT-1")
             .sector("TECH")
             .size("SMALL")
             .enabled(true)
@@ -1525,5 +1525,122 @@ class UserServiceTest {
         .sendExecuteActionsEmail(any(), any(), anyInt(), any(), any());
 
     assertThrows(ConflictException.class, () -> service.resendInvitation(invited.getId()));
+  }
+
+  // ---- Estado de bloqueo de cada usuario (RF-AUTH-08): la lista refleja lo que dice Keycloak ----
+
+  private User withKeycloakAccount(String email) {
+    return User.builder()
+        .id(UUID.randomUUID())
+        .email(email)
+        .firstName("N")
+        .lastName("L")
+        .enabled(true)
+        .roles(Set.of(UserRole.VIEWER))
+        .keycloakId(UUID.randomUUID())
+        .createdAt(OffsetDateTime.now())
+        .build();
+  }
+
+  private PaginatedDto<UserDto> listOf(User... users) {
+    PageRequest pr = PageRequest.of(0, 10, Sort.by("createdAt").descending());
+    when(userRepo.search(any(), any()))
+        .thenReturn(new PageImpl<>(List.of(users), pr, users.length));
+    return service.list(null, 0, 10);
+  }
+
+  private static UserDto byEmail(PaginatedDto<UserDto> page, String email) {
+    return page.data().stream().filter(u -> u.email().equals(email)).findFirst().orElseThrow();
+  }
+
+  @Test
+  void theListMarksALockedAccountWithTheTimeItStaysLockedUntil() {
+    User locked = withKeycloakAccount("locked@test.com");
+    long until = java.time.Instant.parse("2026-11-13T19:29:04Z").getEpochSecond();
+    when(keycloakAdmin.loginFailureStatus(locked.getKeycloakId()))
+        .thenReturn(new KeycloakAdminClient.LoginFailureStatus(true, 10, until));
+
+    UserDto dto = byEmail(listOf(locked), "locked@test.com");
+
+    assertEquals(Boolean.TRUE, dto.locked());
+    assertEquals(java.time.Instant.ofEpochSecond(until), dto.lockedUntil().toInstant());
+  }
+
+  @Test
+  void theListShowsAnAccountWithFailuresButNotLockedAsNotLocked() {
+    User tryingUser = withKeycloakAccount("trying@test.com");
+    when(keycloakAdmin.loginFailureStatus(tryingUser.getKeycloakId()))
+        .thenReturn(new KeycloakAdminClient.LoginFailureStatus(false, 4, 0));
+
+    UserDto dto = byEmail(listOf(tryingUser), "trying@test.com");
+
+    assertEquals(Boolean.FALSE, dto.locked());
+    assertNull(dto.lockedUntil());
+  }
+
+  @Test
+  void aUserWithoutAnAccountHasNoLockStateAndKeycloakIsNotAskedAboutIt() {
+    user.setKeycloakId(null);
+
+    UserDto dto = byEmail(listOf(user), "u@test.com");
+
+    assertNull(dto.locked());
+    assertNull(dto.lockedUntil());
+    verify(keycloakAdmin, never()).loginFailureStatus(any());
+  }
+
+  @Test
+  void eachUserInThePageGetsItsOwnState() {
+    User a = withKeycloakAccount("a@test.com");
+    User b = withKeycloakAccount("b@test.com");
+    when(keycloakAdmin.loginFailureStatus(a.getKeycloakId()))
+        .thenReturn(new KeycloakAdminClient.LoginFailureStatus(true, 10, 4_000_000_000L));
+    when(keycloakAdmin.loginFailureStatus(b.getKeycloakId()))
+        .thenReturn(new KeycloakAdminClient.LoginFailureStatus(false, 0, 0));
+
+    PaginatedDto<UserDto> page = listOf(a, b);
+
+    assertEquals(Boolean.TRUE, byEmail(page, "a@test.com").locked());
+    assertEquals(Boolean.FALSE, byEmail(page, "b@test.com").locked());
+  }
+
+  @Test
+  void ifKeycloakFailsTheListIsStillReturnedWithTheStateUnknown() {
+    User u = withKeycloakAccount("down@test.com");
+    when(keycloakAdmin.loginFailureStatus(u.getKeycloakId()))
+        .thenThrow(new IllegalStateException("Keycloak no responde"));
+
+    UserDto dto = byEmail(listOf(u), "down@test.com");
+
+    assertNull(dto.locked());
+    assertEquals("down@test.com", dto.email());
+  }
+
+  @Test
+  void ifKeycloakIsTooSlowTheListDoesNotWaitForeverAndTheStateIsUnknown() {
+    User slow = withKeycloakAccount("slow@test.com");
+    when(keycloakAdmin.loginFailureStatus(slow.getKeycloakId()))
+        .thenAnswer(
+            inv -> {
+              Thread.sleep(10_000);
+              return new KeycloakAdminClient.LoginFailureStatus(true, 10, 4_000_000_000L);
+            });
+
+    long started = System.nanoTime();
+    UserDto dto = byEmail(listOf(slow), "slow@test.com");
+    long elapsedMs = (System.nanoTime() - started) / 1_000_000;
+
+    assertNull(dto.locked());
+    assertTrue(elapsedMs < 5_000, "esperó " + elapsedMs + " ms");
+  }
+
+  @Test
+  void theDetailAlsoReportsTheLockState() {
+    User locked = withKeycloakAccount("detail@test.com");
+    when(userRepo.findById(locked.getId())).thenReturn(Optional.of(locked));
+    when(keycloakAdmin.loginFailureStatus(locked.getKeycloakId()))
+        .thenReturn(new KeycloakAdminClient.LoginFailureStatus(true, 10, 4_000_000_000L));
+
+    assertEquals(Boolean.TRUE, service.getById(locked.getId()).locked());
   }
 }

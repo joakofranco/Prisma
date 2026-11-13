@@ -18,7 +18,8 @@ function org(id: string, enabled = true): Organization {
   return {
     id,
     name: `Org ${id}`,
-    rut: null,
+    identifier: null,
+    identifierIsRut: false,
     sector: 'TECH',
     size: 'SMALL',
     enabled,

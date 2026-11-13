@@ -101,6 +101,8 @@ show_status() {
   row "Ventana en que se cuentan (s)" "$(json_value "$realm" maxDeltaTimeSeconds)" "$LOCKOUT_WINDOW"
   row "Incremento de espera (s)" "$(json_value "$realm" waitIncrementSeconds)" "$LOCKOUT_DURATION"
   row "Espera máxima (s)" "$(json_value "$realm" maxFailureWaitSeconds)" "$LOCKOUT_DURATION"
+  # Tema de login con el texto del error que explica el bloqueo (infra/keycloak/themes/prisma/login).
+  row "Tema de login (texto del error de bloqueo)" "$(json_value "$realm" loginTheme)" "prisma"
   echo "Acceso rápido (no se modifica):"
   printf '  ℹ️  minimumQuickLoginWaitSeconds=%s quickLoginCheckMilliSeconds=%s\n' \
     "$(json_value "$realm" minimumQuickLoginWaitSeconds)" "$(json_value "$realm" quickLoginCheckMilliSeconds)"
@@ -116,7 +118,8 @@ apply_policy() {
     -s "failureFactor=$LOCKOUT_FAILURES" \
     -s "maxDeltaTimeSeconds=$LOCKOUT_WINDOW" \
     -s "waitIncrementSeconds=$LOCKOUT_DURATION" \
-    -s "maxFailureWaitSeconds=$LOCKOUT_DURATION"
+    -s "maxFailureWaitSeconds=$LOCKOUT_DURATION" \
+    -s loginTheme=prisma
   echo "✅ Política aplicada al realm '$REALM'."
 }
 

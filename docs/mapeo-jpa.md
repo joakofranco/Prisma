@@ -66,12 +66,19 @@
 |---|---|---|
 | `id` | `id` | `UUID`, `@Id @GeneratedValue(UUID)` |
 | `name` | `name` | `@Column(nullable=false, length=200)` |
-| `rut` | `rut` | `@Column(unique=true, length=20)` — **opcional** (nullable). Uruguay usa "RUT" (Colombia y otros usan "NIT"); renombrado desde `nit` en `V17__organization_rut_optional.sql`. `UNIQUE` sigue vigente: Postgres no cuenta `NULL` contra ella, así que varias organizaciones sin RUT conviven sin chocar — el servicio normaliza explícitamente un RUT en blanco (`""`) a `NULL`, porque ahí sí Postgres los trata como valores iguales. |
+| `identifier` | `identifier` | `@Column(unique=true, length=20)` — **opcional** (nullable). Identificador de la organización (RUT u otro); era `nit` y pasó a `rut` en `V17__organization_rut_optional.sql`, y a `identifier` en `V35__organization_identifier.sql`. `UNIQUE` sigue vigente: Postgres no cuenta `NULL` contra ella, así que varias organizaciones sin identificador conviven sin chocar — el servicio normaliza explícitamente uno en blanco (`""`) a `NULL`, porque ahí sí Postgres los trata como valores iguales. El duplicado se controla además en el servicio, sin puntos, guiones ni espacios. |
+| `identifierIsRut` | `identifier_is_rut` | `@Column(nullable=false)` `Boolean`, por defecto `false`. Indica que el identificador es un RUT uruguayo: el servicio validó el dígito verificador y lo guardó normalizado (`AA-BBBBBB-001-D`). |
 | `sector` | `sector` | `@Column(length=100)` |
 | `size` | `size` | `@Column(length=50)` |
 | `responsible` | `responsible_id` | `@ManyToOne(LAZY) @JoinColumn(name="responsible_id")` — usuario responsable, opcional |
 | `enabled` | `enabled` | `@Column(nullable=false)`, `@Builder.Default = true` — baja lógica (ver `OrganizationService.delete()`) |
 | `createdAt`/`updatedAt` | `created_at`/`updated_at` | `OffsetDateTime`, `@PreUpdate` actualiza `updatedAt` |
+
+**Sin perfil comunitario:** `Organization` no tiene ningún campo de perfil. El perfil comunitario
+se elige **por evaluación** (`Evaluation.communityProfile`, columna `community_profile_id`), no por
+organización: una misma organización puede tener evaluaciones con perfiles distintos. Es una
+decisión del equipo que se aparta de la redacción original de RF-ORG-02 («clasificar la
+organización con un perfil comunitario»).
 
 **Sin `@OneToMany` hacia `User`/`Evaluation`:** el lado "muchos" de esas relaciones no está
 mapeado desde `Organization` (no hay `List<User> users` ni `List<Evaluation> evaluations`) —

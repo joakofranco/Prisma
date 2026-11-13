@@ -57,7 +57,8 @@ const ORGS = [
   {
     id: 'org-1',
     name: 'Intendencia de Rivera',
-    rut: '210000000011',
+    identifier: '21-616658-001-4',
+    identifierIsRut: true,
     sector: 'Público',
     size: 'Grande',
     responsibleName: 'Ana Pérez',
@@ -67,7 +68,8 @@ const ORGS = [
   {
     id: 'org-2',
     name: 'Hospital Central',
-    rut: null,
+    identifier: null,
+    identifierIsRut: false,
     sector: 'Salud',
     size: 'Mediana',
     responsibleName: null,
@@ -192,8 +194,22 @@ describe('ReportsView: listado por organización (PRI-367)', () => {
     expect(groups[0].textContent).toContain('Salud · Mediana');
     expect(groups[0].textContent).not.toContain('RUT');
     expect(groups[1].querySelector('[data-testid="org-details"]')?.textContent).toContain(
-      'RUT 210000000011 · Público · Grande · Responsable: Ana Pérez',
+      'RUT 21-616658-001-4 · Público · Grande · Responsable: Ana Pérez',
     );
+  });
+
+  it('un identificador que no es RUT se rotula «Identificador»', async () => {
+    organizationsService.getAll.mockResolvedValue({
+      data: {
+        data: [{ ...ORGS[0], identifier: 'NIT-0009', identifierIsRut: false }, ORGS[1]],
+      },
+    });
+    mockEvaluations({ APPROVED: [evaluation('a1', 'APPROVED')] });
+    await mountView();
+
+    const details = qa('[data-testid="org-details"]')[0].textContent;
+    expect(details).toContain('Identificador NIT-0009 · Público');
+    expect(details).not.toContain('RUT');
   });
 
   it('cada evaluación muestra la fecha de aprobación y la madurez', async () => {

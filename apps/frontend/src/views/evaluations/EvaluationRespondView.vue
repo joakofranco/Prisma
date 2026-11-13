@@ -21,9 +21,29 @@
           </p>
         </div>
       </div>
-      <BaseButton variant="secondary" :loading="saving" class="shrink-0" @click="saveProgress">
+      <BaseButton
+        variant="secondary"
+        :loading="saving"
+        :disabled="!canEdit"
+        :title="canEdit ? undefined : lockedReason"
+        class="shrink-0"
+        data-testid="save-progress"
+        @click="saveProgress"
+      >
         Guardar progreso
       </BaseButton>
+    </div>
+
+    <!-- Si se llega acá (enlace guardado, historial) con la evaluación ya enviada a auditoría,
+    aprobada o archivada, las respuestas son de solo lectura: el backend las rechazaría. -->
+    <div
+      v-if="!canEdit"
+      class="px-4 py-3 rounded-lg bg-slate-100 border border-slate-200 text-sm text-slate-700 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300"
+      role="status"
+      data-testid="respond-locked"
+    >
+      Las respuestas están en <strong>solo lectura</strong>. {{ lockedReason }} Se pueden editar
+      cuando la evaluación esté en Borrador, En curso o Devuelta.
     </div>
 
     <div v-if="loading" class="flex items-center justify-center py-12">
@@ -183,12 +203,15 @@
               }}</span>
             </div>
             <button
-              class="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors"
+              class="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               :class="
                 isFlagged
                   ? 'bg-amber-50 border-amber-300 text-amber-700 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-700'
                   : 'bg-white dark:bg-slate-800 border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700'
               "
+              :disabled="!canFlag"
+              :title="canFlag ? undefined : lockedReason"
+              data-testid="flag-control"
               @click="toggleFlag"
             >
               <BookmarkIconSolid v-if="isFlagged" class="w-4 h-4" />
@@ -228,7 +251,8 @@
             <button
               role="radio"
               :aria-checked="currentAnswer === true"
-              class="flex items-center gap-3 p-4 rounded-xl border-2 text-left transition-colors"
+              :disabled="!canEdit"
+              class="flex items-center gap-3 p-4 rounded-xl border-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60"
               :class="
                 currentAnswer === true
                   ? 'bg-emerald-50 border-emerald-500 ring-2 ring-emerald-300 dark:bg-emerald-950'
@@ -249,7 +273,8 @@
             <button
               role="radio"
               :aria-checked="currentAnswer === false"
-              class="flex items-center gap-3 p-4 rounded-xl border-2 text-left transition-colors"
+              :disabled="!canEdit"
+              class="flex items-center gap-3 p-4 rounded-xl border-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60"
               :class="
                 currentAnswer === false
                   ? 'bg-red-50 border-red-500 ring-2 ring-red-300 dark:bg-red-950'
@@ -270,7 +295,8 @@
           <div class="mt-4">
             <button
               v-if="!showObservations && !currentObservations"
-              class="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
+              :disabled="!canEdit"
+              class="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400 disabled:opacity-50 disabled:cursor-not-allowed disabled:no-underline"
               @click="showObservations = true"
             >
               + Agregar observación
@@ -281,6 +307,7 @@
               label="Observaciones (opcional)"
               placeholder="Notas, evidencia disponible o contexto adicional"
               :rows="2"
+              :disabled="!canEdit"
             />
           </div>
         </div>
@@ -294,13 +321,21 @@
             :label="`Comentario de la subcategoría: ${currentQuestion.subcategory.name}`"
             placeholder="Comentario general sobre esta subcategoría (opcional)"
             :rows="3"
+            :disabled="!canEdit"
           />
         </div>
 
         <div class="flex items-center justify-between gap-3">
           <BaseButton variant="outline" :disabled="isFirst" @click="goPrev"> Anterior </BaseButton>
-          <BaseButton variant="primary" :loading="saving" @click="isLast ? finish() : goNext()">
-            {{ isLast ? 'Guardar y Finalizar' : 'Siguiente' }}
+          <BaseButton
+            variant="primary"
+            :loading="saving"
+            data-testid="next-or-finish"
+            @click="isLast ? (canEdit ? finish() : backToEvaluation()) : goNext()"
+          >
+            {{
+              isLast ? (canEdit ? 'Guardar y Finalizar' : 'Volver a la evaluación') : 'Siguiente'
+            }}
           </BaseButton>
         </div>
       </div>
@@ -315,6 +350,11 @@
   import { catalogService } from '@/services/resources';
   import { useNotification } from '@/composables/useUtils';
   import { getErrorMessage } from '@/utils/helpers';
+  import {
+    canFlagControls,
+    isSelfAssessmentEditable,
+    selfAssessmentLockedReason,
+  } from '@/utils/evaluationRules';
   import { pickEntryIndex } from '@/utils/evaluationNav';
   import BaseButton from '@/components/common/BaseButton.vue';
   import BaseTextarea from '@/components/common/BaseTextarea.vue';
@@ -580,7 +620,19 @@
     }
   }
 
+  // Responder, comentar y guardar solo se admiten mientras se está respondiendo (Borrador, En curso,
+  // Devuelta); marcar controles también durante la auditoría. Mismas reglas que el backend. Mientras
+  // la evaluación no cargó no se bloquea nada.
+  const canEdit = computed(() => isSelfAssessmentEditable(evaluation.value?.status));
+  const canFlag = computed(() => canFlagControls(evaluation.value?.status));
+  const lockedReason = computed(() => selfAssessmentLockedReason(evaluation.value?.status));
+
+  function backToEvaluation() {
+    router.push(`/evaluations/${evaluationId}`);
+  }
+
   function selectCompliant(value: boolean) {
+    if (!canEdit.value) return;
     const id = currentQuestion.value.control.id;
     if (!responseMap[id]) responseMap[id] = { compliant: false, answered: false, observations: '' };
     responseMap[id].compliant = value;
@@ -589,6 +641,7 @@
 
   // La marca se guarda en el momento: antes vivía solo en memoria y se perdía al recargar.
   async function toggleFlag() {
+    if (!canFlag.value) return;
     const id = currentQuestion.value.control.id;
     const wasFlagged = flaggedControls.value.has(id);
     setFlagLocal(id, !wasFlagged);
@@ -686,11 +739,13 @@
   }
 
   async function saveProgress() {
+    if (!canEdit.value) return;
     const ok = await persistResponses();
     if (ok) notification.success('Progreso guardado correctamente');
   }
 
   async function finish() {
+    if (!canEdit.value) return;
     const ok = await persistResponses();
     if (!ok) return;
     try {

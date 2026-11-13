@@ -19,6 +19,7 @@ Todos los workflows están en `.github/workflows/`.
 | **`frontend`** | ESLint + vue-tsc (type-check) + Vitest (unit + coverage) + build Vite | Si cambió `apps/frontend/**` o es un PR |
 | **`backend-core`** | Spotless (format) + Checkstyle + Compile + JUnit unit + Failsafe integration (con Testcontainers para Postgres real) + JaCoCo report | Si cambió `apps/backend-core/**` o es un PR |
 | **`backend-ai`** | Ruff (lint) + Black (format) + mypy (types) + pytest + coverage | Si cambió `apps/backend-ai/**` o es un PR |
+| **`version-sync`** | `scripts/version.sh check`: la versión de `pom.xml`, `package.json`, `version.py` y `sonar-project.properties` tiene que ser la misma. | Siempre |
 | **`infra-validation`** | `docker compose config` + hadolint (Dockerfiles) + yamllint | Si cambió `infra/**` |
 | **`ci-summary`** | Gate final. Falla el CI si alguno de los jobs anteriores falló. | Siempre |
 
@@ -99,7 +100,7 @@ Cada servicio en `docker-compose.yml` tiene un rol claro. Los perfiles (`--profi
 
 | Servicio | Imagen | Rol |
 |---|---|---|
-| **`keycloak`** | `quay.io/keycloak/keycloak:26.7` | Identity Provider. SSO, OAuth2, políticas de contraseña. Política de OTP/TOTP configurada a nivel de realm pero **no forzada** para ningún rol (ver [`SECURITY.md`](SECURITY.md)) — un usuario puede activarla desde su propia cuenta, no es obligatoria hoy. Realm `prisma` importado automáticamente desde `infra/keycloak/realm-prisma.json`. |
+| **`keycloak`** | `quay.io/keycloak/keycloak:26.7` | Identity Provider. SSO, OAuth2, políticas de contraseña. Política de OTP/TOTP configurada a nivel de realm. La MFA obligatoria para `PRISMA_ADMIN` y `ORG_RESPONSIBLE` está funcional y validada, pero **no viene en el realm importado**: se activa en cada ambiente con `make mfa-enable` (`scripts/keycloak/enable-mfa.sh`, ver [`SECURITY.md`](SECURITY.md)). Realm `prisma` importado automáticamente desde `infra/keycloak/realm-prisma.json`. |
 | **`keycloak-db`** | `postgres:17-alpine` | BD dedicada de Keycloak (separada de la de la app). |
 | **`rustfs`** | `rustfs/rustfs:1.0.3` | Storage S3-compatible para evidencias. El bucket lo crea `backend-core` en la primera subida (no hay job de init). |
 

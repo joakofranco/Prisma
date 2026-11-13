@@ -69,6 +69,14 @@
       @confirm="changeStatus('ARCHIVED')"
     />
     <ConfirmDialog
+      v-model="showIncompleteConfirm"
+      title="Hay controles sin responder"
+      :message="incompleteMessage"
+      confirm-text="Enviar a auditoría igual"
+      variant="warning"
+      @confirm="changeStatus('READY_FOR_AUDIT')"
+    />
+    <ConfirmDialog
       v-model="showDeleteConfirm"
       title="Eliminar evaluación"
       message="La evaluación no tiene datos cargados, así que se elimina definitivamente."
@@ -82,7 +90,18 @@
     </div>
 
     <template v-else-if="evaluation">
-      <EvaluationLifecycleStepper :status="evaluation.status" />
+      <!-- Zona 3: ciclo de vida + «Qué sigue». El panel dice de quién es el turno, ofrece las
+      acciones del estado actual (antes en la tarjeta «Acciones de Flujo») y deja a la vista las
+      evidencias y las observaciones del auditor. -->
+      <EvaluationLifecycleStepper :status="evaluation.status">
+        <EvaluationActionPanel
+          :plan="actionPlan"
+          :progress="actionProgress"
+          :busy="changingStatus"
+          @status="onStatusAction"
+          @delete="showDeleteConfirm = true"
+        />
+      </EvaluationLifecycleStepper>
 
       <!-- RF-AUD-09: registro de certificación -- solo existe una vez aprobada (sellada), nunca se
       recalcula ni se puede editar desde acá. -->
@@ -104,68 +123,6 @@
           <p class="font-mono text-xs text-emerald-600 dark:text-emerald-400 mt-1 break-all">
             Sello: {{ evaluation.certificationSeal }}
           </p>
-        </div>
-      </div>
-
-      <div
-        class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6 space-y-4"
-      >
-        <div>
-          <h3 class="text-lg font-semibold text-slate-900 dark:text-white mb-1">
-            Acciones de Flujo
-          </h3>
-          <p class="text-xs text-slate-500 dark:text-slate-400">
-            Transiciones disponibles para tu rol en el estado actual, y accesos a responder,
-            evidencias y auditoría -- desactivados cuando no corresponden al estado actual.
-          </p>
-        </div>
-
-        <div v-if="statusActions.length > 0" class="flex flex-wrap gap-x-6 gap-y-3">
-          <div v-for="action in statusActions" :key="action.status" class="flex flex-col gap-1.5">
-            <BaseButton :variant="action.variant" @click="onStatusAction(action.status)">
-              {{ action.label }}
-            </BaseButton>
-            <span class="text-xs text-slate-500 max-w-[220px] dark:text-slate-400">{{
-              action.hint
-            }}</span>
-          </div>
-        </div>
-
-        <div
-          v-if="canDelete"
-          class="flex flex-col gap-1.5 pt-3 border-t border-slate-100 dark:border-slate-700"
-        >
-          <div>
-            <BaseButton variant="danger" @click="showDeleteConfirm = true">
-              <TrashIcon class="w-4 h-4" />
-              Eliminar evaluación
-            </BaseButton>
-          </div>
-          <span class="text-xs text-slate-500 dark:text-slate-400">
-            No tiene datos cargados, así que se puede eliminar definitivamente. Una evaluación con
-            contenido solo se puede archivar.
-          </span>
-        </div>
-
-        <div
-          class="flex flex-wrap gap-x-6 gap-y-3"
-          :class="
-            statusActions.length > 0 ? 'pt-3 border-t border-slate-100 dark:border-slate-700' : ''
-          "
-        >
-          <div v-for="action in flowActions" :key="action.key" class="flex flex-col gap-1.5">
-            <BaseButton
-              variant="secondary"
-              :disabled="action.disabled"
-              @click="!action.disabled && router.push(action.to)"
-            >
-              <component :is="action.icon" class="w-4 h-4" />
-              {{ action.label }}
-            </BaseButton>
-            <span class="text-xs text-slate-500 max-w-[220px] dark:text-slate-400">{{
-              action.hint
-            }}</span>
-          </div>
         </div>
       </div>
 
@@ -335,23 +292,6 @@
                 <CalculatorIcon class="w-4 h-4" />
                 {{ results.length ? 'Recalcular Madurez' : 'Calcular Madurez' }}
               </BaseButton>
-              <router-link
-                v-if="
-                  evaluation.status === 'APPROVED' &&
-                  authStore.hasAnyRole('PRISMA_ADMIN', 'ORG_RESPONSIBLE')
-                "
-                to="/reports"
-                class="text-sm text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
-              >
-                <ArrowDownTrayIcon class="w-4 h-4 inline" /> Reportes
-              </router-link>
-              <router-link
-                v-if="!['DRAFT', 'ARCHIVED'].includes(evaluation.status)"
-                :to="`/improvement/${evaluation.id}`"
-                class="text-sm text-emerald-700 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300"
-              >
-                <ArrowTrendingUpIcon class="w-4 h-4 inline" /> Plan de Mejora
-              </router-link>
             </div>
           </div>
         </div>
@@ -506,9 +446,11 @@
   import { useEvaluationsStore } from '@/stores/evaluations';
   import { useAuthStore } from '@/stores/auth';
   import {
+    auditService,
     catalogService,
     communityProfilesService,
     evaluationsService,
+    evidenceService,
   } from '@/services/resources';
   import {
     getStatusLabel,
@@ -530,20 +472,16 @@
   import EvaluationLifecycleStepper from '@/components/evaluations/EvaluationLifecycleStepper.vue';
   import AuditObservationsReadOnly from '@/components/evaluations/AuditObservationsReadOnly.vue';
   import ReopenedNotice from '@/components/evaluations/ReopenedNotice.vue';
+  import EvaluationActionPanel from '@/components/evaluations/EvaluationActionPanel.vue';
+  import { buildActionPlan, type PlanRole } from '@/utils/evaluationActionPlan';
   import {
     ArrowLeftIcon,
     ChartBarIcon,
     ChevronDownIcon,
     ClipboardDocumentCheckIcon,
     DocumentTextIcon,
-    PencilSquareIcon,
-    RectangleStackIcon,
-    PaperClipIcon,
     ShieldCheckIcon,
-    ArrowTrendingUpIcon,
-    ArrowDownTrayIcon,
     CalculatorIcon,
-    TrashIcon,
   } from '@heroicons/vue/24/outline';
   import type {
     MaturityCatalog,
@@ -563,6 +501,8 @@
   const evaluation = computed(() => store.currentEvaluation);
   const calculating = ref(false);
   const totalControls = ref(0);
+  // Ids de los controles que esta evaluación debe responder (catálogo podado al perfil).
+  const catalogControlIds = ref<Set<string>>(new Set());
   // Árbol del catálogo (podado al perfil si aplica) -- se fetchea una vez en onMounted; sirve para
   // contar controles Y para el resumen de la pestaña "Tablas y promedios" (siglas + orden oficial).
   const catalogFunctions = ref<MaturityFunction[]>([]);
@@ -683,7 +623,6 @@
   );
 
   const canRespondRole = computed(() => authStore.hasAnyRole('PRISMA_ADMIN', 'INTERNAL_EVALUATOR'));
-  const canAuditRole = computed(() => authStore.hasAnyRole('PRISMA_ADMIN', 'AUDITOR'));
 
   const canRespond = computed(() => {
     if (!evaluation.value) return false;
@@ -695,68 +634,6 @@
   const canCalculate = computed(() => {
     if (!evaluation.value) return false;
     return canRespond.value && responses.value.length > 0;
-  });
-
-  interface FlowAction {
-    key: string;
-    label: string;
-    to: string;
-    icon: typeof PencilSquareIcon;
-    disabled: boolean;
-    hint: string;
-  }
-
-  // Responder/Evidencias/Auditoría siempre se muestran si el rol corresponde (antes se ocultaban
-  // directamente cuando el estado no correspondía) -- ahora quedan visibles pero deshabilitados,
-  // para que se entienda que la acción existe y por qué no está disponible en este momento.
-  const flowActions = computed<FlowAction[]>(() => {
-    if (!evaluation.value) return [];
-    const s = evaluation.value.status;
-    const list: FlowAction[] = [];
-
-    list.push({
-      key: 'overview',
-      label: 'Estructura',
-      to: `/evaluations/${evaluation.value.id}/overview`,
-      icon: RectangleStackIcon,
-      disabled: false,
-      hint: 'Ver subcategorías, requisitos MCU y controles por nivel.',
-    });
-
-    if (canRespondRole.value) {
-      list.push({
-        key: 'respond',
-        label: 'Responder',
-        to: `/evaluations/${evaluation.value.id}/respond`,
-        icon: PencilSquareIcon,
-        disabled: !['DRAFT', 'IN_PROGRESS', 'RETURNED'].includes(s),
-        hint: 'Cargar o corregir las respuestas de los controles.',
-      });
-    }
-
-    list.push({
-      key: 'evidence',
-      label: 'Evidencias',
-      to: `/evidence/${evaluation.value.id}`,
-      icon: PaperClipIcon,
-      disabled: s === 'ARCHIVED',
-      hint: 'Documentación de respaldo de los controles.',
-    });
-
-    // Antes no había ningún link a /audit/:id en toda la app -- la ruta existía y estaba
-    // habilitada para AUDITOR, pero no había forma de llegar ahí desde la UI.
-    if (canAuditRole.value) {
-      list.push({
-        key: 'audit',
-        label: 'Auditoría',
-        to: `/audit/${evaluation.value.id}`,
-        icon: ShieldCheckIcon,
-        disabled: s === 'ARCHIVED',
-        hint: 'Revisar y dejar observaciones sobre la evaluación.',
-      });
-    }
-
-    return list;
   });
 
   // El radar necesita un punto por función: agrega los resultados por subcategoría
@@ -909,86 +786,40 @@
     }
   }
 
-  const statusActions = computed(() => {
-    if (!evaluation.value) return [];
-    const actions: {
-      label: string;
-      status: string;
-      variant: 'primary' | 'secondary' | 'success' | 'danger';
-      hint: string;
-    }[] = [];
-    const s = evaluation.value.status;
-
-    if (authStore.hasAnyRole('PRISMA_ADMIN', 'ORG_RESPONSIBLE', 'INTERNAL_EVALUATOR')) {
-      if (s === 'DRAFT')
-        actions.push({
-          label: 'Iniciar Evaluación',
-          status: 'IN_PROGRESS',
-          variant: 'primary',
-          hint: 'Habilita cargar respuestas de los controles.',
-        });
-      if (s === 'IN_PROGRESS')
-        actions.push({
-          label: 'Enviar a Auditoría',
-          status: 'READY_FOR_AUDIT',
-          variant: 'success',
-          hint: 'Queda visible para que un auditor la tome.',
-        });
-      if (s === 'RETURNED')
-        actions.push({
-          label: 'Reanudar',
-          status: 'IN_PROGRESS',
-          variant: 'primary',
-          hint: 'Vuelve a edición para corregir las observaciones del auditor.',
-        });
-    }
-
-    if (authStore.hasAnyRole('PRISMA_ADMIN', 'AUDITOR')) {
-      if (s === 'READY_FOR_AUDIT')
-        actions.push({
-          label: 'Iniciar Auditoría',
-          status: 'IN_AUDIT',
-          variant: 'primary',
-          hint: 'La tomás como auditor para revisarla.',
-        });
-      if (s === 'IN_AUDIT') {
-        actions.push({
-          label: 'Aprobar',
-          status: 'APPROVED',
-          variant: 'success',
-          hint: 'Confirma el resultado; habilita plan de mejora y reportes.',
-        });
-        actions.push({
-          label: 'Devolver',
-          status: 'RETURNED',
-          variant: 'danger',
-          hint: 'La regresa al responsable con tus observaciones cargadas.',
-        });
-      }
-    }
-
-    // Archivar (descartar / cerrar): desde Borrador, En Curso, Devuelta o Aprobada -- no mientras hay
-    // una auditoría en marcha (el backend lo exige igual). Conserva todo el historial.
-    if (
-      authStore.hasAnyRole('PRISMA_ADMIN', 'ORG_RESPONSIBLE') &&
-      ['DRAFT', 'IN_PROGRESS', 'RETURNED', 'APPROVED'].includes(s)
-    ) {
-      actions.push({
-        label: 'Archivar',
-        status: 'ARCHIVED',
-        variant: 'secondary',
-        hint: 'La retira de la lista activa conservando su historial; deja de admitir cambios.',
-      });
-    }
-
-    return actions;
-  });
-
   // Archivar es definitivo (ARCHIVED es un estado terminal): pide confirmación.
   const showArchiveConfirm = ref(false);
 
+  // Controles del catálogo (o del perfil) sin respuesta. Si el catálogo todavía no cargó no se
+  // puede saber, y en ese caso no se advierte.
+  const unansweredCount = computed(() => {
+    if (catalogControlIds.value.size === 0) return 0;
+    const answered = new Set(responses.value.map((r) => r.controlId));
+    let missing = 0;
+    for (const id of catalogControlIds.value) if (!answered.has(id)) missing++;
+    return missing;
+  });
+
+  // Enviar a auditoría con controles sin responder: el modelo cuenta cada uno como «no cumple», así
+  // que antes de enviar se le avisa a la persona y confirma (o vuelve a responder).
+  const showIncompleteConfirm = ref(false);
+  const incompleteMessage = computed(() => {
+    const n = unansweredCount.value;
+    const total = catalogControlIds.value.size;
+    const sinRespuesta =
+      n === 1
+        ? '1 de los ' + total + ' controles no tiene respuesta'
+        : `${n} de los ${total} controles no tienen respuesta`;
+    return (
+      `${sinRespuesta}. Todos los controles sin respuesta se cuentan como «no cumple» al calcular ` +
+      'la madurez, así que el nivel resultante puede ser menor al real. ' +
+      '¿Querés enviar la evaluación a auditoría en estas condiciones?'
+    );
+  });
+
   function onStatusAction(status: string) {
     if (status === 'ARCHIVED') showArchiveConfirm.value = true;
+    else if (status === 'READY_FOR_AUDIT' && unansweredCount.value > 0)
+      showIncompleteConfirm.value = true;
     else changeStatus(status);
   }
 
@@ -1021,14 +852,72 @@
     }
   }
 
+  const changingStatus = ref(false);
   async function changeStatus(status: string) {
     if (!evaluation.value) return;
+    changingStatus.value = true;
     try {
       await store.updateStatus(evaluation.value.id, status);
     } catch (err) {
       console.error(err);
+    } finally {
+      changingStatus.value = false;
     }
   }
+
+  // Contadores de las tarjetas «Evidencias» y «Observaciones del auditor» del panel. Son ayuda
+  // visual: si no se pueden leer, las tarjetas se muestran igual, sin número.
+  const evidenceCount = ref<number | null>(null);
+  const observationCounts = ref<{ total: number; open: number } | null>(null);
+
+  async function loadEvidenceCount(id: string) {
+    try {
+      const { data } = await evidenceService.getByEvaluation(id);
+      evidenceCount.value = data.length;
+    } catch {
+      evidenceCount.value = null;
+    }
+  }
+
+  async function loadObservationCounts(id: string) {
+    try {
+      const { data } = await auditService.getObservations(id);
+      observationCounts.value = {
+        total: data.length,
+        open: data.filter((o) => o.status === 'OPEN' || o.status === 'IN_PROGRESS').length,
+      };
+    } catch {
+      observationCounts.value = null;
+    }
+  }
+
+  // Las observaciones solo se piden cuando la organización puede verlas (mismo criterio que el
+  // bloque de abajo); si el estado cambia y pasan a corresponder, se piden en ese momento.
+  watch(
+    showAuditorObservations,
+    (visible) => {
+      if (visible && evaluation.value) loadObservationCounts(evaluation.value.id);
+    },
+    { immediate: true },
+  );
+
+  // «Qué sigue»: lo que le toca hacer a este usuario en el estado actual (ver evaluationActionPlan).
+  const actionPlan = computed(() =>
+    buildActionPlan({
+      status: evaluation.value!.status,
+      evaluationId: evaluation.value!.id,
+      hasRole: (...roles: PlanRole[]) => authStore.hasAnyRole(...roles),
+      canDelete: canDelete.value,
+      showAuditorObservations: showAuditorObservations.value,
+      evidenceCount: evidenceCount.value,
+      observations: observationCounts.value,
+    }),
+  );
+  const actionProgress = computed(() => ({
+    percent: progressPercent.value,
+    answered: responses.value.length,
+    total: totalControls.value,
+  }));
 
   // Árbol del catálogo (podado al perfil si aplica): sirve para contar los controles a responder.
   function loadCatalogTree(version: string, profileId?: string | null) {
@@ -1052,9 +941,11 @@
           }
         }
         totalControls.value = controlIds.size;
+        catalogControlIds.value = controlIds;
       })
       .catch(() => {
         totalControls.value = 0;
+        catalogControlIds.value = new Set();
         catalogFunctions.value = [];
       });
   }
@@ -1069,6 +960,7 @@
         store.fetchResults(id),
         loadCatalogTree(version, evaluation.value.communityProfileId),
         loadDeletable(id),
+        loadEvidenceCount(id),
       ]);
     }
   });

@@ -46,14 +46,18 @@ location /ai/ {
     proxy_read_timeout 300s;         # RAG puede tardar
 }
 
-# ---- Keycloak (SSO) -- login (RNF-07: 5 intentos por minuto por IP) ----
+# ---- Keycloak (SSO) -- login (RNF-07: límite de intentos por IP, zona auth_login en nginx.conf) ----
 # Location regex ("location ~"): nginx siempre la prioriza por sobre el prefijo "location /auth/"
 # de abajo cuando ambas matchean, sin importar el orden en que estén escritas acá -- matchea sólo
 # el POST donde Keycloak procesa usuario/contraseña del formulario de login, no el resto de
 # /auth/ (token exchange, refresh, logout, etc.), que sí deben poder repetirse más seguido sin
 # que esto los corte.
 location ~ ^/auth/realms/[^/]+/login-actions/authenticate {
-    limit_req zone=auth_login burst=2 nodelay;
+    # burst=15 nodelay: los primeros 16 intentos de una IP pasan sin esperar, a propósito más que los 10
+    # fallos (failureFactor) con que Keycloak bloquea la cuenta: así, probando a mano o a ritmo humano,
+    # el bloqueo de la cuenta llega ANTES que el 503 de nginx. Pasado el burst se admite lo que
+    # permita el rate de la zona (nginx.conf); lo que nginx rechaza no llega a Keycloak y no cuenta.
+    limit_req zone=auth_login burst=15 nodelay;
     proxy_pass         https://keycloak_svc;
     include            /etc/nginx/conf.d/keycloak-upstream-tls.inc;
     proxy_set_header   Host              $http_host;

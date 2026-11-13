@@ -15,6 +15,7 @@ import uy.edu.prisma.domain.entity.Organization;
 import uy.edu.prisma.domain.entity.User;
 import uy.edu.prisma.domain.entity.UserRole;
 import uy.edu.prisma.domain.exception.ConflictException;
+import uy.edu.prisma.domain.exception.InvalidRequestException;
 import uy.edu.prisma.domain.exception.ResourceNotFoundException;
 import uy.edu.prisma.domain.repository.OrganizationRepository;
 import uy.edu.prisma.domain.repository.UserRepository;
@@ -53,11 +54,11 @@ public class OrganizationService {
   // criterio para operaciones puntuales): PRISMA_ADMIN y el evaluador general ven todas; el resto
   // solo las suyas (una o varias). Antes esto devolvía TODAS
   // las organizaciones sin importar el rol -- cualquier usuario autenticado podía enumerar la
-  // plataforma entera (nombre, RUT, sector) de organizaciones ajenas.
+  // plataforma entera (nombre, identificador, sector) de organizaciones ajenas.
   @Transactional(readOnly = true)
   public PaginatedDto<OrganizationDto> list(String search, int page, int pageSize) {
     PageRequest pageable = PageRequest.of(page, pageSize, Sort.by("createdAt").descending());
-    // PRI-368: sin tildes, mayúsculas ni puntos; el RUT además sin guiones ni espacios.
+    // PRI-368: sin tildes, mayúsculas ni puntos; el identificador además sin guiones ni espacios.
     String pattern = SearchText.pattern(search);
     String idPattern = SearchText.idPattern(search);
     Page<Organization> result;
@@ -86,11 +87,13 @@ public class OrganizationService {
   }
 
   public OrganizationDto create(CreateOrganizationDto dto) {
-    assertRutAvailable(dto.rut(), null);
+    ResolvedIdentifier identifier = resolveIdentifier(dto);
+    assertIdentifierAvailable(identifier.value(), null);
     Organization org =
         Organization.builder()
             .name(dto.name())
-            .rut(blankToNull(dto.rut()))
+            .identifier(identifier.value())
+            .identifierIsRut(identifier.isRut())
             .sector(dto.sector())
             .size(dto.size())
             .enabled(true)
@@ -104,9 +107,11 @@ public class OrganizationService {
   public OrganizationDto update(UUID id, CreateOrganizationDto dto) {
     Organization org =
         repo.findById(id).orElseThrow(() -> new ResourceNotFoundException("Organización", id));
-    assertRutAvailable(dto.rut(), id);
+    ResolvedIdentifier identifier = resolveIdentifier(dto);
+    assertIdentifierAvailable(identifier.value(), id);
     org.setName(dto.name());
-    org.setRut(blankToNull(dto.rut()));
+    org.setIdentifier(identifier.value());
+    org.setIdentifierIsRut(identifier.isRut());
     org.setSector(dto.sector());
     org.setSize(dto.size());
     OrganizationDto result = toDto(repo.save(org));
@@ -114,33 +119,69 @@ public class OrganizationService {
     return result;
   }
 
-  // Rechaza con un mensaje claro (409, asociado al campo "rut") un RUT que ya tiene OTRA
-  // organización, comparando sin puntos / guiones / espacios. Un RUT vacío no se chequea (es
-  // opcional y varias organizaciones pueden no tenerlo). `selfId` = la organización que se está
-  // editando, para que conservar su propio RUT no cuente como duplicado.
-  private void assertRutAvailable(String rut, UUID selfId) {
-    String normalized = normalizeRut(rut);
+  /** Identificador ya validado, tal como se guarda, y si es un RUT. */
+  private record ResolvedIdentifier(String value, boolean isRut) {}
+
+  // Valida el identificador en el servidor (la única validación que cuenta: el formulario solo
+  // avisa antes). Sin texto no hay identificador (NULL, ver blankToNull). Con la casilla «es un
+  // RUT»
+  // se exige un RUT uruguayo válido y se guarda normalizado («AA-BBBBBB-001-D»); sin ella se exige
+  // un largo mínimo y se guarda tal cual, sin espacios en los extremos. Los errores se asocian al
+  // campo «identifier» para que el formulario lo marque.
+  private static ResolvedIdentifier resolveIdentifier(CreateOrganizationDto dto) {
+    String raw = blankToNull(dto.identifier());
+    if (raw == null) {
+      return new ResolvedIdentifier(null, false);
+    }
+    if (Boolean.TRUE.equals(dto.identifierIsRut())) {
+      String normalized = UruguayanRut.normalize(raw);
+      if (normalized == null) {
+        throw new InvalidRequestException(OrganizationMessages.INVALID_RUT, "identifier");
+      }
+      return new ResolvedIdentifier(normalized, true);
+    }
+    String trimmed = raw.trim();
+    if (trimmed.length() < OrganizationMessages.MIN_IDENTIFIER_LENGTH) {
+      throw new InvalidRequestException(OrganizationMessages.IDENTIFIER_TOO_SHORT, "identifier");
+    }
+    if (trimmed.length() > OrganizationMessages.MAX_IDENTIFIER_LENGTH) {
+      throw new InvalidRequestException(OrganizationMessages.IDENTIFIER_TOO_LONG, "identifier");
+    }
+    return new ResolvedIdentifier(trimmed, false);
+  }
+
+  // Rechaza con un mensaje claro (409, asociado al campo "identifier") un identificador que ya
+  // tiene OTRA organización, comparando sin puntos / guiones / espacios, SEA O NO un RUT. Un
+  // identificador vacío no se chequea (es opcional y varias organizaciones pueden no tenerlo).
+  // `selfId` = la organización que se está editando, para que conservar su propio identificador no
+  // cuente como duplicado.
+  private void assertIdentifierAvailable(String identifier, UUID selfId) {
+    String normalized = normalizeIdentifier(identifier);
     if (normalized.isEmpty()) {
       return;
     }
-    repo.findByNormalizedRut(normalized).stream()
+    repo.findByNormalizedIdentifier(normalized).stream()
         .filter(other -> !other.getId().equals(selfId))
         .findFirst()
         .ifPresent(
             other -> {
               throw new ConflictException(
-                  OrganizationMessages.duplicateRut(rut.trim(), other.getName()), "rut");
+                  OrganizationMessages.duplicateIdentifier(identifier, other.getName()),
+                  "identifier");
             });
   }
 
-  static String normalizeRut(String rut) {
-    return rut == null ? "" : rut.replaceAll("[.\\-\\s]", "").toUpperCase(java.util.Locale.ROOT);
+  static String normalizeIdentifier(String identifier) {
+    return identifier == null
+        ? ""
+        : identifier.replaceAll("[.\\-\\s]", "").toUpperCase(java.util.Locale.ROOT);
   }
 
-  // Un RUT en blanco ("") debe guardarse como NULL, no como cadena vacía: la UNIQUE constraint de
-  // Postgres SÍ los distingue -- NULL no cuenta contra ella (varias organizaciones sin RUT
-  // conviven bien), pero "" sí es un valor como cualquier otro, así que la SEGUNDA organización
-  // creada sin RUT rompería el alta con una violación de unicidad si no se normalizara acá.
+  // Un identificador en blanco ("") debe guardarse como NULL, no como cadena vacía: la UNIQUE
+  // constraint de Postgres SÍ los distingue -- NULL no cuenta contra ella (varias organizaciones
+  // sin identificador conviven bien), pero "" sí es un valor como cualquier otro, así que la
+  // SEGUNDA organización creada sin identificador rompería el alta con una violación de unicidad
+  // si no se normalizara acá.
   private static String blankToNull(String s) {
     return s == null || s.isBlank() ? null : s;
   }
@@ -260,7 +301,8 @@ public class OrganizationService {
     return new OrganizationDto(
         o.getId(),
         o.getName(),
-        o.getRut(),
+        o.getIdentifier(),
+        Boolean.TRUE.equals(o.getIdentifierIsRut()),
         o.getSector(),
         o.getSize(),
         o.getResponsible() != null ? o.getResponsible().getId() : null,

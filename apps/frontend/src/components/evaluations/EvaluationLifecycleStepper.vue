@@ -1,6 +1,6 @@
 <template>
   <div
-    class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6"
+    class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6 overflow-hidden"
   >
     <div class="flex items-center justify-between mb-5">
       <h3 class="text-sm font-semibold text-slate-900 dark:text-white">
@@ -16,7 +16,12 @@
       </button>
     </div>
 
-    <BaseAlert v-if="isReturned" variant="danger" title="Devuelta por auditoría" class="mb-5">
+    <BaseAlert
+      v-if="isReturned && !hasPanel"
+      variant="danger"
+      title="Devuelta por auditoría"
+      class="mb-5"
+    >
       {{ getStatusDescription('RETURNED') }}
       <span v-if="responsibleLabel" class="font-medium">
         Responsable ahora: {{ responsibleLabel }}.</span
@@ -48,12 +53,21 @@
       </div>
     </div>
 
-    <p v-if="!isReturned" class="mt-5 text-xs text-slate-500 dark:text-slate-400 text-center">
+    <p
+      v-if="!isReturned && !hasPanel"
+      class="mt-5 text-xs text-slate-500 dark:text-slate-400 text-center"
+    >
       {{ getStatusDescription(status) }}
       <span v-if="responsibleLabel" class="font-medium text-slate-700 dark:text-slate-200">
         Responsable ahora: {{ responsibleLabel }}.
       </span>
     </p>
+
+    <!-- Panel «Qué sigue»: ocupa el ancho completo de la tarjeta y reemplaza la descripción y la
+    alerta de «Devuelta» de arriba, que el panel ya explica con más contexto. -->
+    <div v-if="hasPanel" class="-mx-6 -mb-6 mt-6 border-t border-slate-200 dark:border-slate-700">
+      <slot />
+    </div>
 
     <BaseModal v-model="showGlossary" title="Estados de una evaluación" size="lg">
       <div class="space-y-3">
@@ -92,7 +106,7 @@
 </template>
 
 <script setup lang="ts">
-  import { computed, ref } from 'vue';
+  import { computed, ref, useSlots } from 'vue';
   import { QuestionMarkCircleIcon, CheckIcon } from '@heroicons/vue/24/outline';
   import { EVALUATION_LIFECYCLE_STEPS } from '@/utils/constants';
   import {
@@ -122,6 +136,8 @@
   ];
 
   const showGlossary = ref(false);
+  const slots = useSlots();
+  const hasPanel = computed(() => !!slots.default);
 
   const isReturned = computed(() => props.status === 'RETURNED');
   // RETURNED no tiene posición propia en el stepper: mientras dura, lo pendiente es lo mismo que

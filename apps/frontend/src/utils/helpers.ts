@@ -124,8 +124,8 @@ export function generateId(): string {
 }
 
 /**
- * Mensaje de error de un campo puntual que mandó el backend en `details` (p.ej. un 409 por RUT
- * duplicado trae `details.rut`), o undefined. Sirve para marcar ese campo del formulario.
+ * Mensaje de error de un campo puntual que mandó el backend en `details` (p.ej. un 409 por identificador
+ * duplicado trae `details.identifier`), o undefined. Sirve para marcar ese campo del formulario.
  */
 export function getFieldError(err: unknown, field: string): string | undefined {
   if (err && typeof err === 'object' && 'response' in err) {

@@ -8,7 +8,7 @@
 | **XSS** | Vue escapa interpolaciones por default (no se usa `v-html` con datos de usuario); CSP restrictiva servida por nginx (`default-src 'self'`, ver `apps/frontend/nginx.conf`). |
 | **CSRF** | No aplica en el sentido clásico: la API es 100% stateless (JWT en header `Authorization: Bearer`, sin cookies de sesión que un request cross-site pueda reenviar solo). |
 | **BOLA / IDOR** | **No es un middleware global** — cada `Service` llama explícitamente a `CurrentUserService.assertOrganizationAccess(organizationId)` (o filtra por tenant en la query) antes de devolver/mutar un recurso. Es responsabilidad de quien escribe un `Service` nuevo acordarse de llamarlo; nada a nivel de framework lo fuerza. **Esto no siempre se cumplió**: `OrganizationService`/`UserService` no tuvieron ningún chequeo de este tipo hasta que se detectó en una pasada de QA exhaustiva y se corrigió (cualquier usuario autenticado podía enumerar todas las organizaciones y usuarios de la plataforma, sin importar su propio tenant) — ver "Endurecimientos recientes" más abajo. Al agregar un `Service` nuevo que exponga datos por organización, agregar el chequeo explícitamente y no asumir que "ya está cubierto en otro lado". |
-| **Broken auth** | Keycloak (SSO, JWT firmado RS256, **MFA TOTP obligatoria para `PRISMA_ADMIN` y `ORG_RESPONSIBLE`** — ver "MFA (TOTP) obligatoria por rol" abajo, brute-force protection — `failureFactor: 5`, bloqueo escalonado hasta 900s, configurable en vivo desde la consola de Keycloak sin redeploy) + Argon2id para contraseñas locales. Los intentos fallidos además quedan en la bitácora propia (`LOGIN_FAILED`, ver "Registro de intentos de login fallidos" abajo) para verlos sin entrar a Keycloak. **MFA/TOTP está configurado pero no es obligatorio** para ningún rol (ver [`Arquitectura.md`](Arquitectura.md)) — queda como mejora pendiente, no como control ya activo. |
+| **Broken auth** | Keycloak (SSO, JWT firmado RS256, **MFA TOTP obligatoria para `PRISMA_ADMIN` y `ORG_RESPONSIBLE`** — ver "MFA (TOTP) obligatoria por rol" abajo, brute-force protection — `failureFactor: 10` intentos en una ventana de 15 min y bloqueo fijo de 15 min (ver [`RUNBOOK.md`](RUNBOOK.md#bloqueo-de-cuenta-por-intentos-fallidos-rf-auth-08)); además NGINX limita los intentos de login por IP y responde 429 al excederlo, configurable en vivo desde la consola de Keycloak sin redeploy) + Argon2id para contraseñas locales. Los intentos fallidos además quedan en la bitácora propia (`LOGIN_FAILED`, ver "Registro de intentos de login fallidos" abajo) para verlos sin entrar a Keycloak. **MFA/TOTP está configurado pero no es obligatorio** para ningún rol (ver [`Arquitectura.md`](Arquitectura.md)) — queda como mejora pendiente, no como control ya activo. |
 | **Sensitive Data Exposure** | HTTPS forzado desde el navegador vía nginx (certificado propio, ver [`Certificados-TLS.md`](Certificados-TLS.md)); evidencias en RustFS con URLs firmadas de corta duración (900s) en vez de un bucket público. **Cifrado en tránsito hacia Keycloak (BUG-12 / PRI-369, MCU SC.14-2):** los tramos internos nginx → Keycloak y backend-core → Keycloak (JWKS y Admin API) van por TLS (`keycloak:8443`) con verificación del certificado contra una CA interna (`scripts/generate-internal-ca.sh`); en producción el puerto HTTP de Keycloak está deshabilitado. Los demás tramos internos (backend-core/backend-ai/frontend, Postgres, Elasticsearch, RustFS) siguen en HTTP dentro de `prisma-net` — ver [`Certificados-TLS.md`](Certificados-TLS.md). |
 | **Components with known vulnerabilities** | Trivy (FS + imágenes) + OWASP Dependency-Check + Gitleaks + CodeQL, semanal y en cada push a `main`/`dev` (`security.yml`). |
 | **Insufficient Logging** | Bitácora de auditoría de acciones sensibles (`audit.audit_logs`, escritura síncrona — ver [`Arquitectura.md`](Arquitectura.md)), consultable desde la app ("Actividad del Sistema", `GET /api/audit-logs`) e incluye **login/logout y login fallido** (ver "Registro de intentos de login fallidos" abajo); logs de todos los contenedores centralizados en Loki/Grafana y, opcionalmente, Elasticsearch/Kibana (perfil `elastic`). |
@@ -113,6 +113,14 @@ Authenticator, Microsoft Authenticator, FreeOTP, etc.). Respalda el Marco de Cib
   (`KeycloakAdminClient.verifyPassword`, para el cambio de contraseña) y no puede enviar un
   código OTP, así que el cliente `prisma-backend` (confidencial, solo servidor) usa el flujo
   `direct-grant-sin-otp`. El resto del realm conserva el direct grant con OTP condicional.
+
+**Estado:** la MFA está funcional y sus flujos de funcionamiento están validados: el registro del
+TOTP con QR en el primer ingreso, el pedido del código en los ingresos siguientes y la
+verificación de la contraseña actual por parte de `backend-core` (flujo `direct-grant-sin-otp`,
+sin OTP). La MFA **no viene incluida en `realm-prisma.json`**: se activa ejecutando el script
+`scripts/keycloak/enable-mfa.sh` (`make mfa-enable`) en cada ambiente, como se explica a
+continuación. Mientras no se ejecute, el ambiente usa el flujo de login original de Keycloak y la
+MFA no es exigida.
 
 **Activar / consultar / desactivar** (idempotente; se corre en cada ambiente después del primer
 arranque de Keycloak, porque `--import-realm` solo importa `realm-prisma.json` cuando el realm no
@@ -235,6 +243,27 @@ algo que no está verificado: si RustFS lo soporta en una versión más nueva, e
 confirmarlo contra la documentación oficial del proyecto antes de activarlo, en vez de asumirlo. La
 mitigación real disponible hoy es el cifrado de volumen del punto anterior, que cubre tanto a
 Postgres como a RustFS por igual.
+
+## Vulnerabilidades conocidas en dependencias (excepciones aceptadas)
+
+Trivy (jobs `trivy-fs` y `trivy-images` de `security.yml`, `CRITICAL,HIGH` con `ignore-unfixed`)
+detecta tres CVEs con fix disponible que **no se corrigen todavía** porque el fix es un salto de
+versión mayor. Están aceptados y justificados en [`.trivyignore`](../.trivyignore), que es la
+fuente de verdad (la justificación completa y el seguimiento están ahí); el CI los respeta y los
+jobs de Trivy pasan.
+
+| Imagen | Dependencia | CVE | Severidad | Instalada | Corregida en | Por qué no se corrige ya |
+|---|---|---|---|---|---|---|
+| backend-core | `spring-webmvc` | CVE-2026-47884 (RCE por limitación de ruta en `XsltView`) | CRÍTICA | 6.2.19 | 7.0.9 | El fix existe solo en Spring Framework 7 (exige Spring Boot 4); no se usa `XsltView` |
+| backend-core | `spring-webmvc` | CVE-2026-47890 (corrupción de stream en SSE con vistas) | CRÍTICA | 6.2.19 | 7.0.9 | Ídem; no se usan vistas con SSE (API REST con JSON) |
+| backend-ai | `langchain-core` | CVE-2026-34070 (path traversal en `load_prompt`) | ALTA | 0.3.86 | 1.2.22 | Pasar a LangChain 1.x es un cambio de API mayor que puede romper el pipeline RAG; no se usa `load_prompt` |
+
+**Seguimiento:** migrar a Spring Boot 4 y a LangChain 1.x en tareas aparte. La excepción de Spring se
+revisa cada mes (próxima revisión: 2026-11-30) o antes si aparece un 6.2.x con el fix. Cada fila se
+borra de acá y de `.trivyignore` cuando su versión corregida esté desplegada.
+
+**Al escanear en local**, usar el mismo archivo (`--ignorefile .trivyignore`); sin él, Trivy
+informa estos tres como fallos aunque el CI los dé por aceptados.
 
 ## Cumplimiento MCU 5.0
 

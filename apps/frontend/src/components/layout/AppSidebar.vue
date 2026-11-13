@@ -64,6 +64,16 @@
         <span :class="collapsed ? 'lg:hidden' : ''">{{ item.label }}</span>
       </router-link>
     </nav>
+
+    <!-- Versión (web y API) y entorno; contraído en escritorio no hay lugar y se oculta. -->
+    <div
+      :class="[
+        'shrink-0 border-t border-slate-700 px-4 py-3 text-center text-[11px] text-slate-400',
+        collapsed ? 'lg:hidden' : '',
+      ]"
+    >
+      <AppVersion />
+    </div>
   </aside>
 </template>
 
@@ -71,6 +81,7 @@
   import { computed } from 'vue';
   import { useRoute } from 'vue-router';
   import { useAuthStore } from '@/stores/auth';
+  import AppVersion from '@/components/layout/AppVersion.vue';
   import type { UserRole } from '@/types';
   import {
     HomeIcon,

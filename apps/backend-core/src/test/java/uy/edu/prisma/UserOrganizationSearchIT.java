@@ -77,8 +77,12 @@ class UserOrganizationSearchIT {
     member(jose, demo);
   }
 
-  private void org(UUID id, String name, String rut) {
-    jdbc.update("INSERT INTO prisma.organizations (id, name, rut) VALUES (?, ?, ?)", id, name, rut);
+  private void org(UUID id, String name, String identifier) {
+    jdbc.update(
+        "INSERT INTO prisma.organizations (id, name, identifier) VALUES (?, ?, ?)",
+        id,
+        name,
+        identifier);
   }
 
   private void user(UUID id, String email, String first, String last) {
@@ -159,7 +163,7 @@ class UserOrganizationSearchIT {
     assertEquals(1, orgs("1234567-8"));
     assertEquals(1, orgs("12345678"));
     assertEquals(1, orgs("234.567"));
-    // El RUT guardado con espacios también se encuentra con puntos o pegado.
+    // El identificador guardado con espacios también se encuentra con puntos o pegado.
     assertEquals(1, orgs("21.345.678-9"));
     assertEquals(1, orgs("213456789"));
   }

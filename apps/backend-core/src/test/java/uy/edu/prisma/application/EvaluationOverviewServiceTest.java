@@ -63,7 +63,7 @@ class EvaluationOverviewServiceTest {
         new EvaluationOverviewService(
             evalRepo, versionRepo, functionRepo, controlRepo, profileRepo, currentUser);
 
-    org = Organization.builder().id(UUID.randomUUID()).name("Acme").rut("N1").build();
+    org = Organization.builder().id(UUID.randomUUID()).name("Acme").identifier("N1").build();
     version =
         CatalogVersion.builder().id(UUID.randomUUID()).version("5.0").label("MCU 5.0").build();
 

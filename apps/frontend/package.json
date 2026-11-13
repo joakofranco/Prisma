@@ -1,6 +1,6 @@
 {
   "name": "prisma-frontend",
-  "version": "0.1.0",
+  "version": "0.6.0",
   "description": "Interfaz web de PRISMA (Vue 3 + Vite + Tailwind + Pinia)",
   "private": true,
   "type": "module",

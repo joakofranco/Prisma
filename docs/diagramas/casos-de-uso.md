@@ -106,7 +106,7 @@ graph LR
 ### UC1 — Administrar organizaciones
 - **Actor:** `PRISMA_ADMIN`.
 - **Endpoints:** `GET/POST/PUT/DELETE /api/organizations` (`OrganizationController`).
-- **Flujo principal:** alta con nombre/NIT/sector/tamaño → queda `enabled=true`.
+- **Flujo principal:** alta con nombre/identificador/sector/tamaño → queda `enabled=true`.
 - **Baja lógica:** `DELETE` no borra la fila (violaría las FK de `users.tenant_id` y
   `evaluations.organization_id`, que no tienen `ON DELETE CASCADE`); marca `enabled=false` y
   preserva todo el histórico (evaluaciones, evidencia, plan de mejora, auditoría) — ver

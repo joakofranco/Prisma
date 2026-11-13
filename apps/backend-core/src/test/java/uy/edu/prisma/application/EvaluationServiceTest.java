@@ -74,7 +74,7 @@ class EvaluationServiceTest {
             auditLog,
             "test-certification-secret");
 
-    org = Organization.builder().id(UUID.randomUUID()).name("Acme").rut("N1").build();
+    org = Organization.builder().id(UUID.randomUUID()).name("Acme").identifier("N1").build();
     eval =
         Evaluation.builder()
             .id(UUID.randomUUID())
@@ -1297,5 +1297,54 @@ class EvaluationServiceTest {
     assertNull(dto.globalMaturity());
     assertNull(dto.createdBy());
     assertEquals(eval.getCreatedAt(), dto.createdAt());
+  }
+
+  // ---- Evaluación cerrada: no se recalcula la madurez ----
+
+  @Test
+  void calculateMaturityIsRejectedOnceTheEvaluationIsApprovedOrArchived() {
+    for (Evaluation.Status status :
+        List.of(Evaluation.Status.APPROVED, Evaluation.Status.ARCHIVED)) {
+      eval.setStatus(status);
+      when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+
+      uy.edu.prisma.domain.exception.InvalidRequestException ex =
+          assertThrows(
+              uy.edu.prisma.domain.exception.InvalidRequestException.class,
+              () -> service.calculateMaturity(eval.getId()),
+              "estado " + status);
+
+      assertTrue(ex.getMessage().contains(status.name()), ex.getMessage());
+    }
+    // Ni se borraron los resultados que respaldan la certificación ni se tocó la evaluación.
+    verify(matRepo, never()).deleteAllInBatch(any());
+    verify(matRepo, never()).saveAll(any());
+    verify(evalRepo, never()).save(any(Evaluation.class));
+  }
+
+  @Test
+  void calculateMaturityStillWorksWhileTheEvaluationIsOpen() {
+    SubGraph graph = buildSubgraph();
+    CatalogControl c1 = controlAtLevel(graph, 1);
+    // Se stubea una sola vez: volver a stubear un método con matchers dentro del bucle invocaría
+    // la respuesta anterior con argumentos nulos.
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(controlRepo.findByVersionOrdered("5.0")).thenReturn(List.of(c1));
+    when(respRepo.findByEvaluationId(eval.getId())).thenReturn(List.of());
+    when(matRepo.findByEvaluationId(eval.getId())).thenReturn(List.of());
+    when(matRepo.saveAll(any())).thenAnswer(inv -> new java.util.ArrayList<>(inv.getArgument(0)));
+    when(evalRepo.save(any(Evaluation.class))).thenAnswer(inv -> inv.getArgument(0));
+
+    for (Evaluation.Status status :
+        List.of(
+            Evaluation.Status.DRAFT,
+            Evaluation.Status.IN_PROGRESS,
+            Evaluation.Status.RETURNED,
+            Evaluation.Status.READY_FOR_AUDIT,
+            Evaluation.Status.IN_AUDIT)) {
+      eval.setStatus(status);
+
+      assertDoesNotThrow(() -> service.calculateMaturity(eval.getId()), "estado " + status);
+    }
   }
 }

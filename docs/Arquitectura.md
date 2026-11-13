@@ -106,11 +106,13 @@ implementar rate-limiting real.
 - **MFA (TOTP) obligatoria para `PRISMA_ADMIN` y `ORG_RESPONSIBLE`**: el flujo de login
   `browser-mfa-por-rol` (se instala con `make mfa-enable`, ver
   [`SECURITY.md`](SECURITY.md#mfa-totp-obligatoria-por-rol)) obliga a registrar una app
-  autenticadora en el primer login y a pedir el código en los siguientes. El resto de los roles
+  autenticadora en el primer login y a pedir el código en los siguientes. Está funcional y sus
+  flujos están validados; el flujo no viene en `realm-prisma.json`, por eso hay que ejecutar el
+  script (`scripts/keycloak/enable-mfa.sh`) en cada ambiente. El resto de los roles
   puede activarla voluntariamente desde su cuenta de Keycloak. La política OTP (TOTP, SHA1,
   6 dígitos, 30 s) está en `infra/keycloak/realm-prisma.json`.
 - Política de password: longitud mínima 8 (`passwordPolicy: length(8)`).
-- Brute-force protection habilitado (`bruteForceProtected: true`, 5 intentos, configurable en vivo
+- Brute-force protection habilitado (`bruteForceProtected: true`, 10 intentos en 15 min y bloqueo de 15 min, configurable en vivo
   desde la consola de Keycloak sin redeploy).
 - `eventsEnabled: true` — Keycloak audita sus propios eventos de login (éxito/error); el rol
   `view-events` de `realm-management`, concedido al *service account* `prisma-backend`, es lo que
