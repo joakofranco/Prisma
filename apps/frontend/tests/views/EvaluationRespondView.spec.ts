@@ -185,3 +185,56 @@ describe('EvaluationRespondView: comentario por subcategoría (RF-EVA-06)', () =
     expect(wrapper.find('h3.text-lg').text()).toContain('control dos');
   });
 });
+
+describe('EvaluationRespondView: guía del control', () => {
+  const guide = {
+    interpretation: 'Qué se evalúa en lenguaje llano.',
+    example: 'Una forma posible de cumplir.',
+    evidence: 'Acta de aprobación.',
+  };
+
+  function catalogWithGuide() {
+    const copy = structuredClone(catalog);
+    copy.functions[0].categories[0].subcategories[0].requirements[0].controls[0] = {
+      ...copy.functions[0].categories[0].subcategories[0].requirements[0].controls[0],
+      guide,
+    } as never;
+    return copy;
+  }
+
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    vi.clearAllMocks();
+    document.body.innerHTML = '';
+    evaluationsService.getById.mockResolvedValue({
+      data: { id: 'eval-1', name: 'Eval', catalogVersion: '5.0', communityProfileId: null },
+    });
+    evaluationsService.getResponses.mockResolvedValue({ data: [] });
+    evaluationsService.getSubcategoryComments.mockResolvedValue({ data: [] });
+    evaluationsService.getFlags.mockResolvedValue({ data: [] });
+  });
+
+  it('muestra el botón de la guía solo cuando el control tiene guía', async () => {
+    catalogService.getByVersion.mockResolvedValue({ data: catalog });
+    const without = await mountView();
+    expect(without.find('[data-testid="open-control-guide"]').exists()).toBe(false);
+
+    catalogService.getByVersion.mockResolvedValue({ data: catalogWithGuide() });
+    const withGuide = await mountView();
+    expect(withGuide.find('[data-testid="open-control-guide"]').exists()).toBe(true);
+  });
+
+  it('abre el modal con interpretación, ejemplo y evidencia del control', async () => {
+    catalogService.getByVersion.mockResolvedValue({ data: catalogWithGuide() });
+    const wrapper = await mountView();
+
+    await wrapper.find('[data-testid="open-control-guide"]').trigger('click');
+    await flushPromises();
+
+    const text = document.body.textContent ?? '';
+    expect(text).toContain('Guía del control C1');
+    expect(text).toContain('Qué se evalúa en lenguaje llano.');
+    expect(text).toContain('Una forma posible de cumplir.');
+    expect(text).toContain('Acta de aprobación.');
+  });
+});

@@ -206,6 +206,23 @@
           <h3 class="text-lg font-bold text-slate-900 dark:text-white mt-2">
             {{ currentQuestion.control.description }}
           </h3>
+          <div v-if="currentQuestion.control.guide" class="mt-3 flex justify-end">
+            <BaseButton
+              variant="outline"
+              data-testid="open-control-guide"
+              @click="guideOpen = true"
+            >
+              <LightBulbIcon class="w-4 h-4" />
+              Guía del control
+            </BaseButton>
+          </div>
+          <ControlGuideModal
+            v-if="currentQuestion.control.guide"
+            v-model="guideOpen"
+            :code="currentQuestion.control.code"
+            :description="currentQuestion.control.description"
+            :guide="currentQuestion.control.guide"
+          />
           <p
             v-if="currentQuestion.requirement.description"
             class="text-sm text-slate-500 dark:text-slate-400 mt-1 mb-5"
@@ -318,11 +335,13 @@
   import { pickEntryIndex } from '@/utils/evaluationNav';
   import BaseButton from '@/components/common/BaseButton.vue';
   import BaseTextarea from '@/components/common/BaseTextarea.vue';
+  import ControlGuideModal from '@/components/evaluations/ControlGuideModal.vue';
   import {
     ArrowLeftIcon,
     ChevronDownIcon,
     ChevronRightIcon,
     BookmarkIcon,
+    LightBulbIcon,
     CheckCircleIcon,
     XCircleIcon,
   } from '@heroicons/vue/24/outline';
@@ -397,6 +416,8 @@
     }
     return out;
   });
+
+  const guideOpen = ref(false);
 
   const currentQuestion = computed(
     () => flatQuestions.value[currentIndex.value] ?? flatQuestions.value[0],

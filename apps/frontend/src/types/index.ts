@@ -141,11 +141,37 @@ export interface MaturityRequirement {
   controls: MaturityControl[];
 }
 
+export interface ControlGuide {
+  interpretation: string;
+  example: string;
+  evidence: string;
+}
+
 export interface MaturityControl {
   id: string;
   code: string;
   description: string;
   targetLevel: MaturityLevel;
+  guide?: ControlGuide;
+}
+
+export interface ControlGuideItem {
+  id: string;
+  code: string;
+  description: string;
+  targetLevel: MaturityLevel;
+  requirementCode: string;
+  interpretation: string | null;
+  example: string | null;
+  evidence: string | null;
+}
+
+export interface ControlGuideImportResult {
+  parsed: number;
+  updated: number;
+  notInCatalog: string[];
+  incomplete: string[];
+  catalogWithoutGuide: number;
 }
 
 /** Vista plana de un control del catálogo (GET /catalog/{version}/controls). La usa el selector
