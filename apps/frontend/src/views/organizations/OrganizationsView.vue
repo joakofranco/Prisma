@@ -39,8 +39,16 @@
       :total-items="total"
       @page-change="handlePageChange"
     >
-      <template #cell-rut="{ value }">
-        <span v-if="value" class="text-slate-700 dark:text-slate-200">{{ value }}</span>
+      <template #cell-identifier="{ value, row }">
+        <span v-if="value" class="text-slate-700 dark:text-slate-200">
+          {{ value }}
+          <span
+            v-if="(row as Organization).identifierIsRut"
+            class="ml-1 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 dark:bg-slate-700 dark:text-slate-300"
+            data-testid="rut-badge"
+            >RUT</span
+          >
+        </span>
         <span v-else class="text-slate-500 dark:text-slate-400">—</span>
       </template>
       <template #cell-enabled="{ value }">
@@ -105,12 +113,25 @@
           :error="errors.name"
           required
         />
-        <BaseInput
-          v-model="form.rut"
-          label="RUT"
-          placeholder="123456789012 (opcional)"
-          :error="errors.rut"
-        />
+        <div class="space-y-2">
+          <BaseInput
+            v-model="form.identifier"
+            label="Identificador"
+            :placeholder="
+              form.identifierIsRut
+                ? '21-123456-001-0 (opcional)'
+                : 'RUT u otro identificador (opcional)'
+            "
+            :error="errors.identifier"
+            @update:model-value="errors.identifier = ''"
+          />
+          <BaseCheckbox
+            v-model="form.identifierIsRut"
+            label="Es un RUT"
+            hint="Se valida el formato y el dígito verificador, y se guarda como AA-BBBBBB-001-D."
+            @update:model-value="errors.identifier = ''"
+          />
+        </div>
         <BaseSelect
           v-model="form.sector"
           label="Sector"
@@ -183,6 +204,8 @@
   import BaseButton from '@/components/common/BaseButton.vue';
   import BaseModal from '@/components/common/BaseModal.vue';
   import BaseInput from '@/components/common/BaseInput.vue';
+  import BaseCheckbox from '@/components/common/BaseCheckbox.vue';
+  import { identifierError, normalizeRut } from '@/utils/uruguayanRut';
   import BaseSelect from '@/components/common/BaseSelect.vue';
   import ConfirmDialog from '@/components/common/ConfirmDialog.vue';
   import {
@@ -218,7 +241,7 @@
 
   const columns = [
     { key: 'name', label: 'Nombre' },
-    { key: 'rut', label: 'RUT' },
+    { key: 'identifier', label: 'Identificador' },
     { key: 'sector', label: 'Sector' },
     { key: 'size', label: 'Tamaño' },
     { key: 'enabled', label: 'Estado' },
@@ -227,14 +250,15 @@
 
   const form = reactive({
     name: '',
-    rut: '',
+    identifier: '',
+    identifierIsRut: false,
     sector: '',
     size: '',
   });
 
   const errors = reactive({
     name: '',
-    rut: '',
+    identifier: '',
     sector: '',
     size: '',
   });
@@ -279,7 +303,8 @@
   function editOrganization(org: Organization) {
     editingOrg.value = org;
     form.name = org.name;
-    form.rut = org.rut || '';
+    form.identifier = org.identifier || '';
+    form.identifierIsRut = org.identifierIsRut ?? false;
     form.sector = org.sector;
     form.size = org.size;
     showCreateModal.value = true;
@@ -304,10 +329,23 @@
       errors.size = 'Seleccione un tamaño';
       return;
     }
+    // Aviso previo: el servidor vuelve a validar (y es el que decide), pero así el error aparece
+    // en el campo sin esperar la respuesta.
+    const identifierMessage = identifierError(form.identifier, form.identifierIsRut);
+    if (identifierMessage) {
+      errors.identifier = identifierMessage;
+      return;
+    }
 
     saving.value = true;
     try {
-      const payload: Partial<Organization> = { ...form, enabled: true };
+      const identifier = form.identifier.trim();
+      const payload: Partial<Organization> = {
+        ...form,
+        // Un RUT válido viaja ya normalizado (AA-BBBBBB-001-D); el servidor lo normaliza igual.
+        identifier: form.identifierIsRut ? (normalizeRut(identifier) ?? identifier) : identifier,
+        enabled: true,
+      };
       if (editingOrg.value) {
         await store.updateOrganization(editingOrg.value.id, payload);
         notification.success('Organización actualizada correctamente');
@@ -325,11 +363,11 @@
         showResponsiblePrompt.value = true;
       }
     } catch (err) {
-      // Un RUT duplicado se marca en el propio campo (el modal sigue abierto para corregirlo) en
-      // lugar de solo un aviso suelto.
-      const rutError = getFieldError(err, 'rut');
-      if (rutError) {
-        errors.rut = rutError;
+      // Un identificador duplicado o inválido se marca en el propio campo (el modal sigue abierto
+      // para corregirlo) en lugar de solo un aviso suelto.
+      const identifierFieldError = getFieldError(err, 'identifier');
+      if (identifierFieldError) {
+        errors.identifier = identifierFieldError;
       } else {
         notification.error(getErrorMessage(err, 'Error al guardar la organización'));
       }
@@ -386,7 +424,8 @@
 
   function resetForm() {
     form.name = '';
-    form.rut = '';
+    form.identifier = '';
+    form.identifierIsRut = false;
     form.sector = '';
     form.size = '';
   }

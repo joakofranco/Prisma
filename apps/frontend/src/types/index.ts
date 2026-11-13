@@ -22,6 +22,12 @@ export interface User {
   invitedAt?: string | null;
   /** Primer ingreso del invitado. Con invitedAt y sin esto, la invitación está pendiente. */
   invitationAcceptedAt?: string | null;
+  /** RF-AUTH-08: estado real de la cuenta en Keycloak. true = bloqueada ahora por demasiados
+   * intentos fallidos; false = no lo está; null/ausente = no se sabe (sin cuenta o Keycloak no
+   * respondió) y la pantalla no muestra nada. */
+  locked?: boolean | null;
+  /** Hasta cuándo dura el bloqueo (solo si `locked`). */
+  lockedUntil?: string | null;
 }
 
 /** Alta por invitación: el rol es siempre Evaluador interno y lo fija el backend. */
@@ -36,9 +42,11 @@ export interface InviteUserPayload {
 export interface Organization {
   id: string;
   name: string;
-  /** Uruguay usa "RUT" (Colombia y otros usan "NIT") -- opcional: no toda organización lo tiene
-   * cargado al momento del alta. */
-  rut?: string | null;
+  /** Identificador de la organización (RUT u otro) -- opcional: no toda organización lo tiene
+   * cargado al momento del alta. Si `identifierIsRut`, el servidor lo validó y lo guardó
+   * normalizado (`AA-BBBBBB-001-D`). */
+  identifier?: string | null;
+  identifierIsRut: boolean;
   sector: string;
   size: string;
   responsibleId?: string;

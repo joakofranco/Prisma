@@ -168,16 +168,25 @@ describe('changePasswordSchema', () => {
 });
 
 describe('organizationSchema', () => {
-  const valid = { name: 'QA Test Org', rut: '123456789', sector: 'Tecnología', size: 'Mediana' };
+  const valid = {
+    name: 'QA Test Org',
+    identifier: '123456789',
+    identifierIsRut: false,
+    sector: 'Tecnología',
+    size: 'Mediana',
+  };
 
   it('acepta una organización completa', () => {
     expect(organizationSchema.safeParse(valid).success).toBe(true);
   });
 
-  it('acepta una organización sin RUT (opcional)', () => {
-    const withoutRut = { name: valid.name, sector: valid.sector, size: valid.size };
-    expect(organizationSchema.safeParse(withoutRut).success).toBe(true);
-    expect(organizationSchema.safeParse({ ...valid, rut: '' }).success).toBe(true);
+  it('acepta una organización sin identificador (opcional)', () => {
+    const withoutIdentifier = { name: valid.name, sector: valid.sector, size: valid.size };
+    expect(organizationSchema.safeParse(withoutIdentifier).success).toBe(true);
+    expect(organizationSchema.safeParse({ ...valid, identifier: '' }).success).toBe(true);
+    expect(
+      organizationSchema.safeParse({ ...valid, identifier: '', identifierIsRut: true }).success,
+    ).toBe(true);
   });
 
   it('rechaza un nombre de un solo caracter', () => {
@@ -185,9 +194,25 @@ describe('organizationSchema', () => {
     expect(result.success).toBe(false);
   });
 
-  it('rechaza un RUT demasiado corto cuando se lo carga', () => {
-    const result = organizationSchema.safeParse({ ...valid, rut: '123' });
+  it('rechaza un identificador libre de menos de 8 caracteres', () => {
+    const result = organizationSchema.safeParse({ ...valid, identifier: '1234567' });
     expect(result.success).toBe(false);
+    if (!result.success) expect(result.error.issues[0].path).toEqual(['identifier']);
+  });
+
+  it('con «es un RUT» valida el dígito verificador', () => {
+    const rut = { ...valid, identifierIsRut: true };
+    expect(organizationSchema.safeParse({ ...rut, identifier: '21-616658-001-4' }).success).toBe(
+      true,
+    );
+    expect(organizationSchema.safeParse({ ...rut, identifier: '216166580014' }).success).toBe(true);
+    expect(organizationSchema.safeParse({ ...rut, identifier: '210303670014' }).success).toBe(
+      false,
+    );
+    // El mismo texto sin la casilla es un identificador libre válido.
+    expect(organizationSchema.safeParse({ ...valid, identifier: '210303670014' }).success).toBe(
+      true,
+    );
   });
 
   it('rechaza sector y tamaño vacíos', () => {

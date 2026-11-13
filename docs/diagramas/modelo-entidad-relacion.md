@@ -44,7 +44,8 @@ erDiagram
   ORGANIZATIONS {
     uuid id PK
     varchar_200 name
-    varchar_20 rut UK "nullable"
+    varchar_20 identifier UK "nullable"
+    boolean identifier_is_rut
     varchar_100 sector
     varchar_50 size
     uuid responsible_id FK
@@ -269,4 +270,4 @@ erDiagram
 - Mapeo objeto-relacional (anotaciones JPA por entidad): [`../mapeo-jpa.md`](../mapeo-jpa.md)
 - Migraciones fuente: `apps/backend-core/src/main/resources/db/migration/V1` a `V17`
   (`V16` permite madurez global en 0, `V17` renombra `organizations.nit` a `rut` y lo vuelve
-  opcional)
+  opcional; `V35` lo renombra a `identifier` y agrega `identifier_is_rut`)

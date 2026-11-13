@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { identifierError } from '@/utils/uruguayanRut';
 
 // Email de usuario. Misma idea que el backend (CreateUserDto.email): formato válido, con punto en
 // el dominio ("a@b" lo rechaza Keycloak), y como máximo 254 caracteres.
@@ -50,14 +51,21 @@ export const changePasswordSchema = z
     path: ['newPassword'],
   });
 
-export const organizationSchema = z.object({
-  name: z.string().min(2, 'El nombre debe tener al menos 2 caracteres'),
-  // Opcional: no toda organización tiene el RUT cargado al momento del alta (ver
-  // apps/backend-core Organization.rut).
-  rut: z.string().min(8, 'RUT inválido').optional().or(z.literal('')),
-  sector: z.string().min(1, 'Seleccione un sector'),
-  size: z.string().min(1, 'Seleccione un tamaño'),
-});
+export const organizationSchema = z
+  .object({
+    name: z.string().min(2, 'El nombre debe tener al menos 2 caracteres'),
+    // Opcional: no toda organización tiene un identificador cargado al momento del alta (ver
+    // apps/backend-core Organization.identifier). Con la casilla «es un RUT» se valida el RUT
+    // uruguayo; sin ella, un largo mínimo (ver identifierError).
+    identifier: z.string().optional(),
+    identifierIsRut: z.boolean().optional(),
+    sector: z.string().min(1, 'Seleccione un sector'),
+    size: z.string().min(1, 'Seleccione un tamaño'),
+  })
+  .superRefine((org, ctx) => {
+    const message = identifierError(org.identifier, org.identifierIsRut);
+    if (message) ctx.addIssue({ code: 'custom', message, path: ['identifier'] });
+  });
 
 export const userSchema = z.object({
   email: emailSchema,
