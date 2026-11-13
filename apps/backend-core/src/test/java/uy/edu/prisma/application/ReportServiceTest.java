@@ -16,6 +16,9 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import uy.edu.prisma.domain.entity.AuditControlVerdict;
 import uy.edu.prisma.domain.entity.AuditObservation;
+import uy.edu.prisma.domain.entity.CatalogCategory;
+import uy.edu.prisma.domain.entity.CatalogFunction;
+import uy.edu.prisma.domain.entity.CatalogSubcategory;
 import uy.edu.prisma.domain.entity.Evaluation;
 import uy.edu.prisma.domain.entity.ImprovementPlan;
 import uy.edu.prisma.domain.entity.MaturityResult;
@@ -25,6 +28,7 @@ import uy.edu.prisma.domain.exception.ConflictException;
 import uy.edu.prisma.domain.exception.ResourceNotFoundException;
 import uy.edu.prisma.domain.repository.AuditControlVerdictRepository;
 import uy.edu.prisma.domain.repository.AuditObservationRepository;
+import uy.edu.prisma.domain.repository.CatalogSubcategoryRepository;
 import uy.edu.prisma.domain.repository.EvaluationRepository;
 import uy.edu.prisma.domain.repository.EvidenceRepository;
 import uy.edu.prisma.domain.repository.ImprovementPlanRepository;
@@ -41,6 +45,7 @@ class ReportServiceTest {
   @Mock private CurrentUserService currentUser;
   @Mock private AuditControlVerdictRepository verdictRepo;
   @Mock private ImprovementPlanRepository planRepo;
+  @Mock private CatalogSubcategoryRepository subcategoryRepo;
 
   private ReportService service;
   private Evaluation eval;
@@ -50,7 +55,14 @@ class ReportServiceTest {
     when(currentUser.isGlobalRole()).thenReturn(true);
     service =
         new ReportService(
-            evalRepo, matRepo, obsRepo, evidenceRepo, currentUser, verdictRepo, planRepo);
+            evalRepo,
+            matRepo,
+            obsRepo,
+            evidenceRepo,
+            currentUser,
+            verdictRepo,
+            planRepo,
+            subcategoryRepo);
     eval =
         Evaluation.builder()
             .id(UUID.randomUUID())
@@ -979,5 +991,141 @@ class ReportServiceTest {
     when(planRepo.findByEvaluationIdOrderByCreatedAtDesc(eval.getId())).thenReturn(exportPlans());
     java.nio.file.Files.write(
         dir.resolve("plan-de-mejora.pdf"), service.generateImprovementPlanPdf(eval.getId()));
+  }
+
+  // ---- Madurez por categoría (reporte completo) ----
+
+  private CatalogSubcategory catalogSub(
+      String functionName, int functionOrder, String categoryCode, int categoryOrder) {
+    CatalogFunction function =
+        CatalogFunction.builder()
+            .id(UUID.randomUUID())
+            .name(functionName)
+            .sortOrder(functionOrder)
+            .build();
+    CatalogCategory category =
+        CatalogCategory.builder()
+            .id(UUID.randomUUID())
+            .function_(function)
+            .code(categoryCode)
+            .name("Cat " + categoryCode)
+            .sortOrder(categoryOrder)
+            .build();
+    return CatalogSubcategory.builder()
+        .id(UUID.randomUUID())
+        .category(category)
+        .code(categoryCode + "-01")
+        .name("Sub " + categoryCode)
+        .build();
+  }
+
+  private MaturityResult categoryResult(CatalogSubcategory sub, int level) {
+    return MaturityResult.builder()
+        .functionId(sub.getCategory().getFunction_().getId())
+        .functionName(sub.getCategory().getFunction_().getName())
+        .categoryId(sub.getCategory().getId())
+        .categoryName(sub.getCategory().getName())
+        .subcategoryId(sub.getId())
+        .subcategoryName(sub.getName())
+        .currentLevel(level)
+        .targetLevel(4)
+        .gap(Math.max(0, 4 - level))
+        .build();
+  }
+
+  @Test
+  void theCompleteReportShowsMaturityByCategoryBeforeTheSubcategoryDetail() throws Exception {
+    var gvOc = catalogSub("Gobernar", 1, "GV.OC", 1);
+    var gvRm = catalogSub("Gobernar", 1, "GV.RM", 2);
+    var idAm = catalogSub("Identificar", 2, "ID.AM", 1);
+    var prAa = catalogSub("Proteger", 3, "PR.AA", 1);
+    when(subcategoryRepo.findAllById(any())).thenReturn(List.of(gvOc, gvRm, idAm, prAa));
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(matRepo.findByEvaluationId(eval.getId()))
+        .thenReturn(
+            List.of(
+                categoryResult(gvOc, 2),
+                categoryResult(gvOc, 3),
+                categoryResult(gvRm, 1),
+                categoryResult(idAm, 4),
+                categoryResult(prAa, 0)));
+
+    String text = allText(service.generatePdf(eval.getId()));
+
+    int chart = text.indexOf("Madurez por Categoría");
+    int detail = text.indexOf("Detalle de Resultados por Subcategoría");
+    assertTrue(chart >= 0, "falta la sección");
+    assertTrue(chart < detail, "va antes del detalle por subcategoría");
+    for (String code : List.of("GV.OC", "GV.RM", "ID.AM", "PR.AA")) {
+      assertTrue(text.contains(code), "falta la sigla " + code);
+    }
+    // GV.OC promedia (2 + 3) / 2 = 2.5 y se imprime en el eje y en la tabla.
+    assertTrue(text.contains("GV.OC 2.5"), "etiqueta del eje");
+    assertTrue(text.contains("Escala de 0 a 4"), "es un radar");
+    // Como en la UI, el gráfico por categoría muestra solo el nivel actual.
+    assertFalse(text.contains("Nivel objetivo"), "sin línea de objetivo");
+  }
+
+  @Test
+  void categoriesFollowTheCatalogOrderNotTheOrderOfTheResults() throws Exception {
+    var first = catalogSub("Gobernar", 1, "AA.01", 1);
+    var second = catalogSub("Gobernar", 1, "BB.02", 2);
+    var third = catalogSub("Identificar", 2, "CC.03", 1);
+    when(subcategoryRepo.findAllById(any())).thenReturn(List.of(first, second, third));
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(matRepo.findByEvaluationId(eval.getId()))
+        .thenReturn(
+            List.of(categoryResult(third, 1), categoryResult(first, 2), categoryResult(second, 3)));
+
+    String text = allText(service.generatePdf(eval.getId()));
+    String table = text.substring(text.indexOf("Sigla"));
+
+    assertTrue(table.indexOf("AA.01") < table.indexOf("BB.02"));
+    assertTrue(table.indexOf("BB.02") < table.indexOf("CC.03"));
+  }
+
+  @Test
+  void withFewerThanThreeCategoriesItShowsOnlyTheTable() throws Exception {
+    var gvOc = catalogSub("Gobernar", 1, "GV.OC", 1);
+    var gvRm = catalogSub("Gobernar", 1, "GV.RM", 2);
+    when(subcategoryRepo.findAllById(any())).thenReturn(List.of(gvOc, gvRm));
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(matRepo.findByEvaluationId(eval.getId()))
+        .thenReturn(List.of(categoryResult(gvOc, 2), categoryResult(gvRm, 3)));
+
+    String text = allText(service.generatePdf(eval.getId()));
+
+    assertTrue(text.contains("Madurez por Categoría"));
+    assertTrue(text.contains("GV.OC") && text.contains("GV.RM"));
+    assertFalse(text.contains("Escala de 0 a 4"), "sin radar");
+  }
+
+  @Test
+  void categoriesNotFoundInTheCatalogAreLabelledByName() throws Exception {
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(matRepo.findByEvaluationId(eval.getId())).thenReturn(functionResults(4, 2));
+
+    String text = allText(service.generatePdf(eval.getId()));
+
+    assertTrue(text.contains("Madurez por Categoría"));
+    assertTrue(text.contains("Categoria 0") && text.contains("Categoria 3"));
+  }
+
+  @Test
+  void theCompleteReportWithoutResultsSaysThereIsNothingToChart() throws Exception {
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(matRepo.findByEvaluationId(eval.getId())).thenReturn(List.of());
+
+    String text = allText(service.generatePdf(eval.getId()));
+
+    assertTrue(text.contains("Madurez por Categoría"));
+    assertTrue(text.contains("Sin resultados de madurez para graficar"));
+  }
+
+  @Test
+  void theExecutiveReportDoesNotGetTheCategoryChart() throws Exception {
+    withExecutiveData(functionResults(6, 3), List.of());
+
+    assertFalse(allText(service.generateExecutivePdf(eval.getId())).contains("por Categoría"));
   }
 }
