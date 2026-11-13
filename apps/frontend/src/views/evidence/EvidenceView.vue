@@ -14,10 +14,28 @@
           Gestión de evidencias documentales de respaldo
         </p>
       </div>
-      <BaseButton variant="primary" @click="showUploadModal = true">
+      <BaseButton
+        variant="primary"
+        :disabled="!canModify"
+        :title="canModify ? undefined : lockedReason"
+        data-testid="upload-evidence"
+        @click="showUploadModal = true"
+      >
         <CloudArrowUpIcon class="w-4 h-4" />
         Subir Evidencia
       </BaseButton>
+    </div>
+
+    <!-- Desde que se envía a auditoría la organización no puede cambiar la evidencia (el backend lo
+    rechaza): se avisa y se deshabilitan subir, analizar con IA y eliminar. Descargar y ver siguen. -->
+    <div
+      v-if="!canModify"
+      class="px-4 py-3 rounded-lg bg-slate-100 border border-slate-200 text-sm text-slate-700 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300"
+      role="status"
+      data-testid="evidence-locked"
+    >
+      Las evidencias están en <strong>solo lectura</strong>. {{ lockedReason }} Se pueden volver a
+      cargar cuando la evaluación esté en Borrador, En curso o Devuelta.
     </div>
 
     <div v-if="loading" class="flex items-center justify-center py-12">
@@ -94,8 +112,10 @@
           </span>
           <button
             v-else-if="isUsable(ev) && isAiAnalyzable(ev.fileType)"
-            class="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-blue-600 disabled:opacity-50 dark:hover:text-blue-300 dark:text-slate-400"
-            :disabled="reindexingId === ev.id"
+            class="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-blue-600 disabled:opacity-50 disabled:cursor-not-allowed dark:hover:text-blue-300 dark:text-slate-400"
+            :disabled="reindexingId === ev.id || !canModify"
+            :title="canModify ? undefined : lockedReason"
+            data-testid="reindex-evidence"
             @click="reindexEvidence(ev)"
           >
             <SparklesIcon class="w-3.5 h-3.5" />
@@ -126,8 +146,10 @@
               <ArrowDownTrayIcon class="w-4 h-4" />
             </button>
             <button
-              class="p-1.5 rounded-lg hover:bg-red-50 text-slate-500 hover:text-red-600 dark:hover:bg-red-950 dark:hover:text-red-300 dark:text-slate-400"
-              title="Eliminar evidencia"
+              class="p-1.5 rounded-lg hover:bg-red-50 text-slate-500 hover:text-red-600 dark:hover:bg-red-950 dark:hover:text-red-300 dark:text-slate-400 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+              :title="canModify ? 'Eliminar evidencia' : lockedReason"
+              :disabled="!canModify"
+              data-testid="delete-evidence"
               @click="confirmDeleteEvidence(ev)"
             >
               <TrashIcon class="w-4 h-4" />
@@ -278,6 +300,7 @@
     TrashIcon,
     SparklesIcon,
   } from '@heroicons/vue/24/outline';
+  import { isSelfAssessmentEditable, selfAssessmentLockedReason } from '@/utils/evaluationRules';
   import type { Evidence, MaturityCatalog } from '@/types';
 
   const route = useRoute();
@@ -291,6 +314,13 @@
   const evidences = ref<Evidence[]>([]);
   const fileInput = ref<HTMLInputElement | null>(null);
   const reindexingId = ref<string | null>(null);
+
+  // Estado de la evaluación: subir, borrar y reindexar solo se admiten mientras se está
+  // respondiendo (mismas reglas que EvidenceService). Si no se pudo cargar no se bloquea nada y
+  // el backend sigue validando.
+  const evaluationStatus = ref<string | null>(null);
+  const canModify = computed(() => isSelfAssessmentEditable(evaluationStatus.value));
+  const lockedReason = computed(() => selfAssessmentLockedReason(evaluationStatus.value));
 
   const uploadForm = reactive({
     controlId: '',
@@ -379,6 +409,7 @@
         evaluationsService.getById(evaluationId),
         evaluationsService.getResponses(evaluationId),
       ]);
+      evaluationStatus.value = evaluation.status ?? null;
       // Las evidencias solo se cargan para controles cuya respuesta fue "Cumple" -- no tiene
       // sentido pedir respaldo documental de algo que no se cumple, o que todavia no se respondió.
       const compliantControlIds = new Set(

@@ -123,18 +123,22 @@ describe('generateId', () => {
 describe('getFieldError', () => {
   it('devuelve el primer mensaje del campo pedido', () => {
     const err = {
-      response: { data: { details: { rut: ['Ya existe una organización con ese RUT'] } } },
+      response: {
+        data: { details: { identifier: ['Ya existe una organización con ese identificador'] } },
+      },
     };
-    expect(getFieldError(err, 'rut')).toBe('Ya existe una organización con ese RUT');
+    expect(getFieldError(err, 'identifier')).toBe(
+      'Ya existe una organización con ese identificador',
+    );
   });
 
   it('devuelve undefined si el campo no viene, no hay details o el error no es de red', () => {
     expect(
-      getFieldError({ response: { data: { details: { name: ['x'] } } } }, 'rut'),
+      getFieldError({ response: { data: { details: { name: ['x'] } } } }, 'identifier'),
     ).toBeUndefined();
-    expect(getFieldError({ response: { data: {} } }, 'rut')).toBeUndefined();
-    expect(getFieldError(new Error('boom'), 'rut')).toBeUndefined();
-    expect(getFieldError(null, 'rut')).toBeUndefined();
+    expect(getFieldError({ response: { data: {} } }, 'identifier')).toBeUndefined();
+    expect(getFieldError(new Error('boom'), 'identifier')).toBeUndefined();
+    expect(getFieldError(null, 'identifier')).toBeUndefined();
   });
 });
 

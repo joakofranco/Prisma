@@ -21,7 +21,9 @@ final class RadarChart {
   /** Un eje del radar: la función y sus niveles medios (de 0 a {@link #MAX_LEVEL}). */
   record Axis(String label, double current, double target) {}
 
-  static final int MAX_LEVEL = 5;
+  // La escala de madurez del MCU va de 0 a 4 (el catálogo solo tiene controles de nivel 1 a 4), la
+  // misma que muestra la web.
+  static final int MAX_LEVEL = 4;
 
   private static final Color RING = new Color(226, 232, 240); // slate-200
   private static final Color AXIS = new Color(203, 213, 225); // slate-300
@@ -42,6 +44,17 @@ final class RadarChart {
    */
   static Image render(PdfWriter writer, List<Axis> axes, float width, float height)
       throws DocumentException, IOException {
+    return render(writer, axes, width, height, true);
+  }
+
+  /**
+   * Igual que {@link #render(PdfWriter, List, float, float)}; con {@code showTarget = false} dibuja
+   * solo el nivel actual (sin polígono ni leyenda del objetivo) y deja cada etiqueta en una línea,
+   * para gráficos con muchos ejes, como el de madurez por categoría.
+   */
+  static Image render(
+      PdfWriter writer, List<Axis> axes, float width, float height, boolean showTarget)
+      throws DocumentException, IOException {
     if (axes.size() < 3) {
       throw new IllegalArgumentException("Un radar necesita al menos 3 ejes");
     }
@@ -61,9 +74,11 @@ final class RadarChart {
     drawRings(template, font, cx, cy, radius, n);
     drawAxes(template, cx, cy, radius, n);
     drawPolygon(template, axes, cx, cy, radius, true, false);
-    drawPolygon(template, axes, cx, cy, radius, false, false);
-    drawLabels(template, font, bold, axes, cx, cy, radius);
-    drawLegend(template, font, height);
+    if (showTarget) {
+      drawPolygon(template, axes, cx, cy, radius, false, false);
+    }
+    drawLabels(template, font, bold, axes, cx, cy, radius, showTarget);
+    drawLegend(template, font, height, showTarget);
     return Image.getInstance(template);
   }
 
@@ -174,17 +189,22 @@ final class RadarChart {
       List<Axis> axes,
       float cx,
       float cy,
-      float radius) {
+      float radius,
+      boolean showTarget) {
     int n = axes.size();
     for (int i = 0; i < n; i++) {
       Axis axis = axes.get(i);
       double a = angle(i, n);
       float x = px(cx, radius, 1, a) + (float) Math.cos(a) * 9;
       float y = py(cy, radius, 1, a) + (float) Math.sin(a) * 9;
+      // Con pocos ejes las etiquetas de arriba y abajo van centradas. Con muchos (sin objetivo,
+      // etiquetas de una línea) cada etiqueta se alinea hacia el lado en que está su eje: dos
+      // ejes vecinos del extremo quedan uno a cada lado y no se pisan.
+      double flat = showTarget ? 0.3 : 0.05;
       int align;
-      if (Math.cos(a) > 0.3) {
+      if (Math.cos(a) > flat) {
         align = PdfContentByte.ALIGN_LEFT;
-      } else if (Math.cos(a) < -0.3) {
+      } else if (Math.cos(a) < -flat) {
         align = PdfContentByte.ALIGN_RIGHT;
       } else {
         align = PdfContentByte.ALIGN_CENTER;
@@ -194,22 +214,35 @@ final class RadarChart {
       t.saveState();
       t.beginText();
       t.setColorFill(TEXT);
-      t.setFontAndSize(bold, 8);
-      t.showTextAligned(align, shorten(axis.label(), bold, 8, 120), x, nameY, 0);
-      t.setColorFill(MUTED);
-      t.setFontAndSize(font, 7);
-      t.showTextAligned(
-          align,
-          String.format("actual %.1f · objetivo %.1f", axis.current(), axis.target()),
-          x,
-          nameY - 9,
-          0);
+      if (showTarget) {
+        t.setFontAndSize(bold, 8);
+        t.showTextAligned(align, shorten(axis.label(), bold, 8, 120), x, nameY, 0);
+        t.setColorFill(MUTED);
+        t.setFontAndSize(font, 7);
+        t.showTextAligned(
+            align,
+            String.format("actual %.1f · objetivo %.1f", axis.current(), axis.target()),
+            x,
+            nameY - 9,
+            0);
+      } else {
+        // Una sola línea («GV.OC 2.4»): con muchos ejes, dos líneas por etiqueta se pisarían.
+        t.setFontAndSize(bold, 7.5f);
+        t.showTextAligned(
+            align,
+            shorten(axis.label(), bold, 7.5f, 100)
+                + " "
+                + String.format(java.util.Locale.ROOT, "%.1f", axis.current()),
+            x,
+            nameY - 2,
+            0);
+      }
       t.endText();
       t.restoreState();
     }
   }
 
-  private static void drawLegend(PdfTemplate t, BaseFont font, float height) {
+  private static void drawLegend(PdfTemplate t, BaseFont font, float height, boolean showTarget) {
     float x = 4;
     float y = height - 12;
     t.saveState();
@@ -220,24 +253,29 @@ final class RadarChart {
     t.fillStroke();
     t.restoreState();
 
-    t.saveState();
-    t.setColorStroke(TARGET);
-    t.setLineWidth(1.4f);
-    t.setLineDash(4, 3);
-    t.moveTo(x, y - 17);
-    t.lineTo(x + 12, y - 17);
-    t.stroke();
-    t.restoreState();
+    if (showTarget) {
+      t.saveState();
+      t.setColorStroke(TARGET);
+      t.setLineWidth(1.4f);
+      t.setLineDash(4, 3);
+      t.moveTo(x, y - 17);
+      t.lineTo(x + 12, y - 17);
+      t.stroke();
+      t.restoreState();
+    }
 
     t.saveState();
     t.beginText();
     t.setColorFill(TEXT);
     t.setFontAndSize(font, 8);
     t.showTextAligned(PdfContentByte.ALIGN_LEFT, "Nivel actual", x + 17, y, 0);
-    t.showTextAligned(PdfContentByte.ALIGN_LEFT, "Nivel objetivo", x + 17, y - 18, 0);
+    if (showTarget) {
+      t.showTextAligned(PdfContentByte.ALIGN_LEFT, "Nivel objetivo", x + 17, y - 18, 0);
+    }
     t.setColorFill(MUTED);
     t.setFontAndSize(font, 7);
-    t.showTextAligned(PdfContentByte.ALIGN_LEFT, "Escala de 0 a " + MAX_LEVEL, x, y - 32, 0);
+    t.showTextAligned(
+        PdfContentByte.ALIGN_LEFT, "Escala de 0 a " + MAX_LEVEL, x, y - (showTarget ? 32 : 16), 0);
     t.endText();
     t.restoreState();
   }

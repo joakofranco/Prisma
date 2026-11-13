@@ -381,7 +381,7 @@
   function orgDetails(org: Organization | undefined) {
     if (!org) return '';
     return [
-      org.rut ? `RUT ${org.rut}` : '',
+      org.identifier ? `${org.identifierIsRut ? 'RUT' : 'Identificador'} ${org.identifier}` : '',
       org.sector,
       org.size,
       org.responsibleName ? `Responsable: ${org.responsibleName}` : '',

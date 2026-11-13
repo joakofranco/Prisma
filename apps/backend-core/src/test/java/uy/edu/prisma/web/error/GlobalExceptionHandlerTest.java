@@ -134,18 +134,39 @@ class GlobalExceptionHandlerTest {
         .perform(get("/conflict-field"))
         .andExpect(status().isConflict())
         .andExpect(jsonPath("$.code").value("CONFLICT"))
-        .andExpect(jsonPath("$.details.rut[0]").value("rut repetido"));
+        .andExpect(jsonPath("$.details.identifier[0]").value("identificador repetido"));
   }
 
   @Test
-  void duplicateRutConstraintViolationGetsAClearMessage() throws Exception {
-    // Red de seguridad: dos altas simultáneas con el mismo RUT que se adelantan al chequeo previo.
+  void duplicateIdentifierConstraintViolationGetsAClearMessage() throws Exception {
+    // Red de seguridad: dos altas simultáneas con el mismo identificador que se adelantan al
+    // chequeo previo.
     mockMvc
-        .perform(get("/rut-constraint"))
+        .perform(get("/identifier-constraint"))
         .andExpect(status().isConflict())
         .andExpect(jsonPath("$.code").value("CONFLICT"))
-        .andExpect(jsonPath("$.message").value("Ya existe una organización con ese RUT"))
-        .andExpect(jsonPath("$.details.rut[0]").value("Ya existe una organización con ese RUT"));
+        .andExpect(jsonPath("$.message").value("Ya existe una organización con ese identificador"))
+        .andExpect(
+            jsonPath("$.details.identifier[0]")
+                .value("Ya existe una organización con ese identificador"));
+  }
+
+  @Test
+  void invalidRequestWithAFieldReturnsItInDetails() throws Exception {
+    mockMvc
+        .perform(get("/invalid-field"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value("INVALID_REQUEST"))
+        .andExpect(jsonPath("$.details.identifier[0]").value("identificador inválido"));
+  }
+
+  @Test
+  void invalidRequestWithoutAFieldHasNoDetails() throws Exception {
+    mockMvc
+        .perform(get("/invalid"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value("INVALID_REQUEST"))
+        .andExpect(jsonPath("$.details").isEmpty());
   }
 
   @Test
@@ -201,15 +222,21 @@ class GlobalExceptionHandlerTest {
 
     @GetMapping("/conflict-field")
     public String conflictField() {
-      throw new ConflictException("rut repetido", "rut");
+      throw new ConflictException("identificador repetido", "identifier");
     }
 
-    @GetMapping("/rut-constraint")
-    public String rutConstraint() {
+    @GetMapping("/invalid-field")
+    public String invalidField() {
+      throw new uy.edu.prisma.domain.exception.InvalidRequestException(
+          "identificador inválido", "identifier");
+    }
+
+    @GetMapping("/identifier-constraint")
+    public String identifierConstraint() {
       throw new DataIntegrityViolationException(
           "could not execute statement",
           new RuntimeException(
-              "ERROR: duplicate key value violates unique constraint \"organizations_rut_key\""));
+              "ERROR: duplicate key value violates unique constraint \"organizations_identifier_key\""));
     }
 
     @GetMapping("/malware")

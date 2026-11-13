@@ -376,56 +376,60 @@ botón con el candado abierto («Desbloquear cuenta») de la fila. Queda registr
 `UNLOCK_USER` en la bitácora. Si la cuenta no estaba bloqueada, la pantalla lo avisa y no cambia
 nada. Solo el administrador global puede hacerlo (no el `ORG_RESPONSIBLE`).
 
-**Al probar el bloqueo, ojo con el límite de NGINX** (sección siguiente): deja pasar 5 intentos de login
-por minuto por IP (`burst=2`), y los que NGINX rechaza no llegan a Keycloak, así que no cuentan para el
-bloqueo. Para llegar a 10 hay que espaciar los intentos (unos 12 segundos entre ellos después de los
-tres primeros), o probar contra Keycloak directo (puerto 8180). No hay que cambiar el límite de NGINX.
+**Qué ve quien intenta entrar.** Keycloak no avisa que una cuenta está bloqueada (es por diseño: así
+nadie puede averiguar qué cuentas existen): responde con el mismo error que para una contraseña
+incorrecta o un usuario inexistente. Por eso el texto de ese error explica la política
+(«Invalid username or password. After 10 failed attempts in a row the account is locked for 15
+minutes.») y se define en el tema de login `prisma` (`infra/keycloak/themes/prisma/login/messages/`;
+hay una versión en español lista para cuando se habilite el español en el realm). Los números del
+texto (10 intentos, 15 minutos) son los de la tabla de arriba: si se cambian, hay que cambiarlos
+también en esos archivos. El tema se asigna al realm con `make auth-policy`.
 
-## Antivirus de evidencias (RNF-09)
+**Qué ve el administrador.** La lista de **Usuarios** muestra el estado real de cada cuenta: una
+cuenta bloqueada figura como «Cuenta bloqueada · Hasta las HH:MM» en la columna Acceso (no «Puede
+iniciar sesión») y su candado se resalta en rojo; las demás lo muestran atenuado. El backend lo
+consulta a Keycloak por cada usuario de la página (`locked` y `lockedUntil` en `GET /api/users`); si
+Keycloak no responde, esa fila queda sin marca en vez de fallar la lista.
 
-Toda evidencia se analiza con ClamAV antes de guardarse (servicio `clamav` de Compose, perfiles `app` y
-`full`). Variables de `backend-core`: `CLAMAV_HOST` (por defecto `localhost`; en Compose `clamav`),
-`CLAMAV_PORT` (3310) y `CLAMAV_TIMEOUT` (60s). No hay interruptor para desactivarlo.
-
-**Antivirus caído:** la evidencia no se rechaza: se guarda en cuarentena (`scan_status = QUARANTINED`) y
-la pantalla la marca "En cuarentena: pendiente de análisis". No se puede descargar ni indexar hasta que se
-analice. `EvidenceRescanScheduler` la reanaliza cada `CLAMAV_RESCAN_INTERVAL_MS` (60 s) y se libera sola
-cuando ClamAV vuelve; si el análisis detecta malware, se borra el archivo y queda `INFECTED`. Para ver
-cuáles están pendientes: `SELECT id, file_name, uploaded_at FROM prisma.evidences WHERE scan_status = 'QUARANTINED';`.
-
-**Primer arranque:** `freshclam` descarga las firmas (unos 300 MB, varios minutos) y el contenedor figura
-`starting` hasta que `clamd` carga la base. Las subidas de ese rato quedan en cuarentena y se liberan
-solas. Las firmas quedan en el volumen `prisma-clamav-data`: los reinicios siguientes son rápidos.
-
-**Límites:** `clamd` acepta hasta 105 MB (`CLAMD_CONF_StreamMaxLength`), un poco por encima de
-`EVIDENCE_MAX_SIZE` (100 MB). Si se sube `EVIDENCE_MAX_SIZE`, subir también ese valor en
-`docker-compose.yml`, o el análisis fallará justo en los archivos grandes.
-
-**Ver qué pasó con una subida:** en la bitácora de actividad, acciones `EVIDENCE_SCAN_CLEAN`,
-`EVIDENCE_SCAN_INFECTED`, `EVIDENCE_QUARANTINED`, `EVIDENCE_QUARANTINE_RELEASED` y
-`EVIDENCE_QUARANTINE_INFECTED`.
-
-**Probarlo a mano:** subir un `.txt` con la cadena de prueba EICAR
-(`X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*`): debe rechazarse. Para correr los
-tests contra un ClamAV real: `CLAMAV_HOST=clamav mvn test -Dtest='ClamAvClientRealTest,EvidenceUploadRealAntivirusTest'`
-desde un contenedor en la red `prisma-net` (sin esa variable esos tests se omiten).
+**Al probar el bloqueo, tené en cuenta el límite de NGINX** (sección siguiente): el login admite una
+ráfaga (`burst`) de 15 intentos seguidos por IP, más que los 10 fallos que bloquean la cuenta, así
+que probando a mano el bloqueo de Keycloak llega antes que cualquier rechazo de NGINX. Pasados esos
+15, NGINX deja pasar un intento cada 3 segundos (20 por minuto) y rechaza el resto con `429`; lo que
+NGINX rechaza no llega a Keycloak y no cuenta para el bloqueo. Dos fallos con menos de 1 segundo de
+diferencia activan además la espera de acceso rápido (60 s): al probar, dejá más de 1 segundo entre
+intentos. Para llegar a 10 fallos sin tocar nada de NGINX también se puede probar contra Keycloak
+directo (puerto 8180).
 
 ## Rate limiting de login (RNF-07)
 
-NGINX limita a **5 intentos de login por minuto por IP** (zona `auth_login`, ver
-`infra/nginx/nginx.conf` y `infra/nginx/conf.d/prisma-locations.inc`), aplicado solo al endpoint
-donde Keycloak procesa usuario/contraseña del formulario de login
+NGINX limita los intentos de login **por IP** (zona `auth_login`, ver `infra/nginx/nginx.conf` y
+`infra/nginx/conf.d/prisma-locations.inc`):
+
+| Parámetro | Valor | Significado |
+|---|---|---|
+| `rate` | `20r/m` | en régimen, un intento cada 3 segundos (20 por minuto) |
+| `burst` | `15` (`nodelay`) | los primeros 16 intentos seguidos de una IP pasan sin esperar |
+| código al rechazar | `429` | `limit_req_status` / `limit_conn_status` (antes 503) |
+
+Se aplica solo al endpoint donde Keycloak procesa usuario/contraseña del formulario de login
 (`/auth/realms/*/login-actions/authenticate`) — no al endpoint de token
 (`protocol/openid-connect/token`), que también usa el refresh silencioso de sesión del frontend y
 no debe verse afectado. Esto es independiente de la protección de fuerza bruta de Keycloak
-(`failureFactor`/`waitIncrementSeconds` en `infra/keycloak/realm-prisma.json`), que es por
-cuenta/usuario tras varios fallos; este límite de NGINX es por IP, sin importar a qué usuario se
-le esté probando la contraseña.
+(sección anterior), que es por cuenta/usuario tras varios fallos; este límite de NGINX es por IP,
+sin importar a qué usuario se le esté probando la contraseña. El `burst` es mayor que los 10 fallos
+con que Keycloak bloquea una cuenta a propósito: así el bloqueo de la cuenta llega antes que el
+rechazo de NGINX. Como es por IP, varias personas detrás de la misma IP (una red o una VPN)
+comparten el cupo.
 
-**Síntoma si se excede:** NGINX corta con `503` los intentos de más allá del quinto en el minuto
-desde la misma IP. Para levantarlo antes de que expire la ventana, hay que reiniciar el contenedor
-de NGINX (`docker compose restart nginx`) — la zona de rate limiting vive en memoria compartida y
-se reinicia junto con el proceso.
+El resto de los límites de NGINX: `/api/` admite 30 solicitudes por segundo por IP (`burst=50`) y
+hasta 20 conexiones simultáneas; `/ai/` 30 por segundo (`burst=20`). Todos rechazan con `429`.
+
+**Síntoma si se excede:** NGINX responde `429 Too Many Requests` (en el login, el navegador muestra
+esa página de NGINX). Esos intentos no llegan a Keycloak. La zona de rate limiting vive en memoria
+compartida: para levantar el límite antes de que se libere solo basta con esperar unos segundos, o
+reiniciar el contenedor (`docker compose restart nginx`). Cambiar `rate`/`burst` no requiere
+reiniciar: se edita el archivo (está montado en el contenedor), se valida con
+`docker exec prisma-nginx nginx -t` y se recarga con `docker exec prisma-nginx nginx -s reload`.
 
 ## Backup y recuperación (RNF-13)
 

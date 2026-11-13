@@ -19,6 +19,7 @@ import java.io.ByteArrayOutputStream;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -42,6 +43,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import uy.edu.prisma.domain.entity.AuditControlVerdict;
 import uy.edu.prisma.domain.entity.AuditObservation;
+import uy.edu.prisma.domain.entity.CatalogCategory;
+import uy.edu.prisma.domain.entity.CatalogSubcategory;
 import uy.edu.prisma.domain.entity.Evaluation;
 import uy.edu.prisma.domain.entity.Evidence;
 import uy.edu.prisma.domain.entity.ImprovementPlan;
@@ -52,6 +55,7 @@ import uy.edu.prisma.domain.exception.InvalidRequestException;
 import uy.edu.prisma.domain.exception.ResourceNotFoundException;
 import uy.edu.prisma.domain.repository.AuditControlVerdictRepository;
 import uy.edu.prisma.domain.repository.AuditObservationRepository;
+import uy.edu.prisma.domain.repository.CatalogSubcategoryRepository;
 import uy.edu.prisma.domain.repository.EvaluationRepository;
 import uy.edu.prisma.domain.repository.EvidenceRepository;
 import uy.edu.prisma.domain.repository.ImprovementPlanRepository;
@@ -89,6 +93,7 @@ public class ReportService {
   private final CurrentUserService currentUser;
   private final AuditControlVerdictRepository verdictRepo;
   private final ImprovementPlanRepository planRepo;
+  private final CatalogSubcategoryRepository subcategoryRepo;
 
   public ReportService(
       EvaluationRepository evalRepo,
@@ -97,7 +102,8 @@ public class ReportService {
       EvidenceRepository evidenceRepo,
       CurrentUserService currentUser,
       AuditControlVerdictRepository verdictRepo,
-      ImprovementPlanRepository planRepo) {
+      ImprovementPlanRepository planRepo,
+      CatalogSubcategoryRepository subcategoryRepo) {
     this.evalRepo = evalRepo;
     this.matRepo = matRepo;
     this.obsRepo = obsRepo;
@@ -105,6 +111,7 @@ public class ReportService {
     this.currentUser = currentUser;
     this.verdictRepo = verdictRepo;
     this.planRepo = planRepo;
+    this.subcategoryRepo = subcategoryRepo;
   }
 
   // =====================================================================================
@@ -136,6 +143,7 @@ public class ReportService {
       if (!summary.topGaps().isEmpty()) {
         addPdfTopGaps(document, summary.topGaps());
       }
+      addCategoryMaturity(document, writer, results);
       addPdfResultsTable(document, results);
 
       document.close();
@@ -228,7 +236,7 @@ public class ReportService {
         kpiCard(
             "NIVEL DE MADUREZ GLOBAL",
             (eval.getGlobalMaturity() != null ? eval.getGlobalMaturity() : summary.avgCurrent())
-                + " / 5",
+                + " / 4",
             maturityColor(
                 eval.getGlobalMaturity() != null
                     ? eval.getGlobalMaturity()
@@ -284,6 +292,139 @@ public class ReportService {
       shaded = !shaded;
     }
     document.add(table);
+  }
+
+  /**
+   * «Madurez por Categoría»: el mismo radar y la misma tabla de siglas que la pestaña «Tablas y
+   * promedios» del detalle de la evaluación. Va antes del detalle por subcategoría.
+   */
+  private void addCategoryMaturity(
+      Document document, PdfWriter writer, List<MaturityResult> results)
+      throws DocumentException, java.io.IOException {
+    Paragraph heading = new Paragraph("Madurez por Categoría", PdfA.font(true, 12, SLATE_900));
+    heading.setSpacingAfter(4);
+
+    List<CategoryMaturityChart.Point> points = categoryPoints(results);
+    if (points.isEmpty()) {
+      document.add(heading);
+      Paragraph none =
+          new Paragraph("Sin resultados de madurez para graficar.", PdfA.font(false, 9, SLATE_500));
+      none.setSpacingAfter(16);
+      document.add(none);
+      return;
+    }
+    Paragraph note =
+        new Paragraph(
+            "Nivel actual promedio de las subcategorías de cada categoría, en escala de 0 a 4. En"
+                + " el gráfico cada categoría se identifica por su sigla.",
+            PdfA.font(false, 9, SLATE_500));
+    note.setSpacingAfter(6);
+
+    // Título, nota y gráfico forman un solo bloque: si no entran en lo que queda de la hoja pasan
+    // juntos a la siguiente. Una imagen suelta que no entra queda «en espera» en iText y la tabla
+    // que viene después se imprime primero, por delante del gráfico.
+    PdfPTable block = new PdfPTable(1);
+    block.setWidthPercentage(100);
+    block.setKeepTogether(true);
+    block.setSpacingAfter(8);
+    PdfPCell cell = new PdfPCell();
+    cell.setBorder(Rectangle.NO_BORDER);
+    cell.setPadding(0);
+    cell.addElement(heading);
+    cell.addElement(note);
+    if (CategoryMaturityChart.canRender(points)) {
+      cell.addElement(
+          CategoryMaturityChart.render(writer, points, document.right() - document.left()));
+    }
+    block.addCell(cell);
+    document.add(block);
+
+    PdfPTable table = new PdfPTable(4);
+    table.setWidthPercentage(100);
+    table.setWidths(new float[] {1.1f, 3.2f, 2.4f, 1.3f});
+    table.setSpacingAfter(16);
+    table.setHeaderRows(1);
+    addTableHeader(table, "Sigla", "Categoría", "Función", "Nivel actual (prom.)");
+    boolean shaded = false;
+    for (CategoryMaturityChart.Point point : points) {
+      Color bg = shaded ? SLATE_50 : Color.WHITE;
+      addBodyCell(
+          table,
+          point.code() != null && !point.code().isBlank() ? point.code() : "—",
+          bg,
+          Element.ALIGN_LEFT,
+          SLATE_900);
+      addBodyCell(table, point.name(), bg, Element.ALIGN_LEFT, SLATE_900);
+      addBodyCell(table, point.functionName(), bg, Element.ALIGN_LEFT, SLATE_900);
+      addBodyCell(
+          table,
+          String.format(java.util.Locale.ROOT, "%.1f", point.level()),
+          bg,
+          Element.ALIGN_CENTER,
+          SLATE_900);
+      shaded = !shaded;
+    }
+    document.add(table);
+  }
+
+  /**
+   * Una categoría por cada categoría presente en los resultados, con su nivel medio. El orden y la
+   * sigla salen del catálogo; si no se pueden resolver (resultado sin subcategoría en el catálogo),
+   * la categoría queda con su nombre y en el orden en que aparece.
+   */
+  private List<CategoryMaturityChart.Point> categoryPoints(List<MaturityResult> results) {
+    Map<String, List<MaturityResult>> byCategory = new LinkedHashMap<>();
+    for (MaturityResult r : results) {
+      String key =
+          r.getCategoryId() != null
+              ? r.getCategoryId().toString()
+              : r.getFunctionName() + "|" + r.getCategoryName();
+      byCategory.computeIfAbsent(key, k -> new ArrayList<>()).add(r);
+    }
+    List<UUID> subcategoryIds =
+        results.stream()
+            .map(MaturityResult::getSubcategoryId)
+            .filter(java.util.Objects::nonNull)
+            .distinct()
+            .toList();
+    Map<UUID, CatalogSubcategory> subcategories = new java.util.HashMap<>();
+    if (!subcategoryIds.isEmpty()) {
+      for (CatalogSubcategory sub : subcategoryRepo.findAllById(subcategoryIds)) {
+        subcategories.put(sub.getId(), sub);
+      }
+    }
+
+    record Entry(int functionOrder, int categoryOrder, CategoryMaturityChart.Point point) {}
+    List<Entry> entries = new ArrayList<>();
+    for (List<MaturityResult> group : byCategory.values()) {
+      MaturityResult first = group.get(0);
+      CatalogCategory category =
+          group.stream()
+              .map(r -> subcategories.get(r.getSubcategoryId()))
+              .filter(java.util.Objects::nonNull)
+              .map(CatalogSubcategory::getCategory)
+              .findFirst()
+              .orElse(null);
+      double level = group.stream().mapToInt(MaturityResult::getCurrentLevel).average().orElse(0);
+      String functionName = first.getFunctionName() != null ? first.getFunctionName() : "—";
+      entries.add(
+          new Entry(
+              category != null && category.getFunction_().getSortOrder() != null
+                  ? category.getFunction_().getSortOrder()
+                  : Integer.MAX_VALUE,
+              category != null && category.getSortOrder() != null
+                  ? category.getSortOrder()
+                  : Integer.MAX_VALUE,
+              new CategoryMaturityChart.Point(
+                  functionName,
+                  category != null ? category.getCode() : null,
+                  first.getCategoryName(),
+                  level)));
+    }
+    // El orden es estable: lo que no está en el catálogo conserva el orden de los resultados.
+    entries.sort(
+        Comparator.comparingInt(Entry::functionOrder).thenComparingInt(Entry::categoryOrder));
+    return entries.stream().map(Entry::point).toList();
   }
 
   private void addPdfResultsTable(Document document, List<MaturityResult> results)
@@ -518,7 +659,7 @@ public class ReportService {
             sheet,
             r,
             "Nivel de Madurez Global",
-            globalLevel + " / 5",
+            globalLevel + " / 4",
             kpiLabelStyle,
             kpiValueStyle);
     r =
@@ -799,10 +940,10 @@ public class ReportService {
       byFunction
           .computeIfAbsent(
               r.getFunctionName() != null ? r.getFunctionName() : "Sin función",
-              k -> new java.util.ArrayList<>())
+              k -> new ArrayList<>())
           .add(r);
     }
-    List<RadarChart.Axis> axes = new java.util.ArrayList<>();
+    List<RadarChart.Axis> axes = new ArrayList<>();
     byFunction.forEach(
         (name, items) ->
             axes.add(
@@ -1146,7 +1287,7 @@ public class ReportService {
   private PdfPTable statusBar(PlanStats stats) {
     int[] counts = {stats.completed(), stats.inProgress(), stats.pending(), stats.overdue()};
     Color[] colors = {STATUS_DONE, STATUS_PROGRESS, STATUS_PENDING, DANGER};
-    List<Integer> used = new java.util.ArrayList<>();
+    List<Integer> used = new ArrayList<>();
     for (int i = 0; i < counts.length; i++) {
       if (counts[i] > 0) {
         used.add(i);

@@ -76,6 +76,9 @@
       <p class="text-center text-xs text-slate-500 dark:text-slate-400 mt-6">
         Marco de Ciberseguridad de AGESIC v5.0
       </p>
+      <p class="text-center text-xs text-slate-500 dark:text-slate-400 mt-1">
+        PRISMA <AppVersion />
+      </p>
     </div>
   </div>
 </template>
@@ -83,6 +86,7 @@
 <script setup lang="ts">
   import { ref } from 'vue';
   import { useAuthStore } from '@/stores/auth';
+  import AppVersion from '@/components/layout/AppVersion.vue';
   import { getErrorMessage } from '@/utils/helpers';
   import { PASSWORD_CHANGED_KEY } from '@/utils/constants';
   import { ShieldCheckIcon } from '@heroicons/vue/24/solid';

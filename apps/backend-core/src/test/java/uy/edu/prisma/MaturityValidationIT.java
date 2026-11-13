@@ -96,7 +96,11 @@ class MaturityValidationIT {
 
     Organization org =
         orgRepo.save(
-            Organization.builder().name("Validación MCU").rut("NIT-VAL").sector("GOV").build());
+            Organization.builder()
+                .name("Validación MCU")
+                .identifier("NIT-VAL")
+                .sector("GOV")
+                .build());
     EvaluationDto eval =
         evaluationService.create(
             new CreateEvaluationDto("Validación Básico", org.getId(), VERSION, BASICO_PROFILE_ID));

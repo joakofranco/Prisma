@@ -71,6 +71,13 @@
               <BaseButton
                 variant="secondary"
                 :loading="searchingControlId === c.controlId"
+                :disabled="!canWriteObservations"
+                :title="
+                  canWriteObservations
+                    ? undefined
+                    : 'La búsqueda de citas solo está disponible con la evaluación en auditoría'
+                "
+                data-testid="search-citations"
                 @click="searchCitations(c)"
               >
                 Buscar citas

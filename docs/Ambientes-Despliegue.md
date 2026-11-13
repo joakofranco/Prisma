@@ -354,6 +354,38 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
 docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile full up -d --remove-orphans
 ```
 
+## Versión y entorno
+
+**Versión.** PRISMA tiene una sola versión (SemVer `MAJOR.MINOR.PATCH`, hoy `0.6.0`) compartida por la
+API, el servicio de IA y la web. Vive en cuatro archivos que tienen que coincidir
+(`apps/backend-core/pom.xml`, `apps/frontend/package.json`, `apps/backend-ai/app/version.py` y
+`sonar-project.properties`); el CI lo verifica (`version-sync`). Para cambiarla:
+
+```bash
+scripts/version.sh show          # ver la de cada archivo
+scripts/version.sh bump 0.7.0    # cambiar las cuatro a la vez
+```
+
+Mientras sea `0.x`, `MINOR` sube con cada entrega/sprint y `PATCH` con las correcciones. El tag que
+despliega (`v0.7.0` a producción, `v0.7.0-rc1` a staging) tiene que ser el mismo número que
+`scripts/version.sh show`.
+
+**Entorno.** Cada servidor define qué entorno es con `ENV` en su `.env`
+(`development` | `staging` | `production`); `docker-compose.yml` lo pasa a los servicios como
+`APP_ENV` y `docker-compose.prod.yml` fuerza `production`. Sin la variable se asume `development`
+(así, un olvido en producción es visible, no silencioso). Con eso:
+
+- `GET /api/version` (público) y `GET /health` de `backend-ai` informan versión y entorno;
+- la web muestra un cartel («Entorno de desarrollo», «Entorno de pruebas (staging)»), una franja de
+  color arriba de todo y `[DEV]`/`[STAGING]` en el título de la pestaña; en producción no hay nada de
+  eso, solo la versión en el menú lateral y en el login;
+- si la web y la API tienen versiones distintas (despliegue a medias) la versión se muestra en
+  ámbar con las dos.
+
+El commit y la fecha de construcción los pasa el CI al construir las imágenes (`APP_COMMIT`,
+`APP_BUILD_TIME`); aparecen al pasar el mouse sobre la versión y en `/api/version` solo con sesión
+iniciada. En una construcción local: `GIT_SHA=$(git rev-parse --short HEAD) docker compose build`.
+
 ## Referencias
 
 - Detalle de cada job del pipeline que dispara estos despliegues: [`CI-CD-Infra.md`](CI-CD-Infra.md)

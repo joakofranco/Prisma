@@ -149,6 +149,7 @@ public class TechnicalReportService {
       PdfA.addOutputIntent(writer);
       writeCover(doc, eval, data);
       writeFunctionMaturity(doc, data);
+      writeCategoryMaturity(doc, writer, data);
       writeDetail(doc, data);
       writeAnnexes(doc, eval, data);
       doc.close();
@@ -178,6 +179,7 @@ public class TechnicalReportService {
   record SubcategoryBlock(
       String function,
       String category,
+      String categoryCode,
       String title,
       int current,
       int target,
@@ -300,6 +302,7 @@ public class TechnicalReportService {
           new SubcategoryBlock(
               sub.getCategory().getFunction_().getName(),
               sub.getCategory().getName(),
+              sub.getCategory().getCode(),
               sub.getCode() != null && !sub.getCode().isBlank()
                   ? sub.getCode() + " · " + sub.getName()
                   : sub.getName(),
@@ -668,6 +671,84 @@ public class TechnicalReportService {
       table.addCell(empty);
     }
     doc.add(table);
+  }
+
+  /**
+   * «Madurez por categoría»: el mismo radar y la misma tabla de siglas que la pestaña «Tablas y
+   * promedios» del detalle de la evaluación. Va a continuación de la tabla por función y no cambia
+   * la numeración de las secciones.
+   */
+  private void writeCategoryMaturity(Document doc, PdfWriter writer, Data data)
+      throws DocumentException, IOException {
+    List<CategoryMaturityChart.Point> points = categoryPoints(data);
+    Paragraph heading =
+        spaced(
+            new Paragraph("Madurez por categoría", font(FontFactory.HELVETICA_BOLD, 11, SLATE_900)),
+            14,
+            3);
+    if (points.isEmpty()) {
+      doc.add(heading);
+      doc.add(new Paragraph("Sin resultados de madurez.", italic(9)));
+      return;
+    }
+    Paragraph note =
+        paragraph(
+            "Nivel actual promedio de las subcategorías de cada categoría, en escala de 0 a 4. En"
+                + " el gráfico cada categoría se identifica por su sigla.",
+            9);
+
+    // Título, nota y gráfico forman un solo bloque: si no entran en lo que queda de la hoja pasan
+    // juntos a la siguiente. Una imagen suelta que no entra queda «en espera» en iText y la tabla
+    // que viene después se imprime primero, por delante del gráfico.
+    PdfPTable block = new PdfPTable(1);
+    block.setWidthPercentage(100);
+    block.setKeepTogether(true);
+    block.setSpacingAfter(8);
+    PdfPCell cell = new PdfPCell();
+    cell.setBorder(Rectangle.NO_BORDER);
+    cell.setPadding(0);
+    cell.addElement(heading);
+    cell.addElement(note);
+    if (CategoryMaturityChart.canRender(points)) {
+      cell.addElement(CategoryMaturityChart.render(writer, points, doc.right() - doc.left()));
+    }
+    block.addCell(cell);
+    doc.add(block);
+
+    PdfPTable table = new PdfPTable(new float[] {1.1f, 3.4f, 2.6f, 1.3f});
+    table.setWidthPercentage(100);
+    table.setHeaderRows(1);
+    header(table, "Sigla", "Categoría", "Función", "Nivel actual (prom.)");
+    int i = 0;
+    for (CategoryMaturityChart.Point p : points) {
+      Color bg = i++ % 2 == 0 ? Color.WHITE : SLATE_50;
+      body(table, p.code() != null && !p.code().isBlank() ? p.code() : "—", bg, true);
+      body(table, p.name(), bg, false);
+      body(table, p.functionName(), bg, false);
+      body(table, String.format(java.util.Locale.ROOT, "%.1f", p.level()), bg, false);
+    }
+    doc.add(table);
+  }
+
+  /** Una categoría por cada par función/categoría, en el orden del catálogo, con su media. */
+  private static List<CategoryMaturityChart.Point> categoryPoints(Data data) {
+    Map<String, List<SubcategoryBlock>> byCategory = new LinkedHashMap<>();
+    for (SubcategoryBlock b : data.blocks()) {
+      byCategory
+          .computeIfAbsent(b.function() + " › " + b.category(), k -> new ArrayList<>())
+          .add(b);
+    }
+    List<CategoryMaturityChart.Point> points = new ArrayList<>();
+    for (List<SubcategoryBlock> list : byCategory.values()) {
+      SubcategoryBlock first = list.get(0);
+      points.add(
+          new CategoryMaturityChart.Point(
+              first.function(),
+              first.categoryCode(),
+              first.category(),
+              list.stream().mapToInt(SubcategoryBlock::current).average().orElse(0)));
+    }
+    return points;
   }
 
   // =====================================================================================

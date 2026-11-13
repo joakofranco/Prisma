@@ -36,9 +36,11 @@
               </dd>
             </div>
             <div>
-              <dt class="text-sm text-slate-500 dark:text-slate-400">RUT</dt>
+              <dt class="text-sm text-slate-500 dark:text-slate-400">
+                {{ organization.identifierIsRut ? 'RUT' : 'Identificador' }}
+              </dt>
               <dd class="text-sm font-medium text-slate-900 dark:text-white">
-                {{ organization.rut || '—' }}
+                {{ organization.identifier || '—' }}
               </dd>
             </div>
             <div>

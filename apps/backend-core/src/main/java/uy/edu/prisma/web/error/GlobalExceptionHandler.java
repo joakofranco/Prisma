@@ -58,7 +58,9 @@ public class GlobalExceptionHandler {
 
   @ExceptionHandler(InvalidRequestException.class)
   public ResponseEntity<ApiErrorDto> handleInvalidRequest(InvalidRequestException ex) {
-    return build(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", ex.getMessage(), null);
+    Map<String, List<String>> details =
+        ex.getField() == null ? null : Map.of(ex.getField(), List.of(ex.getMessage()));
+    return build(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", ex.getMessage(), details);
   }
 
   @ExceptionHandler(PayloadTooLargeException.class)
@@ -104,16 +106,17 @@ public class GlobalExceptionHandler {
 
   @ExceptionHandler(DataIntegrityViolationException.class)
   public ResponseEntity<ApiErrorDto> handleIntegrity(DataIntegrityViolationException ex) {
-    // Red de seguridad: OrganizationService ya chequea el RUT duplicado antes de guardar, pero si
+    // Red de seguridad: OrganizationService ya chequea el identificador duplicado antes de guardar,
+    // pero si
     // dos altas simultáneas se le adelantan, la restricción única de la base es la que salta. En
     // vez del genérico "conflicto de integridad", se devuelve el mismo mensaje claro.
     String cause = ex.getMostSpecificCause().getMessage();
-    if (cause != null && cause.contains("organizations_rut_key")) {
+    if (cause != null && cause.contains("organizations_identifier_key")) {
       return build(
           HttpStatus.CONFLICT,
           "CONFLICT",
-          OrganizationMessages.DUPLICATE_RUT,
-          Map.of("rut", List.of(OrganizationMessages.DUPLICATE_RUT)));
+          OrganizationMessages.DUPLICATE_IDENTIFIER,
+          Map.of("identifier", List.of(OrganizationMessages.DUPLICATE_IDENTIFIER)));
     }
     return build(HttpStatus.CONFLICT, "DATA_CONFLICT", "Conflicto de integridad de datos", null);
   }

@@ -10,9 +10,9 @@ public class ConflictException extends RuntimeException {
   }
 
   /**
-   * @param field campo del formulario que provoca el conflicto (p.ej. {@code "rut"}); el manejador
-   *     global lo devuelve en {@code details} para que el front marque ese campo en lugar de
-   *     mostrar solo un aviso genérico. {@code null} = conflicto que no es de un campo puntual.
+   * @param field campo del formulario que provoca el conflicto (p.ej. {@code "identifier"}); el
+   *     manejador global lo devuelve en {@code details} para que el front marque ese campo en lugar
+   *     de mostrar solo un aviso genérico. {@code null} = conflicto que no es de un campo puntual.
    */
   public ConflictException(String message, String field) {
     super(message);

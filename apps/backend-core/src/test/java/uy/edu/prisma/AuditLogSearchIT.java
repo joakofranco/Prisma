@@ -65,7 +65,7 @@ class AuditLogSearchIT {
     when(currentUser.isPrismaAdmin()).thenReturn(true);
 
     jdbc.update(
-        "INSERT INTO prisma.organizations (id, name, rut) VALUES (?, 'Organización Búsqueda', '1.234.567-8')",
+        "INSERT INTO prisma.organizations (id, name, identifier) VALUES (?, 'Organización Búsqueda', '1.234.567-8')",
         orgId);
     jdbc.update(
         "INSERT INTO prisma.users (id, email, first_name, last_name) VALUES (?, 'auditora@prisma.local', 'Ana', 'Pérez')",

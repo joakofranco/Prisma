@@ -100,6 +100,7 @@ class TechnicalReportServiceTest {
     CatalogCategory category =
         CatalogCategory.builder()
             .id(UUID.randomUUID())
+            .code("SO")
             .name("Seguridad de las operaciones")
             .function_(function)
             .build();
@@ -456,7 +457,8 @@ class TechnicalReportServiceTest {
         new TechnicalReportService.ControlRow(
             c1, TechnicalReportService.Compliance.MET, null, null, List.of());
     var block =
-        new TechnicalReportService.SubcategoryBlock("F", "C", "S", 1, 1, List.of(row), List.of());
+        new TechnicalReportService.SubcategoryBlock(
+            "F", "C", "C1", "S", 1, 1, List.of(row), List.of());
 
     assertTrue(TechnicalReportService.whyText(block).startsWith("Alcanza su nivel objetivo"));
     assertNull(TechnicalReportService.nextStepText(block));
@@ -472,7 +474,7 @@ class TechnicalReportServiceTest {
             c4, TechnicalReportService.Compliance.MET, null, null, List.of());
     var block =
         new TechnicalReportService.SubcategoryBlock(
-            "F", "C", "S", 0, 3, List.of(pending, higher), List.of());
+            "F", "C", "C1", "S", 0, 3, List.of(pending, higher), List.of());
 
     String why = TechnicalReportService.whyText(block);
     assertTrue(why.startsWith("No alcanza el nivel 1 porque SO.6-1 no está cumplido"), why);
@@ -519,5 +521,74 @@ class TechnicalReportServiceTest {
     java.nio.file.Path dir = java.nio.file.Path.of(System.getProperty("pdfa.dumpDir"));
     java.nio.file.Files.createDirectories(dir);
     java.nio.file.Files.write(dir.resolve("reporte-tecnico.pdf"), service.generate(eval.getId()));
+  }
+
+  // ---- Madurez por categoría ----
+
+  @Test
+  void theTechnicalReportShowsMaturityByCategoryRightAfterMaturityByFunction() throws Exception {
+    String text = text(service.generate(eval.getId()));
+
+    int byFunction = text.indexOf("3. Madurez por función");
+    int byCategory = text.indexOf("Madurez por categoría");
+    int detail = text.indexOf("4. Detalle por subcategoría");
+    assertTrue(byFunction >= 0 && byCategory > byFunction, "va después de la tabla por función");
+    assertTrue(byCategory < detail, "y antes del detalle por subcategoría");
+    // La tabla de siglas: sigla, categoría y función.
+    assertTrue(text.contains("Sigla"), text);
+    String section = text.substring(byCategory, detail);
+    assertTrue(section.contains("SO Seguridad de las operaciones"), section);
+    assertTrue(section.contains("Proteger"), section);
+  }
+
+  private CatalogControl controlInNewCategory(
+      String functionName, String categoryCode, String categoryName) {
+    CatalogFunction f = CatalogFunction.builder().id(UUID.randomUUID()).name(functionName).build();
+    CatalogCategory cat =
+        CatalogCategory.builder()
+            .id(UUID.randomUUID())
+            .code(categoryCode)
+            .name(categoryName)
+            .function_(f)
+            .build();
+    CatalogSubcategory s =
+        CatalogSubcategory.builder()
+            .id(UUID.randomUUID())
+            .code(categoryCode + "-1")
+            .name("Sub " + categoryCode)
+            .category(cat)
+            .build();
+    CatalogRequirement req = CatalogRequirement.builder().id(UUID.randomUUID()).build();
+    req.setSubcategoryLinks(
+        List.of(
+            CatalogRequirementSubcategory.builder()
+                .id(UUID.randomUUID())
+                .requirement(req)
+                .subcategory(s)
+                .build()));
+    return control(req, categoryCode + "-1-1", "Control " + categoryCode, 1);
+  }
+
+  @Test
+  void withThreeOrMoreCategoriesTheTechnicalReportDrawsTheRadar() throws Exception {
+    var idAm = controlInNewCategory("Identificar", "ID.AM", "Gestión de activos");
+    var gvOc = controlInNewCategory("Gobernar", "GV.OC", "Contexto organizacional");
+    when(controlRepo.findByVersionOrdered("5.0"))
+        .thenReturn(List.of(c1, c2, c3, c4, c5, idAm, gvOc));
+
+    String text = text(service.generate(eval.getId()));
+
+    assertTrue(text.contains("Escala de 0 a 4"), "radar");
+    // Sin resultado de madurez guardado una subcategoría cuenta como nivel 0.
+    assertTrue(text.contains("ID.AM 0.0") && text.contains("GV.OC 0.0"), text);
+    assertFalse(text.contains("Nivel objetivo"), "sin línea de objetivo");
+  }
+
+  @Test
+  void withFewerThanThreeCategoriesTheTechnicalReportShowsOnlyTheTable() throws Exception {
+    String text = text(service.generate(eval.getId()));
+
+    assertTrue(text.contains("Madurez por categoría"));
+    assertFalse(text.contains("Escala de 0 a 4"), "sin radar");
   }
 }

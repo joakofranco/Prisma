@@ -731,3 +731,99 @@ describe('EvidenceView: antivirus al subir (RNF-09)', () => {
     expect(noAi.className).toContain('text-slate-500');
   });
 });
+
+describe('EvidenceView: acciones según el estado de la evaluación', () => {
+  const button = (selector: string) => document.body.querySelector<HTMLButtonElement>(selector);
+  const evidence = {
+    id: 'e1',
+    evaluationId: 'eval-1',
+    fileName: 'politica.pdf',
+    fileSize: 10,
+    fileType: 'application/pdf',
+    uploadedAt: '2026-11-10T00:00:00Z',
+    aiIndexed: false,
+    scanStatus: 'CLEAN',
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    document.body.innerHTML = '';
+    authState.roles = ['PRISMA_ADMIN'];
+    evidenceService.getAllowedFormats.mockResolvedValue(FORMATS);
+    evidenceService.getByEvaluation.mockResolvedValue({ data: [evidence] });
+    evidenceService.reindex.mockResolvedValue({ data: { ...evidence, aiIndexed: true } });
+    evaluationsService.getResponses.mockResolvedValue({ data: [] });
+    catalogService.getByVersion.mockResolvedValue({ data: { functions: [] } });
+  });
+
+  async function mountWith(status?: string) {
+    evaluationsService.getById.mockResolvedValue({ data: { catalogVersion: '5.0', status } });
+    const wrapper = mount(EvidenceView, {
+      attachTo: document.body,
+      global: { stubs: { RouterLink: true } },
+    });
+    await flushPromises();
+    return wrapper;
+  }
+
+  it.each(['DRAFT', 'IN_PROGRESS', 'RETURNED'])(
+    '%s: se puede subir, analizar con IA y eliminar',
+    async (status) => {
+      await mountWith(status);
+
+      expect(button('[data-testid="upload-evidence"]')!.disabled).toBe(false);
+      expect(button('[data-testid="reindex-evidence"]')!.disabled).toBe(false);
+      expect(button('[data-testid="delete-evidence"]')!.disabled).toBe(false);
+      expect(button('[data-testid="evidence-locked"]')).toBeNull();
+    },
+  );
+
+  it.each(['READY_FOR_AUDIT', 'IN_AUDIT', 'APPROVED', 'ARCHIVED'])(
+    '%s: subir, analizar con IA y eliminar quedan deshabilitados y se avisa por qué',
+    async (status) => {
+      await mountWith(status);
+
+      expect(button('[data-testid="upload-evidence"]')!.disabled).toBe(true);
+      expect(button('[data-testid="reindex-evidence"]')!.disabled).toBe(true);
+      expect(button('[data-testid="delete-evidence"]')!.disabled).toBe(true);
+      const notice = document.body.querySelector('[data-testid="evidence-locked"]')!;
+      expect(notice.textContent).toContain('solo lectura');
+      expect(notice.textContent).toContain('ya no admite cambios');
+      // El tooltip del botón explica el motivo.
+      expect(button('[data-testid="upload-evidence"]')!.title).toContain('ya no admite cambios');
+    },
+  );
+
+  it('en un estado cerrado sigue pudiéndose descargar la evidencia', async () => {
+    await mountWith('APPROVED');
+
+    expect(button('button[title="Descargar evidencia"]')!.disabled).toBe(false);
+  });
+
+  it('un clic en «Analizar con IA» deshabilitado no llama al servidor', async () => {
+    await mountWith('APPROVED');
+
+    button('[data-testid="reindex-evidence"]')!.click();
+    await flushPromises();
+
+    expect(evidenceService.reindex).not.toHaveBeenCalled();
+  });
+
+  it('con el estado desconocido no se bloquea nada: decide el backend', async () => {
+    await mountWith(undefined);
+
+    expect(button('[data-testid="upload-evidence"]')!.disabled).toBe(false);
+    expect(button('[data-testid="reindex-evidence"]')!.disabled).toBe(false);
+    expect(button('[data-testid="evidence-locked"]')).toBeNull();
+  });
+
+  it('si la evaluación cambia a un estado cerrado, «Analizar con IA» ya indexado no aparece', async () => {
+    evidenceService.getByEvaluation.mockResolvedValue({
+      data: [{ ...evidence, aiIndexed: true }],
+    });
+    await mountWith('APPROVED');
+
+    expect(button('[data-testid="reindex-evidence"]')).toBeNull();
+    expect(document.body.textContent).toContain('Indexado');
+  });
+});

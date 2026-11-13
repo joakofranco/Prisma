@@ -149,3 +149,87 @@ describe('UsersView: desbloquear cuenta (PRI-233)', () => {
     expect(notification.error).toHaveBeenCalledWith('No se pudo desbloquear la cuenta');
   });
 });
+
+describe('UsersView: la lista refleja el estado real de bloqueo (RF-AUTH-08)', () => {
+  const lockedUser = (id: string, extra: Record<string, unknown> = {}) => ({
+    ...user(id, true),
+    locked: true,
+    lockedUntil: '2026-11-13T19:29:04Z',
+    ...extra,
+  });
+  const accessCell = () =>
+    Array.from(document.body.querySelectorAll('tbody tr')).map((tr) => tr.textContent ?? '');
+
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    vi.clearAllMocks();
+    document.body.innerHTML = '';
+    auth.isAdmin = true;
+    organizationsService.getAll.mockResolvedValue({ data: { data: [], total: 0 } });
+    usersService.unlock.mockResolvedValue({ data: { wasLocked: true } });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('una cuenta bloqueada se marca «Cuenta bloqueada», con la hora, y no dice que puede iniciar sesión', async () => {
+    await mountView([lockedUser('u-1')]);
+
+    const cell = document.body.querySelector('[data-testid="account-locked"]')!;
+    expect(cell.textContent).toContain('Cuenta bloqueada');
+    expect(document.body.querySelector('[data-testid="locked-until"]')!.textContent).toMatch(
+      /Hasta las \d{2}:\d{2}/,
+    );
+    expect(accessCell()[0]).not.toContain('Puede iniciar sesión');
+  });
+
+  it('una cuenta sin bloqueo sigue diciendo que puede iniciar sesión', async () => {
+    await mountView([{ ...user('u-1', true), locked: false }]);
+
+    expect(document.body.querySelector('[data-testid="account-locked"]')).toBeNull();
+    expect(accessCell()[0]).toContain('Puede iniciar sesión');
+  });
+
+  it('si no se sabe el estado (Keycloak no respondió) no se marca nada raro', async () => {
+    await mountView([{ ...user('u-1', true), locked: null }]);
+
+    expect(document.body.querySelector('[data-testid="account-locked"]')).toBeNull();
+    expect(accessCell()[0]).toContain('Puede iniciar sesión');
+  });
+
+  it('el candado se resalta solo en la cuenta bloqueada y se atenúa en las que no lo están', async () => {
+    await mountView([
+      lockedUser('u-1'),
+      { ...user('u-2', true), locked: false },
+      { ...user('u-3', true), locked: null },
+    ]);
+
+    const [blocked, free, unknown] = unlockButtons();
+    expect(blocked.dataset.locked).toBe('true');
+    expect(blocked.className).toContain('text-red-600');
+    expect(blocked.title).toMatch(/bloqueada hasta las \d{2}:\d{2}/);
+    expect(free.dataset.locked).toBe('false');
+    expect(free.className).toContain('opacity-40');
+    expect(free.title).toContain('no está bloqueada');
+    expect(unknown.dataset.locked).toBe('unknown');
+    expect(unknown.title).toBe('Desbloquear cuenta');
+  });
+
+  it('al desbloquear se vuelve a pedir la lista y la fila deja de figurar bloqueada', async () => {
+    const wrapper = await mountView([lockedUser('u-1')]);
+    usersService.getAll.mockResolvedValue({
+      data: { data: [{ ...user('u-1', true), locked: false }], total: 1 },
+    });
+
+    unlockButtons()[0].click();
+    await flushPromises();
+
+    expect(usersService.unlock).toHaveBeenCalledWith('u-1');
+    expect(usersService.getAll).toHaveBeenCalledTimes(2);
+    expect(document.body.querySelector('[data-testid="account-locked"]')).toBeNull();
+    expect(accessCell()[0]).toContain('Puede iniciar sesión');
+    wrapper.unmount();
+  });
+});

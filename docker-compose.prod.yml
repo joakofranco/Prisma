@@ -59,6 +59,8 @@ services:
     image: ghcr.io/${GHCR_ORG}/prisma-backend-core:${TAG:-latest}
     pull_policy: always
     environment:
+      # Producción siempre se informa como tal, aunque el .env del servidor traiga otro ENV.
+      APP_ENV: production
       SPRING_PROFILES_ACTIVE: production
       LOGGING_LEVEL_ROOT: WARN
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}?sslmode=verify-full&sslrootcert=/etc/prisma/tls/ca.crt
@@ -89,6 +91,7 @@ services:
     image: ghcr.io/${GHCR_ORG}/prisma-backend-ai:${TAG:-latest}
     pull_policy: always
     environment:
+      APP_ENV: production
       CORE_BACKEND_URL: https://backend-core:8080
       SSL_CERT_FILE: /etc/prisma/tls/ca.crt
     volumes:

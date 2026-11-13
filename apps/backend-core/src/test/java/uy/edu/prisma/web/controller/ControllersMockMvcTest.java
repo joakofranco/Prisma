@@ -456,7 +456,8 @@ class ControllersMockMvcTest {
     UUID id = UUID.randomUUID();
     when(organizationService.getById(id))
         .thenReturn(
-            new OrganizationDto(id, "Acme", "NIT-1", "TECH", "SMALL", null, null, true, null));
+            new OrganizationDto(
+                id, "Acme", "NIT-1", false, "TECH", "SMALL", null, null, true, null));
 
     organizations
         .perform(get("/api/organizations/{id}", id))
@@ -469,13 +470,14 @@ class ControllersMockMvcTest {
     UUID id = UUID.randomUUID();
     when(organizationService.create(any(CreateOrganizationDto.class)))
         .thenReturn(
-            new OrganizationDto(id, "NewCo", "NIT-9", "FIN", "LARGE", null, null, true, null));
+            new OrganizationDto(
+                id, "NewCo", "NIT-9", false, "FIN", "LARGE", null, null, true, null));
 
     organizations
         .perform(
             post("/api/organizations")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"name\":\"NewCo\",\"rut\":\"NIT-9\"}"))
+                .content("{\"name\":\"NewCo\",\"identifier\":\"NIT-0009\"}"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.name").value("NewCo"));
   }
@@ -486,13 +488,13 @@ class ControllersMockMvcTest {
     when(organizationService.update(eq(id), any(CreateOrganizationDto.class)))
         .thenReturn(
             new OrganizationDto(
-                id, "Renamed", "NIT-X", "HEALTH", "MEDIUM", null, null, true, null));
+                id, "Renamed", "NIT-X", false, "HEALTH", "MEDIUM", null, null, true, null));
 
     organizations
         .perform(
             put("/api/organizations/{id}", id)
                 .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"name\":\"Renamed\",\"rut\":\"NIT-X\"}"))
+                .content("{\"name\":\"Renamed\",\"identifier\":\"NIT-XXXX\"}"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.name").value("Renamed"));
   }
@@ -503,7 +505,8 @@ class ControllersMockMvcTest {
     when(organizationService.enable(id))
         .thenReturn(
             new OrganizationReactivationDto(
-                new OrganizationDto(id, "Acme", "NIT-1", "TECH", "SMALL", null, null, true, null),
+                new OrganizationDto(
+                    id, "Acme", "NIT-1", false, "TECH", "SMALL", null, null, true, null),
                 3));
 
     organizations

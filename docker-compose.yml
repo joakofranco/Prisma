@@ -123,6 +123,8 @@ services:
       target: runtime
       args:
         BUILD_ENV: ${ENV:-development}
+        APP_COMMIT: ${GIT_SHA:-}
+        APP_BUILD_TIME: ${BUILD_TIME:-}
     image: ghcr.io/${GHCR_ORG:-prisma}/prisma-backend-core:${TAG:-latest}
     # Sin esto, Compose ve que el "image:" de arriba apunta a un host real (ghcr.io) y por
     # default PREFIERE hacer pull antes que build, incluso teniendo el bloque "build:" -- alcanza
@@ -137,6 +139,10 @@ services:
       postgres:  { condition: service_healthy }
       redis:     { condition: service_healthy }
     environment:
+      # Entorno que informa /api/version y que el frontend muestra con un cartel si no es producción.
+      # Lo define ENV del .env (development | staging | production); docker-compose.prod.yml lo
+      # fuerza a production.
+      APP_ENV: ${ENV:-development}
       SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-docker}
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
@@ -229,6 +235,9 @@ services:
       context: ./apps/backend-ai
       dockerfile: ../../infra/docker/backend-ai.Dockerfile
       target: runtime
+      args:
+        APP_COMMIT: ${GIT_SHA:-}
+        APP_BUILD_TIME: ${BUILD_TIME:-}
     image: ghcr.io/${GHCR_ORG:-prisma}/prisma-backend-ai:${TAG:-latest}
     # Ver el comentario en el mismo campo de backend-core más arriba.
     pull_policy: build
@@ -238,6 +247,7 @@ services:
     depends_on:
       ollama: { condition: service_healthy }
     environment:
+      APP_ENV: ${ENV:-development}
       OLLAMA_HOST: http://ollama:11434
       OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3:8b}
       CHROMA_PERSIST_DIR: /data/chroma
@@ -306,6 +316,8 @@ services:
         VITE_KEYCLOAK_URL: ${VITE_KEYCLOAK_URL}
         VITE_KEYCLOAK_REALM: ${VITE_KEYCLOAK_REALM}
         VITE_KEYCLOAK_CLIENT_ID: ${VITE_KEYCLOAK_CLIENT_ID}
+        VITE_APP_COMMIT: ${GIT_SHA:-}
+        VITE_APP_BUILD_TIME: ${BUILD_TIME:-}
     image: ghcr.io/${GHCR_ORG:-prisma}/prisma-frontend:${TAG:-latest}
     # Ver el comentario en el mismo campo de backend-core más arriba.
     pull_policy: build

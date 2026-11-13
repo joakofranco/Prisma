@@ -55,7 +55,7 @@ class OrganizationServiceTest {
         Organization.builder()
             .id(UUID.randomUUID())
             .name("Acme")
-            .rut("NIT-1")
+            .identifier("NIT-1")
             .sector("TECH")
             .size("SMALL")
             .responsible(responsible)
@@ -75,7 +75,7 @@ class OrganizationServiceTest {
     OrganizationDto dto = result.data().get(0);
     assertEquals(org.getId(), dto.id());
     assertEquals("Acme", dto.name());
-    assertEquals("NIT-1", dto.rut());
+    assertEquals("NIT-1", dto.identifier());
     assertEquals("TECH", dto.sector());
     assertEquals("SMALL", dto.size());
     assertEquals(responsible.getId(), dto.responsibleId());
@@ -99,7 +99,8 @@ class OrganizationServiceTest {
 
   @Test
   void listMapsNullResponsible() {
-    Organization bare = Organization.builder().id(UUID.randomUUID()).name("X").rut("N2").build();
+    Organization bare =
+        Organization.builder().id(UUID.randomUUID()).name("X").identifier("N2").build();
     PageRequest pr = PageRequest.of(0, 10, Sort.by("createdAt").descending());
     when(repo.search(isNull(), any(), any())).thenReturn(new PageImpl<>(List.of(bare), pr, 1));
 
@@ -185,11 +186,13 @@ class OrganizationServiceTest {
   void createPersistsEnabledOrganization() {
     when(repo.save(any(Organization.class))).thenAnswer(inv -> inv.getArgument(0));
 
-    CreateOrganizationDto dto = new CreateOrganizationDto("NewCo", "NIT-9", "FIN", "LARGE", null);
+    CreateOrganizationDto dto =
+        new CreateOrganizationDto("NewCo", "NIT-0009", false, "FIN", "LARGE", null);
     OrganizationDto result = service.create(dto);
 
     assertEquals("NewCo", result.name());
-    assertEquals("NIT-9", result.rut());
+    assertEquals("NIT-0009", result.identifier());
+    assertFalse(result.identifierIsRut());
     assertEquals("FIN", result.sector());
     assertEquals("LARGE", result.size());
     assertTrue(result.enabled());
@@ -203,37 +206,50 @@ class OrganizationServiceTest {
     when(repo.save(any(Organization.class))).thenAnswer(inv -> inv.getArgument(0));
 
     CreateOrganizationDto dto =
-        new CreateOrganizationDto("NewName", "NIT-X", "HEALTH", "MEDIUM", null);
+        new CreateOrganizationDto("NewName", "NIT-XXXX", false, "HEALTH", "MEDIUM", null);
     OrganizationDto result = service.update(org.getId(), dto);
 
     assertEquals("NewName", result.name());
-    assertEquals("NIT-X", result.rut());
+    assertEquals("NIT-XXXX", result.identifier());
     assertEquals("HEALTH", result.sector());
     assertEquals("MEDIUM", result.size());
   }
 
   @Test
-  void createNormalizesBlankRutToNull() {
+  void createNormalizesBlankIdentifierToNull() {
     when(repo.save(any(Organization.class))).thenAnswer(inv -> inv.getArgument(0));
 
-    CreateOrganizationDto dto = new CreateOrganizationDto("SinRut", "   ", "FIN", "LARGE", null);
+    CreateOrganizationDto dto =
+        new CreateOrganizationDto("SinId", "   ", false, "FIN", "LARGE", null);
     OrganizationDto result = service.create(dto);
 
-    // No "" -- una segunda organización sin RUT tiene que poder crearse sin chocar contra la
-    // UNIQUE constraint (que sí distingue NULL de "", ver el comentario en
+    // No "" -- una segunda organización sin identificador tiene que poder crearse sin chocar
+    // contra la UNIQUE constraint (que sí distingue NULL de "", ver el comentario en
     // OrganizationService.blankToNull).
-    assertNull(result.rut());
+    assertNull(result.identifier());
   }
 
   @Test
-  void updateNormalizesBlankRutToNull() {
+  void updateNormalizesBlankIdentifierToNull() {
     when(repo.findById(org.getId())).thenReturn(Optional.of(org));
     when(repo.save(any(Organization.class))).thenAnswer(inv -> inv.getArgument(0));
 
-    CreateOrganizationDto dto = new CreateOrganizationDto("NewName", "", "HEALTH", "MEDIUM", null);
+    CreateOrganizationDto dto =
+        new CreateOrganizationDto("NewName", "", false, "HEALTH", "MEDIUM", null);
     OrganizationDto result = service.update(org.getId(), dto);
 
-    assertNull(result.rut());
+    assertNull(result.identifier());
+  }
+
+  @Test
+  void theRutCheckboxWithoutTextLeavesNoIdentifierAndNoRutFlag() {
+    when(repo.save(any(Organization.class))).thenAnswer(inv -> inv.getArgument(0));
+
+    OrganizationDto result =
+        service.create(new CreateOrganizationDto("SinId", "  ", true, "FIN", "LARGE", null));
+
+    assertNull(result.identifier());
+    assertFalse(result.identifierIsRut());
   }
 
   @Test
@@ -241,7 +257,7 @@ class OrganizationServiceTest {
     UUID id = UUID.randomUUID();
     when(repo.findById(id)).thenReturn(Optional.empty());
 
-    CreateOrganizationDto dto = new CreateOrganizationDto("A", "B", null, null, null);
+    CreateOrganizationDto dto = new CreateOrganizationDto("A", "B", false, null, null, null);
 
     assertThrows(RuntimeException.class, () -> service.update(id, dto));
   }
@@ -261,72 +277,189 @@ class OrganizationServiceTest {
     assertFalse(org.getEnabled());
   }
 
-  // ---- RUT duplicado (C11) ----
+  // ---- Identificador: RUT (casilla «es un RUT») y largo mínimo ----
 
-  private Organization other(String name, String rut) {
-    return Organization.builder().id(UUID.randomUUID()).name(name).rut(rut).enabled(true).build();
+  private OrganizationDto createWith(String identifier, boolean isRut) {
+    return service.create(
+        new CreateOrganizationDto("Nueva", identifier, isRut, "TECH", "SMALL", null));
+  }
+
+  private uy.edu.prisma.domain.exception.InvalidRequestException assertInvalid(
+      String identifier, boolean isRut) {
+    uy.edu.prisma.domain.exception.InvalidRequestException ex =
+        assertThrows(
+            uy.edu.prisma.domain.exception.InvalidRequestException.class,
+            () -> createWith(identifier, isRut),
+            identifier);
+    assertEquals("identifier", ex.getField());
+    verify(repo, never()).save(any());
+    return ex;
   }
 
   @Test
-  void createRejectsADuplicateRutWithAClearMessageAndTheFieldName() {
-    Organization existing = other("Acme", "21.234.567-0");
-    when(repo.findByNormalizedRut("212345670")).thenReturn(List.of(existing));
+  void aValidRutIsStoredNormalizedAndFlaggedWhateverTheWayItWasTyped() {
+    when(repo.save(any(Organization.class))).thenAnswer(inv -> inv.getArgument(0));
+
+    for (String typed :
+        List.of("216166580014", "21-616658-001-4", " 21 616658 001 4 ", "UY 21.616658.001-4")) {
+      OrganizationDto result = createWith(typed, true);
+
+      assertEquals("21-616658-001-4", result.identifier(), typed);
+      assertTrue(result.identifierIsRut(), typed);
+    }
+  }
+
+  @Test
+  void anInvalidRutIsRejectedOnTheIdentifierField() {
+    for (String bad :
+        List.of(
+            "210303670014", // dígito verificador incorrecto
+            "21616658001", // 11 dígitos
+            "2161665800144", // 13 dígitos
+            "006166580014", // prefijo 00
+            "236166580014", // prefijo 23
+            "210000000014", // secuencial 000000
+            "216166580024", // grupo distinto de 001
+            "21616658001A", // no numérico
+            "NIT-12345678")) {
+      assertEquals(OrganizationMessages.INVALID_RUT, assertInvalid(bad, true).getMessage(), bad);
+    }
+  }
+
+  @Test
+  void aRutIsNotValidatedWhenTheCheckboxIsOff() {
+    when(repo.save(any(Organization.class))).thenAnswer(inv -> inv.getArgument(0));
+
+    // Mismo texto que arriba es inválido como RUT, pero como identificador libre se acepta tal
+    // cual.
+    OrganizationDto result = createWith("210303670014", false);
+
+    assertEquals("210303670014", result.identifier());
+    assertFalse(result.identifierIsRut());
+  }
+
+  @Test
+  void aFreeIdentifierNeedsAtLeastEightCharactersAndIsTrimmed() {
+    when(repo.save(any(Organization.class))).thenAnswer(inv -> inv.getArgument(0));
+
+    assertEquals(
+        OrganizationMessages.IDENTIFIER_TOO_SHORT, assertInvalid("1234567", false).getMessage());
+    assertEquals("12345678", createWith("12345678", false).identifier());
+    assertEquals("ABC-12345", createWith("  ABC-12345  ", false).identifier());
+  }
+
+  @Test
+  void aFreeIdentifierCannotExceedTheColumnLength() {
+    assertEquals(
+        OrganizationMessages.IDENTIFIER_TOO_LONG,
+        assertInvalid("X".repeat(OrganizationMessages.MAX_IDENTIFIER_LENGTH + 1), false)
+            .getMessage());
+  }
+
+  @Test
+  void updateAlsoValidatesAndNormalizesTheRut() {
+    when(repo.findById(org.getId())).thenReturn(Optional.of(org));
+    when(repo.save(any(Organization.class))).thenAnswer(inv -> inv.getArgument(0));
+
+    OrganizationDto result =
+        service.update(
+            org.getId(),
+            new CreateOrganizationDto("Acme", "211003420017", true, "TECH", "SMALL", null));
+
+    assertEquals("21-100342-001-7", result.identifier());
+    assertTrue(result.identifierIsRut());
+
+    assertThrows(
+        uy.edu.prisma.domain.exception.InvalidRequestException.class,
+        () ->
+            service.update(
+                org.getId(),
+                new CreateOrganizationDto("Acme", "211003420018", true, "TECH", "SMALL", null)));
+  }
+
+  // ---- Identificador duplicado (C11): se controla siempre, sea o no un RUT ----
+
+  private Organization other(String name, String identifier) {
+    return Organization.builder()
+        .id(UUID.randomUUID())
+        .name(name)
+        .identifier(identifier)
+        .enabled(true)
+        .build();
+  }
+
+  @Test
+  void createRejectsADuplicateIdentifierWithAClearMessageAndTheFieldName() {
+    Organization existing = other("Acme", "ABC.12345-X");
+    when(repo.findByNormalizedIdentifier("ABC12345X")).thenReturn(List.of(existing));
 
     uy.edu.prisma.domain.exception.ConflictException ex =
         assertThrows(
             uy.edu.prisma.domain.exception.ConflictException.class,
-            () ->
-                service.create(
-                    new CreateOrganizationDto("Nueva", "21.234.567-0", "TECH", "SMALL", null)));
+            () -> createWith("ABC.12345-X", false));
 
-    assertEquals("rut", ex.getField());
-    assertTrue(ex.getMessage().contains("Ya existe una organización con el RUT 21.234.567-0"));
+    assertEquals("identifier", ex.getField());
+    assertTrue(
+        ex.getMessage().contains("Ya existe una organización con el identificador ABC.12345-X"));
     assertTrue(ex.getMessage().contains("«Acme»"));
     verify(repo, never()).save(any());
   }
 
   @Test
-  void createDetectsTheSameRutWrittenInAnotherFormat() {
-    Organization existing = other("Acme", "212345670");
-    when(repo.findByNormalizedRut("212345670")).thenReturn(List.of(existing));
+  void aRutIsDetectedAsDuplicateOfTheSameNumberStoredWithoutTheRutFlag() {
+    Organization existing = other("Acme", "216166580014");
+    when(repo.findByNormalizedIdentifier("216166580014")).thenReturn(List.of(existing));
+
+    uy.edu.prisma.domain.exception.ConflictException ex =
+        assertThrows(
+            uy.edu.prisma.domain.exception.ConflictException.class,
+            () -> createWith("21-616658-001-4", true));
+
+    assertEquals("identifier", ex.getField());
+    assertTrue(ex.getMessage().contains("21-616658-001-4"), ex.getMessage());
+  }
+
+  @Test
+  void aFreeIdentifierIsDetectedAsDuplicateOfAStoredRut() {
+    Organization existing = other("Acme", "21-616658-001-4");
+    when(repo.findByNormalizedIdentifier("216166580014")).thenReturn(List.of(existing));
 
     assertThrows(
         uy.edu.prisma.domain.exception.ConflictException.class,
-        () ->
-            service.create(
-                new CreateOrganizationDto("Nueva", " 21.234.567-0 ", "TECH", "SMALL", null)));
+        () -> createWith(" 216166580014 ", false));
   }
 
   @Test
-  void createWithAnUnusedRutOrNoRutIsNotChecked() {
-    when(repo.findByNormalizedRut(any())).thenReturn(List.of());
+  void createWithAnUnusedIdentifierOrNoIdentifierIsNotChecked() {
+    when(repo.findByNormalizedIdentifier(any())).thenReturn(List.of());
     when(repo.save(any(Organization.class))).thenAnswer(inv -> inv.getArgument(0));
 
-    service.create(new CreateOrganizationDto("Uno", "55555555", "TECH", "SMALL", null));
-    service.create(new CreateOrganizationDto("Dos", null, "TECH", "SMALL", null));
-    service.create(new CreateOrganizationDto("Tres", "   ", "TECH", "SMALL", null));
+    createWith("55555555", false);
+    createWith(null, false);
+    createWith("   ", false);
 
-    // Solo el primero consulta: un RUT vacío es opcional y no puede estar "duplicado".
-    verify(repo, times(1)).findByNormalizedRut(any());
+    // Solo el primero consulta: un identificador vacío es opcional y no puede estar "duplicado".
+    verify(repo, times(1)).findByNormalizedIdentifier(any());
   }
 
   @Test
-  void updateAllowsKeepingTheOrganizationsOwnRut() {
+  void updateAllowsKeepingTheOrganizationsOwnIdentifier() {
     when(repo.findById(org.getId())).thenReturn(Optional.of(org));
     when(repo.save(org)).thenReturn(org);
-    when(repo.findByNormalizedRut("NIT1")).thenReturn(List.of(org));
+    when(repo.findByNormalizedIdentifier("NIT00001")).thenReturn(List.of(org));
 
     assertDoesNotThrow(
         () ->
             service.update(
-                org.getId(), new CreateOrganizationDto("Acme", "NIT-1", "TECH", "SMALL", null)));
+                org.getId(),
+                new CreateOrganizationDto("Acme", "NIT-0001", false, "TECH", "SMALL", null)));
   }
 
   @Test
-  void updateRejectsTakingAnotherOrganizationsRut() {
+  void updateRejectsTakingAnotherOrganizationsIdentifier() {
     Organization existing = other("Otra", "99999999");
     when(repo.findById(org.getId())).thenReturn(Optional.of(org));
-    when(repo.findByNormalizedRut("99999999")).thenReturn(List.of(existing));
+    when(repo.findByNormalizedIdentifier("99999999")).thenReturn(List.of(existing));
 
     uy.edu.prisma.domain.exception.ConflictException ex =
         assertThrows(
@@ -334,18 +467,18 @@ class OrganizationServiceTest {
             () ->
                 service.update(
                     org.getId(),
-                    new CreateOrganizationDto("Acme", "99999999", "TECH", "SMALL", null)));
+                    new CreateOrganizationDto("Acme", "99999999", false, "TECH", "SMALL", null)));
 
-    assertEquals("rut", ex.getField());
+    assertEquals("identifier", ex.getField());
     verify(repo, never()).save(any());
   }
 
   @Test
-  void normalizeRutIgnoresSeparatorsSpacesAndCase() {
-    assertEquals("212345670", OrganizationService.normalizeRut(" 21.234.567-0 "));
-    assertEquals("12345678K", OrganizationService.normalizeRut("12.345.678-k"));
-    assertEquals("", OrganizationService.normalizeRut(null));
-    assertEquals("", OrganizationService.normalizeRut("  - . "));
+  void normalizeIdentifierIgnoresSeparatorsSpacesAndCase() {
+    assertEquals("212345670", OrganizationService.normalizeIdentifier(" 21.234.567-0 "));
+    assertEquals("12345678K", OrganizationService.normalizeIdentifier("12.345.678-k"));
+    assertEquals("", OrganizationService.normalizeIdentifier(null));
+    assertEquals("", OrganizationService.normalizeIdentifier("  - . "));
   }
 
   private User orgUser(String email, Set<UserRole> roles, boolean enabled, UUID keycloakId) {

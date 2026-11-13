@@ -94,12 +94,18 @@ multi-tenant en cada capa.
 ## 2. Organizaciones
 
 ### HU-ORG-01 — Alta de organización
-> Como `PRISMA_ADMIN`, quiero dar de alta una organización (nombre, RUT, sector, tamaño), para
-> empezar a evaluarla.
+> Como `PRISMA_ADMIN`, quiero dar de alta una organización (nombre, identificador, sector,
+> tamaño), para empezar a evaluarla.
 
-- El RUT es **opcional**: no toda organización lo tiene cargado al momento del alta. Un RUT en
-  blanco se normaliza a `NULL` (no `""`) en el backend, para que la constraint `UNIQUE` no choque
-  entre dos organizaciones sin RUT cargado.
+- El identificador es **opcional**: no toda organización lo tiene cargado al momento del alta. Uno
+  en blanco se normaliza a `NULL` (no `""`) en el backend, para que la constraint `UNIQUE` no choque
+  entre dos organizaciones sin identificador.
+- Una casilla **«Es un RUT»** indica si el identificador es un RUT uruguayo. Con ella marcada se
+  valida el formato (12 dígitos `AA-BBBBBB-001-D`) y el dígito verificador, y se guarda normalizado;
+  sin ella basta con tener al menos 8 caracteres. El servidor valida siempre; el formulario solo
+  avisa antes de enviar.
+- Un identificador ya usado por otra organización se rechaza **siempre**, esté o no marcada la
+  casilla (se compara sin puntos, guiones ni espacios).
 - **Implementado en:** `POST /api/organizations`, `OrganizationsView.vue`.
 
 ### HU-ORG-02 — Guiar la designación del responsable al crear una organización
@@ -246,6 +252,10 @@ multi-tenant en cada capa.
 > evaluación, para no tener que responder controles que no aplican a mi sector.
 
 - **Implementado en:** `NewEvaluationView.vue`, `CreateEvaluationDto.communityProfileId`.
+- **Decisión de diseño:** el perfil pertenece a la **evaluación**, no a la organización. La
+  organización no tiene un perfil propio (ver `Evaluation.communityProfile` en
+  [`mapeo-jpa.md`](mapeo-jpa.md)). Esto cubre lo que RF-ORG-02 llama «perfil de organización», con
+  la diferencia de que la clasificación se decide en cada evaluación.
 
 ---
 
@@ -669,7 +679,7 @@ y roles habilitados en [`docs/API.md`](API.md).
   organización (para que `ORG_RESPONSIBLE` lo vea) y a su nombre; si no coincide con nadie
   (usuario inexistente), queda sin vincular y sólo lo ve `PRISMA_ADMIN`.
 - **El bloqueo en sí no es cosa de esta historia**: ya lo hace Keycloak (`bruteForceProtected`,
-  `failureFactor: 5` por defecto — configurable en vivo desde su consola de administración, Realm
+  `failureFactor: 10` (bloqueo de 15 min) — configurable en vivo desde su consola de administración, Realm
   Settings → Security Defenses → Brute Force Detection, sin redeploy). Esto sólo le da
   visibilidad al equipo desde la app.
 - **Implementado en:** `LoginFailureAuditSyncService`, `KeycloakAdminClient.fetchLoginFailures`,

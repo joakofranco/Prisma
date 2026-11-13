@@ -1,8 +1,16 @@
 package uy.edu.prisma.application;
 
+import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -86,8 +94,10 @@ public class UserService {
               ? Page.empty(pageable)
               : userRepo.searchByOrganizationIdIn(allowedOrgIds, pattern, pageable);
     }
+    List<User> users = result.getContent();
+    Map<UUID, LockState> locks = lockStates(users);
     return new PaginatedDto<>(
-        result.getContent().stream().map(this::toDto).toList(),
+        users.stream().map(u -> toDto(u, locks.get(u.getId()))).toList(),
         result.getTotalElements(),
         page,
         pageSize);
@@ -98,7 +108,60 @@ public class UserService {
     User user =
         userRepo.findById(id).orElseThrow(() -> new ResourceNotFoundException("Usuario", id));
     assertUserAccess(user);
-    return toDto(user);
+    return toDto(user, lockStates(List.of(user)).get(user.getId()));
+  }
+
+  private static final Logger log = LoggerFactory.getLogger(UserService.class);
+
+  // Cuánto se espera, como máximo, a Keycloak para saber si una cuenta está bloqueada: la lista de
+  // usuarios no puede quedar colgada porque Keycloak tarde o no responda.
+  private static final long LOCK_LOOKUP_TIMEOUT_MS = 2000;
+  private static final ExecutorService LOCK_LOOKUPS = Executors.newVirtualThreadPerTaskExecutor();
+
+  /** Bloqueo de una cuenta por intentos fallidos (null = no se sabe). */
+  private record LockState(Boolean locked, OffsetDateTime until) {
+    static final LockState UNKNOWN = new LockState(null, null);
+  }
+
+  /**
+   * Estado de bloqueo (RF-AUTH-08) de cada usuario que ya tiene cuenta en Keycloak, para que la
+   * pantalla de usuarios muestre el estado real y no solo «puede iniciar sesión». Keycloak no tiene
+   * una consulta en lote: se hace una por usuario, en paralelo y con tope de espera. Si una falla o
+   * tarda de más, ese usuario queda con el estado desconocido (la lista igual se devuelve).
+   */
+  private Map<UUID, LockState> lockStates(List<User> users) {
+    Map<UUID, CompletableFuture<LockState>> lookups = new HashMap<>();
+    for (User u : users) {
+      UUID keycloakId = u.getKeycloakId();
+      if (keycloakId == null) {
+        continue;
+      }
+      lookups.put(
+          u.getId(),
+          CompletableFuture.supplyAsync(() -> lockStateOf(keycloakId), LOCK_LOOKUPS)
+              .completeOnTimeout(LockState.UNKNOWN, LOCK_LOOKUP_TIMEOUT_MS, TimeUnit.MILLISECONDS));
+    }
+    Map<UUID, LockState> states = new HashMap<>();
+    lookups.forEach((id, future) -> states.put(id, future.join()));
+    return states;
+  }
+
+  private LockState lockStateOf(UUID keycloakId) {
+    try {
+      var status = keycloakAdmin.loginFailureStatus(keycloakId);
+      if (!status.disabled()) {
+        return new LockState(false, null);
+      }
+      OffsetDateTime until =
+          status.failedLoginNotBefore() > 0
+              ? OffsetDateTime.ofInstant(
+                  Instant.ofEpochSecond(status.failedLoginNotBefore()), ZoneOffset.UTC)
+              : null;
+      return new LockState(true, until);
+    } catch (RuntimeException e) {
+      log.warn("No se pudo consultar el bloqueo de la cuenta {}: {}", keycloakId, e.getMessage());
+      return LockState.UNKNOWN;
+    }
   }
 
   // Un usuario siempre puede ver su propia ficha (p.ej. "Mi Cuenta"); fuera de eso, mismo criterio
@@ -544,6 +607,10 @@ public class UserService {
   }
 
   private UserDto toDto(User u) {
+    return toDto(u, null);
+  }
+
+  private UserDto toDto(User u, LockState lock) {
     return new UserDto(
         u.getId(),
         u.getEmail(),
@@ -556,7 +623,9 @@ public class UserService {
         u.getCreatedAt(),
         u.getKeycloakId() != null,
         u.getInvitedAt(),
-        u.getInvitationAcceptedAt());
+        u.getInvitationAcceptedAt(),
+        lock != null ? lock.locked() : null,
+        lock != null ? lock.until() : null);
   }
 
   private Set<String> toRoleNames(Set<UserRole> roles) {

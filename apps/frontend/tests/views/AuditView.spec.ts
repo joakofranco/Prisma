@@ -655,3 +655,43 @@ describe('AuditView: citas de la IA (PRI-359)', () => {
     expect(openSpy).toHaveBeenCalledWith('blob:doc#page=2', '_blank');
   });
 });
+
+describe('AuditView: «Buscar citas» según el estado (RF-EVI-14)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    document.body.innerHTML = '';
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    auditService.getObservations.mockResolvedValue({ data: [] });
+    auditService.getVerdicts.mockResolvedValue({ data: [] });
+    evaluationsService.getFlags.mockResolvedValue({ data: [] });
+    evidenceService.getByEvaluation.mockResolvedValue({
+      data: [{ id: 'ev-1', controlId: 'ctl-1', fileName: 'politica-1.pdf' }],
+    });
+    evidenceService.getCitations.mockResolvedValue({ data: [] });
+    catalogService.getByVersion.mockResolvedValue({ data: catalog });
+  });
+
+  it('con la evaluación en auditoría se puede buscar citas', async () => {
+    const wrapper = await mountView('IN_AUDIT');
+
+    const button = wrapper.find('[data-testid="search-citations"]');
+    expect((button.element as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it.each(['READY_FOR_AUDIT', 'RETURNED', 'APPROVED', 'ARCHIVED'])(
+    '%s: el botón está deshabilitado y no consulta a la IA',
+    async (status) => {
+      const wrapper = await mountView(status);
+
+      const button = wrapper.find('[data-testid="search-citations"]');
+      expect((button.element as HTMLButtonElement).disabled).toBe(true);
+      expect(button.attributes('title')).toContain(
+        'solo está disponible con la evaluación en auditoría',
+      );
+
+      await button.trigger('click');
+      await flushPromises();
+      expect(evidenceService.getCitations).not.toHaveBeenCalled();
+    },
+  );
+});

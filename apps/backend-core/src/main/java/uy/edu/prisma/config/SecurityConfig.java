@@ -97,6 +97,9 @@ public class SecurityConfig {
             auth ->
                 auth.requestMatchers("/actuator/**", "/actuator")
                     .permitAll()
+                    // Versión y entorno: los muestra la pantalla de login, antes de autenticarse.
+                    .requestMatchers("/api/version")
+                    .permitAll()
                     .requestMatchers("/api/v1/docs/**", "/swagger-ui/**", "/swagger-ui.html")
                     .permitAll()
                     .anyRequest()

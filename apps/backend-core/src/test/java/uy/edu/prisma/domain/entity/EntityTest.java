@@ -80,19 +80,20 @@ class EntityTest {
     UUID id = UUID.randomUUID();
     Organization all =
         new Organization(
-            id, "N", "NIT", "S", "Z", null, true, OffsetDateTime.now(), OffsetDateTime.now());
+            id, "N", "NIT", true, "S", "Z", null, true, OffsetDateTime.now(), OffsetDateTime.now());
     assertEquals(id, all.getId());
     assertEquals("N", all.getName());
-    assertEquals("NIT", all.getRut());
+    assertEquals("NIT", all.getIdentifier());
+    assertTrue(all.getIdentifierIsRut());
     assertEquals("S", all.getSector());
     assertEquals("Z", all.getSize());
     assertNull(all.getResponsible());
     assertTrue(all.getEnabled());
 
     Organization built =
-        Organization.builder().id(id).name("N2").rut("N2").sector("S2").size("Z2").build();
+        Organization.builder().id(id).name("N2").identifier("N2").sector("S2").size("Z2").build();
     built.setName("N3");
-    built.setRut("N3");
+    built.setIdentifier("N3");
     built.setSector("S3");
     built.setSize("Z3");
     built.setResponsible(User.builder().id(UUID.randomUUID()).build());

@@ -113,11 +113,28 @@
           </button>
         </div>
         <span
-          v-else-if="value"
+          v-else-if="value && (row as User).locked !== true"
           class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
         >
           Puede iniciar sesión
         </span>
+        <!-- RF-AUTH-08: bloqueada por intentos fallidos. Hasta que pase el tiempo o un administrador
+        la desbloquee no puede iniciar sesión, aunque esté «Activa». -->
+        <div v-else-if="(row as User).locked === true" data-testid="account-locked">
+          <span
+            class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300"
+          >
+            <LockClosedIcon class="w-3 h-3" aria-hidden="true" />
+            Cuenta bloqueada
+          </span>
+          <span
+            v-if="(row as User).lockedUntil"
+            class="block mt-1 text-xs text-slate-500 dark:text-slate-400"
+            data-testid="locked-until"
+          >
+            Hasta las {{ formatTime((row as User).lockedUntil as string) }}
+          </span>
+        </div>
         <span
           v-if="(row as User).invitationAcceptedAt"
           class="block mt-1 text-xs text-slate-500 dark:text-slate-400"
@@ -151,9 +168,16 @@
         <button
           v-if="isPlatformAdmin && (row as User).canLogin"
           class="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
-          title="Desbloquear cuenta"
+          :class="[
+            (row as User).locked === true
+              ? 'bg-red-50 text-red-600 hover:bg-red-100 dark:bg-red-950 dark:text-red-300 dark:hover:bg-red-900'
+              : '',
+            (row as User).locked === false ? 'opacity-40' : '',
+          ]"
+          :title="unlockTitle(row as User)"
           aria-label="Desbloquear cuenta"
           data-testid="unlock-user"
+          :data-locked="String((row as User).locked ?? 'unknown')"
           @click="confirmUnlock(row as User)"
         >
           <LockOpenIcon class="w-4 h-4" />
@@ -396,6 +420,7 @@
     TrashIcon,
     NoSymbolIcon,
     LockOpenIcon,
+    LockClosedIcon,
     CheckCircleIcon,
     ClipboardDocumentIcon,
     ArrowPathIcon,
@@ -718,9 +743,25 @@
   }
 
   // RF-AUTH-08: Keycloak bloquea la cuenta tras 10 intentos fallidos seguidos en 15 minutos. El
-  // administrador global puede levantar el bloqueo sin esperar. No se consulta el estado de cada fila
-  // (sería una llamada a Keycloak por usuario): el botón está siempre y el backend dice si la cuenta
-  // estaba bloqueada.
+  // backend informa el estado real de cada usuario de la página (`locked`, `lockedUntil`): la
+  // columna «Acceso» lo muestra y el candado se resalta solo en las cuentas bloqueadas. El
+  // administrador global puede levantar el bloqueo sin esperar; el botón sigue disponible aunque la
+  // fila no figure bloqueada (el estado puede haber cambiado desde que se cargó la lista) y el
+  // backend dice si realmente había algo que limpiar.
+  function formatTime(iso: string): string {
+    return new Date(iso).toLocaleTimeString('es-UY', { hour: '2-digit', minute: '2-digit' });
+  }
+
+  function unlockTitle(user: User): string {
+    if (user.locked === true) {
+      return user.lockedUntil
+        ? `Desbloquear cuenta (bloqueada hasta las ${formatTime(user.lockedUntil)})`
+        : 'Desbloquear cuenta (bloqueada)';
+    }
+    if (user.locked === false) return 'Desbloquear cuenta (no está bloqueada)';
+    return 'Desbloquear cuenta';
+  }
+
   async function confirmUnlock(user: User) {
     if (
       !confirm(
@@ -736,6 +777,8 @@
       } else {
         notification.warning(`La cuenta de ${user.firstName} ${user.lastName} no estaba bloqueada`);
       }
+      // Se vuelve a pedir la página para que la fila refleje el estado real.
+      await store.fetchUsers(currentPage.value, pageSize, searchTerm.value);
     } catch (err) {
       notification.error(getErrorMessage(err, 'No se pudo desbloquear la cuenta'));
     }

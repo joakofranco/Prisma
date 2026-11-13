@@ -51,13 +51,25 @@ public class Dto {
     return value == null ? null : value.trim();
   }
 
+  // ---- Versión de la aplicación ----
+  // `development`: el entorno es de desarrollo (el frontend muestra un cartel). `commit` y
+  // `buildTime` solo vienen con sesión iniciada.
+  public record AppVersionDto(
+      String application,
+      String version,
+      String environment,
+      boolean development,
+      String commit,
+      String buildTime) {}
+
   // ---- Organization ----
   public record OrganizationDto(
       UUID id,
       String name,
-      // Uruguay usa "RUT" (Colombia y otros usan "NIT") -- opcional, ver
-      // V17__organization_rut_optional.sql.
-      String rut,
+      // Identificador (RUT u otro), opcional. `identifierIsRut`: el servicio lo validó como RUT
+      // uruguayo y lo guardó normalizado. Ver V35__organization_identifier.sql.
+      String identifier,
+      boolean identifierIsRut,
       String sector,
       String size,
       UUID responsibleId,
@@ -69,7 +81,8 @@ public class Dto {
 
   public record CreateOrganizationDto(
       @NotBlank(message = "El nombre es obligatorio") String name,
-      String rut,
+      String identifier,
+      Boolean identifierIsRut,
       String sector,
       String size,
       UUID responsibleId) {}
@@ -109,11 +122,48 @@ public class Dto {
       // por primera vez. invitedAt != null && invitationAcceptedAt == null = invitación pendiente.
       // Ambos null = alta con contraseña temporal.
       OffsetDateTime invitedAt,
-      OffsetDateTime invitationAcceptedAt) {
+      OffsetDateTime invitationAcceptedAt,
+      // Bloqueo por intentos fallidos de login (Keycloak, RF-AUTH-08): true = la cuenta está
+      // bloqueada ahora mismo; false = no lo está; null = no se sabe (todavía no tiene cuenta en
+      // Keycloak, o Keycloak no respondió) -- la pantalla no muestra nada en ese caso.
+      // lockedUntil = hasta cuándo dura el bloqueo; solo viene si locked es true.
+      Boolean locked,
+      OffsetDateTime lockedUntil) {
     public UserDto {
       organizationIds = organizationIds == null ? Set.of() : Set.copyOf(organizationIds);
       organizationNames = organizationNames == null ? List.of() : List.copyOf(organizationNames);
       roles = roles == null ? Set.of() : Set.copyOf(roles);
+    }
+
+    // Compat: firma previa al estado de bloqueo (se desconoce).
+    public UserDto(
+        UUID id,
+        String email,
+        String firstName,
+        String lastName,
+        Set<UUID> organizationIds,
+        List<String> organizationNames,
+        Set<String> roles,
+        Boolean enabled,
+        OffsetDateTime createdAt,
+        boolean canLogin,
+        OffsetDateTime invitedAt,
+        OffsetDateTime invitationAcceptedAt) {
+      this(
+          id,
+          email,
+          firstName,
+          lastName,
+          organizationIds,
+          organizationNames,
+          roles,
+          enabled,
+          createdAt,
+          canLogin,
+          invitedAt,
+          invitationAcceptedAt,
+          null,
+          null);
     }
 
     // Compat: firma previa a la invitación por correo (usuario no invitado).
