@@ -628,6 +628,15 @@ public class EvaluationService {
             .findById(evaluationId)
             .orElseThrow(() -> new ResourceNotFoundException("Evaluación", evaluationId));
     currentUser.assertOrganizationAccess(eval.getOrganization().getId());
+    // Una evaluación aprobada (sellada, certificada) o archivada es un registro cerrado: recalcular
+    // borraría y reescribiría los resultados que ya respaldan la certificación y los reportes.
+    if (eval.getStatus() == Evaluation.Status.APPROVED
+        || eval.getStatus() == Evaluation.Status.ARCHIVED) {
+      throw new InvalidRequestException(
+          "No se puede calcular la madurez: la evaluación está en estado "
+              + eval.getStatus()
+              + ", que ya no admite cambios");
+    }
 
     // Delete old results
     matRepo.deleteAllInBatch(matRepo.findByEvaluationId(evaluationId));

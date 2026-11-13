@@ -1039,4 +1039,81 @@ class EvidenceServiceTest {
 
     assertThrows(ResourceNotFoundException.class, () -> service.download(id));
   }
+
+  // ---- Evaluación cerrada: nadie puede borrar evidencia, ni siquiera con permiso de borrado ----
+
+  /** Estados en que la organización ya no puede tocar la evidencia. */
+  private static final List<Evaluation.Status> CLOSED_FOR_EVIDENCE =
+      List.of(
+          Evaluation.Status.READY_FOR_AUDIT,
+          Evaluation.Status.IN_AUDIT,
+          Evaluation.Status.APPROVED,
+          Evaluation.Status.ARCHIVED);
+
+  private void assertDeleteRejectedFor(Evaluation.Status status) {
+    eval.setStatus(status);
+    when(evidenceRepo.findById(evidence.getId())).thenReturn(Optional.of(evidence));
+
+    assertThrows(
+        uy.edu.prisma.domain.exception.InvalidRequestException.class,
+        () -> service.delete(evidence.getId()),
+        "estado " + status);
+    verify(evidenceRepo, never()).delete(any());
+    verify(s3Client, never()).deleteObject(any(DeleteObjectRequest.class));
+  }
+
+  @Test
+  void anAdministratorCannotDeleteEvidenceOnceTheEvaluationIsClosed() {
+    // Por defecto el usuario de la prueba es PRISMA_ADMIN con acceso a todas las organizaciones.
+    for (Evaluation.Status status : CLOSED_FOR_EVIDENCE) {
+      assertDeleteRejectedFor(status);
+    }
+  }
+
+  @Test
+  void theOrganizationResponsibleCannotDeleteEvidenceOnceTheEvaluationIsClosed() {
+    when(currentUser.hasAllOrganizationsAccess()).thenReturn(false);
+    when(currentUser.hasRole(UserRole.ORG_RESPONSIBLE)).thenReturn(true);
+    for (Evaluation.Status status : CLOSED_FOR_EVIDENCE) {
+      assertDeleteRejectedFor(status);
+    }
+  }
+
+  @Test
+  void theUploaderCannotDeleteEvidenceOnceTheEvaluationIsClosed() {
+    User uploader = User.builder().id(UUID.randomUUID()).build();
+    evidence.setUploadedBy(uploader);
+    when(currentUser.hasAllOrganizationsAccess()).thenReturn(false);
+    when(currentUser.hasRole(UserRole.ORG_RESPONSIBLE)).thenReturn(false);
+    when(currentUser.currentUserId()).thenReturn(uploader.getId());
+    for (Evaluation.Status status : CLOSED_FOR_EVIDENCE) {
+      assertDeleteRejectedFor(status);
+    }
+  }
+
+  @Test
+  void aClosedEvaluationAlsoRejectsUploadingAndReindexingEvidence() {
+    when(evidenceRepo.findById(evidence.getId())).thenReturn(Optional.of(evidence));
+    for (Evaluation.Status status :
+        List.of(Evaluation.Status.APPROVED, Evaluation.Status.ARCHIVED)) {
+      eval.setStatus(status);
+      assertThrows(
+          uy.edu.prisma.domain.exception.InvalidRequestException.class,
+          () -> service.reindex(evidence.getId()),
+          "reindexar en " + status);
+    }
+  }
+
+  @Test
+  void whileTheEvaluationIsBeingAnsweredDeletingStillWorks() throws Exception {
+    for (Evaluation.Status status :
+        List.of(
+            Evaluation.Status.DRAFT, Evaluation.Status.IN_PROGRESS, Evaluation.Status.RETURNED)) {
+      eval.setStatus(status);
+      when(evidenceRepo.findById(evidence.getId())).thenReturn(Optional.of(evidence));
+
+      service.delete(evidence.getId());
+    }
+    verify(evidenceRepo, times(3)).delete(evidence);
+  }
 }

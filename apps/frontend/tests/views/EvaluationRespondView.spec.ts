@@ -185,3 +185,113 @@ describe('EvaluationRespondView: comentario por subcategoría (RF-EVA-06)', () =
     expect(wrapper.find('h3.text-lg').text()).toContain('control dos');
   });
 });
+
+describe('EvaluationRespondView: acciones según el estado de la evaluación', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    vi.clearAllMocks();
+    evaluationsService.getResponses.mockResolvedValue({ data: [] });
+    evaluationsService.getSubcategoryComments.mockResolvedValue({ data: [] });
+    evaluationsService.saveResponse.mockResolvedValue({ data: {} });
+    evaluationsService.getFlags.mockResolvedValue({ data: [] });
+    evaluationsService.setFlag.mockResolvedValue({});
+    evaluationsService.saveSubcategoryComment.mockResolvedValue({ data: {} });
+    evaluationsService.calculateMaturity.mockResolvedValue({});
+    catalogService.getByVersion.mockResolvedValue({ data: catalog });
+  });
+
+  async function mountWith(status?: string) {
+    evaluationsService.getById.mockResolvedValue({
+      data: {
+        id: 'eval-1',
+        name: 'Eval',
+        status,
+        catalogVersion: '5.0',
+        communityProfileId: null,
+      },
+    });
+    return mountView();
+  }
+
+  const isDisabled = (el: { element: Element }) => (el.element as HTMLButtonElement).disabled;
+
+  it.each(['DRAFT', 'IN_PROGRESS', 'RETURNED'])(
+    '%s: se puede responder y guardar',
+    async (status) => {
+      const wrapper = await mountWith(status);
+
+      expect(wrapper.find('[data-testid="respond-locked"]').exists()).toBe(false);
+      expect(isDisabled(wrapper.find('[data-testid="save-progress"]'))).toBe(false);
+      for (const radio of wrapper.findAll('[role="radio"]')) expect(isDisabled(radio)).toBe(false);
+      expect(
+        (
+          wrapper.find('[data-testid="subcategory-comment"] textarea')
+            .element as HTMLTextAreaElement
+        ).disabled,
+      ).toBe(false);
+      expect(isDisabled(wrapper.find('[data-testid="flag-control"]'))).toBe(false);
+    },
+  );
+
+  it.each(['READY_FOR_AUDIT', 'IN_AUDIT', 'APPROVED', 'ARCHIVED'])(
+    '%s: respuestas, comentarios y guardado quedan de solo lectura',
+    async (status) => {
+      const wrapper = await mountWith(status);
+
+      expect(wrapper.find('[data-testid="respond-locked"]').text()).toContain('solo lectura');
+      expect(isDisabled(wrapper.find('[data-testid="save-progress"]'))).toBe(true);
+      const radios = wrapper.findAll('[role="radio"]');
+      expect(radios).toHaveLength(2);
+      for (const radio of radios) expect(isDisabled(radio)).toBe(true);
+      expect(
+        (
+          wrapper.find('[data-testid="subcategory-comment"] textarea')
+            .element as HTMLTextAreaElement
+        ).disabled,
+      ).toBe(true);
+      const addObservation = wrapper.findAll('button').find((b) => b.text().includes('Agregar'));
+      expect(isDisabled(addObservation!)).toBe(true);
+    },
+  );
+
+  it('«Marcar para revisar» también se puede durante la auditoría, pero no cerrada la evaluación', async () => {
+    const inAudit = await mountWith('IN_AUDIT');
+    expect(isDisabled(inAudit.find('[data-testid="flag-control"]'))).toBe(false);
+
+    for (const status of ['READY_FOR_AUDIT', 'APPROVED', 'ARCHIVED']) {
+      const wrapper = await mountWith(status);
+      expect(isDisabled(wrapper.find('[data-testid="flag-control"]')), status).toBe(true);
+    }
+  });
+
+  it('en solo lectura un clic sobre «Guardar progreso» no llama al servidor', async () => {
+    const wrapper = await mountWith('APPROVED');
+
+    await wrapper.find('[data-testid="save-progress"]').trigger('click');
+    await flushPromises();
+
+    expect(evaluationsService.saveResponse).not.toHaveBeenCalled();
+    expect(evaluationsService.saveSubcategoryComment).not.toHaveBeenCalled();
+  });
+
+  it('en solo lectura se puede recorrer el catálogo y la última pregunta ofrece volver, sin guardar', async () => {
+    const wrapper = await mountWith('APPROVED');
+    const next = wrapper.find('[data-testid="next-or-finish"]');
+    expect(next.text()).toBe('Siguiente');
+
+    await next.trigger('click');
+    expect(wrapper.find('[data-testid="next-or-finish"]').text()).toBe('Volver a la evaluación');
+    await wrapper.find('[data-testid="next-or-finish"]').trigger('click');
+    await flushPromises();
+
+    expect(evaluationsService.saveResponse).not.toHaveBeenCalled();
+    expect(evaluationsService.calculateMaturity).not.toHaveBeenCalled();
+  });
+
+  it('con el estado desconocido no se bloquea nada: decide el backend', async () => {
+    const wrapper = await mountWith(undefined);
+
+    expect(wrapper.find('[data-testid="respond-locked"]').exists()).toBe(false);
+    expect(isDisabled(wrapper.find('[data-testid="save-progress"]'))).toBe(false);
+  });
+});
