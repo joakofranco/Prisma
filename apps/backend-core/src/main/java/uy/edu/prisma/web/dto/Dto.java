@@ -445,6 +445,37 @@ public class Dto {
           @Max(value = 4, message = "El nivel objetivo debe ser entre 1 y 4")
           Integer targetLevel) {}
 
+  public record ControlGuideItemDto(
+      UUID id,
+      String code,
+      String description,
+      Integer targetLevel,
+      String requirementCode,
+      String interpretation,
+      String example,
+      String evidence) {}
+
+  public record SaveControlGuideDto(
+      @Size(max = 4000, message = "La interpretación no puede superar los 4000 caracteres")
+          String interpretation,
+      @Size(max = 4000, message = "El ejemplo no puede superar los 4000 caracteres") String example,
+      @Size(max = 4000, message = "La evidencia no puede superar los 4000 caracteres")
+          String evidence) {}
+
+  public record DeleteControlGuidesDto(
+      @NotEmpty(message = "Indique al menos un control") List<UUID> controlIds) {}
+
+  public record DeleteControlGuidesResultDto(int removed) {}
+
+  public record ControlGuideSummaryDto(int total, int withGuide) {}
+
+  public record ControlGuideImportResultDto(
+      int parsed,
+      int updated,
+      List<String> notInCatalog,
+      List<String> incomplete,
+      int catalogWithoutGuide) {}
+
   public record CatalogImportDto(
       @NotBlank(message = "La versión es obligatoria")
           @Size(max = 20, message = "La versión no puede superar los 20 caracteres")
