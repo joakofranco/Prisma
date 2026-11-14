@@ -537,3 +537,32 @@ de `infra/keycloak/themes/`.
 - Setup completo del entorno: [`Dev-Config.md`](Dev-Config.md)
 - Modelo de seguridad y endurecimientos recientes: [`SECURITY.md`](SECURITY.md)
 - Testing (automatizado + metodología manual que encontró varios de estos incidentes): [`Testing.md`](Testing.md)
+
+## Alertas y monitoreo
+
+Prometheus evalúa las reglas de `infra/monitoring/prometheus/rules/` (`availability.yml`,
+`saturation.yml`, `security.yml`) y manda lo que dispara a Alertmanager, que las envía por correo.
+Las alertas activas se ven en Grafana → carpeta PRISMA → **«PRISMA · Estado general y alertas»**.
+
+| Tablero | Qué muestra |
+|---|---|
+| Estado general y alertas | Alertas activas, estado de cada servicio (ACTIVO/CAÍDO), saturación del host, contenedores, API |
+| Seguridad: DoS y fuerza bruta | Peticiones y 429 de NGINX, logins fallidos de Keycloak, 401/403 de la API, conexiones TCP |
+| Elasticsearch | Estado del clúster, shards, heap, indexación y búsquedas |
+| Observabilidad y sondas | Prometheus, Alertmanager, Loki, Promtail, Grafana, Keycloak y latencia de las sondas |
+
+**Qué alerta:** servicio caído (`ServiceDown`, `ProbeDown`, `ContainerNotRunning`), saturación de
+CPU, memoria, disco, conexiones de PostgreSQL, heap de la JVM y Redis, errores 5xx y latencia de la
+API, y seguridad: DoS (`DosRateLimit*`, `RequestFloodSpike`, `TcpConnectionsFlood`,
+`SynFloodSuspected`) y fuerza bruta (`LoginFailuresHigh`, `BruteForceInProgress`,
+`LoginRateLimitHit`, `ApiUnauthorizedSpike`). Los umbrales están en cada regla.
+
+**Correo:** por defecto las alertas llegan a Mailpit (buzón de pruebas, <http://localhost:8025>).
+Para producción se definen en `.env` `ALERT_EMAIL_TO`, `ALERT_SMTP_FROM`, `ALERT_SMTP_SMARTHOST`,
+`ALERT_SMTP_USER`, `ALERT_SMTP_PASSWORD` y `ALERT_SMTP_REQUIRE_TLS` (cuenta propia del sistema).
+
+**Probar las alertas:** detener un servicio (`docker stop prisma-pgadmin`) dispara `ProbeDown` al
+minuto; 25 logins fallidos seguidos disparan `LoginFailuresHigh`. Tras recrear contenedores,
+`docker exec prisma-nginx nginx -s reload` si `/auth` responde 502.
+
+Validar las reglas: `promtool check rules infra/monitoring/prometheus/rules/*.yml`.
