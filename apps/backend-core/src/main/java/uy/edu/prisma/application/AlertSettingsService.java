@@ -308,9 +308,17 @@ public class AlertSettingsService {
   private boolean sendTestAlert() {
     OffsetDateTime now = OffsetDateTime.now();
     DateTimeFormatter fmt = DateTimeFormatter.ISO_OFFSET_DATE_TIME;
+    // test_id (único por click): sin esto, dos pruebas seguidas comparten el mismo fingerprint de
+    // alerta (mismas etiquetas) y Alertmanager las trata como "la misma alerta, ya notificada" --
+    // la ruta "category=test" de alertmanager.yml agrupa por test_id (group_wait 0s), así que cada
+    // clic en "Enviar alerta de prueba" siempre manda un correo nuevo, sin esperar el
+    // repeat_interval de las alertas reales.
+    String testId = java.util.UUID.randomUUID().toString();
     String body =
         "[{\"labels\":{\"alertname\":\"PruebaDeCorreo\",\"severity\":\"critical\","
-            + "\"category\":\"test\"},\"annotations\":{\"summary\":\"Prueba de correo de alertas\","
+            + "\"category\":\"test\",\"test_id\":\""
+            + testId
+            + "\"},\"annotations\":{\"summary\":\"Prueba de correo de alertas\","
             + "\"description\":\"Esta es una alerta de prueba enviada desde Configuración de Alertas.\"},"
             + "\"startsAt\":\""
             + fmt.format(now)

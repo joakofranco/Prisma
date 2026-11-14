@@ -7,6 +7,7 @@ groups:
         for: 10m
         labels: { severity: warning, category: saturation }
         annotations:
+          title: "CPU del host alta"
           summary: "CPU del host alta"
           description: "La CPU del host está en {{ $value | printf \"%.0f\" }}% hace más de 10 minutos."
 
@@ -15,6 +16,7 @@ groups:
         for: 5m
         labels: { severity: critical, category: saturation }
         annotations:
+          title: "CPU del host saturada"
           summary: "CPU del host saturada"
           description: "La CPU del host está en {{ $value | printf \"%.0f\" }}% hace más de 5 minutos."
 
@@ -23,6 +25,7 @@ groups:
         for: 5m
         labels: { severity: critical, category: saturation }
         annotations:
+          title: "Memoria del host casi agotada"
           summary: "Memoria del host casi agotada"
           description: "El host usa {{ $value | printf \"%.0f\" }}% de la memoria hace más de 5 minutos."
 
@@ -36,6 +39,7 @@ groups:
         for: 10m
         labels: { severity: warning, category: saturation }
         annotations:
+          title: "Disco casi lleno"
           summary: "Disco casi lleno: {{ $labels.device }}"
           description: "Queda {{ $value | printf \"%.0f\" }}% libre en {{ $labels.device }}."
 
@@ -49,6 +53,7 @@ groups:
         for: 5m
         labels: { severity: critical, category: saturation }
         annotations:
+          title: "Disco sin espacio"
           summary: "Disco sin espacio: {{ $labels.device }}"
           description: "Queda solo {{ $value | printf \"%.0f\" }}% libre en {{ $labels.device }}."
 
@@ -59,6 +64,7 @@ groups:
         for: 5m
         labels: { severity: warning, category: saturation }
         annotations:
+          title: "Contenedor cerca del límite de memoria"
           summary: "Contenedor cerca de su límite de memoria: {{ $labels.name }}"
           description: "{{ $labels.name }} usa {{ $value | printf \"%.0f\" }}% de su límite de memoria."
 
@@ -69,6 +75,7 @@ groups:
         for: 10m
         labels: { severity: warning, category: saturation }
         annotations:
+          title: "Contenedor al límite de CPU"
           summary: "Contenedor al límite de CPU: {{ $labels.name }}"
           description: "{{ $labels.name }} usa {{ $value | printf \"%.0f\" }}% de su CPU asignada."
 
@@ -77,6 +84,7 @@ groups:
         for: 5m
         labels: { severity: warning, category: saturation }
         annotations:
+          title: "PostgreSQL con muchas conexiones"
           summary: "PostgreSQL con muchas conexiones"
           description: "Hay {{ $value | printf \"%.0f\" }}% de las conexiones máximas de PostgreSQL en uso."
 
@@ -85,6 +93,7 @@ groups:
         for: 5m
         labels: { severity: warning, category: saturation }
         annotations:
+          title: "Redis cerca de su límite de memoria"
           summary: "Redis cerca de su límite de memoria"
           description: "Redis usa {{ $value | printf \"%.0f\" }}% de su memoria máxima."
 
@@ -95,6 +104,7 @@ groups:
         for: 10m
         labels: { severity: warning, category: saturation }
         annotations:
+          title: "Heap de la JVM alto"
           summary: "Heap de la JVM alto en {{ $labels.instance }}"
           description: "El heap de {{ $labels.instance }} está al {{ $value | printf \"%.0f\" }}% hace más de 10 minutos."
 
@@ -103,6 +113,7 @@ groups:
         for: 2m
         labels: { severity: warning, category: saturation }
         annotations:
+          title: "Pool de conexiones saturado"
           summary: "Pool de conexiones saturado"
           description: "Hay {{ $value }} peticiones esperando una conexión a la base de datos desde hace más de 2 minutos."
 
@@ -113,6 +124,7 @@ groups:
         for: 10m
         labels: { severity: warning, category: saturation }
         annotations:
+          title: "Heap de Elasticsearch alto"
           summary: "Heap de Elasticsearch alto"
           description: "El heap de Elasticsearch está al {{ $value | printf \"%.0f\" }}% hace más de 10 minutos."
 
@@ -124,6 +136,7 @@ groups:
         for: 5m
         labels: { severity: critical, category: saturation }
         annotations:
+          title: "Muchos errores 5xx"
           summary: "Muchos errores 5xx en {{ $labels.application }}"
           description: "{{ $labels.application }} responde {{ $value | printf \"%.1f\" }}% de errores 5xx hace más de 5 minutos."
 
@@ -133,5 +146,6 @@ groups:
         for: 10m
         labels: { severity: warning, category: saturation }
         annotations:
+          title: "Latencia alta"
           summary: "Latencia alta en {{ $labels.application }}"
           description: "El percentil 95 de {{ $labels.application }} es de {{ $value | printf \"%.1f\" }} s hace más de 10 minutos."

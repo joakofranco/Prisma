@@ -25,13 +25,32 @@ route:
       group_wait: 10s
       repeat_interval: 1h
 
+    # "Enviar alerta de prueba" (Configuración → Alertas del sistema): agrupa por test_id (una
+    # etiqueta random por clic, ver AlertSettingsService.sendTestAlert), así que cada prueba es su
+    # propio grupo nuevo y manda de inmediato -- sin esto, dos pruebas seguidas comparten el
+    # fingerprint de la de arriba y la segunda esperaría hasta 1 h (repeat_interval de "critical").
+    - matchers: [category="test"]
+      receiver: email-admin
+      group_by: [alertname, severity, test_id]
+      group_wait: 0s
+      group_interval: 1m
+      repeat_interval: 1m
+
 receivers:
   - name: email-admin
     email_configs:
       - to: "__EMAIL_TO__"
         send_resolved: true
         headers:
-          subject: '[PRISMA][{{ .Status | toUpper }}] {{ .CommonLabels.alertname }} ({{ .CommonLabels.severity }})'
+          # .CommonAnnotations.title sólo existe si TODAS las alertas del grupo comparten
+          # exactamente el mismo texto (ver "title" en los *.yml de reglas) -- como agrupamos por
+          # alertname+severity, siempre es así; "or" cae al nombre técnico si alguna regla no
+          # define "title" todavía. "prisma.sev" (definido en email.tmpl, cargado por "templates:"
+          # más arriba) traduce la severidad al español sólo para mostrarla.
+          subject: >-
+            [PRISMA][{{ if eq .Status "firing" }}ACTIVA{{ else }}RESUELTA{{ end }}]
+            {{ or .CommonAnnotations.title .CommonLabels.alertname }}
+            ({{ template "prisma.sev" .CommonLabels.severity }})
         html: '{{ template "prisma.email.html" . }}'
 
 # Si un servicio cae, no se avisa además de cada métrica secundaria de ese mismo servicio.
