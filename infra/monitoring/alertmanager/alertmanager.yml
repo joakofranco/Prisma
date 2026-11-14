@@ -1,0 +1,41 @@
+# Alertmanager: agrupa las alertas de Prometheus y las envía por correo. Los marcadores __X__ los
+# reemplaza el arranque del contenedor con las variables ALERT_* (ver docker-compose.yml); el
+# password SMTP va en un archivo aparte, nunca en este YAML.
+global:
+  smtp_smarthost: "__SMTP_SMARTHOST__"
+  smtp_from: "__SMTP_FROM__"
+  smtp_auth_username: "__SMTP_USER__"
+  smtp_auth_password_file: /tmp/smtp_password
+  smtp_require_tls: __SMTP_REQUIRE_TLS__
+  resolve_timeout: 5m
+
+templates:
+  - /etc/alertmanager/templates/*.tmpl
+
+route:
+  receiver: email-admin
+  group_by: [alertname, severity]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    # Lo crítico (caídas, DoS, fuerza bruta) se avisa rápido y se repite cada hora.
+    - matchers: [severity="critical"]
+      receiver: email-admin
+      group_wait: 10s
+      repeat_interval: 1h
+
+receivers:
+  - name: email-admin
+    email_configs:
+      - to: "__EMAIL_TO__"
+        send_resolved: true
+        headers:
+          subject: '[PRISMA][{{ .Status | toUpper }}] {{ .CommonLabels.alertname }} ({{ .CommonLabels.severity }})'
+        html: '{{ template "prisma.email.html" . }}'
+
+# Si un servicio cae, no se avisa además de cada métrica secundaria de ese mismo servicio.
+inhibit_rules:
+  - source_matchers: [severity="critical"]
+    target_matchers: [severity="warning"]
+    equal: [alertname]

@@ -1,0 +1,137 @@
+# Alertas de saturación: recursos del host, de los contenedores y de las bases de datos.
+groups:
+  - name: prisma-saturation
+    rules:
+      - alert: HostCpuHigh
+        expr: 100 - (avg(rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 85
+        for: 10m
+        labels: { severity: warning, category: saturation }
+        annotations:
+          summary: "CPU del host alta"
+          description: "La CPU del host está en {{ $value | printf \"%.0f\" }}% hace más de 10 minutos."
+
+      - alert: HostCpuCritical
+        expr: 100 - (avg(rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 95
+        for: 5m
+        labels: { severity: critical, category: saturation }
+        annotations:
+          summary: "CPU del host saturada"
+          description: "La CPU del host está en {{ $value | printf \"%.0f\" }}% hace más de 5 minutos."
+
+      - alert: HostMemoryHigh
+        expr: (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100 > 90
+        for: 5m
+        labels: { severity: critical, category: saturation }
+        annotations:
+          summary: "Memoria del host casi agotada"
+          description: "El host usa {{ $value | printf \"%.0f\" }}% de la memoria hace más de 5 minutos."
+
+      - alert: HostDiskAlmostFull
+        expr: |
+          min by (device) (
+            node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs|ramfs|devtmpfs|fuse.*"}
+              / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs|ramfs|devtmpfs|fuse.*"} * 100
+            and node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs|ramfs|devtmpfs|fuse.*"} > 1e9
+          ) < 15
+        for: 10m
+        labels: { severity: warning, category: saturation }
+        annotations:
+          summary: "Disco casi lleno: {{ $labels.device }}"
+          description: "Queda {{ $value | printf \"%.0f\" }}% libre en {{ $labels.device }}."
+
+      - alert: HostDiskCritical
+        expr: |
+          min by (device) (
+            node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs|ramfs|devtmpfs|fuse.*"}
+              / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs|ramfs|devtmpfs|fuse.*"} * 100
+            and node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs|ramfs|devtmpfs|fuse.*"} > 1e9
+          ) < 5
+        for: 5m
+        labels: { severity: critical, category: saturation }
+        annotations:
+          summary: "Disco sin espacio: {{ $labels.device }}"
+          description: "Queda solo {{ $value | printf \"%.0f\" }}% libre en {{ $labels.device }}."
+
+      - alert: ContainerMemoryNearLimit
+        expr: |
+          container_memory_working_set_bytes{name=~"prisma-.+"}
+            / (container_spec_memory_limit_bytes{name=~"prisma-.+"} > 0) * 100 > 90
+        for: 5m
+        labels: { severity: warning, category: saturation }
+        annotations:
+          summary: "Contenedor cerca de su límite de memoria: {{ $labels.name }}"
+          description: "{{ $labels.name }} usa {{ $value | printf \"%.0f\" }}% de su límite de memoria."
+
+      - alert: ContainerCpuNearLimit
+        expr: |
+          sum by (name) (rate(container_cpu_usage_seconds_total{name=~"prisma-.+"}[5m]))
+            / (sum by (name) (container_spec_cpu_quota{name=~"prisma-.+"} / container_spec_cpu_period{name=~"prisma-.+"}) > 0) * 100 > 90
+        for: 10m
+        labels: { severity: warning, category: saturation }
+        annotations:
+          summary: "Contenedor al límite de CPU: {{ $labels.name }}"
+          description: "{{ $labels.name }} usa {{ $value | printf \"%.0f\" }}% de su CPU asignada."
+
+      - alert: PostgresConnectionsHigh
+        expr: sum(pg_stat_activity_count) / max(pg_settings_max_connections) * 100 > 80
+        for: 5m
+        labels: { severity: warning, category: saturation }
+        annotations:
+          summary: "PostgreSQL con muchas conexiones"
+          description: "Hay {{ $value | printf \"%.0f\" }}% de las conexiones máximas de PostgreSQL en uso."
+
+      - alert: RedisMemoryHigh
+        expr: redis_memory_used_bytes / (redis_memory_max_bytes > 0) * 100 > 90
+        for: 5m
+        labels: { severity: warning, category: saturation }
+        annotations:
+          summary: "Redis cerca de su límite de memoria"
+          description: "Redis usa {{ $value | printf \"%.0f\" }}% de su memoria máxima."
+
+      - alert: JvmHeapHigh
+        expr: |
+          sum by (instance) (jvm_memory_used_bytes{area="heap"})
+            / sum by (instance) (jvm_memory_max_bytes{area="heap"}) * 100 > 90
+        for: 10m
+        labels: { severity: warning, category: saturation }
+        annotations:
+          summary: "Heap de la JVM alto en {{ $labels.instance }}"
+          description: "El heap de {{ $labels.instance }} está al {{ $value | printf \"%.0f\" }}% hace más de 10 minutos."
+
+      - alert: DbPoolSaturated
+        expr: hikaricp_connections_pending > 0
+        for: 2m
+        labels: { severity: warning, category: saturation }
+        annotations:
+          summary: "Pool de conexiones saturado"
+          description: "Hay {{ $value }} peticiones esperando una conexión a la base de datos desde hace más de 2 minutos."
+
+      - alert: ElasticsearchHeapHigh
+        expr: |
+          elasticsearch_jvm_memory_used_bytes{area="heap"}
+            / elasticsearch_jvm_memory_max_bytes{area="heap"} * 100 > 90
+        for: 10m
+        labels: { severity: warning, category: saturation }
+        annotations:
+          summary: "Heap de Elasticsearch alto"
+          description: "El heap de Elasticsearch está al {{ $value | printf \"%.0f\" }}% hace más de 10 minutos."
+
+      - alert: BackendHighErrorRate
+        expr: |
+          sum by (application) (rate(http_server_requests_seconds_count{status=~"5.."}[5m]))
+            / sum by (application) (rate(http_server_requests_seconds_count[5m])) * 100 > 5
+          and sum by (application) (rate(http_server_requests_seconds_count[5m])) > 0.2
+        for: 5m
+        labels: { severity: critical, category: saturation }
+        annotations:
+          summary: "Muchos errores 5xx en {{ $labels.application }}"
+          description: "{{ $labels.application }} responde {{ $value | printf \"%.1f\" }}% de errores 5xx hace más de 5 minutos."
+
+      - alert: BackendHighLatency
+        expr: |
+          histogram_quantile(0.95, sum by (le, application) (rate(http_server_requests_seconds_bucket[5m]))) > 2
+        for: 10m
+        labels: { severity: warning, category: saturation }
+        annotations:
+          summary: "Latencia alta en {{ $labels.application }}"
+          description: "El percentil 95 de {{ $labels.application }} es de {{ $value | printf \"%.1f\" }} s hace más de 10 minutos."

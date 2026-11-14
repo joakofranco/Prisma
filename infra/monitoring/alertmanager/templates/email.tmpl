@@ -1,0 +1,24 @@
+{{ define "prisma.email.html" }}
+<div style="font-family:Segoe UI,Arial,sans-serif;max-width:640px;margin:0 auto;color:#0f172a">
+  <div style="background:#0f172a;color:#fff;padding:16px 20px;border-radius:12px 12px 0 0">
+    <strong style="font-size:18px">PRISMA · Alertas de la plataforma</strong>
+  </div>
+  <div style="border:1px solid #e2e8f0;border-top:none;border-radius:0 0 12px 12px;padding:16px 20px">
+    <p style="margin:0 0 12px">
+      {{ if eq .Status "firing" }}<strong style="color:#b91c1c">{{ .Alerts.Firing | len }} alerta(s) activa(s)</strong>{{ else }}<strong style="color:#15803d">Resuelta</strong>{{ end }}
+    </p>
+    {{ range .Alerts }}
+    <div style="border-left:4px solid {{ if eq .Labels.severity "critical" }}#dc2626{{ else }}#f59e0b{{ end }};background:#f8fafc;padding:10px 14px;margin:0 0 10px;border-radius:6px">
+      <div style="font-weight:600">{{ .Annotations.summary }}</div>
+      <div style="font-size:14px;margin-top:4px">{{ .Annotations.description }}</div>
+      <div style="font-size:12px;color:#64748b;margin-top:6px">
+        Severidad: {{ .Labels.severity }} · Categoría: {{ .Labels.category }} · Desde: {{ .StartsAt.Format "02/01/2006 15:04:05 MST" }}
+      </div>
+    </div>
+    {{ end }}
+    <p style="font-size:12px;color:#64748b;margin:12px 0 0">
+      Estas alertas también se ven en el tablero «PRISMA · Estado general y alertas» de Grafana.
+    </p>
+  </div>
+</div>
+{{ end }}
