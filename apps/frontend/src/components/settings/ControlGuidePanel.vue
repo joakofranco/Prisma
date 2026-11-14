@@ -1,23 +1,31 @@
 <template>
   <div
-    class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6 w-full"
+    class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-800 w-full"
   >
-    <h2 class="text-lg font-semibold text-slate-900 dark:text-white">Guía de los controles</h2>
-    <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">
-      Texto de apoyo (interpretación, ejemplo de aplicación y evidencia a considerar) que se muestra
-      en la ventana «Guía del control» de cada pregunta del cuestionario. Puede editarlo control por
-      control, o cargar un archivo CSV (columnas codigo, interpretacion, ejemplo y evidencia) o
-      Markdown. Descargue el CSV para modificarlo en una planilla y volver a cargarlo.
-    </p>
+    <div class="p-6">
+      <p class="text-[11px] font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-400">
+        Administración · Catálogo
+      </p>
+      <h2 class="mt-1 text-lg font-semibold text-slate-900 dark:text-white">
+        Guía de los controles
+      </h2>
+      <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
+        Texto de apoyo (interpretación, ejemplo de aplicación y evidencia a considerar) que se
+        muestra en la ventana «Guía del control» de cada pregunta del cuestionario. Puede editarlo
+        control por control, o cargar un archivo CSV (columnas codigo, interpretacion, ejemplo y
+        evidencia) o Markdown. Descargue el CSV para modificarlo en una planilla y volver a
+        cargarlo.
+      </p>
+    </div>
 
-    <div v-if="loading" class="py-10 text-center text-sm text-slate-500 dark:text-slate-400">
+    <div v-if="loading" class="px-6 pb-10 text-center text-sm text-slate-500 dark:text-slate-400">
       Cargando...
     </div>
 
     <template v-else>
-      <BaseAlert v-if="loadError" variant="danger" class="mt-4">{{ loadError }}</BaseAlert>
+      <BaseAlert v-if="loadError" variant="danger" class="mx-6 mb-4">{{ loadError }}</BaseAlert>
 
-      <div v-if="versions.length > 1" class="mt-4 flex gap-1" role="tablist">
+      <div v-if="versions.length > 1" class="flex gap-1 px-6 pb-4" role="tablist">
         <button
           v-for="v in versions"
           :key="v"
@@ -25,18 +33,46 @@
           role="tab"
           :aria-selected="v === version"
           :class="[
-            'px-3 py-1.5 rounded-lg text-sm font-medium',
+            'rounded-full px-3 py-1 text-xs font-semibold',
             v === version
-              ? 'bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300'
-              : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700',
+              ? 'bg-blue-600 text-white'
+              : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-300 dark:hover:bg-slate-600',
           ]"
           @click="selectVersion(v)"
         >
-          {{ v }}
+          Versión {{ v }}
         </button>
       </div>
 
-      <div class="mt-4 flex flex-wrap items-center gap-2">
+      <div
+        class="flex flex-wrap items-center gap-4 border-y border-blue-100 bg-blue-50 px-6 py-4 dark:border-blue-900 dark:bg-blue-950/40"
+      >
+        <div class="min-w-[14rem] flex-1">
+          <p
+            class="text-[11px] font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-400"
+          >
+            Cobertura de la guía
+          </p>
+          <p class="mt-0.5 text-base font-bold text-slate-900 dark:text-white">
+            {{ withGuide }} de {{ items.length }} controles con guía
+          </p>
+          <p class="text-xs text-slate-500 dark:text-slate-400" data-testid="guide-summary">
+            {{ withGuide }} con guía · {{ items.length - withGuide }} sin guía
+          </p>
+          <div
+            class="mt-2 h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-blue-100 dark:bg-blue-900"
+            role="progressbar"
+            :aria-valuenow="coverage"
+            aria-valuemin="0"
+            aria-valuemax="100"
+          >
+            <div
+              class="h-full rounded-full bg-emerald-500 transition-all"
+              :style="{ width: `${coverage}%` }"
+            />
+          </div>
+        </div>
+
         <input
           ref="fileInput"
           type="file"
@@ -45,41 +81,27 @@
           data-testid="guide-file-input"
           @change="onFileChosen"
         />
-        <BaseButton
-          variant="primary"
-          :loading="importing"
+        <button
+          type="button"
           :disabled="importing || !version"
+          class="inline-flex items-center gap-3 rounded-lg bg-blue-600 px-4 py-2.5 text-left text-white shadow-sm transition-colors hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
           data-testid="guide-upload"
           @click="fileInput?.click()"
         >
-          Cargar archivo
-        </BaseButton>
-        <BaseButton
-          variant="secondary"
-          :disabled="importing || !version"
-          data-testid="guide-export"
-          @click="exportCsv"
-        >
-          Descargar CSV
-        </BaseButton>
-        <BaseButton
-          variant="danger"
-          :disabled="selectedIds.size === 0 || deleting"
-          :loading="deleting"
-          data-testid="guide-delete-selected"
-          @click="deleteSelected"
-        >
-          Eliminar seleccionadas ({{ selectedIds.size }})
-        </BaseButton>
-        <p class="ml-auto text-sm text-slate-600 dark:text-slate-300" data-testid="guide-summary">
-          {{ withGuide }} con guía · {{ items.length - withGuide }} sin guía
-        </p>
+          <ArrowUpTrayIcon class="h-5 w-5 shrink-0" />
+          <span>
+            <span class="block text-sm font-semibold">
+              {{ importing ? 'Cargando…' : 'Cargar archivo' }}
+            </span>
+            <span class="block text-[11px] text-blue-100">CSV o Markdown, hasta 5 MB</span>
+          </span>
+        </button>
       </div>
 
       <BaseAlert
         v-if="importResult"
         :variant="importResult.updated > 0 ? 'success' : 'warning'"
-        class="mt-4"
+        class="mx-6 mt-4"
         data-testid="guide-import-result"
       >
         <p>
@@ -96,28 +118,89 @@
         </p>
       </BaseAlert>
 
-      <div class="mt-4 flex flex-wrap items-center gap-3">
-        <label class="sr-only" for="guide-search">Buscar</label>
-        <input
-          id="guide-search"
-          v-model="search"
-          type="search"
-          placeholder="Buscar por código o texto"
-          class="flex-1 min-w-[14rem] rounded-lg border border-slate-300 dark:border-slate-500 bg-white dark:bg-slate-700 text-sm text-slate-900 dark:text-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          data-testid="guide-search"
-        />
-        <label class="sr-only" for="guide-status">Estado</label>
-        <select
-          id="guide-status"
-          v-model="status"
-          class="rounded-lg border border-slate-300 dark:border-slate-500 bg-white dark:bg-slate-700 text-sm text-slate-900 dark:text-white px-3 py-2"
-          data-testid="guide-status"
+      <div class="px-6 pt-5">
+        <p
+          class="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400"
         >
-          <option value="all">Todas</option>
-          <option value="with">Con guía</option>
-          <option value="without">Sin guía</option>
-        </select>
-        <label class="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
+          Buscar y filtrar
+        </p>
+        <div class="mt-2 flex flex-wrap items-center gap-3">
+          <div class="relative min-w-[14rem] flex-1">
+            <MagnifyingGlassIcon
+              class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+            />
+            <label class="sr-only" for="guide-search">Buscar</label>
+            <input
+              id="guide-search"
+              v-model="search"
+              type="search"
+              placeholder="Buscar por código o texto"
+              class="w-full rounded-lg border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-500 dark:bg-slate-700 dark:text-white"
+              data-testid="guide-search"
+            />
+          </div>
+          <div class="flex gap-1.5" role="group" aria-label="Estado de la guía">
+            <button
+              v-for="option in statusOptions"
+              :key="option.key"
+              type="button"
+              :aria-pressed="status === option.key"
+              :class="[
+                'inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors',
+                status === option.key
+                  ? 'border-blue-600 bg-blue-600 text-white'
+                  : 'border-slate-300 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700',
+              ]"
+              :data-testid="`guide-status-${option.key}`"
+              @click="status = option.key"
+            >
+              {{ option.label }}
+              <span
+                :class="[
+                  'rounded-full px-1.5 text-[11px]',
+                  status === option.key
+                    ? 'bg-white/25 text-white'
+                    : 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300',
+                ]"
+              >
+                {{ option.count }}
+              </span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div
+        class="mx-6 mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-900/40"
+      >
+        <span class="text-xs text-slate-500 dark:text-slate-400">Otras acciones:</span>
+        <button
+          type="button"
+          :disabled="importing || !version"
+          :class="[
+            smallButton,
+            'border-slate-300 text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700',
+          ]"
+          data-testid="guide-export"
+          @click="exportCsv"
+        >
+          <ArrowDownTrayIcon class="h-3.5 w-3.5" />
+          Descargar CSV
+        </button>
+        <button
+          type="button"
+          :disabled="selectedIds.size === 0 || deleting"
+          :class="[
+            smallButton,
+            'border-red-300 text-red-700 hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950',
+          ]"
+          data-testid="guide-delete-selected"
+          @click="deleteSelected"
+        >
+          <TrashIcon class="h-3.5 w-3.5" />
+          Eliminar seleccionadas ({{ selectedIds.size }})
+        </button>
+        <label class="ml-auto flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
           <input
             type="checkbox"
             :checked="allFilteredSelected"
@@ -131,98 +214,141 @@
 
       <p
         v-if="!filtered.length"
-        class="mt-6 text-sm text-slate-500 dark:text-slate-400"
+        class="px-6 py-8 text-center text-sm text-slate-500 dark:text-slate-400"
         data-testid="guide-empty"
       >
         No hay controles que coincidan con la búsqueda.
       </p>
 
-      <ul v-else class="mt-4 divide-y divide-slate-200 dark:divide-slate-700">
-        <li v-for="item in visible" :key="item.id" class="py-4" :data-testid="`guide-${item.code}`">
-          <div class="flex flex-wrap items-center gap-2">
-            <input
-              type="checkbox"
-              :checked="selectedIds.has(item.id)"
-              :aria-label="`Seleccionar ${item.code}`"
-              :data-testid="`guide-check-${item.code}`"
-              @change="toggle(item.id, ($event.target as HTMLInputElement).checked)"
-            />
-            <span class="text-xs font-semibold text-slate-500 dark:text-slate-400">
-              {{ item.code }} · Nivel {{ item.targetLevel }}
-            </span>
-            <span
-              :class="[
-                'text-xs font-medium px-2 py-0.5 rounded-full',
-                item.interpretation
-                  ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300'
-                  : 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300',
-              ]"
-            >
-              {{ item.interpretation ? 'Con guía' : 'Sin guía' }}
-            </span>
-          </div>
-          <p class="mt-1 text-sm text-slate-900 dark:text-white">{{ item.description }}</p>
-
-          <template v-if="editingId === item.id">
-            <div v-for="field in fields" :key="field.key" class="mt-3">
-              <label
-                :for="`${field.key}-${item.id}`"
-                class="text-xs font-semibold text-slate-600 dark:text-slate-300"
-              >
-                {{ field.label }}
-              </label>
-              <textarea
-                :id="`${field.key}-${item.id}`"
-                v-model="draft[field.key]"
-                rows="3"
-                maxlength="4000"
-                class="mt-1 w-full rounded-lg border border-slate-300 dark:border-slate-500 bg-white dark:bg-slate-700 text-sm text-slate-900 dark:text-white p-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                :data-testid="`guide-${field.key}-${item.code}`"
+      <ul v-else class="space-y-3 px-6 pb-6 pt-4">
+        <li
+          v-for="item in visible"
+          :key="item.id"
+          :class="[
+            'overflow-hidden rounded-xl border',
+            item.interpretation
+              ? 'border-emerald-200 dark:border-emerald-900'
+              : 'border-slate-200 dark:border-slate-700',
+          ]"
+          :data-testid="`guide-${item.code}`"
+        >
+          <div class="p-4">
+            <div class="flex flex-wrap items-center gap-2">
+              <input
+                type="checkbox"
+                :checked="selectedIds.has(item.id)"
+                :aria-label="`Seleccionar ${item.code}`"
+                :data-testid="`guide-check-${item.code}`"
+                @change="toggle(item.id, ($event.target as HTMLInputElement).checked)"
               />
-            </div>
-            <div class="mt-3 flex flex-wrap gap-2">
-              <BaseButton
-                variant="primary"
-                :loading="busyId === item.id"
-                :data-testid="`guide-save-${item.code}`"
-                @click="save(item)"
+              <span
+                class="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700 dark:bg-blue-900 dark:text-blue-300"
               >
-                Guardar
-              </BaseButton>
-              <BaseButton variant="ghost" @click="cancelEdit">Cancelar</BaseButton>
+                {{ item.code }}
+              </span>
+              <span class="text-xs text-slate-500 dark:text-slate-400">
+                Nivel {{ item.targetLevel }}
+              </span>
+              <span
+                :class="[
+                  'ml-auto rounded-full px-2 py-0.5 text-xs font-semibold',
+                  item.interpretation
+                    ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300'
+                    : 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300',
+                ]"
+              >
+                {{ item.interpretation ? 'Con guía' : 'Sin guía' }}
+              </span>
             </div>
-          </template>
-          <template v-else>
-            <p
-              v-if="item.interpretation"
-              class="mt-2 text-sm text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-700/50 rounded-lg p-3"
-            >
-              {{ item.interpretation }}
+            <p class="mt-2 text-sm font-medium text-slate-900 dark:text-white">
+              {{ item.description }}
             </p>
-            <div class="mt-2 flex flex-wrap gap-2">
-              <BaseButton
-                variant="secondary"
-                :disabled="busyId !== null"
-                :data-testid="`guide-edit-${item.code}`"
-                @click="startEdit(item)"
+
+            <template v-if="editingId === item.id">
+              <div
+                v-for="field in fields"
+                :key="field.key"
+                :class="['mt-3 rounded-lg border p-3', field.tone.box]"
               >
-                {{ item.interpretation ? 'Editar' : 'Escribir guía' }}
-              </BaseButton>
-              <BaseButton
-                v-if="item.interpretation"
-                variant="ghost"
-                :disabled="busyId !== null || deleting"
-                :data-testid="`guide-delete-${item.code}`"
-                @click="deleteOne(item)"
+                <label
+                  :for="`${field.key}-${item.id}`"
+                  :class="['text-[11px] font-semibold uppercase tracking-wide', field.tone.eyebrow]"
+                >
+                  {{ field.label }}
+                </label>
+                <textarea
+                  :id="`${field.key}-${item.id}`"
+                  v-model="draft[field.key]"
+                  rows="3"
+                  maxlength="4000"
+                  class="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-500 dark:bg-slate-700 dark:text-white"
+                  :data-testid="`guide-${field.key}-${item.code}`"
+                />
+              </div>
+              <div class="mt-3 flex flex-wrap gap-2">
+                <BaseButton
+                  variant="primary"
+                  :loading="busyId === item.id"
+                  :data-testid="`guide-save-${item.code}`"
+                  @click="save(item)"
+                >
+                  Guardar
+                </BaseButton>
+                <BaseButton variant="ghost" @click="cancelEdit">Cancelar</BaseButton>
+              </div>
+            </template>
+            <div
+              v-else-if="item.interpretation"
+              class="mt-3 rounded-lg border border-blue-200 bg-blue-50 p-3 dark:border-blue-900 dark:bg-blue-950/40"
+            >
+              <p
+                class="text-[11px] font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-400"
               >
-                Eliminar
-              </BaseButton>
+                Interpretación
+              </p>
+              <p class="mt-1 text-sm text-slate-700 dark:text-slate-200">
+                {{ item.interpretation }}
+              </p>
             </div>
-          </template>
+          </div>
+
+          <div
+            v-if="editingId !== item.id"
+            class="flex flex-wrap items-center gap-2 border-t border-slate-200 bg-slate-50 px-4 py-2 dark:border-slate-700 dark:bg-slate-900/40"
+          >
+            <span class="text-xs text-slate-500 dark:text-slate-400">Acciones:</span>
+            <button
+              type="button"
+              :disabled="busyId !== null"
+              :class="[
+                smallButton,
+                'border-slate-300 text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700',
+              ]"
+              :data-testid="`guide-edit-${item.code}`"
+              @click="startEdit(item)"
+            >
+              <PencilSquareIcon class="h-3.5 w-3.5" />
+              {{ item.interpretation ? 'Editar' : 'Escribir guía' }}
+            </button>
+            <button
+              v-if="item.interpretation"
+              type="button"
+              :disabled="busyId !== null || deleting"
+              :class="[
+                smallButton,
+                'border-red-300 text-red-700 hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950',
+              ]"
+              :data-testid="`guide-delete-${item.code}`"
+              @click="deleteOne(item)"
+            >
+              <TrashIcon class="h-3.5 w-3.5" />
+              Eliminar
+            </button>
+          </div>
         </li>
       </ul>
 
-      <div v-if="filtered.length > visible.length" class="mt-4 text-center">
+      <div v-if="filtered.length > visible.length" class="pb-6 text-center">
         <BaseButton variant="ghost" data-testid="guide-more" @click="shown += PAGE">
           Mostrar más ({{ filtered.length - visible.length }} restantes)
         </BaseButton>
@@ -233,6 +359,13 @@
 
 <script setup lang="ts">
   import { computed, onMounted, reactive, ref, watch } from 'vue';
+  import {
+    ArrowDownTrayIcon,
+    ArrowUpTrayIcon,
+    MagnifyingGlassIcon,
+    PencilSquareIcon,
+    TrashIcon,
+  } from '@heroicons/vue/24/outline';
   import { catalogService } from '@/services/resources';
   import { useNotificationStore } from '@/stores/notification';
   import { blobErrorMessage, saveBlob } from '@/utils/files';
@@ -242,12 +375,42 @@
   import type { ControlGuideImportResult, ControlGuideItem } from '@/types';
 
   type FieldKey = 'interpretation' | 'example' | 'evidence';
+  type StatusKey = 'all' | 'with' | 'without';
 
   const PAGE = 50;
-  const fields: { key: FieldKey; label: string }[] = [
-    { key: 'interpretation', label: 'Interpretación' },
-    { key: 'example', label: 'Ejemplo de aplicación' },
-    { key: 'evidence', label: 'Evidencia a considerar' },
+
+  const smallButton =
+    'inline-flex items-center gap-1.5 rounded-md border bg-white px-2.5 py-1 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 dark:bg-slate-800';
+
+  const fields: {
+    key: FieldKey;
+    label: string;
+    tone: { box: string; eyebrow: string };
+  }[] = [
+    {
+      key: 'interpretation',
+      label: 'Interpretación',
+      tone: {
+        box: 'border-blue-200 bg-blue-50 dark:border-blue-900 dark:bg-blue-950/40',
+        eyebrow: 'text-blue-600 dark:text-blue-400',
+      },
+    },
+    {
+      key: 'example',
+      label: 'Ejemplo de aplicación',
+      tone: {
+        box: 'border-emerald-200 bg-emerald-50 dark:border-emerald-900 dark:bg-emerald-950/40',
+        eyebrow: 'text-emerald-600 dark:text-emerald-400',
+      },
+    },
+    {
+      key: 'evidence',
+      label: 'Evidencia a considerar',
+      tone: {
+        box: 'border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/40',
+        eyebrow: 'text-amber-600 dark:text-amber-400',
+      },
+    },
   ];
 
   const notification = useNotificationStore();
@@ -259,7 +422,7 @@
   const version = ref('');
   const items = ref<ControlGuideItem[]>([]);
   const search = ref('');
-  const status = ref<'all' | 'with' | 'without'>('all');
+  const status = ref<StatusKey>('all');
   const shown = ref(PAGE);
   const selectedIds = ref<Set<string>>(new Set());
   const importing = ref(false);
@@ -274,6 +437,15 @@
   });
 
   const withGuide = computed(() => items.value.filter((i) => i.interpretation).length);
+  const coverage = computed(() =>
+    items.value.length ? Math.round((withGuide.value / items.value.length) * 100) : 0,
+  );
+
+  const statusOptions = computed<{ key: StatusKey; label: string; count: number }[]>(() => [
+    { key: 'all', label: 'Todas', count: items.value.length },
+    { key: 'with', label: 'Con guía', count: withGuide.value },
+    { key: 'without', label: 'Sin guía', count: items.value.length - withGuide.value },
+  ]);
 
   const filtered = computed(() => {
     const query = normalize(search.value);

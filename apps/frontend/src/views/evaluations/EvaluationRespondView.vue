@@ -230,14 +230,29 @@
             {{ currentQuestion.control.description }}
           </h3>
           <div v-if="currentQuestion.control.guide" class="mt-3 flex justify-end">
-            <BaseButton
-              variant="outline"
+            <button
+              type="button"
+              class="group inline-flex items-center gap-3 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-left transition-colors hover:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:border-blue-900 dark:bg-blue-950/40 dark:hover:bg-blue-950"
               data-testid="open-control-guide"
               @click="guideOpen = true"
             >
-              <LightBulbIcon class="w-4 h-4" />
-              Guía del control
-            </BaseButton>
+              <span
+                class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-100 text-blue-600 dark:bg-blue-900 dark:text-blue-300"
+              >
+                <LightBulbIcon class="w-4 h-4" />
+              </span>
+              <span>
+                <span class="block text-sm font-semibold text-blue-700 dark:text-blue-300">
+                  Guía del control
+                </span>
+                <span class="block text-xs text-blue-600/80 dark:text-blue-400/80">
+                  Interpretación, ejemplo y evidencia
+                </span>
+              </span>
+              <ChevronRightIcon
+                class="h-4 w-4 text-blue-400 transition-transform group-hover:translate-x-0.5"
+              />
+            </button>
           </div>
           <ControlGuideModal
             v-if="currentQuestion.control.guide"

@@ -96,21 +96,32 @@ describe('ControlGuidePanel: guía de los controles', () => {
     expect(byId('guide-empty')).not.toBeNull();
   });
 
-  it('filtra por estado: con guía o sin guía', async () => {
+  it('filtra por estado con los botones Con guía y Sin guía, que muestran su contador', async () => {
     await mountPanel();
-    const select = byId('guide-status') as HTMLSelectElement;
 
-    select.value = 'without';
-    select.dispatchEvent(new Event('change'));
-    await flushPromises();
+    expect(byId('guide-status-all')?.textContent).toContain('3');
+    expect(byId('guide-status-with')?.textContent).toContain('2');
+    expect(byId('guide-status-without')?.textContent).toContain('1');
+
+    await click('guide-status-without');
     expect(byId('guide-GA.1-1')).not.toBeNull();
     expect(byId('guide-PS.1-1')).toBeNull();
 
-    select.value = 'with';
-    select.dispatchEvent(new Event('change'));
-    await flushPromises();
+    await click('guide-status-with');
     expect(byId('guide-PS.1-1')).not.toBeNull();
     expect(byId('guide-GA.1-1')).toBeNull();
+
+    await click('guide-status-all');
+    expect(byId('guide-GA.1-1')).not.toBeNull();
+    expect(byId('guide-PS.1-1')).not.toBeNull();
+  });
+
+  it('muestra la cobertura de la guía como barra de progreso', async () => {
+    await mountPanel();
+
+    const bar = document.body.querySelector('[role="progressbar"]') as HTMLElement;
+    expect(bar.getAttribute('aria-valuenow')).toBe('67');
+    expect(document.body.textContent).toContain('2 de 3 controles con guía');
   });
 
   it('carga un archivo, muestra el resultado y recarga el listado', async () => {
