@@ -119,7 +119,10 @@ apply_policy() {
     -s "maxDeltaTimeSeconds=$LOCKOUT_WINDOW" \
     -s "waitIncrementSeconds=$LOCKOUT_DURATION" \
     -s "maxFailureWaitSeconds=$LOCKOUT_DURATION" \
-    -s loginTheme=prisma
+    -s loginTheme=prisma \
+    -s internationalizationEnabled=true \
+    -s 'supportedLocales=["es"]' \
+    -s defaultLocale=es
   echo "✅ Política aplicada al realm '$REALM'."
 }
 

@@ -4,12 +4,6 @@ import type { UserRole } from '@/types';
 
 const routes: RouteRecordRaw[] = [
   {
-    path: '/login',
-    name: 'Login',
-    component: () => import('@/views/auth/LoginView.vue'),
-    meta: { requiresAuth: false, layout: 'blank' },
-  },
-  {
     path: '/',
     redirect: '/dashboard',
   },
@@ -165,12 +159,8 @@ router.beforeEach(async (to, _from, next) => {
   }
 
   if (to.meta.requiresAuth !== false && !authStore.isAuthenticated) {
-    next({ name: 'Login' });
-    return;
-  }
-
-  if (to.name === 'Login' && authStore.isAuthenticated) {
-    next({ name: 'Dashboard' });
+    await authStore.login();
+    next(false);
     return;
   }
 

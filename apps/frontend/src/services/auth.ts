@@ -13,9 +13,8 @@ export function initKeycloak(): Promise<boolean> {
   return new Promise((resolve, reject) => {
     keycloak!
       .init({
-        onLoad: 'check-sso',
+        onLoad: 'login-required',
         pkceMethod: 'S256',
-        silentCheckSsoRedirectUri: `${window.location.origin}/silent-check-sso.html`,
       })
       .then((authenticated) => {
         // Sin esto, keycloak-js no refresca el token por su cuenta: una pantalla larga (armar un

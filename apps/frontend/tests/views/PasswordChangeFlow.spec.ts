@@ -18,8 +18,6 @@ vi.mock('@/services/resources', () => ({ accountService }));
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => authStore }));
 
 import AccountView from '@/views/account/AccountView.vue';
-import LoginView from '@/views/auth/LoginView.vue';
-import { PASSWORD_CHANGED_KEY } from '@/utils/constants';
 
 async function submitPasswordChange(current: string, next: string, confirm: string) {
   const wrapper = mount(AccountView);
@@ -37,7 +35,6 @@ describe('cambio de contraseña → login con las credenciales nuevas (PRI-363)'
   beforeEach(() => {
     setActivePinia(createPinia());
     vi.clearAllMocks();
-    sessionStorage.clear();
     accountService.changePassword.mockResolvedValue({});
     authStore.logout.mockResolvedValue(undefined);
   });
@@ -50,10 +47,9 @@ describe('cambio de contraseña → login con las credenciales nuevas (PRI-363)'
       newPassword: 'Nueva1234!',
     });
     expect(authStore.logout).toHaveBeenCalledTimes(1);
-    expect(sessionStorage.getItem(PASSWORD_CHANGED_KEY)).toBe('1');
   });
 
-  it('si el cambio falla, no cierra la sesión ni deja la marca', async () => {
+  it('si el cambio falla, no cierra la sesión', async () => {
     accountService.changePassword.mockRejectedValue(
       new Error('La contraseña actual no es correcta'),
     );
@@ -61,7 +57,6 @@ describe('cambio de contraseña → login con las credenciales nuevas (PRI-363)'
     await submitPasswordChange('Mala', 'Nueva1234!', 'Nueva1234!');
 
     expect(authStore.logout).not.toHaveBeenCalled();
-    expect(sessionStorage.getItem(PASSWORD_CHANGED_KEY)).toBeNull();
   });
 
   it('si la validación falla (no coinciden), no llama al backend ni cierra la sesión', async () => {
@@ -69,20 +64,5 @@ describe('cambio de contraseña → login con las credenciales nuevas (PRI-363)'
 
     expect(accountService.changePassword).not.toHaveBeenCalled();
     expect(authStore.logout).not.toHaveBeenCalled();
-  });
-
-  it('el login avisa que la contraseña se actualizó y lo muestra una sola vez', () => {
-    sessionStorage.setItem(PASSWORD_CHANGED_KEY, '1');
-
-    const first = mount(LoginView);
-    expect(first.find('[data-testid="password-changed-notice"]').exists()).toBe(true);
-    expect(sessionStorage.getItem(PASSWORD_CHANGED_KEY)).toBeNull();
-
-    const second = mount(LoginView);
-    expect(second.find('[data-testid="password-changed-notice"]').exists()).toBe(false);
-  });
-
-  it('un login normal no muestra el aviso', () => {
-    expect(mount(LoginView).find('[data-testid="password-changed-notice"]').exists()).toBe(false);
   });
 });

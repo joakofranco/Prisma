@@ -16,13 +16,13 @@ e2e/
 │   ├── keycloak.ts         # loginViaKeycloak() -- completa el formulario real de Keycloak
 │   ├── a11y.ts             # assertNoWcagViolations() -- axe-core con los tags WCAG 2.1 AA
 │   └── routes.ts           # rutas autenticadas "estáticas" a recorrer
-├── public/                 # sin sesión (project "public-chromium"): sólo /login
+├── public/                 # sin sesión (project "public-chromium"): sólo el login de Keycloak
 └── authenticated/          # con sesión (projects "chromium"/"firefox"/"webkit"): resto del menú
 ```
 
 ## Cómo correrlo
 
-### 1. Sólo accesibilidad de `/login` + de las vistas autenticadas (chromium)
+### 1. Sólo accesibilidad del login de Keycloak + de las vistas autenticadas (chromium)
 
 ```bash
 npm run test:a11y
@@ -71,7 +71,7 @@ export KEYCLOAK_TRUSTED_ISSUERS="https://prisma.local/auth/realms/prisma,https:/
 docker compose --profile app --profile security up -d backend-core   # recrea el contenedor con el nuevo env
 ```
 
-Sin este paso, `auth.setup.ts` y los tests de accesibilidad de `/login` (que no llaman a la API)
+Sin este paso, `auth.setup.ts` y los tests de accesibilidad del login (que no llaman a la API)
 funcionan igual; sólo `e2e/authenticated/navigation.spec.ts` (que además verifica "cero errores de
 consola") y las vistas con datos que dependen del backend se ven afectadas por los 401.
 
@@ -106,10 +106,6 @@ Quedan documentados para que quien los aborde no tenga que re-descubrirlos:
    ruta además del `<h1>` de la vista. No es una violación axe per se, pero rompe la navegación por
    headings de un lector de pantalla y obligó a esta suite a usar `.first()` en varios
    `getByRole('heading', ...)`.
-4. **Flash del layout autenticado antes de pintar `/login`**: `main.ts` monta la app recién cuando
-   `authStore.init()` (Keycloak) resuelve, y el guard de router vuelve a esperar ese mismo init en
-   la primera navegación. Mientras tanto, `App.vue` puede pintar por un instante `AppLayout` (con
-   su sidebar y su propio heading "PRISMA") antes de conmutar al layout `blank` real de Login. Si
-   Keycloak está lejos o no responde, esa ventana se estira a varios segundos. Los tests de
-   `e2e/public/login.spec.ts` esperan explícitamente el botón "Iniciar Sesión con Keycloak" (único
-   de esa vista) para no quedar atrapados escaneando ese estado transitorio.
+4. **Sin pantalla de login propia**: la app usa `onLoad: 'login-required'`, así que entrar sin sesión
+   redirige directo al formulario de Keycloak (tema `prisma`). `e2e/public/login.spec.ts` espera
+   `#username` en ese formulario.
