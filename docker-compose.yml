@@ -41,6 +41,7 @@ volumes:
   sonar-logs:           { name: prisma-sonar-logs }
   prometheus-data:      { name: prisma-prometheus-data }
   alertmanager-data:    { name: prisma-alertmanager-data }
+  alertmanager-config:  { name: prisma-alertmanager-config }
   grafana-data:         { name: prisma-grafana-data }
   loki-data:            { name: prisma-loki-data }
   elasticsearch-data:   { name: prisma-elasticsearch-data }
@@ -211,6 +212,7 @@ services:
       - "127.0.0.1:${BACKEND_CORE_PORT:-8081}:8080"
     volumes:
       - evidences-data:/var/prisma/evidences
+      - alertmanager-config:/var/prisma/alerting
       - ./infra/tls/ca.crt:/etc/prisma/tls/ca.crt:ro
     command:
       - sh
@@ -670,12 +672,26 @@ services:
   # Prometheus evalúa las reglas de infra/monitoring/prometheus/rules (caídas, saturación, DoS y
   # fuerza bruta) y manda lo que dispara a Alertmanager, que lo envía por correo. Las alertas
   # activas también se ven en el tablero «PRISMA · Estado general y alertas» de Grafana.
+  alertmanager-config-init:
+    image: busybox:1.37
+    container_name: prisma-alertmanager-config-init
+    restart: "no"
+    profiles: [observability, full]
+    command: ["sh", "-c", "chown 100:65534 /cfg && chmod 2775 /cfg"]
+    volumes:
+      - alertmanager-config:/cfg
+    networks: [prisma-net]
+
   alertmanager:
     image: prom/alertmanager:v0.28.1
     container_name: prisma-alertmanager
     restart: unless-stopped
     profiles: [observability, full]
+    depends_on:
+      alertmanager-config-init: { condition: service_completed_successfully }
     environment:
+      # Valores iniciales: una vez que el administrador guarda la configuración desde la plataforma
+      # (Configuración → Alertas) esa configuración manda y estas variables dejan de usarse.
       # Por defecto el correo cae en Mailpit (buzón de pruebas, UI en :8025). En producción: la
       # cuenta SMTP propia del sistema (ver .env.example).
       ALERT_SMTP_SMARTHOST: ${ALERT_SMTP_SMARTHOST:-mailpit:1025}
@@ -687,20 +703,25 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
-        printf '%s' "$$ALERT_SMTP_PASSWORD" > /tmp/smtp_password
-        sed -e "s|__SMTP_SMARTHOST__|$$ALERT_SMTP_SMARTHOST|" \
-            -e "s|__SMTP_FROM__|$$ALERT_SMTP_FROM|" \
-            -e "s|__SMTP_USER__|$$ALERT_SMTP_USER|" \
-            -e "s|__SMTP_REQUIRE_TLS__|$$ALERT_SMTP_REQUIRE_TLS|" \
-            -e "s|__EMAIL_TO__|$$ALERT_EMAIL_TO|" \
-            /etc/alertmanager/alertmanager.yml.tpl > /tmp/alertmanager.yml
-        exec /bin/alertmanager --config.file=/tmp/alertmanager.yml --storage.path=/alertmanager
+        cp /etc/alertmanager/alertmanager.yml.tpl /alertmanager-config/alertmanager.yml.tpl
+        if [ ! -f /alertmanager-config/.managed ]; then
+          printf '%s' "$$ALERT_SMTP_PASSWORD" > /alertmanager-config/smtp_password
+          chmod 600 /alertmanager-config/smtp_password
+          sed -e "s|__SMTP_SMARTHOST__|$$ALERT_SMTP_SMARTHOST|" \
+              -e "s|__SMTP_FROM__|$$ALERT_SMTP_FROM|" \
+              -e "s|__SMTP_USER__|$$ALERT_SMTP_USER|" \
+              -e "s|__SMTP_REQUIRE_TLS__|$$ALERT_SMTP_REQUIRE_TLS|" \
+              -e "s|__EMAIL_TO__|$$ALERT_EMAIL_TO|" \
+              /etc/alertmanager/alertmanager.yml.tpl > /alertmanager-config/alertmanager.yml
+        fi
+        exec /bin/alertmanager --config.file=/alertmanager-config/alertmanager.yml --storage.path=/alertmanager
     ports:
       - "${ALERTMANAGER_PORT:-9093}:9093"
     volumes:
       - ./infra/monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml.tpl:ro
       - ./infra/monitoring/alertmanager/templates:/etc/alertmanager/templates:ro
       - alertmanager-data:/alertmanager
+      - alertmanager-config:/alertmanager-config
     networks: [prisma-net]
 
   mailpit:

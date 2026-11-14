@@ -1129,6 +1129,33 @@ public class Dto {
 
   public record ReplaceServicesHostDto(String host) {}
 
+  // ---- Configuración de alertas del sistema (solo PRISMA_ADMIN) ----
+  public record AlertSettingsDto(
+      String recipients,
+      String smtpHost,
+      int smtpPort,
+      String from,
+      boolean authEnabled,
+      String username,
+      boolean passwordSet,
+      boolean requireTls,
+      boolean configured,
+      java.time.OffsetDateTime updatedAt,
+      String warning) {}
+
+  public record UpdateAlertSettingsDto(
+      String recipients,
+      String smtpHost,
+      Integer smtpPort,
+      String from,
+      boolean authEnabled,
+      String username,
+      String password,
+      boolean requireTls) {}
+
+  public record AlertTestResultDto(
+      boolean smtpReachable, boolean alertSent, String message) {}
+
   // ---- Audit log (bitácora de acciones del sistema, distinta de AuditObservation/"Auditoría"
   // MCU) ----
   public record AuditLogDto(

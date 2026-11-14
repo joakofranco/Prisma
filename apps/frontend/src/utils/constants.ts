@@ -188,6 +188,7 @@ export const AUDIT_RESOURCE_TYPE_LABELS: Record<string, string> = {
   'email-settings': 'Configuración de Email',
   'plan-deadline-settings': 'Plazos del Plan de Mejora',
   'platform-service': 'Servicio de Infraestructura',
+  'alert-settings': 'Configuración de Alertas',
 };
 
 export const PRIORITY_CONFIG: Record<string, { label: string; color: string }> = {

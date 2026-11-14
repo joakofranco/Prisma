@@ -26,6 +26,9 @@ import type {
   CommunityProfile,
   CommunityProfileSummary,
   EmailSettings,
+  AlertSettings,
+  UpdateAlertSettings,
+  AlertTestResult,
   UpdateEmailSettings,
   PlanDeadlines,
   PlatformService,
@@ -408,6 +411,18 @@ export const platformServicesService = {
   },
   replaceHost(host: string) {
     return apiClient.post<PlatformService[]>('/admin/services/replace-host', { host });
+  },
+};
+
+export const alertSettingsService = {
+  get() {
+    return apiClient.get<AlertSettings>('/admin/alert-settings');
+  },
+  update(data: UpdateAlertSettings) {
+    return apiClient.put<AlertSettings>('/admin/alert-settings', data);
+  },
+  test() {
+    return apiClient.post<AlertTestResult>('/admin/alert-settings/test');
   },
 };
 

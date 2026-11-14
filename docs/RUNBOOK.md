@@ -590,3 +590,20 @@ Notas:
 - Si NGINX queda detrás de otro proxy o balanceador, todas las peticiones llegan con la IP de ese proxy: agregarla a `F2B_IGNORE_IPS` o configurar `real_ip` en NGINX antes de usar fail2ban.
 - El contenedor usa el socket de Docker solo para enviar la señal de recarga a `prisma-nginx`. El log compartido se vacía solo cuando supera los 50 MB.
 - Protege contra el abuso de una IP o de pocas IPs. No reemplaza una protección de red contra un DDoS volumétrico (CDN o proveedor).
+
+## Configuración de alertas desde la plataforma
+
+El administrador define a dónde y cómo se envían las alertas desde **Configuración → Alertas del sistema**, sin editar archivos:
+
+- Destinatarios (hasta 10), servidor SMTP, puerto, remitente, usuario, contraseña y TLS.
+- **Guardar configuración** valida los datos, reescribe la configuración de Alertmanager y la recarga sin reiniciarlo.
+- **Enviar alerta de prueba** comprueba la conexión con el servidor SMTP y manda una alerta `PruebaDeCorreo` a los destinatarios guardados (llega en menos de un minuto).
+- Los correos de cambio y recuperación de contraseña son otra configuración (pestaña **Correo electrónico**, SMTP de Keycloak).
+
+Cómo funciona:
+
+- backend-core y Alertmanager comparten el volumen `prisma-alertmanager-config`. Un contenedor de arranque (`alertmanager-config-init`) le da permisos para los dos.
+- Los datos (menos la contraseña) se guardan en la tabla `prisma.alert_settings`. La contraseña SMTP solo se escribe en el archivo `smtp_password` del volumen, nunca en la base de datos ni en las respuestas de la API.
+- Hasta la primera vez que se guarda, Alertmanager usa los valores de `ALERT_*` del `.env` (por defecto, el buzón de pruebas Mailpit). Después, manda lo guardado en la plataforma y esas variables dejan de usarse. El archivo `.managed` del volumen marca ese cambio.
+- Al arrancar, backend-core vuelve a escribir la configuración de Alertmanager con lo guardado, para que no quede desfasada si cambia la plantilla.
+- Para volver a los valores del `.env`: borrar `.managed` del volumen y reiniciar Alertmanager.

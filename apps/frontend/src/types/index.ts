@@ -523,6 +523,40 @@ export interface EmailSettings {
   configured: boolean;
 }
 
+/** Configuración de las alertas del sistema (Alertmanager). La contraseña SMTP nunca se devuelve:
+ * `passwordSet` indica si ya hay una guardada. `warning` viene si se guardó pero Alertmanager no
+ * respondió a la recarga. */
+export interface AlertSettings {
+  recipients: string;
+  smtpHost: string;
+  smtpPort: number;
+  from: string;
+  authEnabled: boolean;
+  username: string | null;
+  passwordSet: boolean;
+  requireTls: boolean;
+  configured: boolean;
+  updatedAt: string;
+  warning: string | null;
+}
+
+export interface UpdateAlertSettings {
+  recipients: string;
+  smtpHost: string;
+  smtpPort: number;
+  from: string;
+  authEnabled: boolean;
+  username: string | null;
+  password: string | null;
+  requireTls: boolean;
+}
+
+export interface AlertTestResult {
+  smtpReachable: boolean;
+  alertSent: boolean;
+  message: string;
+}
+
 /** RF-PLN-03: plazos por defecto (en meses) con los que se sugiere la fecha límite de una acción
  * del plan de mejora según su prioridad. Los configura PRISMA_ADMIN (1–60, Alta ≤ Media ≤ Baja). */
 export interface PlanDeadlines {

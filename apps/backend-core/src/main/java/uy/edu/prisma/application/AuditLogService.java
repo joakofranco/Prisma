@@ -111,7 +111,8 @@ public class AuditLogService {
           "evaluation", "Evaluación",
           "catalog_version", "Versión de Catálogo",
           "email-settings", "Configuración de Email",
-          "platform-service", "Servicio de Infraestructura");
+          "platform-service", "Servicio de Infraestructura",
+          "alert-settings", "Configuración de Alertas");
 
   // Marcador que no coincide con ninguna acción ni tipo real: el IN de la consulta no admite una
   // lista vacía.
