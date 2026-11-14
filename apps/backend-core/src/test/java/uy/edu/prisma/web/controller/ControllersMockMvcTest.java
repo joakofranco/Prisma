@@ -43,6 +43,7 @@ class ControllersMockMvcTest {
   @Mock private uy.edu.prisma.application.TechnicalReportService technicalReportService;
   @Mock private EmailSettingsService emailSettingsService;
   @Mock private PlanDeadlineSettingsService planDeadlineSettingsService;
+  @Mock private SessionSettingsService sessionSettingsService;
   @Mock private AccountService accountService;
   @Mock private AuditLogService auditLogService;
 
@@ -62,6 +63,7 @@ class ControllersMockMvcTest {
   private MockMvc reports;
   private MockMvc emailSettings;
   private MockMvc planDeadlines;
+  private MockMvc sessionSettings;
   private MockMvc account;
   private MockMvc auditLogs;
 
@@ -104,6 +106,9 @@ class ControllersMockMvcTest {
     planDeadlines =
         MockMvcBuilders.standaloneSetup(
                 new PlanDeadlineSettingsController(planDeadlineSettingsService))
+            .build();
+    sessionSettings =
+        MockMvcBuilders.standaloneSetup(new SessionSettingsController(sessionSettingsService))
             .build();
     account = MockMvcBuilders.standaloneSetup(new AccountController(accountService)).build();
     auditLogs = MockMvcBuilders.standaloneSetup(new AuditLogController(auditLogService)).build();
@@ -1512,6 +1517,46 @@ class ControllersMockMvcTest {
     // Leerlos lo necesita el alta de una acción (cualquier usuario autenticado).
     assertNull(get.getAnnotation(preAuthorize));
     assertNull(PlanDeadlineSettingsController.class.getAnnotation(preAuthorize));
+    assertEquals("hasRole('PRISMA_ADMIN')", update.getAnnotation(preAuthorize).value());
+  }
+
+  // ---------------- Cierre de sesión por inactividad ----------------
+
+  @Test
+  void sessionSettingsGet() throws Exception {
+    when(sessionSettingsService.get()).thenReturn(new SessionSettingsDto(30, 60));
+
+    sessionSettings
+        .perform(get("/api/settings/session"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.idleTimeoutMinutes").value(30))
+        .andExpect(jsonPath("$.warningSeconds").value(60));
+  }
+
+  @Test
+  void sessionSettingsUpdate() throws Exception {
+    when(sessionSettingsService.update(any(SessionSettingsDto.class)))
+        .thenReturn(new SessionSettingsDto(15, 45));
+
+    sessionSettings
+        .perform(
+            put("/api/settings/session")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"idleTimeoutMinutes\":15,\"warningSeconds\":45}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.idleTimeoutMinutes").value(15));
+
+    verify(sessionSettingsService).update(new SessionSettingsDto(15, 45));
+  }
+
+  @Test
+  void sessionSettingsAreReadableByAnyoneButOnlyTheAdminChangesThem() throws Exception {
+    var get = SessionSettingsController.class.getMethod("get");
+    var update = SessionSettingsController.class.getMethod("update", SessionSettingsDto.class);
+    var preAuthorize = org.springframework.security.access.prepost.PreAuthorize.class;
+
+    assertNull(get.getAnnotation(preAuthorize));
+    assertNull(SessionSettingsController.class.getAnnotation(preAuthorize));
     assertEquals("hasRole('PRISMA_ADMIN')", update.getAnnotation(preAuthorize).value());
   }
 

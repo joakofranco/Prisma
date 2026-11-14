@@ -82,7 +82,8 @@ public class AccountService {
     auditLog.record("CHANGE_PASSWORD", "user:" + user.getId(), null);
   }
 
-  private static final Set<String> ALLOWED_SESSION_EVENTS = Set.of("LOGIN", "LOGOUT");
+  private static final Set<String> ALLOWED_SESSION_EVENTS =
+      Set.of("LOGIN", "LOGOUT", "SESSION_TIMEOUT");
 
   // El frontend llama esto justo después de que Keycloak lo autentica (stores/auth.ts#init, una
   // sola vez por sesión de pestaña, no en cada refresh) y justo antes de mandarlo al logout de

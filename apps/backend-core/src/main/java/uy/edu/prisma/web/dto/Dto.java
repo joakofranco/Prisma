@@ -1156,6 +1156,8 @@ public class Dto {
   public record AlertTestResultDto(
       boolean smtpReachable, boolean alertSent, String message) {}
 
+  public record SessionSettingsDto(Integer idleTimeoutMinutes, Integer warningSeconds) {}
+
   // ---- Audit log (bitácora de acciones del sistema, distinta de AuditObservation/"Auditoría"
   // MCU) ----
   public record AuditLogDto(
