@@ -531,6 +531,17 @@ export interface PlanDeadlines {
   lowMonths: number;
 }
 
+/** Servicio de la infraestructura del lanzador «Servicios» (solo PRISMA_ADMIN y solo desde la VPN). */
+export interface PlatformService {
+  id: string;
+  key: string;
+  name: string;
+  description: string;
+  category: string;
+  url: string;
+  defaultUrl: string;
+}
+
 /** Body de actualización: `password` es obligatorio si `authEnabled` es true (Keycloak nunca
  * devuelve el valor guardado, así que hay que reingresarlo en cada guardado). */
 export interface UpdateEmailSettings {

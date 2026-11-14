@@ -1115,6 +1115,20 @@ public class Dto {
   // (Alta <= Media <= Baja) los valida PlanDeadlineSettingsService.
   public record PlanDeadlinesDto(Integer highMonths, Integer mediumMonths, Integer lowMonths) {}
 
+  // ---- Lanzador de servicios de la infraestructura (solo PRISMA_ADMIN y solo desde la VPN) ----
+  public record PlatformServiceDto(
+      UUID id,
+      String key,
+      String name,
+      String description,
+      String category,
+      String url,
+      String defaultUrl) {}
+
+  public record UpdatePlatformServiceUrlDto(String url) {}
+
+  public record ReplaceServicesHostDto(String host) {}
+
   // ---- Audit log (bitácora de acciones del sistema, distinta de AuditObservation/"Auditoría"
   // MCU) ----
   public record AuditLogDto(

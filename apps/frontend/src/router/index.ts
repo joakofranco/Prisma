@@ -124,6 +124,12 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true, title: 'Plan de Mejora' },
   },
   {
+    path: '/services',
+    name: 'Services',
+    component: () => import('@/views/services/ServicesView.vue'),
+    meta: { requiresAuth: true, title: 'Servicios', roles: ['PRISMA_ADMIN'] },
+  },
+  {
     path: '/settings',
     name: 'Settings',
     component: () => import('@/views/settings/SettingsView.vue'),

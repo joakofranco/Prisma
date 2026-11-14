@@ -24,6 +24,7 @@ import uy.edu.prisma.domain.exception.InvalidRequestException;
 import uy.edu.prisma.domain.exception.MalwareDetectedException;
 import uy.edu.prisma.domain.exception.PayloadTooLargeException;
 import uy.edu.prisma.domain.exception.ResourceNotFoundException;
+import uy.edu.prisma.domain.exception.VpnRequiredException;
 import uy.edu.prisma.web.dto.Dto.ApiErrorDto;
 
 /** Convierte excepciones de la aplicación en respuestas HTTP semánticas. */
@@ -119,6 +120,11 @@ public class GlobalExceptionHandler {
           Map.of("identifier", List.of(OrganizationMessages.DUPLICATE_IDENTIFIER)));
     }
     return build(HttpStatus.CONFLICT, "DATA_CONFLICT", "Conflicto de integridad de datos", null);
+  }
+
+  @ExceptionHandler(VpnRequiredException.class)
+  public ResponseEntity<ApiErrorDto> handleVpnRequired(VpnRequiredException ex) {
+    return build(HttpStatus.FORBIDDEN, "VPN_REQUIRED", ex.getMessage(), null);
   }
 
   @ExceptionHandler(AccessDeniedException.class)

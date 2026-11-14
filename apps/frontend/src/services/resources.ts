@@ -28,6 +28,7 @@ import type {
   EmailSettings,
   UpdateEmailSettings,
   PlanDeadlines,
+  PlatformService,
   ChangePasswordPayload,
   CatalogImportPayload,
   CatalogControlFlat,
@@ -392,6 +393,21 @@ export const planDeadlinesService = {
   },
   update(data: PlanDeadlines) {
     return apiClient.put<PlanDeadlines>('/settings/plan-deadlines', data);
+  },
+};
+
+export const platformServicesService = {
+  getAll() {
+    return apiClient.get<PlatformService[]>('/admin/services');
+  },
+  updateUrl(id: string, url: string) {
+    return apiClient.put<PlatformService>(`/admin/services/${id}`, { url });
+  },
+  reset(id: string) {
+    return apiClient.post<PlatformService>(`/admin/services/${id}/reset`);
+  },
+  replaceHost(host: string) {
+    return apiClient.post<PlatformService[]>('/admin/services/replace-host', { host });
   },
 };
 

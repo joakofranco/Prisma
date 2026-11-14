@@ -105,6 +105,7 @@
     ChartBarIcon,
     AdjustmentsHorizontalIcon,
     Cog6ToothIcon,
+    ServerStackIcon,
     ClockIcon,
     XMarkIcon,
   } from '@heroicons/vue/24/outline';
@@ -159,6 +160,7 @@
       icon: ClockIcon,
       roles: ['PRISMA_ADMIN', 'ORG_RESPONSIBLE'],
     },
+    { to: '/services', label: 'Servicios', icon: ServerStackIcon, roles: ['PRISMA_ADMIN'] },
     { to: '/settings', label: 'Configuración', icon: Cog6ToothIcon, roles: ['PRISMA_ADMIN'] },
   ];
 
