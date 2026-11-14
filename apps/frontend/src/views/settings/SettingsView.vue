@@ -30,7 +30,9 @@
 
       <div class="flex-1 min-w-0">
         <EmailSettingsPanel v-if="activeTab === 'email'" />
+        <AlertSettingsPanel v-else-if="activeTab === 'alerts'" />
         <CatalogImportPanel v-else-if="activeTab === 'catalog'" />
+        <ControlGuidePanel v-else-if="activeTab === 'guide'" />
         <PlanDeadlinesPanel v-else-if="activeTab === 'plan'" />
       </div>
     </div>
@@ -39,16 +41,26 @@
 
 <script setup lang="ts">
   import { ref } from 'vue';
-  import { EnvelopeIcon, BookOpenIcon, ArrowTrendingUpIcon } from '@heroicons/vue/24/outline';
+  import {
+    BellAlertIcon,
+    EnvelopeIcon,
+    BookOpenIcon,
+    ArrowTrendingUpIcon,
+    LightBulbIcon,
+  } from '@heroicons/vue/24/outline';
   import EmailSettingsPanel from '@/components/settings/EmailSettingsPanel.vue';
+  import AlertSettingsPanel from '@/components/settings/AlertSettingsPanel.vue';
   import CatalogImportPanel from '@/components/settings/CatalogImportPanel.vue';
+  import ControlGuidePanel from '@/components/settings/ControlGuidePanel.vue';
   import PlanDeadlinesPanel from '@/components/settings/PlanDeadlinesPanel.vue';
 
-  type TabKey = 'email' | 'catalog' | 'plan';
+  type TabKey = 'email' | 'alerts' | 'catalog' | 'guide' | 'plan';
 
   const tabs: { key: TabKey; label: string; icon: unknown }[] = [
     { key: 'email', label: 'Correo electrónico', icon: EnvelopeIcon },
+    { key: 'alerts', label: 'Alertas del sistema', icon: BellAlertIcon },
     { key: 'catalog', label: 'Catálogo', icon: BookOpenIcon },
+    { key: 'guide', label: 'Guía de controles', icon: LightBulbIcon },
     // RF-PLN-03: plazos por defecto del plan de mejora.
     { key: 'plan', label: 'Plan de mejora', icon: ArrowTrendingUpIcon },
   ];

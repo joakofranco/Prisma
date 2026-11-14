@@ -87,6 +87,10 @@ springdoc:
     tryItOutEnabled: true
 
 prisma:
+  # Lanzador de servicios: redes desde las que se permite (VPN). Loopback y rangos privados por
+  # defecto; en producción, la subred exacta de WireGuard (SERVICES_ALLOWED_CIDRS, separadas por coma).
+  services:
+    allowed-cidrs: ${SERVICES_ALLOWED_CIDRS:127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}
   # Versión/entorno de esta instancia (ver AppVersionService). APP_ENV: development | staging |
   # production; sin la variable se asume development (un olvido en producción es visible).
   app:

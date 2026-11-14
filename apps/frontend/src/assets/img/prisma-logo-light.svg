@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 590 205" role="img" aria-label="PRISMA">
+  <defs>
+    <linearGradient id="beam" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#7cc4ff" stop-opacity="0"/><stop offset="1" stop-color="#7cc4ff"/></linearGradient>
+    <linearGradient id="faceL" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#e9eefb"/><stop offset="1" stop-color="#9aa8c7"/></linearGradient>
+    <linearGradient id="bar" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#1d6bff"/><stop offset=".3" stop-color="#19b6a4"/><stop offset=".55" stop-color="#f5d90a"/><stop offset=".8" stop-color="#ff8a00"/><stop offset="1" stop-color="#ff3d1f"/></linearGradient>
+    <clipPath id="faceR"><path d="M150 12 L236 150 L150 188 Z"/></clipPath>
+  </defs>
+  <path d="M0 74 L72 66 L72 80 Z" fill="url(#beam)"/>
+  <path d="M150 12 L150 188 L66 150 Z" fill="url(#faceL)"/>
+  <path d="M150 12 L236 150 L150 188 Z" fill="#0b1f4b"/>
+  <g clip-path="url(#faceR)">
+    <path d="M150 96 L236 112 L236 126 L150 110 Z" fill="#2457d6"/>
+    <path d="M150 110 L236 126 L236 140 L150 124 Z" fill="#12b886"/>
+    <path d="M150 124 L236 140 L236 152 L150 138 Z" fill="#f5d90a"/>
+    <path d="M150 138 L236 152 L236 166 L150 152 Z" fill="#ff8a00"/>
+    <path d="M150 152 L236 166 L236 180 L150 166 Z" fill="#ff3d1f"/>
+  </g>
+  <path d="M66 150 L150 188 L150 196 L66 158 Z" fill="#9aa8c7" opacity=".7"/>
+  <text x="250" y="116" font-family="Poppins, Montserrat, 'Segoe UI', Arial, sans-serif" font-weight="800" font-size="104" textLength="330" lengthAdjust="spacingAndGlyphs" fill="#0b1f4b">PRISMA</text>
+  <rect x="252" y="130" width="326" height="8" rx="4" fill="url(#bar)"/>
+</svg>

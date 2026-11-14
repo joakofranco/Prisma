@@ -28,6 +28,10 @@ networks:
       config:
         - subnet: 172.28.0.0/16
 
+secrets:
+  portainer_admin_password:
+    file: ./.secrets/portainer_admin_password
+
 volumes:
   postgres-data:        { name: prisma-postgres-data }
   redis-data:           { name: prisma-redis-data }
@@ -40,6 +44,8 @@ volumes:
   sonar-extensions:     { name: prisma-sonar-extensions }
   sonar-logs:           { name: prisma-sonar-logs }
   prometheus-data:      { name: prisma-prometheus-data }
+  alertmanager-data:    { name: prisma-alertmanager-data }
+  alertmanager-config:  { name: prisma-alertmanager-config }
   grafana-data:         { name: prisma-grafana-data }
   loki-data:            { name: prisma-loki-data }
   elasticsearch-data:   { name: prisma-elasticsearch-data }
@@ -48,6 +54,9 @@ volumes:
   pgadmin-data:         { name: prisma-pgadmin-data }
   evidences-data:       { name: prisma-evidences-data }
   clamav-data:          { name: prisma-clamav-data }
+  nginx-f2b-logs:       { name: prisma-nginx-f2b-logs }
+  nginx-banlist:        { name: prisma-nginx-banlist }
+  fail2ban-data:        { name: prisma-fail2ban-data }
 
 # =====================================================================
 # SERVICIOS
@@ -201,9 +210,13 @@ services:
       JAVA_TOOL_OPTIONS: ${BACKEND_CORE_JVM_OPTS:--Xms512m -Xmx1024m}
       TZ: ${TZ}
     ports:
-      - "${BACKEND_CORE_PORT:-8081}:8080"
+      # Solo loopback: publicado en todas las interfaces, cualquiera podía hablarle directo al backend
+      # con un X-Forwarded-For falso y saltarse el control de red del lanzador de servicios
+      # (VpnAccessGuard). El tráfico normal entra por NGINX, que fija esa cabecera.
+      - "127.0.0.1:${BACKEND_CORE_PORT:-8081}:8080"
     volumes:
       - evidences-data:/var/prisma/evidences
+      - alertmanager-config:/var/prisma/alerting
       - ./infra/tls/ca.crt:/etc/prisma/tls/ca.crt:ro
     command:
       - sh
@@ -401,6 +414,10 @@ services:
       # (el arranque completo tarda ~30-60s) -- esa ventana es la que daba 502 en /auth/* al
       # levantar el stack o reiniciar este servicio (ver docs/RUNBOOK.md).
       KC_HEALTH_ENABLED: "true"
+      # /auth/metrics en el management interface (9000, interno) y contador de eventos de usuario
+      # (keycloak_user_events_total: login_error, etc.) para las alertas de fuerza bruta.
+      KC_METRICS_ENABLED: "true"
+      KC_EVENT_METRICS_USER_ENABLED: "true"
       KC_HTTP_MANAGEMENT_SCHEME: http
     ports:
       - "127.0.0.1:${KEYCLOAK_PORT:-8180}:8080"
@@ -654,6 +671,95 @@ services:
     networks: [prisma-net]
 
   # -------------------------------------------------------------------
+  # 10a. ALERTAS Y SONDAS (Alertmanager + blackbox + Elasticsearch exporter + buzón de pruebas)
+  # -------------------------------------------------------------------
+  # Prometheus evalúa las reglas de infra/monitoring/prometheus/rules (caídas, saturación, DoS y
+  # fuerza bruta) y manda lo que dispara a Alertmanager, que lo envía por correo. Las alertas
+  # activas también se ven en el tablero «PRISMA · Estado general y alertas» de Grafana.
+  alertmanager-config-init:
+    image: busybox:1.37
+    container_name: prisma-alertmanager-config-init
+    restart: "no"
+    profiles: [observability, full]
+    command: ["sh", "-c", "chown 100:65534 /cfg && chmod 2775 /cfg"]
+    volumes:
+      - alertmanager-config:/cfg
+    networks: [prisma-net]
+
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    container_name: prisma-alertmanager
+    restart: unless-stopped
+    profiles: [observability, full]
+    depends_on:
+      alertmanager-config-init: { condition: service_completed_successfully }
+    environment:
+      # Valores iniciales: una vez que el administrador guarda la configuración desde la plataforma
+      # (Configuración → Alertas) esa configuración manda y estas variables dejan de usarse.
+      # Por defecto el correo cae en Mailpit (buzón de pruebas, UI en :8025). En producción: la
+      # cuenta SMTP propia del sistema (ver .env.example).
+      ALERT_SMTP_SMARTHOST: ${ALERT_SMTP_SMARTHOST:-mailpit:1025}
+      ALERT_SMTP_FROM: ${ALERT_SMTP_FROM:-alertas@prisma.uy}
+      ALERT_SMTP_USER: ${ALERT_SMTP_USER:-}
+      ALERT_SMTP_PASSWORD: ${ALERT_SMTP_PASSWORD:-}
+      ALERT_SMTP_REQUIRE_TLS: ${ALERT_SMTP_REQUIRE_TLS:-false}
+      ALERT_EMAIL_TO: ${ALERT_EMAIL_TO:-admin@prisma.uy}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        cp /etc/alertmanager/alertmanager.yml.tpl /alertmanager-config/alertmanager.yml.tpl
+        if [ ! -f /alertmanager-config/.managed ]; then
+          printf '%s' "$$ALERT_SMTP_PASSWORD" > /alertmanager-config/smtp_password
+          chmod 600 /alertmanager-config/smtp_password
+          sed -e "s|__SMTP_SMARTHOST__|$$ALERT_SMTP_SMARTHOST|" \
+              -e "s|__SMTP_FROM__|$$ALERT_SMTP_FROM|" \
+              -e "s|__SMTP_USER__|$$ALERT_SMTP_USER|" \
+              -e "s|__SMTP_REQUIRE_TLS__|$$ALERT_SMTP_REQUIRE_TLS|" \
+              -e "s|__EMAIL_TO__|$$ALERT_EMAIL_TO|" \
+              /etc/alertmanager/alertmanager.yml.tpl > /alertmanager-config/alertmanager.yml
+        fi
+        exec /bin/alertmanager --config.file=/alertmanager-config/alertmanager.yml --storage.path=/alertmanager
+    ports:
+      - "${ALERTMANAGER_PORT:-9093}:9093"
+    volumes:
+      - ./infra/monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml.tpl:ro
+      - ./infra/monitoring/alertmanager/templates:/etc/alertmanager/templates:ro
+      - alertmanager-data:/alertmanager
+      - alertmanager-config:/alertmanager-config
+    networks: [prisma-net]
+
+  mailpit:
+    image: axllent/mailpit:v1.27
+    container_name: prisma-mailpit
+    restart: unless-stopped
+    profiles: [observability, full]
+    ports:
+      - "${MAILPIT_UI_PORT:-8025}:8025"
+    networks: [prisma-net]
+
+  blackbox-exporter:
+    image: prom/blackbox-exporter:v0.27.0
+    container_name: prisma-blackbox-exporter
+    restart: unless-stopped
+    profiles: [observability, full]
+    volumes:
+      - ./infra/monitoring/blackbox/blackbox.yml:/etc/blackbox_exporter/config.yml:ro
+    networks: [prisma-net]
+
+  elasticsearch-exporter:
+    image: quay.io/prometheuscommunity/elasticsearch-exporter:v1.9.0
+    container_name: prisma-elasticsearch-exporter
+    restart: unless-stopped
+    profiles: [observability, full]
+    command:
+      - "--es.uri=http://elastic:${ELASTIC_PASSWORD}@elasticsearch:9200"
+      - "--es.all"
+      - "--es.indices"
+      - "--es.shards"
+    depends_on: [elasticsearch]
+    networks: [prisma-net]
+
+  # -------------------------------------------------------------------
   # 10b. ELASTICSEARCH + KIBANA + FILEBEAT (logs centralizados)
   # ---------------------------------------------------------------------
   # Aparte de Loki/Promtail (arriba): no lo reemplaza, es una segunda vía de logs pensada para
@@ -799,6 +905,10 @@ services:
     container_name: prisma-portainer
     restart: unless-stopped
     profiles: [management, full]
+    # El administrador se crea al arrancar con la contraseña de .secrets/portainer_admin_password
+    # (usuario "admin"). Sin eso, Portainer se bloquea si nadie lo configura en los primeros 5 minutos.
+    command: ["--admin-password-file", "/run/secrets/portainer_admin_password"]
+    secrets: [portainer_admin_password]
     ports:
       - "${PORTAINER_PORT:-9000}:9000"
       - "9443:9443"
@@ -922,4 +1032,34 @@ services:
       - ./infra/nginx/conf.d:/etc/nginx/conf.d:ro
       - ./infra/nginx/certs:/etc/nginx/certs:ro
       - ./infra/tls/ca.crt:/etc/nginx/internal-ca.crt:ro
+      - nginx-f2b-logs:/var/log/nginx-f2b
+      - nginx-banlist:/etc/nginx/banlist:ro
+    networks: [prisma-net]
+
+  # -------------------------------------------------------------------
+  # FAIL2BAN: bloquea las IPs que abusan de la plataforma. Lee el access.log de NGINX (volumen
+  # nginx-f2b-logs), y al banear una IP la agrega como "deny" a la lista que NGINX incluye
+  # (volumen nginx-banlist) y le manda HUP al contenedor de NGINX para recargarla. Las IPs
+  # baneadas reciben 403. Usa el socket de Docker solo para esa señal. Ver docs/RUNBOOK.md.
+  # -------------------------------------------------------------------
+  fail2ban:
+    build: { context: ./infra/fail2ban }
+    image: prisma-fail2ban:local
+    container_name: prisma-fail2ban
+    restart: unless-stopped
+    profiles: [security, proxy, full]
+    environment:
+      # 172.28.0.1 es la puerta de enlace de prisma-net: en Docker Desktop (Windows/Mac) TODO el
+      # tráfico del host hacia un puerto publicado llega a los contenedores con esa IP, nunca con
+      # la real -- sin ignorarla, cualquier prueba seguida desde el propio equipo (varios 401/403
+      # en poco tiempo) termina bloqueando al desarrollador. No aplica igual en un VPS: ahí no hay
+      # Docker Desktop de por medio y conviene revisar esta lista antes de desplegar.
+      F2B_IGNORE_IPS: "${F2B_IGNORE_IPS:-127.0.0.1/8 ::1 172.28.0.1}"
+    volumes:
+      - nginx-f2b-logs:/logs
+      - nginx-banlist:/banlist
+      - fail2ban-data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      nginx: { condition: service_started }
     networks: [prisma-net]

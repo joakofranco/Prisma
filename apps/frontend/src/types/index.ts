@@ -149,11 +149,37 @@ export interface MaturityRequirement {
   controls: MaturityControl[];
 }
 
+export interface ControlGuide {
+  interpretation: string;
+  example: string;
+  evidence: string;
+}
+
 export interface MaturityControl {
   id: string;
   code: string;
   description: string;
   targetLevel: MaturityLevel;
+  guide?: ControlGuide;
+}
+
+export interface ControlGuideItem {
+  id: string;
+  code: string;
+  description: string;
+  targetLevel: MaturityLevel;
+  requirementCode: string;
+  interpretation: string | null;
+  example: string | null;
+  evidence: string | null;
+}
+
+export interface ControlGuideImportResult {
+  parsed: number;
+  updated: number;
+  notInCatalog: string[];
+  incomplete: string[];
+  catalogWithoutGuide: number;
 }
 
 /** Vista plana de un control del catálogo (GET /catalog/{version}/controls). La usa el selector
@@ -497,12 +523,57 @@ export interface EmailSettings {
   configured: boolean;
 }
 
+/** Configuración de las alertas del sistema (Alertmanager). La contraseña SMTP nunca se devuelve:
+ * `passwordSet` indica si ya hay una guardada. `warning` viene si se guardó pero Alertmanager no
+ * respondió a la recarga. */
+export interface AlertSettings {
+  recipients: string;
+  smtpHost: string;
+  smtpPort: number;
+  from: string;
+  authEnabled: boolean;
+  username: string | null;
+  passwordSet: boolean;
+  requireTls: boolean;
+  configured: boolean;
+  updatedAt: string;
+  warning: string | null;
+}
+
+export interface UpdateAlertSettings {
+  recipients: string;
+  smtpHost: string;
+  smtpPort: number;
+  from: string;
+  authEnabled: boolean;
+  username: string | null;
+  password: string | null;
+  requireTls: boolean;
+}
+
+export interface AlertTestResult {
+  smtpReachable: boolean;
+  alertSent: boolean;
+  message: string;
+}
+
 /** RF-PLN-03: plazos por defecto (en meses) con los que se sugiere la fecha límite de una acción
  * del plan de mejora según su prioridad. Los configura PRISMA_ADMIN (1–60, Alta ≤ Media ≤ Baja). */
 export interface PlanDeadlines {
   highMonths: number;
   mediumMonths: number;
   lowMonths: number;
+}
+
+/** Servicio de la infraestructura del lanzador «Servicios» (solo PRISMA_ADMIN y solo desde la VPN). */
+export interface PlatformService {
+  id: string;
+  key: string;
+  name: string;
+  description: string;
+  category: string;
+  url: string;
+  defaultUrl: string;
 }
 
 /** Body de actualización: `password` es obligatorio si `authEnabled` es true (Keycloak nunca

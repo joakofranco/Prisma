@@ -4,12 +4,6 @@ import type { UserRole } from '@/types';
 
 const routes: RouteRecordRaw[] = [
   {
-    path: '/login',
-    name: 'Login',
-    component: () => import('@/views/auth/LoginView.vue'),
-    meta: { requiresAuth: false, layout: 'blank' },
-  },
-  {
     path: '/',
     redirect: '/dashboard',
   },
@@ -130,6 +124,12 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true, title: 'Plan de Mejora' },
   },
   {
+    path: '/services',
+    name: 'Services',
+    component: () => import('@/views/services/ServicesView.vue'),
+    meta: { requiresAuth: true, title: 'Servicios', roles: ['PRISMA_ADMIN'] },
+  },
+  {
     path: '/settings',
     name: 'Settings',
     component: () => import('@/views/settings/SettingsView.vue'),
@@ -165,12 +165,8 @@ router.beforeEach(async (to, _from, next) => {
   }
 
   if (to.meta.requiresAuth !== false && !authStore.isAuthenticated) {
-    next({ name: 'Login' });
-    return;
-  }
-
-  if (to.name === 'Login' && authStore.isAuthenticated) {
-    next({ name: 'Dashboard' });
+    await authStore.login();
+    next(false);
     return;
   }
 

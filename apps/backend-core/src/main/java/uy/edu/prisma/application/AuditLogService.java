@@ -102,6 +102,7 @@ public class AuditLogService {
           Map.entry("SAVE_RESPONSE", "Respuesta Guardada"),
           Map.entry("LOGIN", "Inicio de Sesión"),
           Map.entry("LOGOUT", "Cierre de Sesión"),
+          Map.entry("SESSION_TIMEOUT", "Sesión Cerrada por Inactividad"),
           Map.entry("LOGIN_FAILED", "Inicio de Sesión Fallido"));
 
   private static final Map<String, String> RESOURCE_TYPE_LABELS =
@@ -110,7 +111,10 @@ public class AuditLogService {
           "organization", "Organización",
           "evaluation", "Evaluación",
           "catalog_version", "Versión de Catálogo",
-          "email-settings", "Configuración de Email");
+          "email-settings", "Configuración de Email",
+          "platform-service", "Servicio de Infraestructura",
+          "alert-settings", "Configuración de Alertas",
+          "session-settings", "Configuración de Sesión");
 
   // Marcador que no coincide con ninguna acción ni tipo real: el IN de la consulta no admite una
   // lista vacía.

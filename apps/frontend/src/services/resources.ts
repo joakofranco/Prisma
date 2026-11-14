@@ -26,11 +26,17 @@ import type {
   CommunityProfile,
   CommunityProfileSummary,
   EmailSettings,
+  AlertSettings,
+  UpdateAlertSettings,
+  AlertTestResult,
   UpdateEmailSettings,
   PlanDeadlines,
+  PlatformService,
   ChangePasswordPayload,
   CatalogImportPayload,
   CatalogControlFlat,
+  ControlGuideItem,
+  ControlGuideImportResult,
   OrganizationReactivation,
   InviteUserPayload,
 } from '@/types';
@@ -173,6 +179,28 @@ export const catalogService = {
   },
   deleteVersion(version: string) {
     return apiClient.delete(`/catalog/${version}`);
+  },
+  getGuideItems(version: string) {
+    return apiClient.get<ControlGuideItem[]>(`/catalog/${version}/guide/items`);
+  },
+  exportGuide(version: string) {
+    return apiClient.get<Blob>(`/catalog/${version}/guide/export`, { responseType: 'blob' });
+  },
+  importGuide(version: string, file: File) {
+    const data = new FormData();
+    data.append('file', file);
+    return apiClient.post<ControlGuideImportResult>(`/catalog/${version}/guide`, data, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+  saveGuide(
+    controlId: string,
+    data: { interpretation: string; example: string; evidence: string },
+  ) {
+    return apiClient.put<ControlGuideItem>(`/catalog/controls/${controlId}/guide`, data);
+  },
+  deleteGuides(controlIds: string[]) {
+    return apiClient.post<{ removed: number }>('/catalog/guide/delete', { controlIds });
   },
 };
 
@@ -368,6 +396,33 @@ export const planDeadlinesService = {
   },
   update(data: PlanDeadlines) {
     return apiClient.put<PlanDeadlines>('/settings/plan-deadlines', data);
+  },
+};
+
+export const platformServicesService = {
+  getAll() {
+    return apiClient.get<PlatformService[]>('/admin/services');
+  },
+  updateUrl(id: string, url: string) {
+    return apiClient.put<PlatformService>(`/admin/services/${id}`, { url });
+  },
+  reset(id: string) {
+    return apiClient.post<PlatformService>(`/admin/services/${id}/reset`);
+  },
+  replaceHost(host: string) {
+    return apiClient.post<PlatformService[]>('/admin/services/replace-host', { host });
+  },
+};
+
+export const alertSettingsService = {
+  get() {
+    return apiClient.get<AlertSettings>('/admin/alert-settings');
+  },
+  update(data: UpdateAlertSettings) {
+    return apiClient.put<AlertSettings>('/admin/alert-settings', data);
+  },
+  test() {
+    return apiClient.post<AlertTestResult>('/admin/alert-settings/test');
   },
 };
 

@@ -537,3 +537,82 @@ de `infra/keycloak/themes/`.
 - Setup completo del entorno: [`Dev-Config.md`](Dev-Config.md)
 - Modelo de seguridad y endurecimientos recientes: [`SECURITY.md`](SECURITY.md)
 - Testing (automatizado + metodología manual que encontró varios de estos incidentes): [`Testing.md`](Testing.md)
+
+## Alertas y monitoreo
+
+Prometheus evalúa las reglas de `infra/monitoring/prometheus/rules/` (`availability.yml`,
+`saturation.yml`, `security.yml`) y manda lo que dispara a Alertmanager, que las envía por correo.
+Las alertas activas se ven en Grafana → carpeta PRISMA → **«PRISMA · Estado general y alertas»**.
+
+| Tablero | Qué muestra |
+|---|---|
+| Estado general y alertas | Alertas activas, estado de cada servicio (ACTIVO/CAÍDO), saturación del host, contenedores, API |
+| Seguridad: DoS y fuerza bruta | Peticiones y 429 de NGINX, logins fallidos de Keycloak, 401/403 de la API, conexiones TCP |
+| Elasticsearch | Estado del clúster, shards, heap, indexación y búsquedas |
+| Observabilidad y sondas | Prometheus, Alertmanager, Loki, Promtail, Grafana, Keycloak y latencia de las sondas |
+
+**Qué alerta:** servicio caído (`ServiceDown`, `ProbeDown`, `ContainerNotRunning`), saturación de
+CPU, memoria, disco, conexiones de PostgreSQL, heap de la JVM y Redis, errores 5xx y latencia de la
+API, y seguridad: DoS (`DosRateLimit*`, `RequestFloodSpike`, `TcpConnectionsFlood`,
+`SynFloodSuspected`) y fuerza bruta (`LoginFailuresHigh`, `BruteForceInProgress`,
+`LoginRateLimitHit`, `ApiUnauthorizedSpike`). Los umbrales están en cada regla.
+
+**Correo:** por defecto las alertas llegan a Mailpit (buzón de pruebas, <http://localhost:8025>).
+Para producción se definen en `.env` `ALERT_EMAIL_TO`, `ALERT_SMTP_FROM`, `ALERT_SMTP_SMARTHOST`,
+`ALERT_SMTP_USER`, `ALERT_SMTP_PASSWORD` y `ALERT_SMTP_REQUIRE_TLS` (cuenta propia del sistema).
+
+**Probar las alertas:** detener un servicio (`docker stop prisma-pgadmin`) dispara `ProbeDown` al
+minuto; 25 logins fallidos seguidos disparan `LoginFailuresHigh`. Tras recrear contenedores,
+`docker exec prisma-nginx nginx -s reload` si `/auth` responde 502.
+
+Validar las reglas: `promtool check rules infra/monitoring/prometheus/rules/*.yml`.
+
+## Bloqueo automático de IPs (fail2ban)
+
+El contenedor `prisma-fail2ban` lee el `access.log` de NGINX y bloquea las IPs que abusan de la plataforma. Un bloqueo agrega `deny <IP>;` a la lista que NGINX incluye (`/etc/nginx/banlist/f2b.conf`) y recarga NGINX con una señal HUP. La IP bloqueada recibe 403.
+
+| Jail | Qué detecta | Umbral | Bloqueo |
+|---|---|---|---|
+| `prisma-nginx-ratelimit` | Respuestas 429 (límite de tasa de NGINX) | 30 en 1 min | 10 min |
+| `prisma-nginx-login` | 429 en `login-actions/authenticate` (fuerza bruta contra el formulario) | 5 en 5 min | 30 min |
+| `prisma-nginx-scan` | 401, 403 o 404 (escaneo o credenciales robadas), sin contar `/assets/` | 60 en 1 min | 10 min |
+
+Cada reincidencia duplica el tiempo de bloqueo, hasta un máximo de 24 h. Los bloqueos se guardan en el volumen `prisma-fail2ban-data` y se restauran al reiniciar el contenedor.
+
+- Ver las IPs bloqueadas: `docker exec prisma-fail2ban fail2ban-client banned`
+- Estado de un jail: `docker exec prisma-fail2ban fail2ban-client status prisma-nginx-ratelimit`
+- Desbloquear una IP: `docker exec prisma-fail2ban fail2ban-client unban <IP>`
+- Probar un filtro contra el log: `docker exec prisma-fail2ban fail2ban-regex /logs/access.log prisma-nginx-ratelimit`
+- Cada bloqueo dispara la alerta `Fail2banIpBanned` (dashboard y correo).
+
+Notas:
+- Para que no se bloquee a los administradores, poner sus IPs en `F2B_IGNORE_IPS` (`.env`).
+- Si NGINX queda detrás de otro proxy o balanceador, todas las peticiones llegan con la IP de ese proxy: agregarla a `F2B_IGNORE_IPS` o configurar `real_ip` en NGINX antes de usar fail2ban.
+- El contenedor usa el socket de Docker solo para enviar la señal de recarga a `prisma-nginx`. El log compartido se vacía solo cuando supera los 50 MB.
+- Protege contra el abuso de una IP o de pocas IPs. No reemplaza una protección de red contra un DDoS volumétrico (CDN o proveedor).
+
+## Configuración de alertas desde la plataforma
+
+El administrador define a dónde y cómo se envían las alertas desde **Configuración → Alertas del sistema**, sin editar archivos:
+
+- Destinatarios (hasta 10), servidor SMTP, puerto, remitente, usuario, contraseña y TLS.
+- **Guardar configuración** valida los datos, reescribe la configuración de Alertmanager y la recarga sin reiniciarlo.
+- **Enviar alerta de prueba** comprueba la conexión con el servidor SMTP y manda una alerta `PruebaDeCorreo` a los destinatarios guardados (llega en menos de un minuto).
+- Los correos de cambio y recuperación de contraseña son otra configuración (pestaña **Correo electrónico**, SMTP de Keycloak).
+
+Cómo funciona:
+
+- backend-core y Alertmanager comparten el volumen `prisma-alertmanager-config`. Un contenedor de arranque (`alertmanager-config-init`) le da permisos para los dos.
+- Los datos (menos la contraseña) se guardan en la tabla `prisma.alert_settings`. La contraseña SMTP solo se escribe en el archivo `smtp_password` del volumen, nunca en la base de datos ni en las respuestas de la API.
+- Hasta la primera vez que se guarda, Alertmanager usa los valores de `ALERT_*` del `.env` (por defecto, el buzón de pruebas Mailpit). Después, manda lo guardado en la plataforma y esas variables dejan de usarse. El archivo `.managed` del volumen marca ese cambio.
+- Al arrancar, backend-core vuelve a escribir la configuración de Alertmanager con lo guardado, para que no quede desfasada si cambia la plantilla.
+- Para volver a los valores del `.env`: borrar `.managed` del volumen y reiniciar Alertmanager.
+
+## Portainer: administrador inicial
+
+Portainer se bloquea («instance timed out for security purposes») si nadie crea el administrador en los 5 minutos siguientes a cada arranque. Para que no pase, el compose lo crea al arrancar con la contraseña del archivo `.secrets/portainer_admin_password` (ignorado por git). Usuario: `admin`.
+
+- En un entorno nuevo, crear el archivo antes de levantar Portainer: `mkdir -p .secrets && openssl rand -base64 24 | tr -d "/+=
+" > .secrets/portainer_admin_password`.
+- Ver la contraseña: `cat .secrets/portainer_admin_password`.
+- La contraseña se aplica solo cuando Portainer todavía no tiene administrador. Para cambiarla después, hacerlo desde la propia interfaz (Users).

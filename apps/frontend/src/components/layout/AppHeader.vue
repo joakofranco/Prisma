@@ -19,12 +19,8 @@
       </button>
       <!-- Logo junto a la hamburguesa (en escritorio ya está en el menú lateral). -->
       <div class="flex items-center gap-2 shrink-0 lg:hidden">
-        <ShieldCheckIcon class="w-7 h-7 text-blue-600 dark:text-blue-400" />
-        <span
-          class="hidden sm:inline text-lg font-bold tracking-wide text-slate-900 dark:text-white"
-        >
-          PRISMA
-        </span>
+        <img :src="logoLight" alt="PRISMA" class="h-9 w-auto select-none dark:hidden" />
+        <img :src="logoDark" alt="PRISMA" class="hidden h-9 w-auto select-none dark:block" />
       </div>
       <h1 class="text-lg font-semibold text-slate-800 dark:text-white truncate">
         {{ currentTitle }}
@@ -128,7 +124,8 @@
     SunIcon,
     MoonIcon,
   } from '@heroicons/vue/24/outline';
-  import { ShieldCheckIcon } from '@heroicons/vue/24/solid';
+  import logoLight from '@/assets/img/prisma-logo-light.svg';
+  import logoDark from '@/assets/img/prisma-logo-dark.svg';
   import type { UserRole } from '@/types';
 
   defineProps<{

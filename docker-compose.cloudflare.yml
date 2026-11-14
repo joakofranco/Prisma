@@ -1,0 +1,87 @@
+# =====================================================================
+# docker-compose.cloudflare.yml
+# ---------------------------------------------------------------------
+# Publicación de PRISMA en internet con un VPS y Cloudflare Tunnel.
+# Se suma a los overrides de producción:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+#                  -f docker-compose.cloudflare.yml up -d --no-build
+#
+# - cloudflared ya corre en el VPS (no es parte de este compose) y entra a NGINX por 127.0.0.1:TUNNEL_ORIGIN_PORT.
+#   Como llega por el puerto publicado, NGINX ve su conexión desde la puerta de enlace de prisma-net
+#   (172.28.0.1) y solo en ese caso confía en la cabecera CF-Connecting-IP: así toma la IP real del
+#   visitante y el límite de tasa, fail2ban y el control de VPN de Servicios funcionan por visitante.
+# - Ningún puerto queda abierto a internet: los que sirven a los administradores se publican solo
+#   en INTERNAL_BIND_IP (la IP de la VPN en el VPS; por defecto 127.0.0.1) y el resto se quita.
+# Ver docs/PUBLICACION-CLOUDFLARE.md.
+# =====================================================================
+
+services:
+
+  nginx:
+    # El túnel (cloudflared en el host) entra por 127.0.0.1:TUNNEL_ORIGIN_PORT; los administradores por
+    # VPN entran por INTERNAL_BIND_IP. Nada queda publicado hacia internet.
+    ports: !override
+      - "127.0.0.1:${TUNNEL_ORIGIN_PORT:-8443}:443"
+      - "${INTERNAL_BIND_IP:-127.0.0.1}:${NGINX_HTTPS_PORT:-443}:443"
+      - "${INTERNAL_BIND_IP:-127.0.0.1}:${NGINX_HTTP_PORT:-80}:80"
+    volumes:
+      - ./infra/nginx/cloudflare/real-ip.conf:/etc/nginx/realip/cloudflare.conf:ro
+
+  # ---------- Servicios de administración: solo en la IP interna (VPN) ----------
+  alertmanager:
+    ports: !override
+      - "${INTERNAL_BIND_IP:-127.0.0.1}:${ALERTMANAGER_PORT:-9093}:9093"
+  cadvisor:
+    ports: !override
+      - "${INTERNAL_BIND_IP:-127.0.0.1}:8082:8080"
+  elasticsearch:
+    ports: !override
+      - "${INTERNAL_BIND_IP:-127.0.0.1}:${ELASTICSEARCH_PORT:-9200}:9200"
+  grafana:
+    ports: !override
+      - "${INTERNAL_BIND_IP:-127.0.0.1}:${GRAFANA_PORT:-3000}:3000"
+  kibana:
+    ports: !override
+      - "${INTERNAL_BIND_IP:-127.0.0.1}:${KIBANA_PORT:-5601}:5601"
+  loki:
+    ports: !override
+      - "${INTERNAL_BIND_IP:-127.0.0.1}:3100:3100"
+  mailpit:
+    ports: !override
+      - "${INTERNAL_BIND_IP:-127.0.0.1}:${MAILPIT_UI_PORT:-8025}:8025"
+  ollama:
+    ports: !override
+      - "${INTERNAL_BIND_IP:-127.0.0.1}:11434:11434"
+  pgadmin:
+    ports: !override
+      - "${INTERNAL_BIND_IP:-127.0.0.1}:${PGADMIN_PORT:-5050}:80"
+  portainer:
+    ports: !override
+      - "${INTERNAL_BIND_IP:-127.0.0.1}:${PORTAINER_PORT:-9000}:9000"
+      - "${INTERNAL_BIND_IP:-127.0.0.1}:9443:9443"
+  prometheus:
+    ports: !override
+      - "${INTERNAL_BIND_IP:-127.0.0.1}:9090:9090"
+  rustfs:
+    ports: !override
+      - "${INTERNAL_BIND_IP:-127.0.0.1}:${S3_PORT_API:-9001}:9000"
+      - "${INTERNAL_BIND_IP:-127.0.0.1}:${S3_PORT_CONSOLE:-9002}:9001"
+  sonarqube:
+    ports: !override
+      - "${INTERNAL_BIND_IP:-127.0.0.1}:${SONAR_PORT:-9003}:9000"
+
+  # ---------- Sin puertos en el host: se usan solo por la red interna ----------
+  postgres:
+    ports: !reset []
+  redis:
+    ports: !reset []
+  backend-ai:
+    ports: !reset []
+  frontend:
+    ports: !reset []
+  node-exporter:
+    ports: !reset []
+  postgres-exporter:
+    ports: !reset []
+  redis-exporter:
+    ports: !reset []

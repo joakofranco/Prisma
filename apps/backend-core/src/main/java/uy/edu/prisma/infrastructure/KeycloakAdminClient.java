@@ -452,27 +452,94 @@ public class KeycloakAdminClient {
    * host inalcanzable, etc.) -- a diferencia del resto de los métodos de esta clase, acá SÍ
    * conviene traducir el error de Keycloak en vez de dejarlo propagar tal cual, porque quien llama
    * necesita mostrárselo al admin para que corrija la configuración.
+   *
+   * <p><b>Por qué cambia el email de la cuenta de servicio:</b> el endpoint {@code
+   * testSMTPConnection} de Keycloak (verificado decompilando {@code RealmAdminResource} de la
+   * versión 26.7.5 en uso) SIEMPRE manda la prueba al "usuario actualmente logueado" -- su propio
+   * resumen OpenAPI dice literalmente "Test SMTP connection with current logged in user" -- y no
+   * declara ningún parámetro de destinatario: el {@code ?user=...} que tenía antes este método era
+   * inofensivo pero Keycloak lo ignoraba por completo. Como backend-core llama a esta API como la
+   * cuenta de servicio {@code service-account-<clientId>}, el correo de prueba siempre terminaba en
+   * el email que esa cuenta tuviera guardado, sin importar qué destinatario pidiera el admin (si
+   * coincidía era por casualidad). Para que funcione con cualquier destinatario, sin introducir un
+   * camino de envío paralelo a Keycloak, se le asigna temporalmente ese email a la cuenta de
+   * servicio, se dispara la prueba y SIEMPRE se restaura el valor anterior (éxito o error) -- ver
+   * {@code finally}. {@code synchronized} porque dos pruebas simultáneas pisarían el email de la
+   * misma cuenta de servicio.
    */
-  public void testSmtpConnection(Map<String, String> smtpServer, String testRecipientEmail) {
+  public synchronized void testSmtpConnection(
+      Map<String, String> smtpServer, String testRecipientEmail) {
+    UUID serviceAccountId = findServiceAccountId();
+    String previousEmail = getUserEmail(serviceAccountId);
+    updateUserEmail(serviceAccountId, testRecipientEmail);
     try {
       restClient
           .post()
-          .uri(
-              "/admin/realms/{realm}/testSMTPConnection?user={user}",
-              properties.realm(),
-              testRecipientEmail)
+          .uri("/admin/realms/{realm}/testSMTPConnection", properties.realm())
           .header("Authorization", "Bearer " + adminToken())
           .contentType(MediaType.APPLICATION_JSON)
           .body(smtpServer)
           .retrieve()
           .toBodilessEntity();
-    } catch (HttpClientErrorException e) {
+    } catch (org.springframework.web.client.RestClientResponseException e) {
+      // RestClientResponseException (no sólo HttpClientErrorException): un SMTP que cuelga o un
+      // host inalcanzable hace que Keycloak responda 500, no sólo 4xx.
       throw new InvalidRequestException(
           "No se pudo enviar el correo de prueba: verificá la configuración SMTP (host, puerto,"
               + " credenciales). Detalle de Keycloak: "
               + e.getStatusCode());
+    } finally {
+      // Keycloak ignora un PUT con email=null (lo trata como "no tocar"); sólo "" borra el campo
+      // de verdad -- así que si la cuenta de servicio no tenía email configurado, hay que
+      // restaurarla con "" y no con null, o el destinatario de prueba quedaría pegado.
+      updateUserEmail(serviceAccountId, previousEmail == null ? "" : previousEmail);
     }
   }
+
+  private UUID findServiceAccountId() {
+    String username = "service-account-" + properties.clientId();
+    ServiceAccountUser[] users =
+        restClient
+            .get()
+            .uri(
+                "/admin/realms/{realm}/users?username={username}&exact=true",
+                properties.realm(),
+                username)
+            .header("Authorization", "Bearer " + adminToken())
+            .retrieve()
+            .body(ServiceAccountUser[].class);
+    if (users == null || users.length == 0) {
+      throw new InvalidRequestException(
+          "No se encontró en Keycloak la cuenta de servicio de la plataforma (" + username + ")");
+    }
+    return UUID.fromString(users[0].id());
+  }
+
+  private String getUserEmail(UUID id) {
+    ServiceAccountUser user =
+        restClient
+            .get()
+            .uri("/admin/realms/{realm}/users/{id}", properties.realm(), id)
+            .header("Authorization", "Bearer " + adminToken())
+            .retrieve()
+            .body(ServiceAccountUser.class);
+    return user == null ? null : user.email();
+  }
+
+  private void updateUserEmail(UUID id, String email) {
+    restClient
+        .put()
+        .uri("/admin/realms/{realm}/users/{id}", properties.realm(), id)
+        .header("Authorization", "Bearer " + adminToken())
+        .contentType(MediaType.APPLICATION_JSON)
+        .body(Map.of("email", email))
+        .retrieve()
+        .toBodilessEntity();
+  }
+
+  /** Representación mínima de un usuario de Keycloak: sólo lo que necesita el método de arriba. */
+  @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+  private record ServiceAccountUser(String id, String email) {}
 
   /**
    * Intentos de login fallidos desde {@code sinceEpochMillisExclusive} (exclusivo), más recientes

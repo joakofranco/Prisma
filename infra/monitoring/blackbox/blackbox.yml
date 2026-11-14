@@ -1,0 +1,19 @@
+# Sondas de disponibilidad (blackbox_exporter): un servicio sin endpoint de métricas propio se
+# considera arriba si responde. Las usa Prometheus (jobs "probe-*" en prometheus.yml) y la alerta
+# ProbeDown de rules/availability.yml.
+modules:
+  # Cualquier respuesta que no sea un error de servidor: un 401/403 también prueba que el servicio
+  # está vivo (Elasticsearch, Kibana y Portainer piden credenciales).
+  http_alive:
+    prober: http
+    timeout: 8s
+    http:
+      method: GET
+      valid_status_codes: [200, 204, 301, 302, 303, 307, 308, 401, 403, 404]
+      follow_redirects: false
+      preferred_ip_protocol: ip4
+  tcp_connect:
+    prober: tcp
+    timeout: 5s
+    tcp:
+      preferred_ip_protocol: ip4

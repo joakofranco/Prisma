@@ -495,6 +495,61 @@ public class Dto {
           @Max(value = 4, message = "El nivel objetivo debe ser entre 1 y 4")
           Integer targetLevel) {}
 
+  public record ControlGuideItemDto(
+      UUID id,
+      String code,
+      String description,
+      Integer targetLevel,
+      String requirementCode,
+      String interpretation,
+      String example,
+      String evidence) {}
+
+  public record SaveControlGuideDto(
+      @Size(max = 4000, message = "La interpretación no puede superar los 4000 caracteres")
+          String interpretation,
+      @Size(max = 4000, message = "El ejemplo no puede superar los 4000 caracteres") String example,
+      @Size(max = 4000, message = "La evidencia no puede superar los 4000 caracteres")
+          String evidence) {}
+
+  public record DeleteControlGuidesDto(
+      @NotEmpty(message = "Indique al menos un control") List<UUID> controlIds) {
+    public DeleteControlGuidesDto {
+      controlIds = controlIds == null ? null : List.copyOf(controlIds);
+    }
+
+    @Override
+    public List<UUID> controlIds() {
+      return controlIds == null ? null : Collections.unmodifiableList(controlIds);
+    }
+  }
+
+  public record DeleteControlGuidesResultDto(int removed) {}
+
+  public record ControlGuideSummaryDto(int total, int withGuide) {}
+
+  public record ControlGuideImportResultDto(
+      int parsed,
+      int updated,
+      List<String> notInCatalog,
+      List<String> incomplete,
+      int catalogWithoutGuide) {
+    public ControlGuideImportResultDto {
+      notInCatalog = notInCatalog == null ? List.of() : List.copyOf(notInCatalog);
+      incomplete = incomplete == null ? List.of() : List.copyOf(incomplete);
+    }
+
+    @Override
+    public List<String> notInCatalog() {
+      return Collections.unmodifiableList(notInCatalog);
+    }
+
+    @Override
+    public List<String> incomplete() {
+      return Collections.unmodifiableList(incomplete);
+    }
+  }
+
   public record CatalogImportDto(
       @NotBlank(message = "La versión es obligatoria")
           @Size(max = 20, message = "La versión no puede superar los 20 caracteres")
@@ -1083,6 +1138,48 @@ public class Dto {
   // RF-PLN-03: plazos por defecto (meses) del plan de mejora por prioridad. El rango y el orden
   // (Alta <= Media <= Baja) los valida PlanDeadlineSettingsService.
   public record PlanDeadlinesDto(Integer highMonths, Integer mediumMonths, Integer lowMonths) {}
+
+  // ---- Lanzador de servicios de la infraestructura (solo PRISMA_ADMIN y solo desde la VPN) ----
+  public record PlatformServiceDto(
+      UUID id,
+      String key,
+      String name,
+      String description,
+      String category,
+      String url,
+      String defaultUrl) {}
+
+  public record UpdatePlatformServiceUrlDto(String url) {}
+
+  public record ReplaceServicesHostDto(String host) {}
+
+  // ---- Configuración de alertas del sistema (solo PRISMA_ADMIN) ----
+  public record AlertSettingsDto(
+      String recipients,
+      String smtpHost,
+      int smtpPort,
+      String from,
+      boolean authEnabled,
+      String username,
+      boolean passwordSet,
+      boolean requireTls,
+      boolean configured,
+      OffsetDateTime updatedAt,
+      String warning) {}
+
+  public record UpdateAlertSettingsDto(
+      String recipients,
+      String smtpHost,
+      Integer smtpPort,
+      String from,
+      boolean authEnabled,
+      String username,
+      String password,
+      boolean requireTls) {}
+
+  public record AlertTestResultDto(boolean smtpReachable, boolean alertSent, String message) {}
+
+  public record SessionSettingsDto(Integer idleTimeoutMinutes, Integer warningSeconds) {}
 
   // ---- Audit log (bitácora de acciones del sistema, distinta de AuditObservation/"Auditoría"
   // MCU) ----

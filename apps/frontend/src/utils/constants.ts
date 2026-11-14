@@ -187,6 +187,8 @@ export const AUDIT_RESOURCE_TYPE_LABELS: Record<string, string> = {
   improvement_plan: 'Acción del Plan de Mejora',
   'email-settings': 'Configuración de Email',
   'plan-deadline-settings': 'Plazos del Plan de Mejora',
+  'platform-service': 'Servicio de Infraestructura',
+  'alert-settings': 'Configuración de Alertas',
 };
 
 export const PRIORITY_CONFIG: Record<string, { label: string; color: string }> = {
@@ -220,7 +222,3 @@ export const MCU_DOMAIN_LABELS: Record<string, string> = {
 export const ITEMS_PER_PAGE = 10;
 export const DATE_FORMAT = 'dd/MM/yyyy';
 export const DATETIME_FORMAT = 'dd/MM/yyyy HH:mm';
-
-/** sessionStorage: marca que la sesión se cerró porque el usuario acaba de cambiar su contraseña
- * (PRI-363); la pantalla de login la lee una vez para avisarle que entre con la nueva. */
-export const PASSWORD_CHANGED_KEY = 'prisma:password-changed';

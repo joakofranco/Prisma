@@ -147,6 +147,35 @@ class CatalogServiceTest {
   }
 
   @Test
+  @SuppressWarnings("unchecked")
+  void getByVersionExposesTheGuideOnlyForControlsThatHaveOne() {
+    when(versionRepo.findByVersion("5.0")).thenReturn(Optional.of(version));
+    when(functionRepo.findByVersionIdOrderBySortOrder(version.getId()))
+        .thenReturn(List.of(function));
+
+    Map<String, Object> without = firstControl(service.getByVersion("5.0"));
+    control.setGuideInterpretation("I");
+    control.setGuideExample("E");
+    control.setGuideEvidence("V");
+    Map<String, Object> with = firstControl(service.getByVersion("5.0"));
+
+    assertFalse(without.containsKey("guide"));
+    Map<String, Object> guide = (Map<String, Object>) with.get("guide");
+    assertEquals("I", guide.get("interpretation"));
+    assertEquals("E", guide.get("example"));
+    assertEquals("V", guide.get("evidence"));
+  }
+
+  @SuppressWarnings("unchecked")
+  private static Map<String, Object> firstControl(Map<String, Object> tree) {
+    var functions = (List<Map<String, Object>>) tree.get("functions");
+    var categories = (List<Map<String, Object>>) functions.get(0).get("categories");
+    var subs = (List<Map<String, Object>>) categories.get(0).get("subcategories");
+    var reqs = (List<Map<String, Object>>) subs.get(0).get("requirements");
+    return ((List<Map<String, Object>>) reqs.get(0).get("controls")).get(0);
+  }
+
+  @Test
   void getByVersionThrowsWhenMissing() {
     when(versionRepo.findByVersion("9.9")).thenReturn(Optional.empty());
 

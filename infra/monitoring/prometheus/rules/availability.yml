@@ -1,0 +1,48 @@
+# Alertas de disponibilidad: un servicio caído o que se reinicia sin parar.
+groups:
+  - name: prisma-availability
+    rules:
+      - alert: ServiceDown
+        expr: up == 0
+        for: 1m
+        labels: { severity: critical, category: availability }
+        annotations:
+          title: "Servicio caído"
+          summary: "Servicio caído: {{ $labels.job }}"
+          description: "Prometheus no puede leer las métricas de {{ $labels.job }} ({{ $labels.instance }}) desde hace más de 1 minuto."
+
+      - alert: ProbeDown
+        expr: probe_success == 0
+        for: 1m
+        labels: { severity: critical, category: availability }
+        annotations:
+          title: "Servicio sin respuesta"
+          summary: "Servicio sin respuesta: {{ $labels.service }}"
+          description: "{{ $labels.service }} ({{ $labels.instance }}) no responde a la sonda de disponibilidad desde hace más de 1 minuto."
+
+      - alert: ContainerNotRunning
+        expr: time() - max by (name) (container_last_seen{name=~"prisma-.+", name!~".*-init"}) > 120
+        for: 1m
+        labels: { severity: critical, category: availability }
+        annotations:
+          title: "Contenedor detenido"
+          summary: "Contenedor detenido: {{ $labels.name }}"
+          description: "cAdvisor no ve ninguna instancia activa del contenedor {{ $labels.name }} hace más de 2 minutos."
+
+      - alert: ContainerRestartingOften
+        expr: changes(container_start_time_seconds{name=~"prisma-.+", name!~".*-init"}[15m]) > 2
+        for: 0m
+        labels: { severity: warning, category: availability }
+        annotations:
+          title: "Contenedor reiniciándose"
+          summary: "Contenedor reiniciándose: {{ $labels.name }}"
+          description: "{{ $labels.name }} se reinició {{ $value }} veces en los últimos 15 minutos."
+
+      - alert: ElasticsearchClusterRed
+        expr: elasticsearch_cluster_health_status{color="red"} == 1
+        for: 2m
+        labels: { severity: critical, category: availability }
+        annotations:
+          title: "Elasticsearch en estado rojo"
+          summary: "Elasticsearch en estado rojo"
+          description: "El clúster de Elasticsearch tiene shards primarios sin asignar: hay datos no disponibles."

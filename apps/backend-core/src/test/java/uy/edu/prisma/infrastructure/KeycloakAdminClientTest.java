@@ -5,6 +5,7 @@ import static org.springframework.test.web.client.match.MockRestRequestMatchers.
 import static org.springframework.test.web.client.response.MockRestResponseCreators.*;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -649,5 +650,115 @@ class KeycloakAdminClientTest {
     List<KeycloakAdminClient.LoginFailureEvent> result = client.fetchLoginFailures(0);
 
     assertTrue(result.isEmpty());
+  }
+
+  // testSmtpConnection: Keycloak (26.x) manda SIEMPRE el correo de prueba al "usuario actualmente
+  // logueado" -- acá, la cuenta de servicio service-account-prisma-backend -- e ignora cualquier
+  // parámetro de destinatario (ver el javadoc del método). Por eso el cliente le cambia el email a
+  // esa cuenta antes de pedir la prueba y SIEMPRE lo restaura después.
+
+  private static final String SA_USERNAME = "service-account-prisma-backend";
+  private static final UUID SA_ID = UUID.randomUUID();
+
+  private void expectFindServiceAccount(String currentEmail) {
+    String body =
+        currentEmail == null
+            ? "[{\"id\":\"" + SA_ID + "\"}]"
+            : "[{\"id\":\"" + SA_ID + "\",\"email\":\"" + currentEmail + "\"}]";
+    server
+        .expect(
+            requestTo(
+                BASE_URL + "/admin/realms/prisma/users?username=" + SA_USERNAME + "&exact=true"))
+        .andExpect(method(HttpMethod.GET))
+        .andRespond(withSuccess(body, MediaType.APPLICATION_JSON));
+  }
+
+  private void expectGetServiceAccountEmail(String currentEmail) {
+    String body =
+        currentEmail == null
+            ? "{\"id\":\"" + SA_ID + "\"}"
+            : "{\"id\":\"" + SA_ID + "\",\"email\":\"" + currentEmail + "\"}";
+    server
+        .expect(requestTo(BASE_URL + "/admin/realms/prisma/users/" + SA_ID))
+        .andExpect(method(HttpMethod.GET))
+        .andRespond(withSuccess(body, MediaType.APPLICATION_JSON));
+  }
+
+  private void expectSetServiceAccountEmail(String email) {
+    server
+        .expect(requestTo(BASE_URL + "/admin/realms/prisma/users/" + SA_ID))
+        .andExpect(method(HttpMethod.PUT))
+        .andExpect(jsonPath("$.email").value(email))
+        .andRespond(withSuccess());
+  }
+
+  @Test
+  void testSmtpConnectionEnviaAlDestinatarioPedidoYRestauraElEmailAnterior() {
+    expectAdminToken();
+    expectFindServiceAccount("anterior@prisma.uy");
+    expectGetServiceAccountEmail("anterior@prisma.uy");
+    expectSetServiceAccountEmail("destino@cualquiera.com");
+    server
+        .expect(requestTo(BASE_URL + "/admin/realms/prisma/testSMTPConnection"))
+        .andExpect(method(HttpMethod.POST))
+        .andRespond(withSuccess());
+    expectSetServiceAccountEmail("anterior@prisma.uy");
+
+    client.testSmtpConnection(Map.of("host", "smtp.test"), "destino@cualquiera.com");
+
+    server.verify();
+  }
+
+  @Test
+  void testSmtpConnectionSinEmailPrevioLoRestauraVacioYNoNulo() {
+    expectAdminToken();
+    expectFindServiceAccount(null);
+    expectGetServiceAccountEmail(null);
+    expectSetServiceAccountEmail("destino@cualquiera.com");
+    server
+        .expect(requestTo(BASE_URL + "/admin/realms/prisma/testSMTPConnection"))
+        .andExpect(method(HttpMethod.POST))
+        .andRespond(withSuccess());
+    expectSetServiceAccountEmail("");
+
+    client.testSmtpConnection(Map.of("host", "smtp.test"), "destino@cualquiera.com");
+
+    server.verify();
+  }
+
+  @Test
+  void testSmtpConnectionSiKeycloakFallaIgualRestauraElEmailYPropagaElError() {
+    expectAdminToken();
+    expectFindServiceAccount("anterior@prisma.uy");
+    expectGetServiceAccountEmail("anterior@prisma.uy");
+    expectSetServiceAccountEmail("destino@cualquiera.com");
+    server
+        .expect(requestTo(BASE_URL + "/admin/realms/prisma/testSMTPConnection"))
+        .andExpect(method(HttpMethod.POST))
+        .andRespond(withStatus(HttpStatus.INTERNAL_SERVER_ERROR));
+    expectSetServiceAccountEmail("anterior@prisma.uy");
+
+    assertThrows(
+        InvalidRequestException.class,
+        () -> client.testSmtpConnection(Map.of("host", "smtp.test"), "destino@cualquiera.com"));
+
+    server.verify();
+  }
+
+  @Test
+  void testSmtpConnectionSinCuentaDeServicioLanzaSinLlamarAKeycloakDeMas() {
+    expectAdminToken();
+    server
+        .expect(
+            requestTo(
+                BASE_URL + "/admin/realms/prisma/users?username=" + SA_USERNAME + "&exact=true"))
+        .andExpect(method(HttpMethod.GET))
+        .andRespond(withSuccess("[]", MediaType.APPLICATION_JSON));
+
+    assertThrows(
+        InvalidRequestException.class,
+        () -> client.testSmtpConnection(Map.of("host", "smtp.test"), "destino@cualquiera.com"));
+
+    server.verify();
   }
 }

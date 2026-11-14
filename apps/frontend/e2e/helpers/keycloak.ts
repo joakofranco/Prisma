@@ -11,8 +11,8 @@ export const E2E_ADMIN = {
 };
 
 /**
- * Ejecuta el login real contra Keycloak (sin mockear el redirect ni el token): hace click en
- * "Iniciar sesión con Keycloak" en /login, completa el formulario servido por Keycloak en su
+ * Ejecuta el login real contra Keycloak (sin mockear el redirect ni el token): entra a la app (que redirige
+ * directo a Keycloak, sin pantalla intermedia), completa el formulario servido por Keycloak en su
  * propio origen y vuelve a la app ya autenticado en /dashboard.
  *
  * El usuario semilla admin@prisma.local tiene `credentials.temporary: true` en el realm export,
@@ -23,8 +23,7 @@ export async function loginViaKeycloak(
   page: Page,
   { email, password }: { email: string; password: string } = E2E_ADMIN,
 ): Promise<void> {
-  await page.goto('/login');
-  await page.getByRole('button', { name: /iniciar sesión con keycloak/i }).click();
+  await page.goto('/');
 
   // Cross-origin redirect a Keycloak (login.gub / prisma-keycloak). Se espera por los campos del
   // formulario en vez de por la URL exacta: el hostname/puerto varía según el ambiente

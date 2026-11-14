@@ -1,0 +1,104 @@
+# Alertas de seguridad: indicios de denegación de servicio y de fuerza bruta.
+# Las métricas promtail_custom_nginx_* las genera Promtail a partir del access.log de NGINX
+# (ver infra/monitoring/promtail-config.yml); keycloak_user_events_total, Keycloak
+# (KC_EVENT_METRICS_USER_ENABLED; un login fallido es event="login" con la etiqueta error).
+groups:
+  - name: prisma-security
+    rules:
+      # ---------- Denegación de servicio ----------
+      - alert: DosRateLimitTriggered
+        expr: sum(rate(promtail_custom_nginx_rate_limited_total[2m])) > 5
+        for: 2m
+        labels: { severity: warning, category: security }
+        annotations:
+          title: "Posible denegación de servicio"
+          summary: "NGINX está rechazando muchas peticiones (posible DoS)"
+          description: "NGINX responde 429 a {{ $value | printf \"%.1f\" }} peticiones por segundo hace más de 2 minutos: una o varias IPs superan el límite de tasa."
+
+      - alert: DosRateLimitSustained
+        expr: sum(rate(promtail_custom_nginx_rate_limited_total[2m])) > 20
+        for: 3m
+        labels: { severity: critical, category: security }
+        annotations:
+          title: "Ataque de denegación de servicio en curso"
+          summary: "Posible ataque de denegación de servicio en curso"
+          description: "NGINX rechaza {{ $value | printf \"%.0f\" }} peticiones por segundo (429) hace más de 3 minutos."
+
+      - alert: RequestFloodSpike
+        expr: |
+          sum(rate(promtail_custom_nginx_requests_total[2m])) > 50
+          and sum(rate(promtail_custom_nginx_requests_total[2m]))
+              > 10 * sum(rate(promtail_custom_nginx_requests_total[1h] offset 10m))
+        for: 3m
+        labels: { severity: warning, category: security }
+        annotations:
+          title: "Pico anormal de tráfico"
+          summary: "Pico anormal de tráfico hacia la plataforma"
+          description: "El tráfico es de {{ $value | printf \"%.0f\" }} peticiones por segundo, más de 10 veces lo habitual."
+
+      - alert: TcpConnectionsFlood
+        expr: node_netstat_Tcp_CurrEstab > 1000
+        for: 3m
+        labels: { severity: warning, category: security }
+        annotations:
+          title: "Demasiadas conexiones TCP"
+          summary: "Demasiadas conexiones TCP abiertas en el host"
+          description: "Hay {{ $value | printf \"%.0f\" }} conexiones TCP establecidas hace más de 3 minutos (posible ataque de agotamiento de conexiones)."
+
+      - alert: SynFloodSuspected
+        expr: rate(node_netstat_TcpExt_SyncookiesSent[2m]) > 10
+        for: 2m
+        labels: { severity: critical, category: security }
+        annotations:
+          title: "Posible SYN flood"
+          summary: "Posible SYN flood"
+          description: "El kernel envía {{ $value | printf \"%.0f\" }} SYN cookies por segundo: el host recibe más intentos de conexión de los que puede atender."
+
+      # ---------- Fuerza bruta ----------
+      # increase() no ve el primer valor de una serie que recién aparece (el contador nace ya con
+      # los intentos de la primera ráfaga): si la serie no existía hace 5 minutos se toma su valor
+      # completo, y si existía, su incremento.
+      - alert: LoginFailuresHigh
+        expr: sum((keycloak_user_events_total{event="login",error!=""} unless keycloak_user_events_total{event="login",error!=""} offset 5m) or increase(keycloak_user_events_total{event="login",error!=""}[5m])) > 20
+        for: 0m
+        labels: { severity: warning, category: security }
+        annotations:
+          title: "Muchos inicios de sesión fallidos"
+          summary: "Muchos intentos de inicio de sesión fallidos"
+          description: "Hubo {{ $value | printf \"%.0f\" }} inicios de sesión fallidos en los últimos 5 minutos: posible fuerza bruta o relleno de credenciales."
+
+      - alert: BruteForceInProgress
+        expr: sum((keycloak_user_events_total{event="login",error!=""} unless keycloak_user_events_total{event="login",error!=""} offset 5m) or increase(keycloak_user_events_total{event="login",error!=""}[5m])) > 60
+        for: 0m
+        labels: { severity: critical, category: security }
+        annotations:
+          title: "Posible fuerza bruta contra el login"
+          summary: "Posible ataque de fuerza bruta contra el login"
+          description: "{{ $value | printf \"%.0f\" }} inicios de sesión fallidos en 5 minutos. Revisar la bitácora de actividad y las IPs de origen."
+
+      - alert: LoginRateLimitHit
+        expr: sum((promtail_custom_nginx_auth_login_rate_limited_total unless promtail_custom_nginx_auth_login_rate_limited_total offset 5m) or increase(promtail_custom_nginx_auth_login_rate_limited_total[5m])) > 10
+        for: 0m
+        labels: { severity: critical, category: security }
+        annotations:
+          title: "Bloqueo de intentos de login por tasa"
+          summary: "NGINX bloqueó intentos de login por exceso de tasa"
+          description: "{{ $value | printf \"%.0f\" }} intentos de login fueron rechazados por el límite de tasa de NGINX en 5 minutos (fuerza bruta contra el formulario)."
+
+      - alert: ApiUnauthorizedSpike
+        expr: sum(rate(http_server_requests_seconds_count{status=~"401|403"}[5m])) > 3
+        for: 5m
+        labels: { severity: warning, category: security }
+        annotations:
+          title: "Muchos accesos no autorizados"
+          summary: "Muchos accesos no autorizados a la API"
+          description: "La API responde 401/403 a {{ $value | printf \"%.1f\" }} peticiones por segundo hace más de 5 minutos: posible escaneo o uso de credenciales robadas."
+
+      - alert: Fail2banIpBanned
+        expr: sum((promtail_custom_fail2ban_bans_total unless promtail_custom_fail2ban_bans_total offset 5m) or increase(promtail_custom_fail2ban_bans_total[5m])) > 0
+        for: 0m
+        labels: { severity: warning, category: security }
+        annotations:
+          title: "fail2ban bloqueó una o más IPs"
+          summary: "fail2ban bloqueó una o más IPs"
+          description: "fail2ban bloqueó {{ $value | printf \"%.0f\" }} IP(s) en los últimos 5 minutos por abuso (límite de tasa, fuerza bruta o escaneo). Ver las IPs con: docker exec prisma-fail2ban fail2ban-client banned"

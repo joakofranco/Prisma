@@ -1,0 +1,675 @@
+:root {
+  --prisma-bg: #f4f8ff;
+  --prisma-bg-accent: #dbe8ff;
+  --prisma-card-bg: #ffffff;
+  --prisma-card-border: transparent;
+  --prisma-card-shadow: 0 18px 50px rgba(15, 40, 100, 0.12), 0 2px 6px rgba(15, 40, 100, 0.06);
+  --prisma-title: #0b1f4b;
+  --prisma-text: #5b6b8a;
+  --prisma-input-bg: #ffffff;
+  --prisma-input-border: #c9d3e6;
+  --prisma-input-text: #0b1f4b;
+  --prisma-placeholder: #7a88a6;
+  --prisma-primary: #0a5cff;
+  --prisma-primary-hover: #0848cc;
+  --prisma-link: #0a5cff;
+  --prisma-divider: #cfd8ea;
+  --prisma-error: #c62828;
+  --prisma-error-bg: #fdecec;
+  --prisma-success: #1b7f4b;
+  --prisma-success-bg: #e8f6ee;
+  --prisma-warning: #8a5a00;
+  --prisma-warning-bg: #fff4dc;
+  --prisma-info: #0a5cff;
+  --prisma-info-bg: #e8f0ff;
+  --prisma-focus: rgba(10, 92, 255, 0.35);
+}
+
+html.prisma-dark {
+  --prisma-bg: #07172e;
+  --prisma-bg-accent: #0d3a78;
+  --prisma-card-bg: #0f2240;
+  --prisma-card-border: #3a4a66;
+  --prisma-card-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+  --prisma-title: #ffffff;
+  --prisma-text: #b4c0d8;
+  --prisma-input-bg: #0a1a33;
+  --prisma-input-border: #55657f;
+  --prisma-input-text: #ffffff;
+  --prisma-placeholder: #a3b0c8;
+  --prisma-primary: #0a5cff;
+  --prisma-primary-hover: #2f78ff;
+  --prisma-link: #4d94ff;
+  --prisma-divider: #3a4a66;
+  --prisma-error: #ff8a8a;
+  --prisma-error-bg: #3a1620;
+  --prisma-success: #6fdc9f;
+  --prisma-success-bg: #0f3324;
+  --prisma-warning: #ffcf6b;
+  --prisma-warning-bg: #3a2c0c;
+  --prisma-info: #8dbbff;
+  --prisma-info-bg: #12294f;
+  --prisma-focus: rgba(77, 148, 255, 0.5);
+}
+
+html.login-pf,
+html.login-pf body {
+  background: var(--prisma-bg);
+}
+
+.prisma-body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: "Poppins", "Montserrat", "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif;
+  color: var(--prisma-text);
+  background: var(--prisma-bg);
+}
+
+.prisma-shell {
+  position: relative;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 3rem 1.5rem;
+  box-sizing: border-box;
+}
+
+.prisma-topbar {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 10px;
+  background: linear-gradient(90deg, #f59e0b, #f97316 50%, #f59e0b);
+  z-index: 2;
+}
+
+.prisma-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background:
+    linear-gradient(155deg, transparent 0 55%, var(--prisma-bg-accent) 55% 70%, transparent 70%),
+    linear-gradient(25deg, var(--prisma-bg-accent) 0 12%, transparent 12%),
+    radial-gradient(900px 500px at 15% 20%, rgba(255, 255, 255, 0.7), transparent 70%);
+  opacity: 0.55;
+}
+
+html.prisma-dark .prisma-backdrop {
+  background:
+    linear-gradient(155deg, transparent 0 58%, rgba(13, 58, 120, 0.8) 58% 72%, transparent 72%),
+    linear-gradient(25deg, rgba(13, 58, 120, 0.9) 0 14%, transparent 14%),
+    radial-gradient(900px 500px at 85% 15%, rgba(20, 70, 150, 0.35), transparent 70%);
+  opacity: 1;
+}
+
+.prisma-layout {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 1180px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 1px minmax(0, 520px);
+  align-items: center;
+  gap: 3.5rem;
+}
+
+.prisma-brand {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.prisma-logo {
+  width: 100%;
+  max-width: 560px;
+  height: auto;
+}
+
+.prisma-logo-dark {
+  display: none;
+}
+
+html.prisma-dark .prisma-logo-light {
+  display: none;
+}
+
+html.prisma-dark .prisma-logo-dark {
+  display: block;
+}
+
+.prisma-divider {
+  align-self: stretch;
+  min-height: 220px;
+  background: var(--prisma-divider);
+}
+
+.prisma-card {
+  box-sizing: border-box;
+  width: 100%;
+  background: var(--prisma-card-bg);
+  border: 1px solid var(--prisma-card-border);
+  border-radius: 24px;
+  box-shadow: var(--prisma-card-shadow);
+  padding: 2.25rem 2.25rem 2rem;
+}
+
+.prisma-title {
+  margin: 0 0 0.75rem;
+  font-size: 1.75rem;
+  line-height: 1.2;
+  font-weight: 800;
+  color: var(--prisma-title);
+}
+
+.prisma-subtitle,
+.prisma-hint {
+  margin: 0 0 1.5rem;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  color: var(--prisma-text);
+}
+
+.prisma-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+}
+
+.prisma-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.prisma-input {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 56px;
+  box-sizing: border-box;
+  padding: 0 1.25rem;
+  gap: 0.85rem;
+  background: var(--prisma-input-bg);
+  border: 1px solid var(--prisma-input-border);
+  border-radius: 999px;
+  color: var(--prisma-placeholder);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.prisma-input:focus-within {
+  border-color: var(--prisma-primary);
+  box-shadow: 0 0 0 3px var(--prisma-focus);
+}
+
+.prisma-input-error {
+  border-color: var(--prisma-error);
+}
+
+.prisma-input-icon {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+}
+
+.prisma-input input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 1.05rem;
+  font-weight: 500;
+  color: var(--prisma-input-text);
+}
+
+.prisma-input input::placeholder {
+  color: var(--prisma-placeholder);
+  opacity: 1;
+}
+
+.prisma-input input:-webkit-autofill {
+  -webkit-text-fill-color: var(--prisma-input-text);
+  box-shadow: 0 0 0 100px var(--prisma-input-bg) inset;
+}
+
+.prisma-toggle {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: var(--prisma-placeholder);
+  cursor: pointer;
+  padding: 0.25rem;
+  border-radius: 999px;
+}
+
+.prisma-toggle:hover {
+  color: var(--prisma-input-text);
+}
+
+.prisma-toggle:focus-visible,
+.prisma-btn:focus-visible,
+.prisma-card a:focus-visible {
+  outline: 3px solid var(--prisma-focus);
+  outline-offset: 2px;
+}
+
+.prisma-field-error {
+  margin: 0.4rem 1.25rem 0;
+  font-size: 0.85rem;
+  color: var(--prisma-error);
+}
+
+.prisma-check {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.95rem;
+  color: var(--prisma-text);
+  cursor: pointer;
+}
+
+.prisma-check input {
+  width: 1.1rem;
+  height: 1.1rem;
+  accent-color: var(--prisma-primary);
+}
+
+.prisma-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 100%;
+  height: 56px;
+  border: 0;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 1.1rem;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.05s;
+}
+
+.prisma-btn:active {
+  transform: translateY(1px);
+}
+
+.prisma-btn-primary {
+  background: var(--prisma-primary);
+  color: #ffffff;
+  box-shadow: 0 8px 20px rgba(10, 92, 255, 0.28);
+}
+
+.prisma-btn-primary:hover {
+  background: var(--prisma-primary-hover);
+}
+
+.prisma-btn-primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.prisma-btn-secondary {
+  margin-top: 1rem;
+  background: transparent;
+  color: var(--prisma-link);
+  border: 1px solid var(--prisma-input-border);
+}
+
+.prisma-links {
+  display: flex;
+  align-items: center;
+  margin-top: 0.25rem;
+  font-size: 1rem;
+}
+
+.prisma-links-divided {
+  margin-top: 0.5rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--prisma-divider);
+}
+
+.prisma-card a {
+  color: var(--prisma-link);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.prisma-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.prisma-back svg {
+  width: 22px;
+  height: 22px;
+}
+
+.prisma-alert {
+  display: flex;
+  gap: 0.7rem;
+  align-items: flex-start;
+  margin: 0 0 1.25rem;
+  padding: 0.85rem 1rem;
+  border-radius: 14px;
+  font-size: 0.92rem;
+  line-height: 1.45;
+  background: var(--prisma-info-bg);
+  color: var(--prisma-info);
+}
+
+.prisma-alert-error {
+  background: var(--prisma-error-bg);
+  color: var(--prisma-error);
+}
+
+.prisma-alert-success {
+  background: var(--prisma-success-bg);
+  color: var(--prisma-success);
+}
+
+.prisma-alert-warning {
+  background: var(--prisma-warning-bg);
+  color: var(--prisma-warning);
+}
+
+.prisma-alert-icon {
+  padding-top: 0.1rem;
+}
+
+.prisma-info {
+  margin-top: 1.25rem;
+  font-size: 0.95rem;
+}
+
+.prisma-card .pf-v5-c-form-control,
+.prisma-card .pf-v5-c-input-group .pf-v5-c-button.pf-m-control {
+  --pf-v5-c-form-control--BackgroundColor: var(--prisma-input-bg);
+  --pf-v5-c-form-control--Color: var(--prisma-input-text);
+  --pf-v5-c-form-control--BorderColor: var(--prisma-input-border);
+  --pf-v5-c-form-control--BorderRadius: 14px;
+}
+
+.prisma-card .pf-v5-c-form__label-text {
+  color: var(--prisma-title);
+  font-weight: 600;
+}
+
+.prisma-card .pf-v5-c-button.pf-m-primary {
+  --pf-v5-c-button--m-primary--BackgroundColor: var(--prisma-primary);
+  --pf-v5-c-button--m-primary--hover--BackgroundColor: var(--prisma-primary-hover);
+  border-radius: 999px;
+  min-height: 52px;
+  font-weight: 700;
+}
+
+.prisma-card .pf-v5-c-button.pf-m-secondary {
+  border-radius: 999px;
+  min-height: 52px;
+}
+
+.prisma-card .pf-v5-c-form__helper-text,
+.prisma-card .pf-v5-c-helper-text__item-text {
+  color: var(--prisma-text);
+}
+
+@media (max-width: 900px) {
+  .prisma-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2rem;
+  }
+
+  .prisma-divider {
+    display: none;
+  }
+
+  .prisma-logo {
+    max-width: 380px;
+  }
+
+  .prisma-card {
+    padding: 1.75rem 1.4rem 1.5rem;
+  }
+}
+
+.prisma-env {
+  pointer-events: none;
+}
+
+.prisma-env[hidden] {
+  display: none;
+}
+
+.prisma-env-bar {
+  position: fixed;
+  inset: 0 0 auto 0;
+  height: 4px;
+  z-index: 100;
+  background: #8b5cf6;
+}
+
+.prisma-env-label {
+  position: fixed;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  padding: 4px 16px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  background: #ddd6fe;
+  color: #2e1065;
+  box-shadow: 0 0 0 1px #8b5cf6, 0 8px 20px rgba(0, 0, 0, 0.25);
+}
+
+.prisma-env[data-env="development"] .prisma-env-bar {
+  background: #f59e0b;
+}
+
+.prisma-env[data-env="development"] .prisma-env-label {
+  background: #fbbf24;
+  color: #451a03;
+  box-shadow: 0 0 0 1px #d97706, 0 8px 20px rgba(0, 0, 0, 0.25);
+}
+
+.prisma-theme-switch {
+  position: absolute;
+  top: 24px;
+  right: 24px;
+  z-index: 3;
+  display: inline-flex;
+  padding: 3px;
+  gap: 2px;
+  border-radius: 999px;
+  background: var(--prisma-card-bg);
+  border: 1px solid var(--prisma-input-border);
+}
+
+.prisma-theme-switch button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--prisma-text);
+  cursor: pointer;
+}
+
+.prisma-theme-switch button svg {
+  width: 18px;
+  height: 18px;
+}
+
+.prisma-theme-switch button:hover {
+  color: var(--prisma-title);
+}
+
+.prisma-theme-switch button[aria-pressed="true"] {
+  background: var(--prisma-primary);
+  color: #ffffff;
+}
+
+.prisma-theme-switch button:focus-visible {
+  outline: 3px solid var(--prisma-focus);
+  outline-offset: 2px;
+}
+
+.prisma-card {
+  box-shadow:
+    0 1px 2px rgba(11, 31, 75, 0.06),
+    0 8px 16px rgba(11, 31, 75, 0.08),
+    0 28px 64px rgba(11, 31, 75, 0.14);
+  animation: prisma-rise 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+html.prisma-dark .prisma-card {
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.04) inset,
+    0 10px 24px rgba(0, 0, 0, 0.35),
+    0 32px 80px rgba(0, 0, 0, 0.5);
+}
+
+.prisma-logo {
+  filter: drop-shadow(0 10px 22px rgba(11, 31, 75, 0.18));
+  animation: prisma-fade 0.7s ease both;
+}
+
+html.prisma-dark .prisma-logo {
+  filter: drop-shadow(0 10px 28px rgba(0, 0, 0, 0.55));
+}
+
+.prisma-input {
+  box-shadow: inset 0 1px 2px rgba(11, 31, 75, 0.06), 0 1px 2px rgba(11, 31, 75, 0.04);
+}
+
+html.prisma-dark .prisma-input {
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.35);
+}
+
+.prisma-input:hover {
+  border-color: var(--prisma-placeholder);
+}
+
+.prisma-input:focus-within {
+  box-shadow: 0 0 0 4px var(--prisma-focus), 0 6px 16px rgba(10, 92, 255, 0.15);
+}
+
+.prisma-input:focus-within .prisma-input-icon {
+  color: var(--prisma-primary);
+}
+
+.prisma-input-error {
+  box-shadow: 0 0 0 3px rgba(198, 40, 40, 0.18);
+}
+
+.prisma-btn-primary {
+  box-shadow: 0 1px 2px rgba(10, 92, 255, 0.3), 0 10px 24px rgba(10, 92, 255, 0.32);
+  transition: background 0.15s, transform 0.15s, box-shadow 0.15s;
+}
+
+.prisma-btn-primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(10, 92, 255, 0.3), 0 16px 32px rgba(10, 92, 255, 0.4);
+}
+
+.prisma-btn-primary:active {
+  transform: translateY(1px);
+  box-shadow: 0 1px 2px rgba(10, 92, 255, 0.3), 0 4px 10px rgba(10, 92, 255, 0.3);
+}
+
+.prisma-btn-primary.prisma-loading {
+  pointer-events: none;
+  opacity: 0.85;
+}
+
+.prisma-spinner {
+  display: none;
+  width: 18px;
+  height: 18px;
+  margin-right: 0.6rem;
+  border: 2px solid rgba(255, 255, 255, 0.45);
+  border-top-color: #ffffff;
+  border-radius: 50%;
+  animation: prisma-spin 0.7s linear infinite;
+}
+
+.prisma-loading .prisma-spinner {
+  display: inline-block;
+}
+
+.prisma-caps {
+  margin: 0.45rem 1.25rem 0;
+  font-size: 0.85rem;
+  color: var(--prisma-warning);
+}
+
+.prisma-caps[hidden] {
+  display: none;
+}
+
+.prisma-alert {
+  box-shadow: 0 4px 12px rgba(11, 31, 75, 0.08);
+}
+
+.prisma-alert-error {
+  animation: prisma-shake 0.4s ease;
+}
+
+.prisma-theme-switch {
+  box-shadow: 0 4px 14px rgba(11, 31, 75, 0.12);
+}
+
+.prisma-theme-switch button[aria-pressed="true"] {
+  box-shadow: 0 2px 8px rgba(10, 92, 255, 0.4);
+}
+
+
+@keyframes prisma-rise {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes prisma-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes prisma-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes prisma-shake {
+  20%, 60% { transform: translateX(-4px); }
+  40%, 80% { transform: translateX(4px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .prisma-card,
+  .prisma-logo,
+  .prisma-alert-error,
+  .prisma-btn-primary,
+  .prisma-spinner {
+    animation: none;
+    transition: none;
+  }
+}
+
+.prisma-links:not(.prisma-links-divided) {
+  justify-content: center;
+}

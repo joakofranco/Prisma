@@ -11,7 +11,7 @@ rule_files:
 alerting:
   alertmanagers:
     - static_configs:
-        - targets: []
+        - targets: ['alertmanager:9093']
 
 scrape_configs:
 
@@ -52,3 +52,94 @@ scrape_configs:
   - job_name: redis
     static_configs:
       - targets: ['redis-exporter:9121']
+
+
+  # ---------- Alertmanager ----------
+  - job_name: alertmanager
+    static_configs:
+      - targets: ['alertmanager:9093']
+
+  # ---------- Loki / Promtail / Grafana (stack de observabilidad) ----------
+  - job_name: loki
+    static_configs:
+      - targets: ['loki:3100']
+
+  # Promtail también expone las métricas derivadas del access.log de NGINX (DoS / fuerza bruta).
+  - job_name: promtail
+    static_configs:
+      - targets: ['promtail:9080']
+
+  - job_name: grafana
+    static_configs:
+      - targets: ['grafana:3000']
+
+  # ---------- Keycloak (management interface; eventos de login en keycloak_user_events_total) ----------
+  - job_name: keycloak
+    metrics_path: /auth/metrics
+    static_configs:
+      - targets: ['keycloak:9000']
+
+  # ---------- Elasticsearch (elasticsearch-exporter) ----------
+  - job_name: elasticsearch
+    static_configs:
+      - targets: ['elasticsearch-exporter:9114']
+
+  # ---------- Sondas de disponibilidad (blackbox-exporter) ----------
+  # Servicios sin endpoint de métricas propio: se consideran arriba si responden.
+  - job_name: probe-http
+    metrics_path: /probe
+    params:
+      module: [http_alive]
+    static_configs:
+      - targets: ['http://nginx/']
+        labels: { service: nginx }
+      - targets: ['http://frontend:80/']
+        labels: { service: frontend }
+      - targets: ['http://keycloak:9000/auth/health/ready']
+        labels: { service: keycloak }
+      - targets: ['http://kibana:5601/api/status']
+        labels: { service: kibana }
+      - targets: ['http://elasticsearch:9200/']
+        labels: { service: elasticsearch }
+      - targets: ['http://grafana:3000/api/health']
+        labels: { service: grafana }
+      - targets: ['http://loki:3100/ready']
+        labels: { service: loki }
+      - targets: ['http://rustfs:9000/health']
+        labels: { service: rustfs }
+      - targets: ['http://pgadmin:80/misc/ping']
+        labels: { service: pgadmin }
+      - targets: ['http://portainer:9000/']
+        labels: { service: portainer }
+      - targets: ['http://sonarqube:9000/api/system/status']
+        labels: { service: sonarqube }
+      - targets: ['http://ollama:11434/']
+        labels: { service: ollama }
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
+
+  - job_name: probe-tcp
+    metrics_path: /probe
+    params:
+      module: [tcp_connect]
+    static_configs:
+      - targets: ['postgres:5432']
+        labels: { service: postgres }
+      - targets: ['keycloak-db:5432']
+        labels: { service: keycloak-db }
+      - targets: ['redis:6379']
+        labels: { service: redis }
+      - targets: ['clamav:3310']
+        labels: { service: clamav }
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115

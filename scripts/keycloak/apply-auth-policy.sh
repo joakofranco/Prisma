@@ -32,6 +32,9 @@
 # RESET_LINK_LIFESPAN_SECONDS (1800), LOCKOUT_FAILURES (10), LOCKOUT_WINDOW_SECONDS (900),
 # LOCKOUT_DURATION_SECONDS (900).
 #
+# SMTP del sistema (opcional): SMTP_HOST, SMTP_PORT (587), SMTP_FROM, SMTP_FROM_NAME, SMTP_USER,
+# SMTP_PASSWORD, SMTP_STARTTLS (true), SMTP_SSL (false). Ver .env.example.
+#
 # Nota: --import-realm solo importa realm-prisma.json la PRIMERA vez que se crea el realm. Esos
 # mismos valores están en el JSON para los entornos nuevos; en los que ya existen hay que correr
 # este script.
@@ -51,9 +54,15 @@ RESET_ATTR="actionTokenGeneratedByUserLifespan.reset-credentials"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 if [ -f "$ROOT_DIR/.env" ]; then
-  # Solo se leen las dos variables que hacen falta (.env no siempre es "sourceable").
+  # Solo se leen las variables que hacen falta (.env no siempre es "sourceable").
   : "${KEYCLOAK_ADMIN:=$(grep -E '^KEYCLOAK_ADMIN=' "$ROOT_DIR/.env" | head -1 | cut -d= -f2- | tr -d '"\r')}"
   : "${KEYCLOAK_ADMIN_PASSWORD:=$(grep -E '^KEYCLOAK_ADMIN_PASSWORD=' "$ROOT_DIR/.env" | head -1 | cut -d= -f2- | tr -d '"\r')}"
+  for v in SMTP_HOST SMTP_PORT SMTP_FROM SMTP_FROM_NAME SMTP_USER SMTP_PASSWORD SMTP_STARTTLS SMTP_SSL; do
+    if [ -z "${!v:-}" ]; then
+      val="$(grep -E "^${v}=" "$ROOT_DIR/.env" | head -1 | cut -d= -f2- | tr -d '"\r' || true)"
+      [ -n "$val" ] && export "$v=$val"
+    fi
+  done
 fi
 : "${KEYCLOAK_ADMIN:?Falta KEYCLOAK_ADMIN (en .env o en el entorno)}"
 : "${KEYCLOAK_ADMIN_PASSWORD:?Falta KEYCLOAK_ADMIN_PASSWORD (en .env o en el entorno)}"
@@ -119,13 +128,43 @@ apply_policy() {
     -s "maxDeltaTimeSeconds=$LOCKOUT_WINDOW" \
     -s "waitIncrementSeconds=$LOCKOUT_DURATION" \
     -s "maxFailureWaitSeconds=$LOCKOUT_DURATION" \
-    -s loginTheme=prisma
+    -s loginTheme=prisma \
+    -s internationalizationEnabled=true \
+    -s 'supportedLocales=["es"]' \
+    -s defaultLocale=es
   echo "✅ Política aplicada al realm '$REALM'."
+}
+
+# Cuenta de correo propia del sistema (no un buzón de usuario): el SMTP del realm sale de SMTP_*
+# (.env). Sin SMTP_HOST no se toca la configuración que ya tenga el realm. El service account
+# prisma-backend recibe como email la dirección del sistema: el "correo de prueba" de Keycloak
+# (testSMTPConnection) se envía al email del usuario autenticado, es decir, a esa cuenta.
+apply_smtp() {
+  if [ -z "${SMTP_HOST:-}" ] || [ -z "${SMTP_FROM:-}" ]; then
+    echo "ℹ️  SMTP_HOST/SMTP_FROM sin definir: no se modifica el SMTP del realm."
+    return 0
+  fi
+  local args=(-s "smtpServer.host=$SMTP_HOST" -s "smtpServer.port=${SMTP_PORT:-587}"
+    -s "smtpServer.from=$SMTP_FROM" -s "smtpServer.starttls=${SMTP_STARTTLS:-true}"
+    -s "smtpServer.ssl=${SMTP_SSL:-false}")
+  [ -n "${SMTP_FROM_NAME:-}" ] && args+=(-s "smtpServer.fromDisplayName=$SMTP_FROM_NAME")
+  if [ -n "${SMTP_USER:-}" ]; then
+    args+=(-s smtpServer.auth=true -s "smtpServer.user=$SMTP_USER" -s "smtpServer.password=${SMTP_PASSWORD:-}")
+  else
+    args+=(-s smtpServer.auth=false)
+  fi
+  kcadm update "realms/$REALM" "${args[@]}"
+  local sa
+  sa="$(kcadm get users -r "$REALM" -q username=service-account-prisma-backend --fields id --format csv --noquotes | head -n1 | tr -d "")"
+  if [ -n "$sa" ]; then
+    kcadm update "users/$sa" -r "$REALM" -s "email=$SMTP_FROM" -s emailVerified=true
+  fi
+  echo "✅ SMTP del sistema aplicado ($SMTP_FROM vía $SMTP_HOST)."
 }
 
 MODE="${1:-apply}"
 case "$MODE" in
-  apply|--apply)    login; apply_policy; show_status ;;
+  apply|--apply)    login; apply_policy; apply_smtp; show_status ;;
   --status)         login; show_status ;;
   --check)          login; show_status; if [ "$DRIFT" -ne 0 ]; then echo "❌ La política vigente difiere de la esperada."; exit 1; fi ;;
   -h|--help)        sed -n '2,/^# =====/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//' ;;
