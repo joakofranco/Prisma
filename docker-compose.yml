@@ -1049,7 +1049,12 @@ services:
     restart: unless-stopped
     profiles: [security, proxy, full]
     environment:
-      F2B_IGNORE_IPS: "${F2B_IGNORE_IPS:-127.0.0.1/8 ::1}"
+      # 172.28.0.1 es la puerta de enlace de prisma-net: en Docker Desktop (Windows/Mac) TODO el
+      # tráfico del host hacia un puerto publicado llega a los contenedores con esa IP, nunca con
+      # la real -- sin ignorarla, cualquier prueba seguida desde el propio equipo (varios 401/403
+      # en poco tiempo) termina bloqueando al desarrollador. No aplica igual en un VPS: ahí no hay
+      # Docker Desktop de por medio y conviene revisar esta lista antes de desplegar.
+      F2B_IGNORE_IPS: "${F2B_IGNORE_IPS:-127.0.0.1/8 ::1 172.28.0.1}"
     volumes:
       - nginx-f2b-logs:/logs
       - nginx-banlist:/banlist
