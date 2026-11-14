@@ -50,8 +50,11 @@ groups:
           description: "El kernel envía {{ $value | printf \"%.0f\" }} SYN cookies por segundo: el host recibe más intentos de conexión de los que puede atender."
 
       # ---------- Fuerza bruta ----------
+      # increase() no ve el primer valor de una serie que recién aparece (el contador nace ya con
+      # los intentos de la primera ráfaga): si la serie no existía hace 5 minutos se toma su valor
+      # completo, y si existía, su incremento.
       - alert: LoginFailuresHigh
-        expr: sum(increase(keycloak_user_events_total{event="login",error!=""}[5m])) > 20
+        expr: sum((keycloak_user_events_total{event="login",error!=""} unless keycloak_user_events_total{event="login",error!=""} offset 5m) or increase(keycloak_user_events_total{event="login",error!=""}[5m])) > 20
         for: 0m
         labels: { severity: warning, category: security }
         annotations:
@@ -59,7 +62,7 @@ groups:
           description: "Hubo {{ $value | printf \"%.0f\" }} inicios de sesión fallidos en los últimos 5 minutos: posible fuerza bruta o relleno de credenciales."
 
       - alert: BruteForceInProgress
-        expr: sum(increase(keycloak_user_events_total{event="login",error!=""}[5m])) > 60
+        expr: sum((keycloak_user_events_total{event="login",error!=""} unless keycloak_user_events_total{event="login",error!=""} offset 5m) or increase(keycloak_user_events_total{event="login",error!=""}[5m])) > 60
         for: 0m
         labels: { severity: critical, category: security }
         annotations:
@@ -67,7 +70,7 @@ groups:
           description: "{{ $value | printf \"%.0f\" }} inicios de sesión fallidos en 5 minutos. Revisar la bitácora de actividad y las IPs de origen."
 
       - alert: LoginRateLimitHit
-        expr: sum(increase(promtail_custom_nginx_auth_login_rate_limited_total[5m])) > 10
+        expr: sum((promtail_custom_nginx_auth_login_rate_limited_total unless promtail_custom_nginx_auth_login_rate_limited_total offset 5m) or increase(promtail_custom_nginx_auth_login_rate_limited_total[5m])) > 10
         for: 0m
         labels: { severity: critical, category: security }
         annotations:

@@ -202,7 +202,10 @@ services:
       JAVA_TOOL_OPTIONS: ${BACKEND_CORE_JVM_OPTS:--Xms512m -Xmx1024m}
       TZ: ${TZ}
     ports:
-      - "${BACKEND_CORE_PORT:-8081}:8080"
+      # Solo loopback: publicado en todas las interfaces, cualquiera podía hablarle directo al backend
+      # con un X-Forwarded-For falso y saltarse el control de red del lanzador de servicios
+      # (VpnAccessGuard). El tráfico normal entra por NGINX, que fija esa cabecera.
+      - "127.0.0.1:${BACKEND_CORE_PORT:-8081}:8080"
     volumes:
       - evidences-data:/var/prisma/evidences
       - ./infra/tls/ca.crt:/etc/prisma/tls/ca.crt:ro
