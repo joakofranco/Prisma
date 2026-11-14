@@ -49,6 +49,9 @@ volumes:
   pgadmin-data:         { name: prisma-pgadmin-data }
   evidences-data:       { name: prisma-evidences-data }
   clamav-data:          { name: prisma-clamav-data }
+  nginx-f2b-logs:       { name: prisma-nginx-f2b-logs }
+  nginx-banlist:        { name: prisma-nginx-banlist }
+  fail2ban-data:        { name: prisma-fail2ban-data }
 
 # =====================================================================
 # SERVICIOS
@@ -1000,4 +1003,29 @@ services:
       - ./infra/nginx/conf.d:/etc/nginx/conf.d:ro
       - ./infra/nginx/certs:/etc/nginx/certs:ro
       - ./infra/tls/ca.crt:/etc/nginx/internal-ca.crt:ro
+      - nginx-f2b-logs:/var/log/nginx-f2b
+      - nginx-banlist:/etc/nginx/banlist:ro
+    networks: [prisma-net]
+
+  # -------------------------------------------------------------------
+  # FAIL2BAN: bloquea las IPs que abusan de la plataforma. Lee el access.log de NGINX (volumen
+  # nginx-f2b-logs), y al banear una IP la agrega como "deny" a la lista que NGINX incluye
+  # (volumen nginx-banlist) y le manda HUP al contenedor de NGINX para recargarla. Las IPs
+  # baneadas reciben 403. Usa el socket de Docker solo para esa señal. Ver docs/RUNBOOK.md.
+  # -------------------------------------------------------------------
+  fail2ban:
+    build: { context: ./infra/fail2ban }
+    image: prisma-fail2ban:local
+    container_name: prisma-fail2ban
+    restart: unless-stopped
+    profiles: [security, proxy, full]
+    environment:
+      F2B_IGNORE_IPS: "${F2B_IGNORE_IPS:-127.0.0.1/8 ::1}"
+    volumes:
+      - nginx-f2b-logs:/logs
+      - nginx-banlist:/banlist
+      - fail2ban-data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      nginx: { condition: service_started }
     networks: [prisma-net]

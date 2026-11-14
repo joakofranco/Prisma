@@ -64,3 +64,16 @@ scrape_configs:
                         config:
                           match_all: true
                           action: inc
+      - match:
+          selector: '{container="/prisma-fail2ban"}'
+          stages:
+            - regex:
+                expression: 'NOTICE\s+\[(?P<jail>[^\]]+)\]\s+Ban (?P<banned_ip>\S+)'
+            - metrics:
+                fail2ban_bans_total:
+                  type: Counter
+                  description: "IPs bloqueadas por fail2ban"
+                  source: banned_ip
+                  max_idle_duration: 24h
+                  config:
+                    action: inc

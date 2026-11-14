@@ -566,3 +566,27 @@ minuto; 25 logins fallidos seguidos disparan `LoginFailuresHigh`. Tras recrear c
 `docker exec prisma-nginx nginx -s reload` si `/auth` responde 502.
 
 Validar las reglas: `promtool check rules infra/monitoring/prometheus/rules/*.yml`.
+
+## Bloqueo automático de IPs (fail2ban)
+
+El contenedor `prisma-fail2ban` lee el `access.log` de NGINX y bloquea las IPs que abusan de la plataforma. Un bloqueo agrega `deny <IP>;` a la lista que NGINX incluye (`/etc/nginx/banlist/f2b.conf`) y recarga NGINX con una señal HUP. La IP bloqueada recibe 403.
+
+| Jail | Qué detecta | Umbral | Bloqueo |
+|---|---|---|---|
+| `prisma-nginx-ratelimit` | Respuestas 429 (límite de tasa de NGINX) | 30 en 1 min | 10 min |
+| `prisma-nginx-login` | 429 en `login-actions/authenticate` (fuerza bruta contra el formulario) | 5 en 5 min | 30 min |
+| `prisma-nginx-scan` | 401, 403 o 404 (escaneo o credenciales robadas), sin contar `/assets/` | 60 en 1 min | 10 min |
+
+Cada reincidencia duplica el tiempo de bloqueo, hasta un máximo de 24 h. Los bloqueos se guardan en el volumen `prisma-fail2ban-data` y se restauran al reiniciar el contenedor.
+
+- Ver las IPs bloqueadas: `docker exec prisma-fail2ban fail2ban-client banned`
+- Estado de un jail: `docker exec prisma-fail2ban fail2ban-client status prisma-nginx-ratelimit`
+- Desbloquear una IP: `docker exec prisma-fail2ban fail2ban-client unban <IP>`
+- Probar un filtro contra el log: `docker exec prisma-fail2ban fail2ban-regex /logs/access.log prisma-nginx-ratelimit`
+- Cada bloqueo dispara la alerta `Fail2banIpBanned` (dashboard y correo).
+
+Notas:
+- Para que no se bloquee a los administradores, poner sus IPs en `F2B_IGNORE_IPS` (`.env`).
+- Si NGINX queda detrás de otro proxy o balanceador, todas las peticiones llegan con la IP de ese proxy: agregarla a `F2B_IGNORE_IPS` o configurar `real_ip` en NGINX antes de usar fail2ban.
+- El contenedor usa el socket de Docker solo para enviar la señal de recarga a `prisma-nginx`. El log compartido se vacía solo cuando supera los 50 MB.
+- Protege contra el abuso de una IP o de pocas IPs. No reemplaza una protección de red contra un DDoS volumétrico (CDN o proveedor).

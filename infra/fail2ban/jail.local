@@ -1,0 +1,32 @@
+[DEFAULT]
+ignoreip = 127.0.0.1/8 ::1
+bantime  = 10m
+findtime = 1m
+maxretry = 30
+backend  = polling
+banaction = nginx-deny
+bantime.increment = true
+bantime.factor = 2
+bantime.maxtime = 24h
+
+[prisma-nginx-ratelimit]
+enabled  = true
+filter   = prisma-nginx-ratelimit
+logpath  = /logs/access.log
+findtime = 1m
+maxretry = 30
+
+[prisma-nginx-login]
+enabled  = true
+filter   = prisma-nginx-login
+logpath  = /logs/access.log
+findtime = 5m
+maxretry = 5
+bantime  = 30m
+
+[prisma-nginx-scan]
+enabled  = true
+filter   = prisma-nginx-scan
+logpath  = /logs/access.log
+findtime = 1m
+maxretry = 60

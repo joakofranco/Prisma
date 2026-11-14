@@ -84,3 +84,11 @@ groups:
         annotations:
           summary: "Muchos accesos no autorizados a la API"
           description: "La API responde 401/403 a {{ $value | printf \"%.1f\" }} peticiones por segundo hace más de 5 minutos: posible escaneo o uso de credenciales robadas."
+
+      - alert: Fail2banIpBanned
+        expr: sum((promtail_custom_fail2ban_bans_total unless promtail_custom_fail2ban_bans_total offset 5m) or increase(promtail_custom_fail2ban_bans_total[5m])) > 0
+        for: 0m
+        labels: { severity: warning, category: security }
+        annotations:
+          summary: "fail2ban bloqueó una o más IPs"
+          description: "fail2ban bloqueó {{ $value | printf \"%.0f\" }} IP(s) en los últimos 5 minutos por abuso (límite de tasa, fuerza bruta o escaneo). Ver las IPs con: docker exec prisma-fail2ban fail2ban-client banned"

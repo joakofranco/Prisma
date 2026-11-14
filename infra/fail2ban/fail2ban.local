@@ -1,0 +1,7 @@
+[Definition]
+loglevel = INFO
+logtarget = STDOUT
+socket = /var/run/fail2ban/fail2ban.sock
+pidfile = /var/run/fail2ban/fail2ban.pid
+dbfile = /data/fail2ban.sqlite3
+dbpurgeage = 7d
