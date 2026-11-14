@@ -258,6 +258,9 @@
 </script>
 <script>
     (function () {
+        if (document.body.getAttribute("data-page-id") === "login-login" && window.history && history.replaceState) {
+            history.replaceState(null, "", "/login");
+        }
         var pwd = document.getElementById("password");
         var caps = document.getElementById("prisma-caps");
         if (pwd && caps) {
