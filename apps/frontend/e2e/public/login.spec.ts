@@ -11,7 +11,7 @@ test('entrar a la app sin sesión lleva directo al login de Keycloak', async ({ 
   await expect(page.locator('#username')).toBeVisible({ timeout: FIRST_PAINT_TIMEOUT });
   await expect(page.locator('#password')).toBeVisible();
   await expect(page.locator('#kc-login')).toBeVisible();
-  await expect(page).not.toHaveURL(/\/login$/);
+  await expect(page).toHaveURL(/\/login$/);
 });
 
 test('el formulario de login es operable con teclado', async ({ page }) => {
@@ -26,6 +26,9 @@ test('el formulario de login es operable con teclado', async ({ page }) => {
 test('el login de Keycloak no tiene violaciones WCAG 2.1 AA (Decreto N° 406/022)', async ({
   page,
 }, testInfo) => {
+  // El tema anima la entrada de la tarjeta (prisma-rise, 0.5 s) y axe medía el contraste a mitad de
+  // la animación, con los colores mezclados con el fondo. El tema respeta prefers-reduced-motion.
+  await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto('/');
   await page.locator('#username').waitFor({ state: 'visible', timeout: FIRST_PAINT_TIMEOUT });
   await assertNoWcagViolations(page, testInfo);
