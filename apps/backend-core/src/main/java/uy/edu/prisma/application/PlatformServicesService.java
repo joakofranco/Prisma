@@ -27,7 +27,8 @@ public class PlatformServicesService {
 
   public static final int MAX_URL_LENGTH = 500;
 
-  // Nombre de host (con puntos y guiones), IPv4 o IPv6 entre corchetes. Sin esquema, puerto ni ruta.
+  // Nombre de host (con puntos y guiones), IPv4 o IPv6 entre corchetes. Sin esquema, puerto ni
+  // ruta.
   private static final Pattern HOST =
       Pattern.compile(
           "^(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*"
@@ -43,7 +44,9 @@ public class PlatformServicesService {
 
   @Transactional(readOnly = true)
   public List<PlatformServiceDto> list() {
-    return repo.findAllByOrderBySortOrderAsc().stream().map(PlatformServicesService::toDto).toList();
+    return repo.findAllByOrderBySortOrderAsc().stream()
+        .map(PlatformServicesService::toDto)
+        .toList();
   }
 
   public PlatformServiceDto updateUrl(UUID id, String rawUrl) {

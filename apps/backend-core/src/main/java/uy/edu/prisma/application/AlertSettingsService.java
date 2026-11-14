@@ -46,7 +46,8 @@ public class AlertSettingsService {
   static final String MANAGED_MARKER = ".managed";
 
   private static final Pattern EMAIL =
-      Pattern.compile("^[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9](?:[A-Za-z0-9.-]{0,253}[A-Za-z0-9])?\\.[A-Za-z]{2,}$");
+      Pattern.compile(
+          "^[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9](?:[A-Za-z0-9.-]{0,253}[A-Za-z0-9])?\\.[A-Za-z]{2,}$");
   private static final Pattern HOST =
       Pattern.compile(
           "^(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*"
@@ -120,7 +121,10 @@ public class AlertSettingsService {
     repo.save(row);
     auditLog.record("UPDATE", "alert-settings", "{\"host\":\"" + host + "\"}");
 
-    String warning = reload() ? null : "Se guardó la configuración, pero Alertmanager no respondió a la recarga. Se aplicará cuando se reinicie el servicio.";
+    String warning =
+        reload()
+            ? null
+            : "Se guardó la configuración, pero Alertmanager no respondió a la recarga. Se aplicará cuando se reinicie el servicio.";
     return toDto(row, warning);
   }
 
@@ -135,7 +139,8 @@ public class AlertSettingsService {
       writeAtomically(CONFIG_FILE, render(row), "rw-r--r--");
       reload();
     } catch (RuntimeException e) {
-      log.warn("No se pudo sincronizar la configuración de alertas al arrancar: {}", e.getMessage());
+      log.warn(
+          "No se pudo sincronizar la configuración de alertas al arrancar: {}", e.getMessage());
     }
   }
 
@@ -253,7 +258,8 @@ public class AlertSettingsService {
     return template
         .replace("__SMTP_SMARTHOST__", r.getSmtpHost() + ":" + r.getSmtpPort())
         .replace("__SMTP_FROM__", r.getSmtpFrom())
-        .replace("__SMTP_USER__", r.isAuthEnabled() && r.getSmtpUser() != null ? r.getSmtpUser() : "")
+        .replace(
+            "__SMTP_USER__", r.isAuthEnabled() && r.getSmtpUser() != null ? r.getSmtpUser() : "")
         .replace("__SMTP_REQUIRE_TLS__", String.valueOf(r.isRequireTls()))
         .replace("__EMAIL_TO__", r.getRecipients());
   }
@@ -343,7 +349,8 @@ public class AlertSettingsService {
   }
 
   private static boolean canConnect(String host, int port) {
-    String h = host.startsWith("[") && host.endsWith("]") ? host.substring(1, host.length() - 1) : host;
+    String h =
+        host.startsWith("[") && host.endsWith("]") ? host.substring(1, host.length() - 1) : host;
     try (Socket socket = new Socket()) {
       socket.connect(new InetSocketAddress(h, port), 3000);
       return true;

@@ -40,7 +40,8 @@ class VpnAccessGuardTest {
     MockHttpServletRequest request = new MockHttpServletRequest();
     request.setRemoteAddr("181.20.4.9");
 
-    VpnRequiredException ex = assertThrows(VpnRequiredException.class, () -> guard.require(request));
+    VpnRequiredException ex =
+        assertThrows(VpnRequiredException.class, () -> guard.require(request));
     assertEquals(VpnAccessGuard.DENIED_MESSAGE, ex.getMessage());
   }
 

@@ -513,7 +513,16 @@ public class Dto {
           String evidence) {}
 
   public record DeleteControlGuidesDto(
-      @NotEmpty(message = "Indique al menos un control") List<UUID> controlIds) {}
+      @NotEmpty(message = "Indique al menos un control") List<UUID> controlIds) {
+    public DeleteControlGuidesDto {
+      controlIds = controlIds == null ? null : List.copyOf(controlIds);
+    }
+
+    @Override
+    public List<UUID> controlIds() {
+      return controlIds == null ? null : Collections.unmodifiableList(controlIds);
+    }
+  }
 
   public record DeleteControlGuidesResultDto(int removed) {}
 
@@ -524,7 +533,22 @@ public class Dto {
       int updated,
       List<String> notInCatalog,
       List<String> incomplete,
-      int catalogWithoutGuide) {}
+      int catalogWithoutGuide) {
+    public ControlGuideImportResultDto {
+      notInCatalog = notInCatalog == null ? List.of() : List.copyOf(notInCatalog);
+      incomplete = incomplete == null ? List.of() : List.copyOf(incomplete);
+    }
+
+    @Override
+    public List<String> notInCatalog() {
+      return Collections.unmodifiableList(notInCatalog);
+    }
+
+    @Override
+    public List<String> incomplete() {
+      return Collections.unmodifiableList(incomplete);
+    }
+  }
 
   public record CatalogImportDto(
       @NotBlank(message = "La versión es obligatoria")
@@ -1140,7 +1164,7 @@ public class Dto {
       boolean passwordSet,
       boolean requireTls,
       boolean configured,
-      java.time.OffsetDateTime updatedAt,
+      OffsetDateTime updatedAt,
       String warning) {}
 
   public record UpdateAlertSettingsDto(
@@ -1153,8 +1177,7 @@ public class Dto {
       String password,
       boolean requireTls) {}
 
-  public record AlertTestResultDto(
-      boolean smtpReachable, boolean alertSent, String message) {}
+  public record AlertTestResultDto(boolean smtpReachable, boolean alertSent, String message) {}
 
   public record SessionSettingsDto(Integer idleTimeoutMinutes, Integer warningSeconds) {}
 

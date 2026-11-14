@@ -459,15 +459,16 @@ public class KeycloakAdminClient {
    * resumen OpenAPI dice literalmente "Test SMTP connection with current logged in user" -- y no
    * declara ningún parámetro de destinatario: el {@code ?user=...} que tenía antes este método era
    * inofensivo pero Keycloak lo ignoraba por completo. Como backend-core llama a esta API como la
-   * cuenta de servicio {@code service-account-<clientId>}, el correo de prueba siempre terminaba
-   * en el email que esa cuenta tuviera guardado, sin importar qué destinatario pidiera el admin
-   * (si coincidía era por casualidad). Para que funcione con cualquier destinatario, sin introducir
-   * un camino de envío paralelo a Keycloak, se le asigna temporalmente ese email a la cuenta de
+   * cuenta de servicio {@code service-account-<clientId>}, el correo de prueba siempre terminaba en
+   * el email que esa cuenta tuviera guardado, sin importar qué destinatario pidiera el admin (si
+   * coincidía era por casualidad). Para que funcione con cualquier destinatario, sin introducir un
+   * camino de envío paralelo a Keycloak, se le asigna temporalmente ese email a la cuenta de
    * servicio, se dispara la prueba y SIEMPRE se restaura el valor anterior (éxito o error) -- ver
    * {@code finally}. {@code synchronized} porque dos pruebas simultáneas pisarían el email de la
    * misma cuenta de servicio.
    */
-  public synchronized void testSmtpConnection(Map<String, String> smtpServer, String testRecipientEmail) {
+  public synchronized void testSmtpConnection(
+      Map<String, String> smtpServer, String testRecipientEmail) {
     UUID serviceAccountId = findServiceAccountId();
     String previousEmail = getUserEmail(serviceAccountId);
     updateUserEmail(serviceAccountId, testRecipientEmail);

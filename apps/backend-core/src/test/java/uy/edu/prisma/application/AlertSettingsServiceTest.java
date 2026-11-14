@@ -121,8 +121,15 @@ class AlertSettingsServiceTest {
   void sinContrasenaNuevaConservaLaExistente() throws IOException {
     service.update(valid());
     service.update(
-        dto("equipo@prisma.uy", "smtp.proveedor.com", 465, "no-reply@prisma.uy", true,
-            "no-reply@prisma.uy", "", true));
+        dto(
+            "equipo@prisma.uy",
+            "smtp.proveedor.com",
+            465,
+            "no-reply@prisma.uy",
+            true,
+            "no-reply@prisma.uy",
+            "",
+            true));
     assertEquals("s3cret", Files.readString(dir.resolve(AlertSettingsService.PASSWORD_FILE)));
     assertEquals(465, row.getSmtpPort());
   }
@@ -139,7 +146,8 @@ class AlertSettingsServiceTest {
   @Test
   void sinAutenticacionVaciaElUsuarioYLaContrasena() throws IOException {
     service.update(valid());
-    service.update(dto("a@prisma.uy", "mailpit", 1025, "b@prisma.uy", false, "ignorado", null, false));
+    service.update(
+        dto("a@prisma.uy", "mailpit", 1025, "b@prisma.uy", false, "ignorado", null, false));
     assertNull(row.getSmtpUser());
     assertFalse(row.isPasswordSet());
     assertEquals("", Files.readString(dir.resolve(AlertSettingsService.PASSWORD_FILE)));
@@ -172,10 +180,12 @@ class AlertSettingsServiceTest {
 
   @Test
   void rechazaServidorConEsquemaPuertoORuta() {
-    for (String bad : new String[] {null, "", "http://smtp.x.com", "smtp.x.com:587", "smtp.x.com/a", "a b"}) {
+    for (String bad :
+        new String[] {null, "", "http://smtp.x.com", "smtp.x.com:587", "smtp.x.com/a", "a b"}) {
       assertThrows(
           InvalidRequestException.class,
-          () -> service.update(dto("a@prisma.uy", bad, 587, "b@prisma.uy", false, null, null, false)),
+          () ->
+              service.update(dto("a@prisma.uy", bad, 587, "b@prisma.uy", false, null, null, false)),
           String.valueOf(bad));
     }
   }
@@ -186,7 +196,8 @@ class AlertSettingsServiceTest {
       assertThrows(
           InvalidRequestException.class,
           () ->
-              service.update(dto("a@prisma.uy", "mailpit", bad, "b@prisma.uy", false, null, null, false)));
+              service.update(
+                  dto("a@prisma.uy", "mailpit", bad, "b@prisma.uy", false, null, null, false)));
     }
   }
 
@@ -195,7 +206,9 @@ class AlertSettingsServiceTest {
     for (String bad : new String[] {"", "con espacio", "com\"illa", "barra\\invertida"}) {
       assertThrows(
           InvalidRequestException.class,
-          () -> service.update(dto("a@prisma.uy", "mailpit", 25, "b@prisma.uy", true, bad, "x", false)));
+          () ->
+              service.update(
+                  dto("a@prisma.uy", "mailpit", 25, "b@prisma.uy", true, bad, "x", false)));
     }
     assertThrows(
         InvalidRequestException.class,
@@ -216,7 +229,8 @@ class AlertSettingsServiceTest {
   @Test
   void sinPlantillaFallaConUnMensajeClaro() throws IOException {
     Files.delete(dir.resolve(AlertSettingsService.TEMPLATE_FILE));
-    InvalidRequestException ex = assertThrows(InvalidRequestException.class, () -> service.update(valid()));
+    InvalidRequestException ex =
+        assertThrows(InvalidRequestException.class, () -> service.update(valid()));
     assertTrue(ex.getMessage().contains("plantilla"));
   }
 
@@ -257,7 +271,8 @@ class AlertSettingsServiceTest {
     row.setConfigured(true);
     row.setSmtpHost("smtp.guardado.com");
     service.syncOnStartup();
-    String yml = Files.readString(dir.resolve(AlertSettingsService.CONFIG_FILE), StandardCharsets.UTF_8);
+    String yml =
+        Files.readString(dir.resolve(AlertSettingsService.CONFIG_FILE), StandardCharsets.UTF_8);
     assertTrue(yml.contains("smtp.guardado.com:1025"));
   }
 }
