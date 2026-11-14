@@ -28,6 +28,10 @@ networks:
       config:
         - subnet: 172.28.0.0/16
 
+secrets:
+  portainer_admin_password:
+    file: ./.secrets/portainer_admin_password
+
 volumes:
   postgres-data:        { name: prisma-postgres-data }
   redis-data:           { name: prisma-redis-data }
@@ -901,6 +905,10 @@ services:
     container_name: prisma-portainer
     restart: unless-stopped
     profiles: [management, full]
+    # El administrador se crea al arrancar con la contraseña de .secrets/portainer_admin_password
+    # (usuario "admin"). Sin eso, Portainer se bloquea si nadie lo configura en los primeros 5 minutos.
+    command: ["--admin-password-file", "/run/secrets/portainer_admin_password"]
+    secrets: [portainer_admin_password]
     ports:
       - "${PORTAINER_PORT:-9000}:9000"
       - "9443:9443"

@@ -607,3 +607,12 @@ Cómo funciona:
 - Hasta la primera vez que se guarda, Alertmanager usa los valores de `ALERT_*` del `.env` (por defecto, el buzón de pruebas Mailpit). Después, manda lo guardado en la plataforma y esas variables dejan de usarse. El archivo `.managed` del volumen marca ese cambio.
 - Al arrancar, backend-core vuelve a escribir la configuración de Alertmanager con lo guardado, para que no quede desfasada si cambia la plantilla.
 - Para volver a los valores del `.env`: borrar `.managed` del volumen y reiniciar Alertmanager.
+
+## Portainer: administrador inicial
+
+Portainer se bloquea («instance timed out for security purposes») si nadie crea el administrador en los 5 minutos siguientes a cada arranque. Para que no pase, el compose lo crea al arrancar con la contraseña del archivo `.secrets/portainer_admin_password` (ignorado por git). Usuario: `admin`.
+
+- En un entorno nuevo, crear el archivo antes de levantar Portainer: `mkdir -p .secrets && openssl rand -base64 24 | tr -d "/+=
+" > .secrets/portainer_admin_password`.
+- Ver la contraseña: `cat .secrets/portainer_admin_password`.
+- La contraseña se aplica solo cuando Portainer todavía no tiene administrador. Para cambiarla después, hacerlo desde la propia interfaz (Users).
