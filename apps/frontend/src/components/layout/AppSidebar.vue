@@ -12,38 +12,51 @@
     aria-label="Menú principal"
   >
     <div
-      :class="[
-        'shrink-0 border-b border-slate-700 flex items-center gap-2 px-4 h-16',
-        collapsed ? 'lg:flex-col lg:h-auto lg:px-0 lg:py-3' : '',
-      ]"
+      class="shrink-0 border-b border-slate-700 px-4 pt-3 pb-2.5 lg:data-[collapsed=true]:px-0"
+      :data-collapsed="collapsed"
     >
-      <ShieldCheckIcon class="w-8 h-8 text-blue-400 shrink-0" />
-      <span :class="['text-lg font-bold tracking-wide', collapsed ? 'lg:hidden' : '']">PRISMA</span>
+      <div :class="['flex items-center gap-2 min-h-10', collapsed ? 'lg:flex-col lg:py-1' : '']">
+        <img
+          :src="logoDark"
+          alt="PRISMA"
+          :class="['h-auto w-[200px] shrink-0 select-none', collapsed ? 'lg:hidden' : '']"
+          data-testid="sidebar-logo"
+        />
+        <img
+          v-if="collapsed"
+          :src="markDark"
+          alt="PRISMA"
+          class="hidden lg:block h-9 w-auto shrink-0 select-none"
+          data-testid="sidebar-logo-mark"
+        />
 
-      <!-- Contraer / expandir (solo escritorio): junto al logo, ya no abajo del todo. -->
-      <button
-        type="button"
-        :class="[
-          'hidden lg:flex items-center justify-center w-8 h-8 rounded-full bg-slate-700 hover:bg-slate-600 transition-colors shrink-0',
-          collapsed ? '' : 'ml-auto',
-        ]"
-        :title="collapsed ? 'Expandir menú' : 'Contraer menú'"
-        :aria-label="collapsed ? 'Expandir menú' : 'Contraer menú'"
-        @click="$emit('toggle-collapse')"
-      >
-        <ChevronLeftIcon :class="['w-4 h-4 transition-transform', collapsed ? 'rotate-180' : '']" />
-      </button>
+        <!-- Contraer / expandir (solo escritorio): junto al logo, ya no abajo del todo. -->
+        <button
+          type="button"
+          :class="[
+            'hidden lg:flex items-center justify-center w-8 h-8 rounded-full bg-slate-700 hover:bg-slate-600 transition-colors shrink-0',
+            collapsed ? '' : 'ml-auto',
+          ]"
+          :title="collapsed ? 'Expandir menú' : 'Contraer menú'"
+          :aria-label="collapsed ? 'Expandir menú' : 'Contraer menú'"
+          @click="$emit('toggle-collapse')"
+        >
+          <ChevronLeftIcon
+            :class="['w-4 h-4 transition-transform', collapsed ? 'rotate-180' : '']"
+          />
+        </button>
 
-      <!-- Cerrar (solo móvil / tableta, donde el menú es un cajón). -->
-      <button
-        type="button"
-        class="lg:hidden ml-auto p-1.5 rounded-lg text-slate-300 hover:bg-slate-800 hover:text-white transition-colors"
-        title="Cerrar menú"
-        aria-label="Cerrar menú"
-        @click="emit('close-mobile')"
-      >
-        <XMarkIcon class="w-6 h-6" />
-      </button>
+        <!-- Cerrar (solo móvil / tableta, donde el menú es un cajón). -->
+        <button
+          type="button"
+          class="lg:hidden ml-auto p-1.5 rounded-lg text-slate-300 hover:bg-slate-800 hover:text-white transition-colors"
+          title="Cerrar menú"
+          aria-label="Cerrar menú"
+          @click="emit('close-mobile')"
+        >
+          <XMarkIcon class="w-6 h-6" />
+        </button>
+      </div>
     </div>
 
     <nav class="flex-1 min-h-0 mt-4 mb-2 px-2 space-y-1 overflow-y-auto">
@@ -95,7 +108,9 @@
     ClockIcon,
     XMarkIcon,
   } from '@heroicons/vue/24/outline';
-  import { ShieldCheckIcon, ChevronLeftIcon } from '@heroicons/vue/24/solid';
+  import { ChevronLeftIcon } from '@heroicons/vue/24/solid';
+  import logoDark from '@/assets/img/prisma-logo-dark.svg';
+  import markDark from '@/assets/img/prisma-mark-dark.svg';
 
   defineProps<{
     collapsed: boolean;
