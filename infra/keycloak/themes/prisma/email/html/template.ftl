@@ -4,11 +4,13 @@
   macro). Las plantillas de contenido en sí (texto, botones, links) siguen viniendo del theme
   "keycloak" (parent=keycloak en theme.properties): acá solo se branding el encabezado/pie.
 
-  Sin logo rasterizado (no existe ninguno en el repo -- la app tampoco usa uno, ver
-  AppHeader.vue: es un icono + texto). Se usa una banda de color + el wordmark "PRISMA" en el
-  mismo azul (#2563eb, Tailwind blue-600) que usa el header real de la app, en vez de depender
-  de una imagen externa (muchos clientes de correo bloquean imágenes remotas por defecto, lo
-  que haría perder el branding en la mayoría de las bandejas de entrada).
+  Sin imagen: Gmail (y Outlook.com, y Outlook de escritorio anterior a 2016) no renderiza
+  imágenes embebidas en base64 dentro del propio correo -- las muestra como ícono roto, visto
+  en un correo real (Mailpit, que no aplica esa restricción, sí la mostraba, por eso no se notó
+  antes). La alternativa confiable -- un logo alojado en un servidor público -- no existe todavía
+  (la plataforma solo corre en local). Por eso el logo es texto + color: un cuadrado y el
+  wordmark "PRISMA" en el mismo azul (#2563eb, Tailwind blue-600) que el header real de la app
+  -- funciona igual en cualquier cliente de correo, sin depender de que cargue una imagen.
 -->
 <#macro emailLayout>
 <html>
