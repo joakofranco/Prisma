@@ -35,10 +35,10 @@ DC := docker compose
 .DEFAULT_GOAL := help
 .PHONY: help up down restart logs ps build rebuild pull clean nuke \
         test test-frontend test-core test-ai lint format \
-        seed migrate backup restore health pull-llm shell-core shell-ai \
+        migrate backup restore health pull-llm shell-core shell-ai \
         sonar security-scan sync-knowledge-base \
         certs certs-force internal-ca restart-nginx \
-        mvp-up mvp-down mvp-logs mvp-ps mvp-seed \
+        mvp-up mvp-down mvp-logs mvp-ps \
         mcu50-build mcu50-validate bugasura-build \
         mfa-enable mfa-status mfa-disable mfa-reset-requires-otp auth-policy auth-policy-status \n        swarm-deploy swarm-ps swarm-down
 
@@ -78,10 +78,6 @@ mvp-logs: ## MVP: seguir logs del stack mínimo
 
 mvp-ps: ## MVP: listar contenedores del stack mínimo
 	$(DC) $(MVP) --profile mvp ps
-
-mvp-seed: ## MVP: precargar catálogo MCU 5.0 + datos demo (sin ingest de IA)
-	@echo "$(CYAN)🌱 Cargando catálogo MCU 5.0 y datos demo...$(RESET)"
-	$(DC) $(MVP) exec backend-core java -jar /app/app.jar --seed
 
 # ---------- MCU 5.0 alineado a las planillas Agesic 2025 ----------
 mcu50-build: ## Regenerar V19__mcu50_align_agesic_2025.sql + expected_basico.json desde docs/mcu-5.0/Planilla MCU 5.0 *.xlsx
@@ -177,11 +173,6 @@ format: ## Auto-formatear todo el código
 # ---------- BASE DE DATOS ----------
 migrate: ## Ejecutar migraciones Flyway
 	$(DC) exec backend-core mvn flyway:migrate
-
-seed: ## Precargar catálogo MCU 5.0 y datos demo
-	@echo "$(CYAN)🌱 Cargando catálogo MCU 5.0 y datos demo...$(RESET)"
-	$(DC) exec backend-core java -jar /app/app.jar --seed
-	$(DC) exec backend-ai python -m app.scripts.ingest_mcu_docs
 
 # RNF-13: respaldo diario (Postgres + bucket de evidencias de RustFS) y restauración. "make
 # backup"/"make restore" corren el MISMO script (scripts/backup/backup.sh y restore.sh, dentro del

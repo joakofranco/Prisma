@@ -242,7 +242,7 @@ make mvp-up     # postgres, redis, keycloak(+db), backend-core, backend-ai, fron
 Queda **afuera**: el LLM (`ollama` y el modelo de ~4.7 GB — no se descarga), la subida de
 archivos de evidencia (necesita RustFS) y las funciones de RAG (citas de evidencia y tips de
 remediación degradan sin romper). `backend-ai` se levanta ocioso sólo para que nginx arranque.
-Comandos: `make mvp-ps`, `make mvp-logs`, `make mvp-seed`, `make mvp-down`.
+Comandos: `make mvp-ps`, `make mvp-logs`, `make mvp-down`.
 
 No hace falta un paso manual de "seed": el catálogo MCU 5.0 y el usuario administrador semilla
 (`admin@prisma.local`) se cargan solos vía migraciones Flyway al arrancar `backend-core`, y el
@@ -404,7 +404,7 @@ make health              # Verifica que frontend/backend-core/backend-ai respond
 make clean / nuke        # Baja la stack; `nuke` además borra volúmenes (¡destructivo!)
 ```
 
-No hace falta `make seed` ni `make migrate`: las migraciones de base de datos las aplica
+No hace falta sembrar datos ni correr `make migrate`: las migraciones de base de datos las aplica
 automáticamente Flyway al arrancar `backend-core` (`spring-boot-starter-flyway`), y el catálogo
 MCU 5.0 se carga como parte de esas mismas migraciones.
 

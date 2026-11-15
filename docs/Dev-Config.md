@@ -158,11 +158,9 @@ make up                    # incluye Portainer, Grafana, SonarQube, Watchtower, 
 make pull-llm
 ```
 
-### Cargar el catálogo MCU 5.0 + datos demo
+### Catálogo MCU 5.0
 
-```bash
-make seed
-```
+No hay que cargarlo a mano: el catálogo MCU 5.0, el usuario administrador inicial y los perfiles comunitarios los aplican las migraciones de Flyway al arrancar `backend-core`. No hay datos demo de organizaciones ni evaluaciones; se crean desde la aplicación.
 
 ---
 
