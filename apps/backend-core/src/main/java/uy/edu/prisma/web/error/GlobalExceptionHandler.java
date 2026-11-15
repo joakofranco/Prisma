@@ -12,10 +12,16 @@ import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.validation.FieldError;
+import org.springframework.web.HttpMediaTypeNotSupportedException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 import uy.edu.prisma.application.OrganizationMessages;
 import uy.edu.prisma.config.EvidenceConfig.EvidenceProperties;
 import uy.edu.prisma.domain.exception.AiUnavailableException;
@@ -105,6 +111,54 @@ public class GlobalExceptionHandler {
     return build(HttpStatus.BAD_REQUEST, "BAD_REQUEST", "Cuerpo de la solicitud mal formado", null);
   }
 
+  @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+  public ResponseEntity<ApiErrorDto> handleTypeMismatch(MethodArgumentTypeMismatchException ex) {
+    String message = "El valor del parámetro «" + ex.getName() + "» no es válido";
+    return build(
+        HttpStatus.BAD_REQUEST, "BAD_REQUEST", message, Map.of(ex.getName(), List.of(message)));
+  }
+
+  @ExceptionHandler(MissingServletRequestParameterException.class)
+  public ResponseEntity<ApiErrorDto> handleMissingParameter(
+      MissingServletRequestParameterException ex) {
+    String message = "Falta el parámetro obligatorio «" + ex.getParameterName() + "»";
+    return build(
+        HttpStatus.BAD_REQUEST,
+        "BAD_REQUEST",
+        message,
+        Map.of(ex.getParameterName(), List.of(message)));
+  }
+
+  @ExceptionHandler(NoResourceFoundException.class)
+  public ResponseEntity<ApiErrorDto> handleNoResource(NoResourceFoundException ex) {
+    return build(HttpStatus.NOT_FOUND, "NOT_FOUND", "El recurso solicitado no existe", null);
+  }
+
+  @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+  public ResponseEntity<ApiErrorDto> handleMethodNotSupported(
+      HttpRequestMethodNotSupportedException ex) {
+    return build(
+        HttpStatus.METHOD_NOT_ALLOWED,
+        "METHOD_NOT_ALLOWED",
+        "El método " + ex.getMethod() + " no está permitido para este recurso",
+        null);
+  }
+
+  @ExceptionHandler(HttpMediaTypeNotSupportedException.class)
+  public ResponseEntity<ApiErrorDto> handleMediaTypeNotSupported(
+      HttpMediaTypeNotSupportedException ex) {
+    return build(
+        HttpStatus.UNSUPPORTED_MEDIA_TYPE,
+        "UNSUPPORTED_MEDIA_TYPE",
+        "El tipo de contenido de la solicitud no está soportado",
+        null);
+  }
+
+  @ExceptionHandler(AsyncRequestNotUsableException.class)
+  public void handleClientDisconnected(AsyncRequestNotUsableException ex) {
+    log.debug("El cliente cerró la conexión antes de recibir la respuesta: {}", ex.getMessage());
+  }
+
   @ExceptionHandler(DataIntegrityViolationException.class)
   public ResponseEntity<ApiErrorDto> handleIntegrity(DataIntegrityViolationException ex) {
     // Red de seguridad: OrganizationService ya chequea el identificador duplicado antes de guardar,
@@ -159,6 +213,8 @@ public class GlobalExceptionHandler {
           HttpStatus.UNAUTHORIZED, "No autorizado",
           HttpStatus.FORBIDDEN, "Prohibido",
           HttpStatus.NOT_FOUND, "No encontrado",
+          HttpStatus.METHOD_NOT_ALLOWED, "Método no permitido",
+          HttpStatus.UNSUPPORTED_MEDIA_TYPE, "Tipo de contenido no soportado",
           HttpStatus.CONFLICT, "Conflicto",
           HttpStatus.PAYLOAD_TOO_LARGE, "Archivo demasiado grande",
           HttpStatus.INTERNAL_SERVER_ERROR, "Error interno del servidor");
