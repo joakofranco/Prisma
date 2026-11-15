@@ -4,6 +4,7 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -52,6 +53,7 @@ public class LoginFailureAuditSyncService {
   @Scheduled(
       fixedDelayString = "${prisma.security.login-failure-sync.interval-ms:15000}",
       initialDelayString = "${prisma.security.login-failure-sync.interval-ms:15000}")
+  @SchedulerLock(name = "loginFailureAuditSync", lockAtMostFor = "PT1M", lockAtLeastFor = "PT10S")
   public void syncLoginFailures() {
     List<LoginFailureEvent> events;
     try {
