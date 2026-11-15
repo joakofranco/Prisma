@@ -422,7 +422,8 @@ rechazo de NGINX. Como es por IP, varias personas detrás de la misma IP (una re
 comparten el cupo.
 
 El resto de los límites de NGINX: `/api/` admite 30 solicitudes por segundo por IP (`burst=50`) y
-hasta 20 conexiones simultáneas; `/ai/` 30 por segundo (`burst=20`). Todos rechazan con `429`.
+hasta 20 conexiones simultáneas. Todos rechazan con `429`. `backend-ai` no se publica por NGINX:
+solo lo llama `backend-core` por la red interna.
 
 **Síntoma si se excede:** NGINX responde `429 Too Many Requests` (en el login, el navegador muestra
 esa página de NGINX). Esos intentos no llegan a Keycloak. La zona de rate limiting vive en memoria

@@ -35,17 +35,6 @@ location /api/ {
     proxy_read_timeout 130s;
 }
 
-# ---- API IA / RAG ----
-location /ai/ {
-    limit_req zone=api burst=20 nodelay;
-    include            /etc/nginx/conf.d/proxy-backend-ai.inc;
-    proxy_set_header   Host              $http_host;
-    proxy_set_header   X-Real-IP         $remote_addr;
-    # $remote_addr, NO $proxy_add_x_forwarded_for -- ver el comentario en location /api/.
-    proxy_set_header   X-Forwarded-For   $remote_addr;
-    proxy_read_timeout 300s;         # RAG puede tardar
-}
-
 # ---- Keycloak (SSO) -- login (RNF-07: límite de intentos por IP, zona auth_login en nginx.conf) ----
 # Location regex ("location ~"): nginx siempre la prioriza por sobre el prefijo "location /auth/"
 # de abajo cuando ambas matchean, sin importar el orden en que estén escritas acá -- matchea sólo
