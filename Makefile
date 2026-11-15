@@ -40,7 +40,7 @@ DC := docker compose
         certs certs-force internal-ca restart-nginx \
         mvp-up mvp-down mvp-logs mvp-ps mvp-seed \
         mcu50-build mcu50-validate bugasura-build \
-        mfa-enable mfa-status mfa-disable mfa-reset-requires-otp auth-policy auth-policy-status
+        mfa-enable mfa-status mfa-disable mfa-reset-requires-otp auth-policy auth-policy-status \n        swarm-deploy swarm-ps swarm-down
 
 # Archivos de compose para el stack MVP (mínimo, sin LLM ni servicios extra)
 MVP := -f docker-compose.yml -f docker-compose.mvp.yml
@@ -269,3 +269,14 @@ shell-db: ## Consola psql
 
 shell-front: ## Shell dentro del frontend
 	$(DC) exec frontend sh
+
+# ---------- DOCKER SWARM (un solo servidor, 2 réplicas) ----------
+swarm-deploy: ## Desplegar/actualizar el stack en Swarm (usa .env; TAG por defecto = commit actual)
+	./scripts/swarm/deploy.sh
+
+swarm-ps: ## Estado de los servicios y tareas del stack en Swarm
+	docker stack services prisma
+	docker stack ps prisma --no-trunc --filter desired-state=running
+
+swarm-down: ## Quitar el stack de Swarm (preserva volúmenes)
+	docker stack rm prisma
