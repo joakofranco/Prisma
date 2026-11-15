@@ -294,7 +294,7 @@ funciona igual de principio a fin (login incluido) siempre que su `iss` correspo
 | `KEYCLOAK_ISSUER_URL` | backend-core — sólo habilita el `JwtDecoder` de Keycloak (`SecurityConfig.MissingIssuerCondition`); su valor concreto ya no valida nada por sí solo | `https://prisma.local/auth` |
 | `KEYCLOAK_TRUSTED_ISSUERS` | backend-core (`prisma.keycloak.trusted-issuers`) — lista de `iss` válidos para un token, uno por cada host+protocolo desde el que se permite loguearse | `https://prisma.local/auth/realms/prisma,http://prisma.local/auth/realms/prisma,https://localhost/auth/realms/prisma,http://localhost/auth/realms/prisma` |
 | `KEYCLOAK_AUTH_SERVER_URL` | backend-core, para resolver las JWKS y la Admin REST API — dirección **interna** de Docker, no cruza el navegador (con el prefijo `/auth` agregado en `application.yml`, ya que Keycloak corre con `KC_HTTP_RELATIVE_PATH=/auth`) | `http://keycloak:8080` |
-| `VITE_API_BASE_URL` / `VITE_AI_API_BASE_URL` / `VITE_KEYCLOAK_URL` | Frontend (build-time) — rutas relativas, mismo origen que sirvió la SPA | `/api` / `/ai/api/v1` / `/auth` |
+| `VITE_API_BASE_URL` / `VITE_KEYCLOAK_URL` | Frontend (build-time) — rutas relativas, mismo origen que sirvió la SPA | `/api` / `/auth` |
 | `CORS_ALLOWED_ORIGINS` | backend-core — ya no lo necesita la SPA (mismo origen), pero sigue permitiendo llamadas directas desde herramientas de prueba (Swagger UI en `:8081`, Postman, etc.) | incluye `https://prisma.local` y `https://localhost` |
 
 ## Referencias

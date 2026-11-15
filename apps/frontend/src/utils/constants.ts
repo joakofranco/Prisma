@@ -3,8 +3,6 @@ export const APP_DESCRIPTION =
   'Plataforma de Revisión Integral de Seguridad y Marcos de Auditorías';
 
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8081/api';
-export const AI_API_BASE_URL =
-  import.meta.env.VITE_AI_API_BASE_URL || 'http://localhost:8000/api/v1';
 // El "/auth" es obligatorio: infra/keycloak (docker-compose.yml) fija
 // KC_HTTP_RELATIVE_PATH=/auth, así que Keycloak nunca sirve nada en la raíz del host.
 export const KEYCLOAK_URL = import.meta.env.VITE_KEYCLOAK_URL || 'http://localhost:8180/auth';

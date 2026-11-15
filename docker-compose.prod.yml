@@ -141,7 +141,6 @@ services:
     restart: always
     volumes:
       - ./infra/nginx/tls/proxy-backend-core.inc:/etc/nginx/conf.d/proxy-backend-core.inc:ro
-      - ./infra/nginx/tls/proxy-backend-ai.inc:/etc/nginx/conf.d/proxy-backend-ai.inc:ro
       - ./infra/nginx/tls/proxy-frontend.inc:/etc/nginx/conf.d/proxy-frontend.inc:ro
     deploy:
       resources:
