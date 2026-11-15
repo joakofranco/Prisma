@@ -375,6 +375,38 @@ class EvaluationServiceTest {
   }
 
   @Test
+  void updateStatusRejectsAMissingStatus() {
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+
+    var missing =
+        assertThrows(
+            uy.edu.prisma.domain.exception.InvalidRequestException.class,
+            () -> service.updateStatus(eval.getId(), null));
+    var blank =
+        assertThrows(
+            uy.edu.prisma.domain.exception.InvalidRequestException.class,
+            () -> service.updateStatus(eval.getId(), "  "));
+
+    assertEquals("El estado es obligatorio", missing.getMessage());
+    assertEquals("status", missing.getField());
+    assertEquals("El estado es obligatorio", blank.getMessage());
+    verify(evalRepo, never()).save(any());
+  }
+
+  @Test
+  void updateStatusRejectsAnUnknownStatusWithoutLeakingInternals() {
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+
+    var ex =
+        assertThrows(
+            uy.edu.prisma.domain.exception.InvalidRequestException.class,
+            () -> service.updateStatus(eval.getId(), "NO_EXISTE"));
+
+    assertEquals("El estado «NO_EXISTE» no es válido", ex.getMessage());
+    verify(evalRepo, never()).save(any());
+  }
+
+  @Test
   void updateStatusRejectsSkippingStates() {
     // DRAFT no puede saltar directo a APPROVED: tiene que pasar por IN_PROGRESS,
     // READY_FOR_AUDIT e IN_AUDIT primero.

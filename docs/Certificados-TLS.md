@@ -15,13 +15,12 @@ del login y la evidencia subida viajaban sin cifrar en esos tramos. Eso ya está
 Navegador ──HTTPS (443)──▶ nginx (infra/nginx/conf.d/prisma.conf)
                               ├─ /            → frontend (SPA Vue, HTTP interno)
                               ├─ /api/*        → backend-core:8080 (HTTP interno)
-                              ├─ /ai/*         → backend-ai:8000 (HTTP interno)
                               └─ /auth/*       → keycloak:8443 (HTTPS interno, CA interna — BUG-12)
 ```
 
-La SPA usa **rutas relativas** (`VITE_API_BASE_URL=/api`, `VITE_AI_API_BASE_URL=/ai/api/v1`,
+La SPA usa **rutas relativas** (`VITE_API_BASE_URL=/api`,
 `VITE_KEYCLOAK_URL=/auth`, ver `.env.example`) — el navegador nunca sale del origen HTTPS desde el
-que se sirvió la página. Los tramos `nginx → frontend/backend-core/backend-ai` quedan en HTTP
+que se sirvió la página. `backend-ai` no se publica por nginx: solo lo llama `backend-core` por la red interna. Los tramos `nginx → frontend/backend-core` quedan en HTTP
 simple porque viajan por la red interna de Docker (`prisma-net`), no por la red pública; es el
 mismo criterio que separa
 "cifrado en tránsito hacia el cliente" (obligatorio, cruza una red no confiable) de "cifrado
@@ -79,8 +78,7 @@ negocia TLS pero no verifica el certificado. En desarrollo Postgres sigue sin TL
 ### backend-ai con TLS (PRI-369, solo producción)
 
 En producción backend-ai arranca uvicorn con `--ssl-keyfile/--ssl-certfile` (mismo puerto 8000,
-certificado `backend-ai.crt`). Verifican el certificado: nginx (`conf.d/proxy-backend-ai.inc`, que en
-producción se reemplaza por `infra/nginx/tls/proxy-backend-ai.inc`), backend-core
+certificado `backend-ai.crt`). Verifican el certificado: backend-core
 (`AI_SERVICE_URL=https://backend-ai:8000`, usa el truststore de la JVM con la CA interna), Prometheus
 (`prometheus.prod.yml`) y el healthcheck del contenedor.
 
@@ -296,7 +294,7 @@ funciona igual de principio a fin (login incluido) siempre que su `iss` correspo
 | `KEYCLOAK_ISSUER_URL` | backend-core — sólo habilita el `JwtDecoder` de Keycloak (`SecurityConfig.MissingIssuerCondition`); su valor concreto ya no valida nada por sí solo | `https://prisma.local/auth` |
 | `KEYCLOAK_TRUSTED_ISSUERS` | backend-core (`prisma.keycloak.trusted-issuers`) — lista de `iss` válidos para un token, uno por cada host+protocolo desde el que se permite loguearse | `https://prisma.local/auth/realms/prisma,http://prisma.local/auth/realms/prisma,https://localhost/auth/realms/prisma,http://localhost/auth/realms/prisma` |
 | `KEYCLOAK_AUTH_SERVER_URL` | backend-core, para resolver las JWKS y la Admin REST API — dirección **interna** de Docker, no cruza el navegador (con el prefijo `/auth` agregado en `application.yml`, ya que Keycloak corre con `KC_HTTP_RELATIVE_PATH=/auth`) | `http://keycloak:8080` |
-| `VITE_API_BASE_URL` / `VITE_AI_API_BASE_URL` / `VITE_KEYCLOAK_URL` | Frontend (build-time) — rutas relativas, mismo origen que sirvió la SPA | `/api` / `/ai/api/v1` / `/auth` |
+| `VITE_API_BASE_URL` / `VITE_KEYCLOAK_URL` | Frontend (build-time) — rutas relativas, mismo origen que sirvió la SPA | `/api` / `/auth` |
 | `CORS_ALLOWED_ORIGINS` | backend-core — ya no lo necesita la SPA (mismo origen), pero sigue permitiendo llamadas directas desde herramientas de prueba (Swagger UI en `:8081`, Postman, etc.) | incluye `https://prisma.local` y `https://localhost` |
 
 ## Referencias

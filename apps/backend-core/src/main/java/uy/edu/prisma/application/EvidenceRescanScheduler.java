@@ -1,6 +1,7 @@
 package uy.edu.prisma.application;
 
 import java.util.UUID;
+import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -21,6 +22,7 @@ public class EvidenceRescanScheduler {
   @Scheduled(
       fixedDelayString = "${prisma.clamav.rescan-interval-ms:60000}",
       initialDelayString = "${prisma.clamav.rescan-interval-ms:60000}")
+  @SchedulerLock(name = "evidenceRescan", lockAtMostFor = "PT10M", lockAtLeastFor = "PT10S")
   public void rescanQuarantined() {
     for (UUID id : evidenceService.quarantinedIds()) {
       try {

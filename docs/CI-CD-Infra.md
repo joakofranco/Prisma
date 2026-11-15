@@ -186,7 +186,7 @@ o `docker.container.labels.com_docker_compose_service` acotan a un servicio punt
 
 | Servicio | Imagen | Rol |
 |---|---|---|
-| **`nginx`** | `nginx:1.27-alpine` | Reverse proxy HTTPS. Termina TLS, rutea `/api/*` → backend-core, `/ai/*` → backend-ai, `/auth/*` → Keycloak, `/*` → frontend. Rate limiting, headers de seguridad. |
+| **`nginx`** | `nginx:1.27-alpine` | Reverse proxy HTTPS. Termina TLS, rutea `/api/*` → backend-core, `/auth/*` → Keycloak, `/*` → frontend. Rate limiting, headers de seguridad. |
 
 ---
 

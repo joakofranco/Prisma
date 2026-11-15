@@ -201,9 +201,92 @@ class GlobalExceptionHandlerTest {
         .andExpect(jsonPath("$.code").value("INTERNAL_ERROR"));
   }
 
+  @Test
+  void pathVariableOfTheWrongTypeMapsTo400() throws Exception {
+    mockMvc
+        .perform(get("/by-id/no-es-uuid"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value("BAD_REQUEST"))
+        .andExpect(jsonPath("$.message").value("El valor del parámetro «id» no es válido"))
+        .andExpect(jsonPath("$.details.id").isNotEmpty());
+  }
+
+  @Test
+  void requestParameterOfTheWrongTypeMapsTo400() throws Exception {
+    mockMvc
+        .perform(get("/paged").param("page", "abc"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value("BAD_REQUEST"))
+        .andExpect(jsonPath("$.details.page").isNotEmpty());
+  }
+
+  @Test
+  void missingRequiredParameterMapsTo400() throws Exception {
+    mockMvc
+        .perform(get("/paged"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value("BAD_REQUEST"))
+        .andExpect(jsonPath("$.message").value("Falta el parámetro obligatorio «page»"))
+        .andExpect(jsonPath("$.details.page").isNotEmpty());
+  }
+
+  @Test
+  void unknownRouteMapsTo404() throws Exception {
+    mockMvc
+        .perform(get("/no-resource"))
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.code").value("NOT_FOUND"))
+        .andExpect(jsonPath("$.message").value("El recurso solicitado no existe"));
+  }
+
+  @Test
+  void unsupportedMethodMapsTo405() throws Exception {
+    mockMvc
+        .perform(delete("/notfound"))
+        .andExpect(status().isMethodNotAllowed())
+        .andExpect(jsonPath("$.code").value("METHOD_NOT_ALLOWED"))
+        .andExpect(
+            jsonPath("$.message").value("El método DELETE no está permitido para este recurso"));
+  }
+
+  @Test
+  void unsupportedContentTypeMapsTo415() throws Exception {
+    mockMvc
+        .perform(post("/body").contentType(MediaType.TEXT_PLAIN).content("name=x"))
+        .andExpect(status().isUnsupportedMediaType())
+        .andExpect(jsonPath("$.code").value("UNSUPPORTED_MEDIA_TYPE"));
+  }
+
+  @Test
+  void clientDisconnectIsNotReportedAsAnInternalError() throws Exception {
+    mockMvc.perform(get("/client-gone")).andExpect(status().isOk()).andExpect(content().string(""));
+  }
+
   @RestController
   @Validated
   static class FixtureController {
+
+    @GetMapping("/by-id/{id}")
+    public String byId(@PathVariable java.util.UUID id) {
+      return id.toString();
+    }
+
+    @GetMapping("/paged")
+    public String paged(@RequestParam int page) {
+      return String.valueOf(page);
+    }
+
+    @GetMapping("/no-resource")
+    public String noResource() throws Exception {
+      throw new org.springframework.web.servlet.resource.NoResourceFoundException(
+          org.springframework.http.HttpMethod.GET, "no-resource");
+    }
+
+    @GetMapping("/client-gone")
+    public String clientGone() throws Exception {
+      throw new org.springframework.web.context.request.async.AsyncRequestNotUsableException(
+          "ServletOutputStream failed to write: java.io.IOException: Broken pipe");
+    }
 
     @GetMapping("/notfound")
     public String notFound() {

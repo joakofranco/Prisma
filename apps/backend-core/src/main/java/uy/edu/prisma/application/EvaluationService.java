@@ -282,7 +282,7 @@ public class EvaluationService {
         evalRepo.findById(id).orElseThrow(() -> new ResourceNotFoundException("Evaluación", id));
     currentUser.assertOrganizationAccess(eval.getOrganization().getId());
     Evaluation.Status current = eval.getStatus();
-    Evaluation.Status target = Evaluation.Status.valueOf(status);
+    Evaluation.Status target = parseStatus(status);
     if (!ALLOWED_TRANSITIONS.getOrDefault(current, Set.of()).contains(target)) {
       throw new InvalidRequestException(
           "No se puede pasar de " + current + " a " + target + ": transición no permitida");
@@ -360,6 +360,17 @@ public class EvaluationService {
   // igual que en assertOrganizationAccess. Antes ninguna de estas reglas se exigía acá: solo se
   // chequeaba el rol para ENTRAR al endpoint, nunca cuál transición puntual le correspondía a cada
   // uno.
+  private static Evaluation.Status parseStatus(String status) {
+    if (status == null || status.isBlank()) {
+      throw new InvalidRequestException("El estado es obligatorio", "status");
+    }
+    try {
+      return Evaluation.Status.valueOf(status.trim());
+    } catch (IllegalArgumentException ex) {
+      throw new InvalidRequestException("El estado «" + status + "» no es válido", "status");
+    }
+  }
+
   private void assertRoleCanTransitionTo(Evaluation.Status target) {
     if (currentUser.isPrismaAdmin()) {
       return;

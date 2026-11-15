@@ -422,7 +422,8 @@ rechazo de NGINX. Como es por IP, varias personas detrás de la misma IP (una re
 comparten el cupo.
 
 El resto de los límites de NGINX: `/api/` admite 30 solicitudes por segundo por IP (`burst=50`) y
-hasta 20 conexiones simultáneas; `/ai/` 30 por segundo (`burst=20`). Todos rechazan con `429`.
+hasta 20 conexiones simultáneas. Todos rechazan con `429`. `backend-ai` no se publica por NGINX:
+solo lo llama `backend-core` por la red interna.
 
 **Síntoma si se excede:** NGINX responde `429 Too Many Requests` (en el login, el navegador muestra
 esa página de NGINX). Esos intentos no llegan a Keycloak. La zona de rate limiting vive en memoria
@@ -616,3 +617,34 @@ Portainer se bloquea («instance timed out for security purposes») si nadie cre
 " > .secrets/portainer_admin_password`.
 - Ver la contraseña: `cat .secrets/portainer_admin_password`.
 - La contraseña se aplica solo cuando Portainer todavía no tiene administrador. Para cambiarla después, hacerlo desde la propia interfaz (Users).
+
+## Alta disponibilidad con Docker Swarm (un solo servidor)
+
+El stack `docker-stack.yml` corre sobre un Swarm de un único nodo. Da 2 réplicas de `backend-core`, `frontend` y `keycloak` (configurables con `BACKEND_CORE_REPLICAS`, `FRONTEND_REPLICAS`, `KEYCLOAK_REPLICAS`), actualizaciones sin corte (`start-first` con vuelta atrás automática) y reposición de réplicas caídas. **No protege contra la caída del servidor**: si el host cae, cae todo.
+
+| Servicio | Réplicas | Actualización |
+|---|---|---|
+| `backend-core`, `frontend`, `keycloak` | 2 | `start-first`, sin corte |
+| `nginx` | 1 (puertos en modo `host` para conservar la IP real) | `stop-first`, corte de unos segundos |
+| `backend-ai`, `clamav`, `postgres`, `keycloak-db`, `redis`, `rustfs`, `ollama`, `fail2ban` | 1 | `stop-first` |
+
+Las herramientas de monitoreo, SonarQube, Portainer y pgAdmin siguen en `docker-compose.yml`; se unen a la red `prisma-net` (overlay attachable) del stack.
+
+Despliegue y operación:
+
+```bash
+make swarm-deploy        # no construye: usa imágenes ghcr.io/$GHCR_ORG/prisma-*:$TAG (TAG = commit actual por defecto)
+make swarm-ps            # estado de servicios y tareas
+make swarm-down          # quita el stack (los volúmenes se conservan)
+```
+
+- Las imágenes se construyen y se suben antes con una etiqueta de versión; `latest` no se usa.
+- Los volúmenes conservan los nombres `prisma-*` de Compose, así que migrar desde Compose reutiliza los datos. Detener primero el stack de Compose.
+- `backend-core` usa ShedLock (tabla `shedlock`): con 2 réplicas, el sondeo de logins fallidos y el reanálisis de evidencias corren una sola vez.
+- Keycloak forma un clúster Infinispan con `KC_CACHE_STACK=jdbc-ping`: la sesión sobrevive a la caída de una réplica.
+- Con Cloudflare Tunnel, los puertos en modo `host` escuchan en todas las interfaces (Swarm no permite fijar `127.0.0.1`). Cerrar `NGINX_HTTPS_PORT` y `NGINX_HTTP_PORT` hacia fuera con el firewall del servidor y dejar entrar solo a `cloudflared`.
+- Fail2ban avisa a nginx buscando el servicio Swarm `prisma_nginx` por etiqueta.
+- Primer despliegue sobre una base de Keycloak vacía: desplegar con `KEYCLOAK_REPLICAS=1` y subir a 2 después. Con 2 réplicas desde cero, ambas crean el esquema a la vez y una se reinicia sola (se recupera, pero queda ruido en los logs).
+- Keycloak ancla JGroups a la interfaz de la red overlay (`-Djgroups.bind.address=match-interface:eth0`). Sin eso, los nodos se anuncian con la IP de `docker_gwbridge` y no se ven entre sí.
+- nginx reintenta sin límite al arrancar: Swarm solo resuelve el nombre de un servicio cuando ya tiene tareas en marcha, y nginx falla si algún upstream no resuelve.
+- Para probar en paralelo a un entorno existente: `STACK`, `VOLUME_PREFIX`, `NETWORK_NAME`, `NGINX_HTTP_PORT`, `NGINX_HTTPS_PORT` y `RESOLVE_IMAGE=never` (imágenes locales) se pueden pasar por entorno a `scripts/swarm/deploy.sh`, y pisan lo que diga el `.env`.
