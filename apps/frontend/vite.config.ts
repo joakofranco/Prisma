@@ -1,9 +1,17 @@
+import { readFileSync } from 'node:fs';
 import { fileURLToPath, URL } from 'node:url';
 import { defineConfig } from 'vitest/config';
 import vue from '@vitejs/plugin-vue';
 import tailwindcss from '@tailwindcss/vite';
 
+// La versión de la web es la de package.json (se cambia junto con las de los demás servicios con
+// scripts/version.sh) y se incorpora al bundle: no hace falta pasarla al construir.
+const { version } = JSON.parse(
+  readFileSync(fileURLToPath(new URL('./package.json', import.meta.url)), 'utf-8'),
+) as { version: string };
+
 export default defineConfig({
+  define: { __APP_VERSION__: JSON.stringify(version) },
   // Tailwind v4 usa configuración "CSS-first" (`@import 'tailwindcss'` en main.css) y necesita
   // este plugin para generar las clases utilitarias — sin él, Vite solo resuelve el import
   // literal y el CSS final queda casi vacío (nada de flex/grid/spacing/colores), rompiendo el

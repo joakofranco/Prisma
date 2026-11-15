@@ -94,12 +94,18 @@ multi-tenant en cada capa.
 ## 2. Organizaciones
 
 ### HU-ORG-01 — Alta de organización
-> Como `PRISMA_ADMIN`, quiero dar de alta una organización (nombre, RUT, sector, tamaño), para
-> empezar a evaluarla.
+> Como `PRISMA_ADMIN`, quiero dar de alta una organización (nombre, identificador, sector,
+> tamaño), para empezar a evaluarla.
 
-- El RUT es **opcional**: no toda organización lo tiene cargado al momento del alta. Un RUT en
-  blanco se normaliza a `NULL` (no `""`) en el backend, para que la constraint `UNIQUE` no choque
-  entre dos organizaciones sin RUT cargado.
+- El identificador es **opcional**: no toda organización lo tiene cargado al momento del alta. Uno
+  en blanco se normaliza a `NULL` (no `""`) en el backend, para que la constraint `UNIQUE` no choque
+  entre dos organizaciones sin identificador.
+- Una casilla **«Es un RUT»** indica si el identificador es un RUT uruguayo. Con ella marcada se
+  valida el formato (12 dígitos `AA-BBBBBB-001-D`) y el dígito verificador, y se guarda normalizado;
+  sin ella basta con tener al menos 8 caracteres. El servidor valida siempre; el formulario solo
+  avisa antes de enviar.
+- Un identificador ya usado por otra organización se rechaza **siempre**, esté o no marcada la
+  casilla (se compara sin puntos, guiones ni espacios).
 - **Implementado en:** `POST /api/organizations`, `OrganizationsView.vue`.
 
 ### HU-ORG-02 — Guiar la designación del responsable al crear una organización
@@ -246,6 +252,10 @@ multi-tenant en cada capa.
 > evaluación, para no tener que responder controles que no aplican a mi sector.
 
 - **Implementado en:** `NewEvaluationView.vue`, `CreateEvaluationDto.communityProfileId`.
+- **Decisión de diseño:** el perfil pertenece a la **evaluación**, no a la organización. La
+  organización no tiene un perfil propio (ver `Evaluation.communityProfile` en
+  [`mapeo-jpa.md`](mapeo-jpa.md)). Esto cubre lo que RF-ORG-02 llama «perfil de organización», con
+  la diferencia de que la clasificación se decide en cada evaluación.
 
 ---
 
@@ -343,6 +353,13 @@ y roles habilitados en [`docs/API.md`](API.md).
 > Como `ORG_RESPONSIBLE`/`INTERNAL_EVALUATOR`, quiero subir un archivo de evidencia documental
 > para respaldar un control, para que quede disponible durante la auditoría.
 
+- **Formatos y tamaño (RF-EVI-02, RF-EVI-04):** la lista de extensiones es configurable
+  (`EVIDENCE_ALLOWED_EXTENSIONS`; por defecto `pdf`, `zip`, `docx`, `txt`, `md`, `markdown`, `png`,
+  `jpg`, `jpeg`; no se admite SVG) y el tamaño máximo es de 100 MB (`EVIDENCE_MAX_SIZE`). La pantalla
+  los lee de `GET /api/evidence/allowed-formats` y avisa antes de enviar, con la extensión primero.
+  ZIP e imágenes se guardan pero no se indexan en `backend-ai`.
+- **Vista previa (RF-EVI-11):** los PDF y las imágenes PNG/JPEG se pueden ver sin descargarlas,
+  con el botón «Ver» (mismos roles que la descarga). DOCX, TXT, MD y ZIP solo se descargan.
 - **Implementado en:** `POST /api/evidence`, `EvidenceView.vue`.
 
 ### HU-EVI-02 — Indexación automática por IA
@@ -415,7 +432,21 @@ y roles habilitados en [`docs/API.md`](API.md).
 > Como `AUDITOR`/`PRISMA_ADMIN`, quiero editar el control, tipo, descripción o estado de una
 > observación ya creada.
 
+- Se editan el tipo y la descripción desde el botón «Editar» de cada observación (`AuditView.vue`). Solo mientras
+  la evaluación está en auditoría (`IN_AUDIT`); después, las observaciones quedan como registro. Una
+  descripción vacía se rechaza y los errores se muestran en pantalla (antes el cambio de estado fallaba
+  en silencio).
 - **Implementado en:** `PUT /api/audit/observations/{id}`.
+
+### HU-AUD-02b — La organización lee las observaciones del auditor
+> Como `ORG_RESPONSIBLE` o `INTERNAL_EVALUATOR`, quiero leer las observaciones que el auditor registró
+> cuando me devuelve la evaluación, para saber qué corregir.
+
+- Aparecen en el detalle de la evaluación («Observaciones del auditor», solo lectura) desde que la
+  evaluación está devuelta, y siguen visibles al aprobarse o archivarse. Antes de eso son el borrador
+  de trabajo del auditor y no se muestran. El `VIEWER` no las ve.
+- **Implementado en:** `GET /api/audit/observations/{evaluationId}`,
+  `AuditObservationsReadOnly.vue` en `EvaluationDetailView.vue`.
 
 ### HU-AUD-03 — Seguimiento del estado de una observación
 > Como `AUDITOR`, quiero marcar una observación como "en progreso" y después "resuelta", para
@@ -490,6 +521,12 @@ y roles habilitados en [`docs/API.md`](API.md).
 > o vencidas, y cambiar el estado de cada una.
 
 - Las acciones vencidas se recalculan al listar (no es un campo estático).
+- **Avance por prioridad (RF-PLN-06):** un bloque «Avance de remediación» muestra el porcentaje
+  de acciones completadas, global y por prioridad (Alta, Media, Baja). Se calcula en el frontend con
+  la lista de planes y se actualiza al crear, editar o completar una acción. Una prioridad sin
+  acciones dice «Sin acciones».
+- **Comentarios (RF-PLN-02):** cada acción puede llevar comentarios libres (hasta 2000 caracteres),
+  que se escriben al crearla y se editan o borran después.
 - **Implementado en:** `ImprovementPlanService.listByEvaluation` (marca overdue),
   `ImprovementView.vue`.
 
@@ -502,6 +539,16 @@ y roles habilitados en [`docs/API.md`](API.md).
 > resultados de madurez, para compartirlo fuera de la plataforma.
 
 - **Implementado en:** `GET /api/reports/{evaluationId}/pdf`, `ReportsView.vue`.
+
+### HU-REP-03 — Reporte ejecutivo gerencial
+> Como `ORG_RESPONSIBLE` o `PRISMA_ADMIN`, quiero un reporte de una o dos páginas con lo esencial de una
+> evaluación aprobada (perfil comunitario, madurez global, radar por función, mayores brechas y
+> acciones principales del plan de mejora), para presentarlo a la gerencia sin el detalle completo.
+
+- Es un reporte nuevo, separado del reporte final. El final y el ejecutivo solo existen con la
+  evaluación aprobada (`APPROVED`); el informe preliminar, solo en auditoría (`IN_AUDIT`).
+- **Implementado en:** `GET /api/reports/{evaluationId}/executive/pdf`,
+  `ReportService.generateExecutivePdf`, `RadarChart`, botón «Reporte ejecutivo» en `ReportsView.vue`.
 
 ### HU-REP-02 — Descargar reporte en Excel
 > Como usuario con acceso a una evaluación aprobada, quiero descargar un reporte Excel con el
@@ -632,7 +679,7 @@ y roles habilitados en [`docs/API.md`](API.md).
   organización (para que `ORG_RESPONSIBLE` lo vea) y a su nombre; si no coincide con nadie
   (usuario inexistente), queda sin vincular y sólo lo ve `PRISMA_ADMIN`.
 - **El bloqueo en sí no es cosa de esta historia**: ya lo hace Keycloak (`bruteForceProtected`,
-  `failureFactor: 5` por defecto — configurable en vivo desde su consola de administración, Realm
+  `failureFactor: 10` (bloqueo de 15 min) — configurable en vivo desde su consola de administración, Realm
   Settings → Security Defenses → Brute Force Detection, sin redeploy). Esto sólo le da
   visibilidad al equipo desde la app.
 - **Implementado en:** `LoginFailureAuditSyncService`, `KeycloakAdminClient.fetchLoginFailures`,

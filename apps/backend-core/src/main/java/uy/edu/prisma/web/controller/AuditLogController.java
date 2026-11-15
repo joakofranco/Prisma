@@ -1,5 +1,8 @@
 package uy.edu.prisma.web.controller;
 
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -36,5 +39,22 @@ public class AuditLogController {
       @RequestParam(defaultValue = "1") int page,
       @RequestParam(defaultValue = "20") int pageSize) {
     return ResponseEntity.ok(service.list(search, action, Math.max(0, page - 1), pageSize));
+  }
+
+  // RF-TRZ-05: mismo filtro que list(), sin paginar, para que PRISMA_ADMIN/ORG_RESPONSIBLE o un
+  // AUDITOR se lleven el set de datos filtrado a una auditoría externa.
+  @GetMapping("/export")
+  @PreAuthorize("hasAnyRole('PRISMA_ADMIN', 'ORG_RESPONSIBLE', 'AUDITOR')")
+  public ResponseEntity<byte[]> export(
+      @RequestParam(required = false) String search,
+      @RequestParam(required = false) String action) {
+    byte[] csv =
+        service.exportCsv(search, action).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    HttpHeaders headers = new HttpHeaders();
+    headers.setContentDisposition(ContentDisposition.attachment().filename("bitacora.csv").build());
+    return ResponseEntity.ok()
+        .headers(headers)
+        .contentType(MediaType.parseMediaType("text/csv; charset=UTF-8"))
+        .body(csv);
   }
 }

@@ -82,7 +82,8 @@ public class AccountService {
     auditLog.record("CHANGE_PASSWORD", "user:" + user.getId(), null);
   }
 
-  private static final Set<String> ALLOWED_SESSION_EVENTS = Set.of("LOGIN", "LOGOUT");
+  private static final Set<String> ALLOWED_SESSION_EVENTS =
+      Set.of("LOGIN", "LOGOUT", "SESSION_TIMEOUT");
 
   // El frontend llama esto justo después de que Keycloak lo autentica (stores/auth.ts#init, una
   // sola vez por sesión de pestaña, no en cada refresh) y justo antes de mandarlo al logout de
@@ -99,6 +100,7 @@ public class AccountService {
             .orElseThrow(() -> new AccessDeniedException("No se pudo identificar al usuario"));
     if ("LOGIN".equals(dto.event())) {
       linkKeycloakAccountIfMissing(user);
+      markInvitationAccepted(user);
     }
     auditLog.record(dto.event(), "user:" + user.getId(), null);
   }
@@ -111,6 +113,18 @@ public class AccountService {
    * hubiera ingresado, y el cambio de contraseña fallaba con "tu cuenta todavía no tiene acceso
    * habilitado". Nunca pisa un {@code keycloakId} ya existente.
    */
+  /**
+   * RF-USR-05 (PRI-240): el primer ingreso de un usuario invitado cierra su invitación (ya creó su
+   * contraseña desde el enlace). Desde ahí deja de figurar «Invitación pendiente».
+   */
+  private void markInvitationAccepted(User user) {
+    if (!user.isInvitationPending()) {
+      return;
+    }
+    user.setInvitationAcceptedAt(java.time.OffsetDateTime.now());
+    auditLog.record("ACCEPT_INVITATION", "user:" + user.getId(), null);
+  }
+
   private void linkKeycloakAccountIfMissing(User user) {
     if (user.getKeycloakId() != null) {
       return;

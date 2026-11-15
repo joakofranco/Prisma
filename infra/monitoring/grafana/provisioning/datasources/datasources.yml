@@ -14,6 +14,15 @@ datasources:
     isDefault: true
     editable: false
 
+  # Alertas activas de Prometheus (las ve el tablero «PRISMA · Estado general y alertas»).
+  - name: Alertmanager
+    type: alertmanager
+    access: proxy
+    url: http://alertmanager:9093
+    editable: false
+    jsonData:
+      implementation: prometheus
+
   - name: Loki
     type: loki
     access: proxy
@@ -31,5 +40,7 @@ datasources:
     secureJsonData:
       password: ${POSTGRES_PASSWORD}
     jsonData:
-      sslmode: disable
+      sslmode: ${GRAFANA_PG_SSLMODE}
+      tlsConfigurationMethod: file-path
+      sslRootCertFile: /etc/prisma/tls/ca.crt
       postgresVersion: 1600

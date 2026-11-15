@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     # = verificación deshabilitada, para no romper tests/desarrollo local; en docker-compose
     # siempre viene seteada con un valor real (ver AI_INTERNAL_API_KEY en .env).
     internal_api_key: str = ""
+    # Entorno de esta instancia (APP_ENV): development | staging | production. Ver app/version.py.
+    app_env: str = "development"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

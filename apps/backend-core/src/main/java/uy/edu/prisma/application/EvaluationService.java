@@ -1,7 +1,12 @@
 package uy.edu.prisma.application;
 
+import java.nio.charset.StandardCharsets;
+import java.time.OffsetDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -13,11 +18,14 @@ import uy.edu.prisma.domain.exception.InvalidRequestException;
 import uy.edu.prisma.domain.exception.ResourceNotFoundException;
 import uy.edu.prisma.domain.repository.*;
 import uy.edu.prisma.web.dto.Dto.CreateEvaluationDto;
+import uy.edu.prisma.web.dto.Dto.EvaluationAuditCycleEventDto;
 import uy.edu.prisma.web.dto.Dto.EvaluationDto;
 import uy.edu.prisma.web.dto.Dto.EvaluationResponseDto;
 import uy.edu.prisma.web.dto.Dto.MaturityResultDto;
 import uy.edu.prisma.web.dto.Dto.PaginatedDto;
 import uy.edu.prisma.web.dto.Dto.SaveResponseDto;
+import uy.edu.prisma.web.dto.Dto.SaveSubcategoryCommentDto;
+import uy.edu.prisma.web.dto.Dto.SubcategoryCommentDto;
 
 @Service
 @Transactional
@@ -25,6 +33,7 @@ public class EvaluationService {
 
   private final EvaluationRepository evalRepo;
   private final EvaluationResponseRepository respRepo;
+  private final EvaluationSubcategoryCommentRepository subcatCommentRepo;
   private final MaturityResultRepository matRepo;
   private final OrganizationRepository orgRepo;
   private final CatalogControlRepository controlRepo;
@@ -35,10 +44,12 @@ public class EvaluationService {
   private final UserRepository userRepo;
   private final CurrentUserService currentUser;
   private final AuditLogService auditLog;
+  private final String certificationSecret;
 
   public EvaluationService(
       EvaluationRepository evalRepo,
       EvaluationResponseRepository respRepo,
+      EvaluationSubcategoryCommentRepository subcatCommentRepo,
       MaturityResultRepository matRepo,
       OrganizationRepository orgRepo,
       CatalogControlRepository controlRepo,
@@ -48,9 +59,11 @@ public class EvaluationService {
       CommunityProfileRepository profileRepo,
       UserRepository userRepo,
       CurrentUserService currentUser,
-      AuditLogService auditLog) {
+      AuditLogService auditLog,
+      @Value("${prisma.certification.secret}") String certificationSecret) {
     this.evalRepo = evalRepo;
     this.respRepo = respRepo;
+    this.subcatCommentRepo = subcatCommentRepo;
     this.matRepo = matRepo;
     this.orgRepo = orgRepo;
     this.controlRepo = controlRepo;
@@ -61,6 +74,7 @@ public class EvaluationService {
     this.userRepo = userRepo;
     this.currentUser = currentUser;
     this.auditLog = auditLog;
+    this.certificationSecret = certificationSecret;
   }
 
   // PRISMA_ADMIN y el evaluador general (INTERNAL_EVALUATOR sin organizaciones) listan sin
@@ -268,19 +282,70 @@ public class EvaluationService {
         evalRepo.findById(id).orElseThrow(() -> new ResourceNotFoundException("Evaluación", id));
     currentUser.assertOrganizationAccess(eval.getOrganization().getId());
     Evaluation.Status current = eval.getStatus();
-    Evaluation.Status target = Evaluation.Status.valueOf(status);
+    Evaluation.Status target = parseStatus(status);
     if (!ALLOWED_TRANSITIONS.getOrDefault(current, Set.of()).contains(target)) {
       throw new InvalidRequestException(
           "No se puede pasar de " + current + " a " + target + ": transición no permitida");
     }
     assertRoleCanTransitionTo(target);
     eval.setStatus(target);
+    if (target == Evaluation.Status.APPROVED) {
+      sealApproval(eval);
+    }
     EvaluationDto result =
         toDto(
             evalRepo.save(eval),
             auditorNamesByOrganization(Set.of(eval.getOrganization().getId())));
     auditLog.record("UPDATE_STATUS", "evaluation:" + id, "{\"status\":\"" + status + "\"}");
+    if (target == Evaluation.Status.APPROVED) {
+      auditLog.record(
+          "CERTIFY",
+          "evaluation:" + id,
+          "{\"approvedBy\":\""
+              + (eval.getApprovedBy() != null ? eval.getApprovedBy().getId() : null)
+              + "\",\"approvedAt\":\""
+              + eval.getApprovedAt()
+              + "\",\"certificationSeal\":\""
+              + eval.getCertificationSeal()
+              + "\"}");
+    }
     return result;
+  }
+
+  // RF-AUD-09: al aprobar, se sella la evaluación con quién la aprobó, cuándo, y una firma HMAC de
+  // esos metadatos (más organización, evaluación y madurez global) -- sirve para detectar
+  // alteraciones posteriores de este registro de certificación. Se llama una única vez por
+  // evaluación: IN_AUDIT -> APPROVED es la única transición que entra a este estado (ver
+  // ALLOWED_TRANSITIONS), así que approvedBy/approvedAt/certificationSeal nunca se recalculan.
+  private void sealApproval(Evaluation eval) {
+    User approver = currentUser.currentUser().orElse(null);
+    OffsetDateTime approvedAt = OffsetDateTime.now();
+    eval.setApprovedBy(approver);
+    eval.setApprovedAt(approvedAt);
+    eval.setCertificationSeal(computeCertificationSeal(eval, approver, approvedAt));
+  }
+
+  private String computeCertificationSeal(
+      Evaluation eval, User approver, OffsetDateTime approvedAt) {
+    String payload =
+        eval.getId()
+            + "|"
+            + eval.getOrganization().getId()
+            + "|"
+            + (approver != null ? approver.getId() : "null")
+            + "|"
+            + approvedAt
+            + "|"
+            + eval.getGlobalMaturity();
+    try {
+      Mac mac = Mac.getInstance("HmacSHA256");
+      mac.init(
+          new SecretKeySpec(certificationSecret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+      return HexFormat.of().formatHex(mac.doFinal(payload.getBytes(StandardCharsets.UTF_8)));
+    } catch (java.security.GeneralSecurityException e) {
+      // HmacSHA256 es parte de todo JDK conforme (JCA); esto nunca debería ocurrir en runtime.
+      throw new IllegalStateException("No se pudo generar el sello de certificación", e);
+    }
   }
 
   // Quién puede disparar cada transición: del lado de autoevaluación (DRAFT/IN_PROGRESS/RETURNED)
@@ -295,6 +360,17 @@ public class EvaluationService {
   // igual que en assertOrganizationAccess. Antes ninguna de estas reglas se exigía acá: solo se
   // chequeaba el rol para ENTRAR al endpoint, nunca cuál transición puntual le correspondía a cada
   // uno.
+  private static Evaluation.Status parseStatus(String status) {
+    if (status == null || status.isBlank()) {
+      throw new InvalidRequestException("El estado es obligatorio", "status");
+    }
+    try {
+      return Evaluation.Status.valueOf(status.trim());
+    } catch (IllegalArgumentException ex) {
+      throw new InvalidRequestException("El estado «" + status + "» no es válido", "status");
+    }
+  }
+
   private void assertRoleCanTransitionTo(Evaluation.Status target) {
     if (currentUser.isPrismaAdmin()) {
       return;
@@ -422,7 +498,7 @@ public class EvaluationService {
     resp.setCompliant(Boolean.TRUE.equals(dto.compliant()));
     resp.setObservations(dto.observations());
     resp.setRespondedBy(currentUser.currentUser().orElse(null));
-    resp.setRespondedAt(java.time.OffsetDateTime.now());
+    resp.setRespondedAt(OffsetDateTime.now());
 
     EvaluationResponseDto result = toRespDto(respRepo.save(resp));
     auditLog.record(
@@ -430,6 +506,76 @@ public class EvaluationService {
         "evaluation:" + evaluationId,
         "{\"controlId\":\"" + dto.controlId() + "\",\"compliant\":" + resp.getCompliant() + "}");
     return result;
+  }
+
+  // RF-AUD-10: historial de ciclos de auditoría de esta evaluación puntual -- delega en
+  // AuditLogService, que ya resuelve el aislamiento multi-tenant/organización y la numeración de
+  // ciclos (ver el comentario en AuditLogService.getEvaluationAuditTrail).
+  @Transactional(readOnly = true)
+  public List<EvaluationAuditCycleEventDto> getAuditTrail(UUID evaluationId) {
+    return auditLog.getEvaluationAuditTrail(evaluationId);
+  }
+
+  // ---- Subcategory comments (RF-EVA-06) ----
+  @Transactional(readOnly = true)
+  public List<SubcategoryCommentDto> getSubcategoryComments(UUID evaluationId) {
+    Evaluation eval = findAccessibleEvaluation(evaluationId);
+    return subcatCommentRepo.findByEvaluationId(eval.getId()).stream()
+        .map(this::toSubcatCommentDto)
+        .toList();
+  }
+
+  /** Guarda el comentario de la subcategoria; un texto vacio elimina el comentario existente. */
+  public SubcategoryCommentDto saveSubcategoryComment(
+      UUID evaluationId, UUID subcategoryId, SaveSubcategoryCommentDto dto) {
+    Evaluation eval = findAccessibleEvaluation(evaluationId);
+    if (!eval.isSelfAssessmentEditable()) {
+      throw new InvalidRequestException(
+          "No se pueden cargar comentarios: la evaluación está en estado "
+              + eval.getStatus()
+              + ", que ya no admite edición");
+    }
+    CatalogSubcategory subcategory =
+        subcategoryRepo
+            .findById(subcategoryId)
+            .orElseThrow(() -> new ResourceNotFoundException("Subcategoría", subcategoryId));
+    String text = dto.comment() == null ? "" : dto.comment().strip();
+    Optional<EvaluationSubcategoryComment> existing =
+        subcatCommentRepo.findByEvaluationIdAndSubcategoryId(evaluationId, subcategoryId);
+
+    if (text.isEmpty()) {
+      existing.ifPresent(subcatCommentRepo::delete);
+      return new SubcategoryCommentDto(subcategoryId, null, null, null);
+    }
+    EvaluationSubcategoryComment entity = existing.orElseGet(EvaluationSubcategoryComment::new);
+    entity.setEvaluation(eval);
+    entity.setSubcategory(subcategory);
+    entity.setComment(text);
+    entity.setUpdatedBy(currentUser.currentUser().orElse(null));
+    entity.setUpdatedAt(OffsetDateTime.now());
+    SubcategoryCommentDto result = toSubcatCommentDto(subcatCommentRepo.save(entity));
+    auditLog.record(
+        "SAVE_SUBCATEGORY_COMMENT",
+        "evaluation:" + evaluationId,
+        "{\"subcategoryId\":\"" + subcategoryId + "\"}");
+    return result;
+  }
+
+  private Evaluation findAccessibleEvaluation(UUID evaluationId) {
+    Evaluation eval =
+        evalRepo
+            .findById(evaluationId)
+            .orElseThrow(() -> new ResourceNotFoundException("Evaluación", evaluationId));
+    currentUser.assertOrganizationAccess(eval.getOrganization().getId());
+    return eval;
+  }
+
+  private SubcategoryCommentDto toSubcatCommentDto(EvaluationSubcategoryComment c) {
+    return new SubcategoryCommentDto(
+        c.getSubcategory().getId(),
+        c.getComment(),
+        c.getUpdatedBy() != null ? c.getUpdatedBy().getId() : null,
+        c.getUpdatedAt());
   }
 
   // ---- Maturity Calculation ----
@@ -440,20 +586,51 @@ public class EvaluationService {
             .findById(evaluationId)
             .orElseThrow(() -> new ResourceNotFoundException("Evaluación", evaluationId));
     currentUser.assertOrganizationAccess(eval.getOrganization().getId());
-    return matRepo.findByEvaluationId(evaluationId).stream()
-        .map(
-            m ->
-                new MaturityResultDto(
-                    m.getFunctionId(),
-                    m.getFunctionName(),
-                    m.getCategoryId(),
-                    m.getCategoryName(),
-                    m.getSubcategoryId(),
-                    m.getSubcategoryName(),
-                    m.getCurrentLevel(),
-                    m.getTargetLevel(),
-                    m.getGap()))
-        .toList();
+    List<MaturityResult> stored = matRepo.findByEvaluationId(evaluationId);
+
+    Map<UUID, List<CatalogControl>> controlsBySubcategory = new HashMap<>();
+    Map<UUID, EvaluationResponse> responsesByControl = new HashMap<>();
+    Set<UUID> profileControlIds = null;
+    if (!stored.isEmpty()) {
+      for (CatalogControl control : controlRepo.findByVersionOrdered(eval.getCatalogVersion())) {
+        for (CatalogSubcategory sub : control.effectiveSubcategories()) {
+          controlsBySubcategory.computeIfAbsent(sub.getId(), k -> new ArrayList<>()).add(control);
+        }
+      }
+      for (EvaluationResponse r : respRepo.findByEvaluationId(evaluationId)) {
+        responsesByControl.put(r.getControl().getId(), r);
+      }
+      if (eval.getCommunityProfile() != null) {
+        profileControlIds =
+            eval.getCommunityProfile().getControls().stream()
+                .map(CatalogControl::getId)
+                .collect(Collectors.toSet());
+      }
+    }
+
+    List<MaturityResultDto> results = new ArrayList<>();
+    for (MaturityResult m : stored) {
+      MaturityGapCalculator.Gap gap =
+          MaturityGapCalculator.compute(
+              m.getCurrentLevel(),
+              controlsBySubcategory.getOrDefault(m.getSubcategoryId(), List.of()),
+              responsesByControl,
+              profileControlIds);
+      results.add(
+          new MaturityResultDto(
+              m.getFunctionId(),
+              m.getFunctionName(),
+              m.getCategoryId(),
+              m.getCategoryName(),
+              m.getSubcategoryId(),
+              m.getSubcategoryName(),
+              m.getCurrentLevel(),
+              m.getTargetLevel(),
+              m.getGap(),
+              gap.nextLevel(),
+              gap.missingControls()));
+    }
+    return results;
   }
 
   public void calculateMaturity(UUID evaluationId) {
@@ -462,6 +639,15 @@ public class EvaluationService {
             .findById(evaluationId)
             .orElseThrow(() -> new ResourceNotFoundException("Evaluación", evaluationId));
     currentUser.assertOrganizationAccess(eval.getOrganization().getId());
+    // Una evaluación aprobada (sellada, certificada) o archivada es un registro cerrado: recalcular
+    // borraría y reescribiría los resultados que ya respaldan la certificación y los reportes.
+    if (eval.getStatus() == Evaluation.Status.APPROVED
+        || eval.getStatus() == Evaluation.Status.ARCHIVED) {
+      throw new InvalidRequestException(
+          "No se puede calcular la madurez: la evaluación está en estado "
+              + eval.getStatus()
+              + ", que ya no admite cambios");
+    }
 
     // Delete old results
     matRepo.deleteAllInBatch(matRepo.findByEvaluationId(evaluationId));
@@ -576,6 +762,7 @@ public class EvaluationService {
 
   private EvaluationDto toDto(Evaluation e, Map<UUID, List<String>> auditorsByOrg) {
     User creator = e.getCreatedBy();
+    User approver = e.getApprovedBy();
     return new EvaluationDto(
         e.getId(),
         e.getName(),
@@ -589,6 +776,10 @@ public class EvaluationService {
         creator != null ? creator.getId() : null,
         e.getCreatedAt(),
         e.getUpdatedAt(),
+        approver != null ? approver.getId() : null,
+        e.getApprovedAt(),
+        e.getCertificationSeal(),
+        approver != null ? (approver.getFirstName() + " " + approver.getLastName()).trim() : null,
         creator != null ? (creator.getFirstName() + " " + creator.getLastName()).trim() : null,
         auditorsByOrg.getOrDefault(e.getOrganization().getId(), List.of()));
   }

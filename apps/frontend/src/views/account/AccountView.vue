@@ -207,10 +207,11 @@
         currentPassword: form.currentPassword,
         newPassword: form.newPassword,
       });
-      notification.success('Contraseña actualizada correctamente');
       form.currentPassword = '';
       form.newPassword = '';
       form.confirmPassword = '';
+      await authStore.logout();
+      return;
     } catch (err) {
       notification.error(getErrorMessage(err, 'No se pudo cambiar la contraseña'));
     } finally {

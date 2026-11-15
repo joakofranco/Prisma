@@ -27,6 +27,12 @@ COPY --from=builder /install /usr/local
 COPY requirements-dev.txt ./
 RUN pip install --no-cache-dir -r requirements-dev.txt
 COPY app ./app
+
+# Commit y fecha de construcción (los pasa el CI; sin ellos quedan vacíos). El entorno
+# (APP_ENV: development | staging | production) se define al ejecutar, no acá.
+ARG APP_COMMIT=""
+ARG APP_BUILD_TIME=""
+ENV APP_COMMIT=${APP_COMMIT}     APP_BUILD_TIME=${APP_BUILD_TIME}
 COPY tests ./tests
 EXPOSE 8000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

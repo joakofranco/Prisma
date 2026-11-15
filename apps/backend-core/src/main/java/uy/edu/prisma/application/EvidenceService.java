@@ -1,20 +1,27 @@
 package uy.edu.prisma.application;
 
+import java.io.IOException;
 import java.io.InputStream;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
+import software.amazon.awssdk.core.ResponseInputStream;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
+import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 import software.amazon.awssdk.services.s3.model.HeadBucketRequest;
 import software.amazon.awssdk.services.s3.model.NoSuchBucketException;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
@@ -24,13 +31,16 @@ import uy.edu.prisma.config.ObjectStorageConfig.StorageProperties;
 import uy.edu.prisma.domain.entity.CatalogControl;
 import uy.edu.prisma.domain.entity.Evaluation;
 import uy.edu.prisma.domain.entity.Evidence;
+import uy.edu.prisma.domain.entity.UserRole;
+import uy.edu.prisma.domain.exception.ConflictException;
 import uy.edu.prisma.domain.exception.InvalidRequestException;
+import uy.edu.prisma.domain.exception.MalwareDetectedException;
 import uy.edu.prisma.domain.exception.ResourceNotFoundException;
 import uy.edu.prisma.domain.repository.CatalogControlRepository;
 import uy.edu.prisma.domain.repository.EvaluationRepository;
 import uy.edu.prisma.domain.repository.EvidenceRepository;
 import uy.edu.prisma.infrastructure.AiEvidenceClient;
-import uy.edu.prisma.web.dto.Dto.DownloadUrlDto;
+import uy.edu.prisma.infrastructure.ClamAvClient;
 import uy.edu.prisma.web.dto.Dto.EvidenceCitationDto;
 import uy.edu.prisma.web.dto.Dto.EvidenceDto;
 import uy.edu.prisma.web.dto.Dto.UploadEvidenceResponseDto;
@@ -47,10 +57,12 @@ public class EvidenceService {
   private final CatalogControlRepository controlRepo;
   private final S3Client s3Client;
   private final S3Presigner internalPresigner;
-  private final S3Presigner publicPresigner;
   private final StorageProperties storageProperties;
   private final CurrentUserService currentUser;
   private final AiEvidenceClient aiClient;
+  private final EvidenceFileValidator fileValidator;
+  private final ClamAvClient clamAv;
+  private final AuditLogService auditLog;
 
   public EvidenceService(
       EvidenceRepository evidenceRepo,
@@ -58,19 +70,23 @@ public class EvidenceService {
       CatalogControlRepository controlRepo,
       S3Client s3Client,
       @Qualifier("internalPresigner") S3Presigner internalPresigner,
-      @Qualifier("publicPresigner") S3Presigner publicPresigner,
       StorageProperties storageProperties,
       CurrentUserService currentUser,
-      AiEvidenceClient aiClient) {
+      AiEvidenceClient aiClient,
+      EvidenceFileValidator fileValidator,
+      ClamAvClient clamAv,
+      AuditLogService auditLog) {
     this.evidenceRepo = evidenceRepo;
     this.evaluationRepo = evaluationRepo;
     this.controlRepo = controlRepo;
     this.s3Client = s3Client;
     this.internalPresigner = internalPresigner;
-    this.publicPresigner = publicPresigner;
     this.storageProperties = storageProperties;
     this.currentUser = currentUser;
     this.aiClient = aiClient;
+    this.fileValidator = fileValidator;
+    this.clamAv = clamAv;
+    this.auditLog = auditLog;
   }
 
   @Transactional(readOnly = true)
@@ -80,9 +96,28 @@ public class EvidenceService {
             .findById(evaluationId)
             .orElseThrow(() -> new ResourceNotFoundException("Evaluación", evaluationId));
     currentUser.assertOrganizationAccess(eval.getOrganization().getId());
+    // El listado no entrega enlaces de descarga: el archivo solo sale por download(), que valida
+    // el JWT, la organización y el rol en cada descarga (PRI-286).
     return evidenceRepo.findByEvaluationIdOrderByUploadedAtDesc(evaluationId).stream()
-        .map(e -> toDto(e, publicPresignedUrl(e)))
+        .map(this::toDto)
         .toList();
+  }
+
+  /** Extensiones de archivo que acepta la carga de evidencias (RF-EVI-02), sin punto. */
+  public List<String> allowedExtensions() {
+    return fileValidator.allowedExtensions();
+  }
+
+  /** Tamaño máximo de una evidencia, en bytes (RF-EVI-04). */
+  public long maxSizeBytes() {
+    return fileValidator.maxSizeBytes();
+  }
+
+  /** Roles que pueden descargar evidencias: PRISMA_ADMIN, ORG_RESPONSIBLE y AUDITOR (PRI-286). */
+  private boolean canDownload() {
+    return currentUser.hasRole(UserRole.PRISMA_ADMIN)
+        || currentUser.hasRole(UserRole.ORG_RESPONSIBLE)
+        || currentUser.hasRole(UserRole.AUDITOR);
   }
 
   public UploadEvidenceResponseDto upload(
@@ -102,6 +137,12 @@ public class EvidenceService {
                 .findById(controlId)
                 .orElseThrow(() -> new ResourceNotFoundException("Control", controlId))
             : null;
+    // RF-EVI-04: el tamaño se mira primero, antes de leer el contenido (un ZIP grande tarda en
+    // recorrerse) y antes de tocar el almacenamiento.
+    fileValidator.assertWithinSizeLimit(file);
+    // RF-EVI-03: antes de tocar el almacenamiento, se valida que la firma binaria real coincida
+    // con la extensión declarada; se persiste el tipo detectado, no el Content-Type del cliente.
+    String detectedType = fileValidator.validate(file);
 
     // Solo para la storage key en el bucket -- no se asigna como @Id de la entidad: Evidence usa
     // @GeneratedValue(strategy = GenerationType.UUID), y si se le asigna manualmente un id antes
@@ -110,17 +151,24 @@ public class EvidenceService {
     // StaleObjectStateException porque Hibernate trata la fila (inexistente) como "detached".
     String storageKey = "evidence/" + UUID.randomUUID();
     ensureBucket();
-    try (InputStream in = file.getInputStream()) {
+    byte[] content;
+    try {
+      content = file.getBytes();
+    } catch (IOException e) {
+      throw new RuntimeException("No se pudo leer el archivo de evidencia", e);
+    }
+    // RF-EVI-05: hash SHA-256 del contenido real recibido, no de metadata declarada por el
+    // cliente, para poder detectar alteraciones posteriores del archivo en el almacenamiento.
+    String fileHash = sha256Hex(content);
+    boolean quarantined = scanForMalware(eval, file, fileHash, content);
+    try {
       s3Client.putObject(
           PutObjectRequest.builder()
               .bucket(storageProperties.bucket())
               .key(storageKey)
-              .contentType(
-                  file.getContentType() != null
-                      ? file.getContentType()
-                      : "application/octet-stream")
+              .contentType(detectedType)
               .build(),
-          RequestBody.fromInputStream(in, file.getSize()));
+          RequestBody.fromBytes(content));
     } catch (Exception e) {
       throw new RuntimeException("No se pudo guardar el archivo de evidencia", e);
     }
@@ -131,8 +179,10 @@ public class EvidenceService {
             .control(control)
             .fileName(file.getOriginalFilename() != null ? file.getOriginalFilename() : "evidence")
             .fileSize(file.getSize())
-            .fileType(file.getContentType())
+            .fileType(detectedType)
             .storageKey(storageKey)
+            .fileHash(fileHash)
+            .scanStatus(quarantined ? Evidence.ScanStatus.QUARANTINED : Evidence.ScanStatus.CLEAN)
             .uploadedBy(currentUser.currentUser().orElse(null))
             .description(description)
             .build();
@@ -143,9 +193,156 @@ public class EvidenceService {
     // por el EntityManager de esta transacción (Evidence no tiene @Version), así que un segundo
     // merge() sobre el mismo id revienta con StaleObjectStateException. El dirty-checking de JPA
     // ya persiste este cambio al hacer commit.
-    saved.setAiIndexed(indexInAi(saved));
+    // ZIP e imágenes no se indexan (backend-ai no los lee): quedan con aiIndexed=false a propósito.
+    saved.setAiIndexed(
+        !quarantined && EvidenceFileValidator.isIndexable(detectedType) && indexInAi(saved));
 
-    return new UploadEvidenceResponseDto(saved.getId(), saved.getFileName(), saved.getFileSize());
+    return new UploadEvidenceResponseDto(
+        saved.getId(), saved.getFileName(), saved.getFileSize(), saved.getScanStatus().name());
+  }
+
+  private boolean scanForMalware(
+      Evaluation eval, MultipartFile file, String fileHash, byte[] content) {
+    ClamAvClient.ScanResult result = clamAv.scan(content);
+    String resource = "evaluation:" + eval.getId();
+    switch (result.status()) {
+      case CLEAN -> {
+        auditLog.recordIndependently(
+            "EVIDENCE_SCAN_CLEAN", resource, scanPayload(file, fileHash, null, null));
+        return false;
+      }
+      case INFECTED -> {
+        auditLog.recordIndependently(
+            "EVIDENCE_SCAN_INFECTED",
+            resource,
+            scanPayload(file, fileHash, result.signature(), null));
+        throw new MalwareDetectedException(result.signature());
+      }
+      default -> {
+        auditLog.recordIndependently(
+            "EVIDENCE_QUARANTINED", resource, scanPayload(file, fileHash, null, result.detail()));
+        return true;
+      }
+    }
+  }
+
+  public List<UUID> quarantinedIds() {
+    return evidenceRepo
+        .findByScanStatusOrderByUploadedAtAsc(Evidence.ScanStatus.QUARANTINED)
+        .stream()
+        .map(Evidence::getId)
+        .toList();
+  }
+
+  public ClamAvClient.Status rescanQuarantined(UUID id) {
+    Evidence evidence = evidenceRepo.findById(id).orElse(null);
+    if (evidence == null || evidence.getScanStatus() != Evidence.ScanStatus.QUARANTINED) {
+      return null;
+    }
+    ClamAvClient.ScanResult result = clamAv.scan(readStoredContent(evidence));
+    UUID organizationId = evidence.getEvaluation().getOrganization().getId();
+    UUID uploaderId = evidence.getUploadedBy() != null ? evidence.getUploadedBy().getId() : null;
+    String resource = "evaluation:" + evidence.getEvaluation().getId();
+    String payload =
+        "{\"fileName\":"
+            + jsonString(evidence.getFileName())
+            + ",\"sha256\":"
+            + jsonString(evidence.getFileHash())
+            + (result.signature() != null ? ",\"signature\":" + jsonString(result.signature()) : "")
+            + "}";
+    switch (result.status()) {
+      case CLEAN -> {
+        evidence.setScanStatus(Evidence.ScanStatus.CLEAN);
+        evidence.setAiIndexed(
+            EvidenceFileValidator.isIndexable(evidence.getFileType()) && indexInAi(evidence));
+        auditLog.recordSystemEvent(
+            "EVIDENCE_QUARANTINE_RELEASED", resource, payload, uploaderId, organizationId);
+      }
+      case INFECTED -> {
+        evidence.setScanStatus(Evidence.ScanStatus.INFECTED);
+        evidence.setAiIndexed(false);
+        deleteStoredObject(evidence);
+        auditLog.recordSystemEvent(
+            "EVIDENCE_QUARANTINE_INFECTED", resource, payload, uploaderId, organizationId);
+      }
+      default -> log.debug("ClamAV sigue sin responder; la evidencia {} queda en cuarentena", id);
+    }
+    return result.status();
+  }
+
+  private byte[] readStoredContent(Evidence evidence) {
+    try (ResponseInputStream<GetObjectResponse> object =
+        s3Client.getObject(
+            GetObjectRequest.builder()
+                .bucket(storageProperties.bucket())
+                .key(evidence.getStorageKey())
+                .build())) {
+      return object.readAllBytes();
+    } catch (Exception e) {
+      throw new RuntimeException("No se pudo leer la evidencia en cuarentena", e);
+    }
+  }
+
+  private void deleteStoredObject(Evidence evidence) {
+    try {
+      s3Client.deleteObject(
+          DeleteObjectRequest.builder()
+              .bucket(storageProperties.bucket())
+              .key(evidence.getStorageKey())
+              .build());
+    } catch (Exception e) {
+      log.warn("No se pudo borrar el archivo infectado {}: {}", evidence.getId(), e.getMessage());
+    }
+  }
+
+  private static void assertAvailable(Evidence evidence) {
+    if (evidence.getScanStatus() == Evidence.ScanStatus.QUARANTINED) {
+      throw new ConflictException(
+          "La evidencia está en cuarentena: se podrá usar cuando el antivirus la analice.");
+    }
+    if (evidence.getScanStatus() == Evidence.ScanStatus.INFECTED) {
+      throw new ConflictException(
+          "La evidencia fue rechazada por el antivirus: contenía contenido malicioso.");
+    }
+  }
+
+  private static String scanPayload(
+      MultipartFile file, String fileHash, String signature, String detail) {
+    StringBuilder json = new StringBuilder("{");
+    json.append("\"fileName\":").append(jsonString(file.getOriginalFilename()));
+    json.append(",\"size\":").append(file.getSize());
+    json.append(",\"sha256\":").append(jsonString(fileHash));
+    if (signature != null) {
+      json.append(",\"signature\":").append(jsonString(signature));
+    }
+    if (detail != null) {
+      json.append(",\"detail\":").append(jsonString(detail));
+    }
+    return json.append('}').toString();
+  }
+
+  private static String jsonString(String value) {
+    if (value == null) {
+      return "null";
+    }
+    StringBuilder out = new StringBuilder("\"");
+    for (char c : value.toCharArray()) {
+      switch (c) {
+        case '"' -> out.append("\\\"");
+        case '\\' -> out.append("\\\\");
+        case '\n' -> out.append("\\n");
+        case '\r' -> out.append("\\r");
+        case '\t' -> out.append("\\t");
+        default -> {
+          if (c < 0x20) {
+            out.append(String.format("\\u%04x", (int) c));
+          } else {
+            out.append(c);
+          }
+        }
+      }
+    }
+    return out.append('"').toString();
   }
 
   /** Reintenta la indexación en backend-ai de una evidencia ya subida (idempotente). */
@@ -154,10 +351,15 @@ public class EvidenceService {
         evidenceRepo.findById(id).orElseThrow(() -> new ResourceNotFoundException("Evidencia", id));
     currentUser.assertOrganizationAccess(evidence.getEvaluation().getOrganization().getId());
     assertSelfAssessmentEditable(evidence.getEvaluation(), "reindexar evidencia");
+    assertAvailable(evidence);
     // `evidence` ya está administrada (viene de findById en esta misma transacción): alcanza con
     // mutarla, sin volver a llamar a save() -- ver comentario en upload().
+    // Un formato que backend-ai no indexa (ZIP, imágenes) no tiene nada que reintentar.
+    if (!EvidenceFileValidator.isIndexable(evidence.getFileType())) {
+      return toDto(evidence);
+    }
     evidence.setAiIndexed(indexInAi(evidence));
-    return toDto(evidence, publicPresignedUrl(evidence));
+    return toDto(evidence);
   }
 
   // Igual que EvaluationService.saveResponse: una vez enviada a auditoría (READY_FOR_AUDIT en
@@ -209,6 +411,15 @@ public class EvidenceService {
             .findById(evaluationId)
             .orElseThrow(() -> new ResourceNotFoundException("Evaluación", evaluationId));
     currentUser.assertOrganizationAccess(eval.getOrganization().getId());
+    // RF-EVI-14: la búsqueda asistida de citas es del auditor y solo con la evaluación en
+    // auditoría.
+    if (eval.getStatus() != Evaluation.Status.IN_AUDIT) {
+      throw new ConflictException(
+          "La búsqueda de citas solo está disponible con la evaluación en auditoría (estado"
+              + " actual: "
+              + eval.getStatus()
+              + ")");
+    }
     CatalogControl control =
         controlRepo
             .findById(controlId)
@@ -221,6 +432,7 @@ public class EvidenceService {
     Evidence evidence =
         evidenceRepo.findById(id).orElseThrow(() -> new ResourceNotFoundException("Evidencia", id));
     currentUser.assertOrganizationAccess(evidence.getEvaluation().getOrganization().getId());
+    assertCanDelete(evidence);
     assertSelfAssessmentEditable(evidence.getEvaluation(), "eliminar evidencia");
     try {
       s3Client.deleteObject(
@@ -241,15 +453,71 @@ public class EvidenceService {
     evidenceRepo.delete(evidence);
   }
 
+  /**
+   * Archivo de una evidencia listo para streaming. El backend lo sirve en cada descarga, en lugar
+   * de entregar un enlace pre-firmado de RustFS: así no existe un enlace que se pueda compartir y
+   * cada descarga exige JWT, acceso a la organización y rol (PRI-286). El llamador debe cerrar
+   * {@code content}.
+   */
+  public record EvidenceFile(String fileName, String contentType, long size, InputStream content) {}
+
   @Transactional(readOnly = true)
-  public DownloadUrlDto generateDownloadUrl(UUID id) {
+  public EvidenceFile download(UUID id) {
     Evidence evidence =
         evidenceRepo.findById(id).orElseThrow(() -> new ResourceNotFoundException("Evidencia", id));
     currentUser.assertOrganizationAccess(evidence.getEvaluation().getOrganization().getId());
+    // Defensa en profundidad: el controlador ya exige el rol con @PreAuthorize.
+    if (!canDownload()) {
+      throw new AccessDeniedException("Su rol no puede descargar evidencias");
+    }
+    assertAvailable(evidence);
     try {
-      return new DownloadUrlDto(presign(publicPresigner, evidence));
+      ResponseInputStream<GetObjectResponse> object =
+          s3Client.getObject(
+              GetObjectRequest.builder()
+                  .bucket(storageProperties.bucket())
+                  .key(evidence.getStorageKey())
+                  .build());
+      return new EvidenceFile(
+          evidence.getFileName(),
+          evidence.getFileType() != null ? evidence.getFileType() : "application/octet-stream",
+          object.response().contentLength() != null
+              ? object.response().contentLength()
+              : evidence.getFileSize(),
+          object);
     } catch (Exception e) {
-      throw new RuntimeException("No se pudo generar la URL de descarga", e);
+      throw new RuntimeException("No se pudo leer el archivo de evidencia", e);
+    }
+  }
+
+  private static String sha256Hex(byte[] content) {
+    try {
+      MessageDigest digest = MessageDigest.getInstance("SHA-256");
+      return HexFormat.of().formatHex(digest.digest(content));
+    } catch (NoSuchAlgorithmException e) {
+      // SHA-256 es parte de todo JDK conforme (JLS/JCA); esto nunca debería ocurrir en runtime.
+      throw new IllegalStateException("SHA-256 no disponible en esta JVM", e);
+    }
+  }
+
+  // RF-EVI-08: solo puede borrar una evidencia quien la subió o el responsable de la
+  // organización (PRISMA_ADMIN y el evaluador general quedan afuera de esta restricción porque ya
+  // tienen acceso irrestricto a todas las organizaciones vía hasAllOrganizationsAccess -- ver
+  // CurrentUserService). assertOrganizationAccess ya corrió antes y descarta cualquier otra
+  // organización.
+  private void assertCanDelete(Evidence evidence) {
+    if (currentUser.hasAllOrganizationsAccess()) {
+      return;
+    }
+    boolean isResponsible = currentUser.hasRole(UserRole.ORG_RESPONSIBLE);
+    UUID currentUserId = currentUser.currentUserId();
+    boolean isUploader =
+        currentUserId != null
+            && evidence.getUploadedBy() != null
+            && currentUserId.equals(evidence.getUploadedBy().getId());
+    if (!isResponsible && !isUploader) {
+      throw new AccessDeniedException(
+          "Solo quien subió la evidencia o el responsable de la organización puede eliminarla");
     }
   }
 
@@ -286,20 +554,7 @@ public class EvidenceService {
         .toString();
   }
 
-  // Usada en los DTOs que devuelve la API: URL pública, para que el navegador del usuario pueda
-  // bajar el archivo directamente. Antes se reusaba presignedUrlOrThrow (endpoint interno) acá
-  // también, y el link de "Descargar" del frontend quedaba con un host que ningún navegador podía
-  // resolver (ver ObjectStorageConfig).
-  private String publicPresignedUrl(Evidence e) {
-    try {
-      return presign(publicPresigner, e);
-    } catch (Exception ex) {
-      log.warn("No se pudo firmar la URL pública de descarga para la evidencia {}", e.getId(), ex);
-      return null;
-    }
-  }
-
-  private EvidenceDto toDto(Evidence e, String url) {
+  private EvidenceDto toDto(Evidence e) {
     return new EvidenceDto(
         e.getId(),
         e.getEvaluation().getId(),
@@ -307,10 +562,11 @@ public class EvidenceService {
         e.getFileName(),
         e.getFileSize(),
         e.getFileType(),
+        e.getFileHash(),
         e.getDescription(),
         e.getUploadedBy() != null ? e.getUploadedBy().getId() : null,
         e.getUploadedAt(),
-        url,
-        e.isAiIndexed());
+        e.isAiIndexed(),
+        e.getScanStatus().name());
   }
 }

@@ -36,7 +36,7 @@ Responsabilidades:
 - Máquina de estados del workflow de auditoría
 - Almacenamiento seguro de evidencias (RustFS + URLs firmadas)
 - Bitácora inmutable de auditoría (append-only)
-- Generación de reportes PDF/Excel
+- Generación de reportes PDF/Excel (los PDF cumplen PDF/A-1b, RNF-12; ver [`Codigo.md`](Codigo.md#pdfa-1b-rnf-12))
 
 ### 3. Backend AI (FastAPI + RAG)
 
@@ -84,17 +84,35 @@ implementar rate-limiting real.
 - Bucket `prisma-evidences` — evidencias privadas; lo crea `backend-core` en la primera subida.
 - URLs firmadas (SigV4) con TTL para descargas.
 
+### 6b. Antivirus (ClamAV, RNF-09)
+
+- Contenedor `clamav` (imagen `clamav/clamav`); `backend-core` le manda cada evidencia por el
+  protocolo `INSTREAM` de `clamd` (puerto 3310) después de validar tamaño y firma, y antes de guardarla
+  en RustFS. Toda evidencia se analiza.
+- Archivo infectado: se rechaza con 422 (`MALWARE_DETECTED`) y no se guarda.
+- Antivirus caído o sin responder: la evidencia **se guarda en cuarentena** (`scan_status = QUARANTINED`).
+  Mientras está en cuarentena no se puede descargar, ver ni indexar en el asistente de IA; sí se puede
+  eliminar. Una tarea programada (`EvidenceRescanScheduler`, cada `CLAMAV_RESCAN_INTERVAL_MS`, 60 s por
+  defecto) la reanaliza apenas ClamAV responde: si está limpia pasa a `CLEAN` y se indexa; si tiene
+  malware pasa a `INFECTED` y se borra el archivo del almacenamiento.
+- Cada resultado queda en la bitácora de auditoría: `EVIDENCE_SCAN_CLEAN`, `EVIDENCE_SCAN_INFECTED`,
+  `EVIDENCE_QUARANTINED`, `EVIDENCE_QUARANTINE_RELEASED` y `EVIDENCE_QUARANTINE_INFECTED`, con nombre,
+  tamaño, SHA-256 y, si corresponde, la firma detectada. Se registran en una transacción aparte para que un
+  rechazo no los borre. Las evidencias anteriores a RNF-09 quedan como `CLEAN` y no se reanalizan.
+
 ### 7. IAM (Keycloak)
 
 - Realm `prisma` con roles: `PRISMA_ADMIN`, `ORG_RESPONSIBLE`, `INTERNAL_EVALUATOR`, `AUDITOR`, `VIEWER`.
 - **MFA (TOTP) obligatoria para `PRISMA_ADMIN` y `ORG_RESPONSIBLE`**: el flujo de login
   `browser-mfa-por-rol` (se instala con `make mfa-enable`, ver
   [`SECURITY.md`](SECURITY.md#mfa-totp-obligatoria-por-rol)) obliga a registrar una app
-  autenticadora en el primer login y a pedir el código en los siguientes. El resto de los roles
+  autenticadora en el primer login y a pedir el código en los siguientes. Está funcional y sus
+  flujos están validados; el flujo no viene en `realm-prisma.json`, por eso hay que ejecutar el
+  script (`scripts/keycloak/enable-mfa.sh`) en cada ambiente. El resto de los roles
   puede activarla voluntariamente desde su cuenta de Keycloak. La política OTP (TOTP, SHA1,
   6 dígitos, 30 s) está en `infra/keycloak/realm-prisma.json`.
 - Política de password: longitud mínima 8 (`passwordPolicy: length(8)`).
-- Brute-force protection habilitado (`bruteForceProtected: true`, 5 intentos, configurable en vivo
+- Brute-force protection habilitado (`bruteForceProtected: true`, 10 intentos en 15 min y bloqueo de 15 min, configurable en vivo
   desde la consola de Keycloak sin redeploy).
 - `eventsEnabled: true` — Keycloak audita sus propios eventos de login (éxito/error); el rol
   `view-events` de `realm-management`, concedido al *service account* `prisma-backend`, es lo que

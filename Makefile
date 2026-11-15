@@ -35,11 +35,12 @@ DC := docker compose
 .DEFAULT_GOAL := help
 .PHONY: help up down restart logs ps build rebuild pull clean nuke \
         test test-frontend test-core test-ai lint format \
-        seed migrate backup restore health pull-llm shell-core shell-ai \
+        migrate backup restore health pull-llm shell-core shell-ai \
         sonar security-scan sync-knowledge-base \
-        certs certs-force restart-nginx \
-        mvp-up mvp-down mvp-logs mvp-ps mvp-seed \
-        mcu50-build mcu50-validate bugasura-build
+        certs certs-force internal-ca restart-nginx \
+        mvp-up mvp-down mvp-logs mvp-ps \
+        mcu50-build mcu50-validate bugasura-build \
+        mfa-enable mfa-status mfa-disable mfa-reset-requires-otp auth-policy auth-policy-status \n        swarm-deploy swarm-ps swarm-down
 
 # Archivos de compose para el stack MVP (mínimo, sin LLM ni servicios extra)
 MVP := -f docker-compose.yml -f docker-compose.mvp.yml
@@ -77,10 +78,6 @@ mvp-logs: ## MVP: seguir logs del stack mínimo
 
 mvp-ps: ## MVP: listar contenedores del stack mínimo
 	$(DC) $(MVP) --profile mvp ps
-
-mvp-seed: ## MVP: precargar catálogo MCU 5.0 + datos demo (sin ingest de IA)
-	@echo "$(CYAN)🌱 Cargando catálogo MCU 5.0 y datos demo...$(RESET)"
-	$(DC) $(MVP) exec backend-core java -jar /app/app.jar --seed
 
 # ---------- MCU 5.0 alineado a las planillas Agesic 2025 ----------
 mcu50-build: ## Regenerar V19__mcu50_align_agesic_2025.sql + expected_basico.json desde docs/mcu-5.0/Planilla MCU 5.0 *.xlsx
@@ -130,9 +127,7 @@ pull: ## Descargar imágenes upstream
 
 health: ## Chequear salud de los servicios
 	@echo "$(CYAN)🩺 Health check...$(RESET)"
-	@curl -sf http://localhost:8081/actuator/health && echo " backend-core OK" || echo " backend-core FAIL"
-	@curl -sf http://localhost:8000/health         && echo " backend-ai OK"   || echo " backend-ai FAIL"
-	@curl -sfI http://localhost:8080               > /dev/null && echo " frontend OK" || echo " frontend FAIL"
+	@bash scripts/health-check.sh
 
 # ---------- LIMPIEZA ----------
 clean: ## Detener y eliminar contenedores + redes (preserva volúmenes)
@@ -179,21 +174,17 @@ format: ## Auto-formatear todo el código
 migrate: ## Ejecutar migraciones Flyway
 	$(DC) exec backend-core mvn flyway:migrate
 
-seed: ## Precargar catálogo MCU 5.0 y datos demo
-	@echo "$(CYAN)🌱 Cargando catálogo MCU 5.0 y datos demo...$(RESET)"
-	$(DC) exec backend-core java -jar /app/app.jar --seed
-	$(DC) exec backend-ai python -m app.scripts.ingest_mcu_docs
-
-backup: ## Backup de Postgres
+# RNF-13: respaldo diario (Postgres + bucket de evidencias de RustFS) y restauración. "make
+# backup"/"make restore" corren el MISMO script (scripts/backup/backup.sh y restore.sh, dentro del
+# contenedor backup-runner) que Ofelia dispara automáticamente una vez al día -- ver el servicio
+# backup-runner/backup-scheduler en docker-compose.yml (perfil management o full). Antes esto solo
+# respaldaba Postgres, a mano, sin ningún mecanismo diario ni cobertura del bucket de evidencias.
+backup: ## Backup manual inmediato (Postgres + evidencias) -- normalmente corre solo, a diario
 	@mkdir -p backups
-	@STAMP=$$(date +%Y%m%d_%H%M%S); \
-	$(DC) exec -T postgres pg_dump -U $(POSTGRES_USER) $(POSTGRES_DB) | gzip > backups/postgres_$${STAMP}.sql.gz; \
-	echo "✅ Backup en backups/postgres_$${STAMP}.sql.gz"
+	$(DC) exec -T backup-runner /usr/local/bin/backup.sh
 
-restore: ## Restaurar Postgres desde el backup más reciente
-	@LATEST=$$(ls -t backups/postgres_*.sql.gz | head -1); \
-	echo "♻️  Restaurando desde $$LATEST..."; \
-	gunzip -c $$LATEST | $(DC) exec -T postgres psql -U $(POSTGRES_USER) $(POSTGRES_DB)
+restore: ## Restaurar Postgres + evidencias desde el backup más reciente en backups/
+	$(DC) exec -T backup-runner /usr/local/bin/restore.sh
 
 # ---------- IA / OLLAMA ----------
 pull-llm: ## Descargar Llama 3 en Ollama (~4.7 GB, primera vez)
@@ -232,12 +223,27 @@ mfa-status: ## Ver el estado de la MFA y qué usuarios con rol obligado ya regis
 mfa-disable: ## Volver al flujo de login original de Keycloak (MFA solo voluntaria)
 	./scripts/keycloak/enable-mfa.sh --disable
 
-# ---------- TLS / CERTIFICADOS ----------
-certs: ## Generar el certificado autofirmado de nginx (pide confirmación si ya existe uno)
-	./scripts/generate-nginx-cert.sh
+mfa-reset-requires-otp: ## "¿Olvidaste tu contraseña?" pide el OTP actual y no lo regenera (idempotente)
+	./scripts/keycloak/enable-mfa.sh --require-otp-on-reset
 
-certs-force: ## Regenerar el certificado de nginx sin preguntar (sobreescribe el actual)
+# ---------- KEYCLOAK: POLÍTICA DE AUTENTICACIÓN (recuperación y bloqueo) ----------
+auth-policy: ## Enlace de recuperar contraseña de 30 min y bloqueo tras 10 intentos fallidos (idempotente)
+	./scripts/keycloak/apply-auth-policy.sh
+
+auth-policy-status: ## Ver la vigencia del enlace de recuperación y los parámetros de bloqueo vigentes
+	./scripts/keycloak/apply-auth-policy.sh --status
+
+# ---------- TLS / CERTIFICADOS ----------
+certs: ## Generar el certificado autofirmado de nginx (pide confirmación si ya existe) + la CA interna y sus certificados (si faltan)
+	./scripts/generate-nginx-cert.sh
+	@[ -f infra/tls/ca.crt ] || ./scripts/generate-internal-ca.sh --force
+
+certs-force: ## Regenerar el certificado de nginx y la CA interna sin preguntar (sobreescribe)
 	./scripts/generate-nginx-cert.sh --force
+	./scripts/generate-internal-ca.sh --force
+
+internal-ca: ## Generar la CA interna y los certificados TLS por servicio (PRI-369; pide confirmación si ya existen)
+	./scripts/generate-internal-ca.sh
 
 restart-nginx: ## Reiniciar solo nginx (para que tome un certificado nuevo)
 	$(DC) restart nginx
@@ -254,3 +260,14 @@ shell-db: ## Consola psql
 
 shell-front: ## Shell dentro del frontend
 	$(DC) exec frontend sh
+
+# ---------- DOCKER SWARM (un solo servidor, 2 réplicas) ----------
+swarm-deploy: ## Desplegar/actualizar el stack en Swarm (usa .env; TAG por defecto = commit actual)
+	./scripts/swarm/deploy.sh
+
+swarm-ps: ## Estado de los servicios y tareas del stack en Swarm
+	docker stack services prisma
+	docker stack ps prisma --no-trunc --filter desired-state=running
+
+swarm-down: ## Quitar el stack de Swarm (preserva volúmenes)
+	docker stack rm prisma

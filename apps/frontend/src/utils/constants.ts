@@ -3,8 +3,6 @@ export const APP_DESCRIPTION =
   'Plataforma de Revisión Integral de Seguridad y Marcos de Auditorías';
 
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8081/api';
-export const AI_API_BASE_URL =
-  import.meta.env.VITE_AI_API_BASE_URL || 'http://localhost:8000/api/v1';
 // El "/auth" es obligatorio: infra/keycloak (docker-compose.yml) fija
 // KC_HTTP_RELATIVE_PATH=/auth, así que Keycloak nunca sirve nada en la raíz del host.
 export const KEYCLOAK_URL = import.meta.env.VITE_KEYCLOAK_URL || 'http://localhost:8180/auth';
@@ -156,14 +154,23 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   UPDATE_PROFILE: 'Actualización de Perfil',
   CHANGE_PASSWORD: 'Cambio de Contraseña',
   LINK_KEYCLOAK_ACCOUNT: 'Vinculación de Cuenta',
+  INVITE_USER: 'Invitación Enviada',
+  RESEND_INVITATION: 'Invitación Reenviada',
+  ACCEPT_INVITATION: 'Invitación Aceptada',
   REACTIVATE: 'Reactivación',
   SAVE_RESPONSE: 'Respuesta Guardada',
+  UPDATE_IMPROVEMENT_PLAN: 'Edición de Plan de Mejora',
   LOGIN: 'Inicio de Sesión',
   LOGOUT: 'Cierre de Sesión',
   // A diferencia del resto, esto NO lo registra AuditLogService.record desde un request HTTP --
   // lo trae LoginFailureAuditSyncService desde los eventos LOGIN_ERROR que Keycloak ya audita
   // solo (backend-core nunca ve el POST del login en sí). Ver el comentario ahí.
   LOGIN_FAILED: 'Inicio de Sesión Fallido',
+  EVIDENCE_SCAN_CLEAN: 'Evidencia sin amenazas',
+  EVIDENCE_SCAN_INFECTED: 'Evidencia rechazada por malware',
+  EVIDENCE_QUARANTINED: 'Evidencia en cuarentena',
+  EVIDENCE_QUARANTINE_RELEASED: 'Evidencia liberada de cuarentena',
+  EVIDENCE_QUARANTINE_INFECTED: 'Evidencia en cuarentena rechazada',
 };
 
 // Prefijo de tipo de uy.edu.prisma.application.AuditLogService.record -- el "resource" que
@@ -175,7 +182,11 @@ export const AUDIT_RESOURCE_TYPE_LABELS: Record<string, string> = {
   organization: 'Organización',
   evaluation: 'Evaluación',
   catalog_version: 'Versión de Catálogo',
+  improvement_plan: 'Acción del Plan de Mejora',
   'email-settings': 'Configuración de Email',
+  'plan-deadline-settings': 'Plazos del Plan de Mejora',
+  'platform-service': 'Servicio de Infraestructura',
+  'alert-settings': 'Configuración de Alertas',
 };
 
 export const PRIORITY_CONFIG: Record<string, { label: string; color: string }> = {

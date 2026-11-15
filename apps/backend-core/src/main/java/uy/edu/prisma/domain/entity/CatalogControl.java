@@ -40,6 +40,15 @@ public class CatalogControl {
   @Column(name = "target_level", nullable = false)
   private Integer targetLevel;
 
+  @Column(name = "guide_interpretation", columnDefinition = "TEXT")
+  private String guideInterpretation;
+
+  @Column(name = "guide_example", columnDefinition = "TEXT")
+  private String guideExample;
+
+  @Column(name = "guide_evidence", columnDefinition = "TEXT")
+  private String guideEvidence;
+
   @Column(name = "sort_order", nullable = false)
   @Builder.Default
   private Integer sortOrder = 0;

@@ -46,6 +46,12 @@ server:
   compression:
     enabled: true
   forward-headers-strategy: framework
+  # Tras rechazar una petición demasiado grande, Tomcat intenta descartar el resto del cuerpo hasta
+  # este máximo (2 MB por defecto); si lo supera corta la conexión sin responder y el cliente puede
+  # ver un error de red en lugar del 413 con su mensaje (RF-EVI-04). 64 MB cubre todo lo que deja
+  # pasar el Nginx (client_max_body_size 105m) sin leer de más de peticiones que ya se rechazaron.
+  tomcat:
+    max-swallow-size: 64MB
   error:
     include-message: always
     include-stacktrace: never
@@ -81,10 +87,25 @@ springdoc:
     tryItOutEnabled: true
 
 prisma:
+  # Lanzador de servicios: redes desde las que se permite (VPN). Loopback y rangos privados por
+  # defecto; en producción, la subred exacta de WireGuard (SERVICES_ALLOWED_CIDRS, separadas por coma).
+  services:
+    allowed-cidrs: ${SERVICES_ALLOWED_CIDRS:127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}
+  # Versión/entorno de esta instancia (ver AppVersionService). APP_ENV: development | staging |
+  # production; sin la variable se asume development (un olvido en producción es visible).
+  app:
+    environment: ${APP_ENV:development}
+    commit: ${APP_COMMIT:}
+    build-time: ${APP_BUILD_TIME:}
   jwt:
     secret: ${JWT_SECRET:change-me-in-production-at-least-256-bits}
     access-expiration-minutes: ${JWT_ACCESS_EXPIRATION_MINUTES:15}
     refresh-expiration-days:  ${JWT_REFRESH_EXPIRATION_DAYS:7}
+  certification:
+    # RF-AUD-09: clave HMAC para sellar una evaluación al aprobarla. Por defecto reusa el secreto
+    # de JWT (ya es el único secreto de firma que maneja este backend) -- se puede fijar aparte con
+    # CERTIFICATION_SECRET si en algún momento conviene rotarlos por separado.
+    secret: ${CERTIFICATION_SECRET:${JWT_SECRET:change-me-in-production-at-least-256-bits}}
   storage:
     endpoint:   ${S3_ENDPOINT:http://localhost:9001}
     # Ver el comentario en ObjectStorageConfig: host desde el que un navegador real puede bajar la
@@ -94,6 +115,21 @@ prisma:
     access-key: ${S3_ACCESS_KEY:rustfsadmin}
     secret-key: ${S3_SECRET_KEY:rustfsadmin}
     bucket:     ${S3_BUCKET:prisma-evidences}
+  evidence:
+    # RF-EVI-02: extensiones permitidas, separadas por coma y sin punto. Cada una tiene que existir
+    # en el catálogo de EvidenceFileValidator (pdf, zip, docx, txt, md, markdown, png, jpg, jpeg):
+    # una extensión desconocida hace fallar el arranque. No se admite SVG (puede llevar scripts).
+    allowed-extensions: ${EVIDENCE_ALLOWED_EXTENSIONS:pdf,zip,docx,txt,md,markdown,png,jpg,jpeg}
+    # RF-EVI-04: tamaño máximo por evidencia. Rige en Spring (límite multipart, ver EvidenceConfig),
+    # en EvidenceService y en lo que valida la pantalla. Los Nginx (infra/nginx/nginx.conf y
+    # apps/frontend/nginx.conf) tienen que dejar pasar un poco más (105m) para que el rechazo lo dé
+    # la aplicación con su mensaje: si se sube este valor por encima, subir también esos.
+    max-size: ${EVIDENCE_MAX_SIZE:100MB}
+  clamav:
+    host:    ${CLAMAV_HOST:localhost}
+    port:    ${CLAMAV_PORT:3310}
+    timeout: ${CLAMAV_TIMEOUT:60s}
+    rescan-interval-ms: ${CLAMAV_RESCAN_INTERVAL_MS:60000}
   security:
     argon2:
       iterations:  ${ARGON2_ITERATIONS:3}
@@ -101,7 +137,7 @@ prisma:
       parallelism: ${ARGON2_PARALLELISM:4}
     login-failure-sync:
       # El bloqueo en sí (cuántos intentos fallidos antes de bloquear la cuenta) lo hace Keycloak,
-      # no esto -- ver "failureFactor" en infra/keycloak/realm-prisma.json (5 por defecto),
+      # no esto -- ver "failureFactor" en infra/keycloak/realm-prisma.json (10),
       # configurable también en vivo desde la consola de Keycloak (Realm Settings > Security
       # Defenses > Brute Force Detection) sin redeploy. Esto sólo trae a la bitácora propia
       # (AuditLog, ver LoginFailureAuditSyncService) los eventos LOGIN_ERROR que Keycloak ya
@@ -114,6 +150,16 @@ prisma:
     # Compartida con backend-ai (X-Internal-Api-Key): sin ella, backend-ai queda alcanzable por
     # cualquiera que le pegue directo al puerto expuesto. Vacía en dev local == sin chequeo.
     internal-api-key: ${AI_INTERNAL_API_KEY:}
+    # Timeouts hacia backend-ai (PRI-358): conexión, lectura de ingesta/citas y lectura de la guía
+    # de mejora (la guía genera con el LLM y tarda cerca de un minuto con Ollama local).
+    connect-timeout: ${AI_CONNECT_TIMEOUT:3s}
+    read-timeout: ${AI_READ_TIMEOUT:60s}
+    guide-read-timeout: ${AI_GUIDE_READ_TIMEOUT:120s}
+  # RF-USR-05 (PRI-240): adónde vuelve quien acepta una invitación, después de crear su contraseña
+  # en Keycloak (la URL pública del frontend). client-id = el client público del frontend.
+  invitations:
+    client-id: ${PRISMA_INVITATIONS_CLIENT_ID:prisma-frontend}
+    redirect-uri: ${PRISMA_APP_URL:http://localhost:8080}
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:8080,http://localhost:5173,https://localhost,https://prisma.local}
   keycloak:

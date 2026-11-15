@@ -38,6 +38,10 @@
       </div>
     </div>
 
+    <!-- RF-AUD-08 (PRI-298): tras «Reanudar» una evaluación devuelta, el aviso explica por qué está
+    otra vez En curso y lleva a las observaciones del auditor. Solo se ve si hay observaciones. -->
+    <ReopenedNotice v-if="showReopenedNotice && evaluation" :evaluation-id="evaluation.id" />
+
     <BaseModal v-model="showProfileModal" title="Cambiar perfil comunitario" size="md">
       <p class="text-sm text-slate-600 dark:text-slate-300 mb-4">
         El perfil define qué controles se responden en esta evaluación. Solo se puede cambiar
@@ -65,6 +69,14 @@
       @confirm="changeStatus('ARCHIVED')"
     />
     <ConfirmDialog
+      v-model="showIncompleteConfirm"
+      title="Hay controles sin responder"
+      :message="incompleteMessage"
+      confirm-text="Enviar a auditoría igual"
+      variant="warning"
+      @confirm="changeStatus('READY_FOR_AUDIT')"
+    />
+    <ConfirmDialog
       v-model="showDeleteConfirm"
       title="Eliminar evaluación"
       message="La evaluación no tiene datos cargados, así que se elimina definitivamente."
@@ -78,67 +90,39 @@
     </div>
 
     <template v-else-if="evaluation">
-      <EvaluationLifecycleStepper :status="evaluation.status" />
+      <!-- Zona 3: ciclo de vida + «Qué sigue». El panel dice de quién es el turno, ofrece las
+      acciones del estado actual (antes en la tarjeta «Acciones de Flujo») y deja a la vista las
+      evidencias y las observaciones del auditor. -->
+      <EvaluationLifecycleStepper :status="evaluation.status">
+        <EvaluationActionPanel
+          :plan="actionPlan"
+          :progress="actionProgress"
+          :busy="changingStatus"
+          @status="onStatusAction"
+          @delete="showDeleteConfirm = true"
+        />
+      </EvaluationLifecycleStepper>
 
+      <!-- RF-AUD-09: registro de certificación -- solo existe una vez aprobada (sellada), nunca se
+      recalcula ni se puede editar desde acá. -->
       <div
-        class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6 space-y-4"
+        v-if="evaluation.status === 'APPROVED' && evaluation.certificationSeal"
+        class="bg-emerald-50 dark:bg-emerald-950 border border-emerald-200 dark:border-emerald-800 rounded-xl p-4 flex items-start gap-3"
       >
-        <div>
-          <h3 class="text-lg font-semibold text-slate-900 dark:text-white mb-1">
-            Acciones de Flujo
-          </h3>
-          <p class="text-xs text-slate-500 dark:text-slate-400">
-            Transiciones disponibles para tu rol en el estado actual, y accesos a responder,
-            evidencias y auditoría -- desactivados cuando no corresponden al estado actual.
-          </p>
-        </div>
-
-        <div v-if="statusActions.length > 0" class="flex flex-wrap gap-x-6 gap-y-3">
-          <div v-for="action in statusActions" :key="action.status" class="flex flex-col gap-1.5">
-            <BaseButton :variant="action.variant" @click="onStatusAction(action.status)">
-              {{ action.label }}
-            </BaseButton>
-            <span class="text-xs text-slate-500 max-w-[220px] dark:text-slate-400">{{
-              action.hint
-            }}</span>
-          </div>
-        </div>
-
-        <div
-          v-if="canDelete"
-          class="flex flex-col gap-1.5 pt-3 border-t border-slate-100 dark:border-slate-700"
-        >
-          <div>
-            <BaseButton variant="danger" @click="showDeleteConfirm = true">
-              <TrashIcon class="w-4 h-4" />
-              Eliminar evaluación
-            </BaseButton>
-          </div>
-          <span class="text-xs text-slate-500 dark:text-slate-400">
-            No tiene datos cargados, así que se puede eliminar definitivamente. Una evaluación con
-            contenido solo se puede archivar.
-          </span>
-        </div>
-
-        <div
-          class="flex flex-wrap gap-x-6 gap-y-3"
-          :class="
-            statusActions.length > 0 ? 'pt-3 border-t border-slate-100 dark:border-slate-700' : ''
-          "
-        >
-          <div v-for="action in flowActions" :key="action.key" class="flex flex-col gap-1.5">
-            <BaseButton
-              variant="secondary"
-              :disabled="action.disabled"
-              @click="!action.disabled && router.push(action.to)"
+        <ShieldCheckIcon class="w-6 h-6 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+        <div class="text-sm text-emerald-800 dark:text-emerald-200">
+          <p class="font-semibold">Evaluación aprobada y sellada</p>
+          <p class="text-emerald-700 dark:text-emerald-300">
+            <span v-if="evaluation.approvedByName"
+              >Certificada por {{ evaluation.approvedByName }}</span
             >
-              <component :is="action.icon" class="w-4 h-4" />
-              {{ action.label }}
-            </BaseButton>
-            <span class="text-xs text-slate-500 max-w-[220px] dark:text-slate-400">{{
-              action.hint
-            }}</span>
-          </div>
+            <span v-if="evaluation.approvedAt">
+              el {{ formatDateTime(evaluation.approvedAt) }}</span
+            >
+          </p>
+          <p class="font-mono text-xs text-emerald-600 dark:text-emerald-400 mt-1 break-all">
+            Sello: {{ evaluation.certificationSeal }}
+          </p>
         </div>
       </div>
 
@@ -164,6 +148,72 @@
           icon-bg-class="bg-amber-50 dark:bg-amber-950"
           icon-color-class="text-amber-700 dark:text-amber-400"
         />
+      </div>
+
+      <!-- PRI-354: observaciones del auditor, de solo lectura, para la organización (responsable
+      y evaluador interno) desde que la evaluación vuelve. Es la forma en que el auditor le explica
+      por qué la devuelve. El VIEWER no las ve; el backend lo exige igual. -->
+      <AuditObservationsReadOnly
+        v-if="showAuditorObservations"
+        :evaluation-id="evaluation.id"
+        :hide-when-empty="['IN_PROGRESS', 'READY_FOR_AUDIT'].includes(evaluation.status)"
+      />
+
+      <!-- RF-AUD-10: historial de ciclos de auditoría (envíos/devoluciones) de esta evaluación --
+      cualquiera con acceso a la organización puede verlo, incluido el AUDITOR. -->
+      <div
+        class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6"
+      >
+        <button
+          type="button"
+          class="flex items-center justify-between w-full text-left"
+          @click="toggleAuditTrail"
+        >
+          <h3 class="text-lg font-semibold text-slate-900 dark:text-white">Ciclos de Auditoría</h3>
+          <ChevronDownIcon
+            class="w-5 h-5 text-slate-400 transition-transform"
+            :class="{ 'rotate-180': showAuditTrail }"
+          />
+        </button>
+        <div v-if="showAuditTrail" class="mt-4 space-y-4">
+          <div v-if="loadingAuditTrail" class="text-sm text-slate-500 dark:text-slate-400">
+            Cargando…
+          </div>
+          <div
+            v-else-if="auditTrail.length === 0"
+            class="text-sm text-slate-500 dark:text-slate-400"
+          >
+            Sin transiciones registradas todavía.
+          </div>
+          <div
+            v-for="(events, cycleNumber) in auditTrailByCycle"
+            v-else
+            :key="cycleNumber"
+            class="space-y-2"
+          >
+            <p class="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">
+              {{ Number(cycleNumber) === 0 ? 'Autoevaluación inicial' : `Ciclo ${cycleNumber}` }}
+            </p>
+            <ul class="space-y-1.5">
+              <li
+                v-for="event in events"
+                :key="event.id"
+                class="flex flex-wrap items-center gap-2 text-sm text-slate-700 dark:text-slate-200"
+              >
+                <span class="font-medium">{{
+                  event.status ? getStatusLabel(event.status) : 'Certificación'
+                }}</span>
+                <span class="text-slate-400 dark:text-slate-500">—</span>
+                <span class="text-slate-500 dark:text-slate-400">{{
+                  formatDateTime(event.occurredAt)
+                }}</span>
+                <span v-if="event.performedByName" class="text-slate-500 dark:text-slate-400">
+                  ({{ event.performedByName }})
+                </span>
+              </li>
+            </ul>
+          </div>
+        </div>
       </div>
 
       <div
@@ -206,6 +256,21 @@
             <div
               v-if="results.length > 0 && resultsTab === 'desglose'"
               class="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400"
+              data-testid="function-filter"
+            >
+              <span aria-hidden="true">Función</span>
+              <BaseSelect
+                v-model="functionFilter"
+                :options="functionFilterOptions"
+                :searchable="false"
+                size="sm"
+                aria-label="Filtrar por función"
+                class="w-56"
+              />
+            </div>
+            <div
+              v-if="results.length > 0 && resultsTab === 'desglose'"
+              class="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400"
             >
               <span aria-hidden="true">Mostrar por página</span>
               <BaseSelect
@@ -227,20 +292,6 @@
                 <CalculatorIcon class="w-4 h-4" />
                 {{ results.length ? 'Recalcular Madurez' : 'Calcular Madurez' }}
               </BaseButton>
-              <router-link
-                v-if="evaluation.status === 'APPROVED'"
-                to="/reports"
-                class="text-sm text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
-              >
-                <ArrowDownTrayIcon class="w-4 h-4 inline" /> Reportes
-              </router-link>
-              <router-link
-                v-if="!['DRAFT', 'ARCHIVED'].includes(evaluation.status)"
-                :to="`/improvement/${evaluation.id}`"
-                class="text-sm text-emerald-700 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300"
-              >
-                <ArrowTrendingUpIcon class="w-4 h-4 inline" /> Plan de Mejora
-              </router-link>
             </div>
           </div>
         </div>
@@ -389,15 +440,17 @@
 </template>
 
 <script setup lang="ts">
-  import { ref, computed, onMounted } from 'vue';
+  import { ref, computed, watch, onMounted } from 'vue';
   import { storeToRefs } from 'pinia';
   import { useRoute, useRouter } from 'vue-router';
   import { useEvaluationsStore } from '@/stores/evaluations';
   import { useAuthStore } from '@/stores/auth';
   import {
+    auditService,
     catalogService,
     communityProfilesService,
     evaluationsService,
+    evidenceService,
   } from '@/services/resources';
   import {
     getStatusLabel,
@@ -405,6 +458,7 @@
     getMaturityColor,
     getMaturityTextStyle,
     getErrorMessage,
+    formatDateTime,
   } from '@/utils/helpers';
   import StatsCard from '@/components/common/StatsCard.vue';
   import BaseButton from '@/components/common/BaseButton.vue';
@@ -412,24 +466,29 @@
   import ConfirmDialog from '@/components/common/ConfirmDialog.vue';
   import BaseSelect from '@/components/common/BaseSelect.vue';
   import { useNotification } from '@/composables/useUtils';
+  import { ALL_FUNCTIONS, functionOptions, filterByFunction } from '@/utils/resultFilters';
   import MaturityRadarChart from '@/components/charts/MaturityRadarChart.vue';
   import MaturitySummaryTables from '@/components/evaluations/MaturitySummaryTables.vue';
   import EvaluationLifecycleStepper from '@/components/evaluations/EvaluationLifecycleStepper.vue';
+  import AuditObservationsReadOnly from '@/components/evaluations/AuditObservationsReadOnly.vue';
+  import ReopenedNotice from '@/components/evaluations/ReopenedNotice.vue';
+  import EvaluationActionPanel from '@/components/evaluations/EvaluationActionPanel.vue';
+  import { buildActionPlan, type PlanRole } from '@/utils/evaluationActionPlan';
   import {
     ArrowLeftIcon,
     ChartBarIcon,
     ChevronDownIcon,
     ClipboardDocumentCheckIcon,
     DocumentTextIcon,
-    PencilSquareIcon,
-    PaperClipIcon,
     ShieldCheckIcon,
-    ArrowTrendingUpIcon,
-    ArrowDownTrayIcon,
     CalculatorIcon,
-    TrashIcon,
   } from '@heroicons/vue/24/outline';
-  import type { MaturityCatalog, MaturityResult, MaturityFunction } from '@/types';
+  import type {
+    MaturityCatalog,
+    MaturityResult,
+    MaturityFunction,
+    EvaluationAuditCycleEvent,
+  } from '@/types';
 
   const route = useRoute();
   const router = useRouter();
@@ -442,10 +501,40 @@
   const evaluation = computed(() => store.currentEvaluation);
   const calculating = ref(false);
   const totalControls = ref(0);
+  // Ids de los controles que esta evaluación debe responder (catálogo podado al perfil).
+  const catalogControlIds = ref<Set<string>>(new Set());
   // Árbol del catálogo (podado al perfil si aplica) -- se fetchea una vez en onMounted; sirve para
   // contar controles Y para el resumen de la pestaña "Tablas y promedios" (siglas + orden oficial).
   const catalogFunctions = ref<MaturityFunction[]>([]);
   const resultsTab = ref<'desglose' | 'tablas'>('desglose');
+
+  // RF-AUD-10: ciclos de auditoría -- se carga perezoso, solo al abrir la sección la primera vez.
+  const showAuditTrail = ref(false);
+  const loadingAuditTrail = ref(false);
+  const auditTrailLoaded = ref(false);
+  const auditTrail = ref<EvaluationAuditCycleEvent[]>([]);
+  const auditTrailByCycle = computed(() => {
+    const grouped: Record<number, EvaluationAuditCycleEvent[]> = {};
+    for (const event of auditTrail.value) {
+      (grouped[event.cycleNumber] ??= []).push(event);
+    }
+    return grouped;
+  });
+
+  async function toggleAuditTrail() {
+    showAuditTrail.value = !showAuditTrail.value;
+    if (!showAuditTrail.value || auditTrailLoaded.value || !evaluation.value) return;
+    loadingAuditTrail.value = true;
+    try {
+      const { data } = await evaluationsService.getAuditTrail(evaluation.value.id);
+      auditTrail.value = data;
+      auditTrailLoaded.value = true;
+    } catch (err) {
+      console.error(err);
+    } finally {
+      loadingAuditTrail.value = false;
+    }
+  }
 
   const progressPercent = computed(() => {
     if (!evaluation.value || totalControls.value === 0) return 0;
@@ -507,8 +596,33 @@
     }
   }
 
+  // PRI-354: las observaciones del auditor las lee la organización desde la devolución. PRI-298
+  // (RF-AUD-08): también mientras corrige tras «Reanudar» (En curso) y al reenviarla (Lista para
+  // auditoría). Siguen ocultas En auditoría, cuando son el borrador del auditor. Mismo criterio que
+  // AuditObservationService en el backend.
+  const OBSERVATION_VISIBLE_STATUSES = [
+    'RETURNED',
+    'IN_PROGRESS',
+    'READY_FOR_AUDIT',
+    'APPROVED',
+    'ARCHIVED',
+  ];
+  const isOrganizationUser = computed(() =>
+    authStore.hasAnyRole('ORG_RESPONSIBLE', 'INTERNAL_EVALUATOR'),
+  );
+  const showAuditorObservations = computed(
+    () =>
+      !!evaluation.value &&
+      OBSERVATION_VISIBLE_STATUSES.includes(evaluation.value.status) &&
+      isOrganizationUser.value,
+  );
+  // El aviso de reapertura: En curso (el componente decide mostrarse solo si hay observaciones,
+  // que en ese estado solo existen si una auditoría anterior la devolvió).
+  const showReopenedNotice = computed(
+    () => evaluation.value?.status === 'IN_PROGRESS' && isOrganizationUser.value,
+  );
+
   const canRespondRole = computed(() => authStore.hasAnyRole('PRISMA_ADMIN', 'INTERNAL_EVALUATOR'));
-  const canAuditRole = computed(() => authStore.hasAnyRole('PRISMA_ADMIN', 'AUDITOR'));
 
   const canRespond = computed(() => {
     if (!evaluation.value) return false;
@@ -520,59 +634,6 @@
   const canCalculate = computed(() => {
     if (!evaluation.value) return false;
     return canRespond.value && responses.value.length > 0;
-  });
-
-  interface FlowAction {
-    key: string;
-    label: string;
-    to: string;
-    icon: typeof PencilSquareIcon;
-    disabled: boolean;
-    hint: string;
-  }
-
-  // Responder/Evidencias/Auditoría siempre se muestran si el rol corresponde (antes se ocultaban
-  // directamente cuando el estado no correspondía) -- ahora quedan visibles pero deshabilitados,
-  // para que se entienda que la acción existe y por qué no está disponible en este momento.
-  const flowActions = computed<FlowAction[]>(() => {
-    if (!evaluation.value) return [];
-    const s = evaluation.value.status;
-    const list: FlowAction[] = [];
-
-    if (canRespondRole.value) {
-      list.push({
-        key: 'respond',
-        label: 'Responder',
-        to: `/evaluations/${evaluation.value.id}/respond`,
-        icon: PencilSquareIcon,
-        disabled: !['DRAFT', 'IN_PROGRESS', 'RETURNED'].includes(s),
-        hint: 'Cargar o corregir las respuestas de los controles.',
-      });
-    }
-
-    list.push({
-      key: 'evidence',
-      label: 'Evidencias',
-      to: `/evidence/${evaluation.value.id}`,
-      icon: PaperClipIcon,
-      disabled: s === 'ARCHIVED',
-      hint: 'Documentación de respaldo de los controles.',
-    });
-
-    // Antes no había ningún link a /audit/:id en toda la app -- la ruta existía y estaba
-    // habilitada para AUDITOR, pero no había forma de llegar ahí desde la UI.
-    if (canAuditRole.value) {
-      list.push({
-        key: 'audit',
-        label: 'Auditoría',
-        to: `/audit/${evaluation.value.id}`,
-        icon: ShieldCheckIcon,
-        disabled: s === 'ARCHIVED',
-        hint: 'Revisar y dejar observaciones sobre la evaluación.',
-      });
-    }
-
-    return list;
   });
 
   // El radar necesita un punto por función: agrega los resultados por subcategoría
@@ -602,6 +663,23 @@
   // subcategorías del catálogo real. Empiezan todas COLAPSADAS (Set vacío = nada expandido); el
   // usuario expande la(s) que le interesan.
   const groupBy = ref<'function' | 'level'>('function');
+  // Filtro por función (RF-VIZ-05): deja visibles solo las subcategorías de la función elegida.
+  // Es del lado del cliente, así que la tabla se actualiza al instante y sin recargar la página.
+  const functionFilter = ref<string>(ALL_FUNCTIONS);
+  const functionFilterOptions = computed(() => functionOptions(results.value));
+  const filteredResults = computed(() => filterByFunction(results.value, functionFilter.value));
+
+  // Si la función elegida ya no está (p. ej. tras recalcular la madurez), se vuelve a «Todas».
+  watch(results, (all) => {
+    if (functionFilter.value && !all.some((r) => r.functionId === functionFilter.value)) {
+      functionFilter.value = ALL_FUNCTIONS;
+    }
+  });
+  // Al elegir una función se abre su sección: llegar a una sección colapsada tras filtrar sería
+  // un clic de más.
+  watch(functionFilter, (id) => {
+    if (id) expandedGroups.value = new Set(expandedGroups.value).add(`function-${id}`);
+  });
   const expandedGroups = ref<Set<string>>(new Set());
 
   function toggleGroup(key: string) {
@@ -637,7 +715,7 @@
       // Ascendente (0 primero): las subcategorías con mayor brecha quedan arriba, coherente con
       // como ImprovementPlanService prioriza los niveles mas bajos como mas urgentes.
       const byLevel = new Map<number, MaturityResult[]>();
-      for (const r of results.value) {
+      for (const r of filteredResults.value) {
         const arr = byLevel.get(r.currentLevel) ?? [];
         arr.push(r);
         byLevel.set(r.currentLevel, arr);
@@ -653,7 +731,7 @@
 
     const order: string[] = [];
     const byFunction = new Map<string, ResultGroup>();
-    for (const r of results.value) {
+    for (const r of filteredResults.value) {
       let group = byFunction.get(r.functionId);
       if (!group) {
         group = { key: `function-${r.functionId}`, title: r.functionName, items: [] };
@@ -708,86 +786,40 @@
     }
   }
 
-  const statusActions = computed(() => {
-    if (!evaluation.value) return [];
-    const actions: {
-      label: string;
-      status: string;
-      variant: 'primary' | 'secondary' | 'success' | 'danger';
-      hint: string;
-    }[] = [];
-    const s = evaluation.value.status;
-
-    if (authStore.hasAnyRole('PRISMA_ADMIN', 'ORG_RESPONSIBLE', 'INTERNAL_EVALUATOR')) {
-      if (s === 'DRAFT')
-        actions.push({
-          label: 'Iniciar Evaluación',
-          status: 'IN_PROGRESS',
-          variant: 'primary',
-          hint: 'Habilita cargar respuestas de los controles.',
-        });
-      if (s === 'IN_PROGRESS')
-        actions.push({
-          label: 'Enviar a Auditoría',
-          status: 'READY_FOR_AUDIT',
-          variant: 'success',
-          hint: 'Queda visible para que un auditor la tome.',
-        });
-      if (s === 'RETURNED')
-        actions.push({
-          label: 'Reanudar',
-          status: 'IN_PROGRESS',
-          variant: 'primary',
-          hint: 'Vuelve a edición para corregir las observaciones del auditor.',
-        });
-    }
-
-    if (authStore.hasAnyRole('PRISMA_ADMIN', 'AUDITOR')) {
-      if (s === 'READY_FOR_AUDIT')
-        actions.push({
-          label: 'Iniciar Auditoría',
-          status: 'IN_AUDIT',
-          variant: 'primary',
-          hint: 'La tomás como auditor para revisarla.',
-        });
-      if (s === 'IN_AUDIT') {
-        actions.push({
-          label: 'Aprobar',
-          status: 'APPROVED',
-          variant: 'success',
-          hint: 'Confirma el resultado; habilita plan de mejora y reportes.',
-        });
-        actions.push({
-          label: 'Devolver',
-          status: 'RETURNED',
-          variant: 'danger',
-          hint: 'La regresa al responsable con tus observaciones cargadas.',
-        });
-      }
-    }
-
-    // Archivar (descartar / cerrar): desde Borrador, En Curso, Devuelta o Aprobada -- no mientras hay
-    // una auditoría en marcha (el backend lo exige igual). Conserva todo el historial.
-    if (
-      authStore.hasAnyRole('PRISMA_ADMIN', 'ORG_RESPONSIBLE') &&
-      ['DRAFT', 'IN_PROGRESS', 'RETURNED', 'APPROVED'].includes(s)
-    ) {
-      actions.push({
-        label: 'Archivar',
-        status: 'ARCHIVED',
-        variant: 'secondary',
-        hint: 'La retira de la lista activa conservando su historial; deja de admitir cambios.',
-      });
-    }
-
-    return actions;
-  });
-
   // Archivar es definitivo (ARCHIVED es un estado terminal): pide confirmación.
   const showArchiveConfirm = ref(false);
 
+  // Controles del catálogo (o del perfil) sin respuesta. Si el catálogo todavía no cargó no se
+  // puede saber, y en ese caso no se advierte.
+  const unansweredCount = computed(() => {
+    if (catalogControlIds.value.size === 0) return 0;
+    const answered = new Set(responses.value.map((r) => r.controlId));
+    let missing = 0;
+    for (const id of catalogControlIds.value) if (!answered.has(id)) missing++;
+    return missing;
+  });
+
+  // Enviar a auditoría con controles sin responder: el modelo cuenta cada uno como «no cumple», así
+  // que antes de enviar se le avisa a la persona y confirma (o vuelve a responder).
+  const showIncompleteConfirm = ref(false);
+  const incompleteMessage = computed(() => {
+    const n = unansweredCount.value;
+    const total = catalogControlIds.value.size;
+    const sinRespuesta =
+      n === 1
+        ? '1 de los ' + total + ' controles no tiene respuesta'
+        : `${n} de los ${total} controles no tienen respuesta`;
+    return (
+      `${sinRespuesta}. Todos los controles sin respuesta se cuentan como «no cumple» al calcular ` +
+      'la madurez, así que el nivel resultante puede ser menor al real. ' +
+      '¿Querés enviar la evaluación a auditoría en estas condiciones?'
+    );
+  });
+
   function onStatusAction(status: string) {
     if (status === 'ARCHIVED') showArchiveConfirm.value = true;
+    else if (status === 'READY_FOR_AUDIT' && unansweredCount.value > 0)
+      showIncompleteConfirm.value = true;
     else changeStatus(status);
   }
 
@@ -820,14 +852,72 @@
     }
   }
 
+  const changingStatus = ref(false);
   async function changeStatus(status: string) {
     if (!evaluation.value) return;
+    changingStatus.value = true;
     try {
       await store.updateStatus(evaluation.value.id, status);
     } catch (err) {
       console.error(err);
+    } finally {
+      changingStatus.value = false;
     }
   }
+
+  // Contadores de las tarjetas «Evidencias» y «Observaciones del auditor» del panel. Son ayuda
+  // visual: si no se pueden leer, las tarjetas se muestran igual, sin número.
+  const evidenceCount = ref<number | null>(null);
+  const observationCounts = ref<{ total: number; open: number } | null>(null);
+
+  async function loadEvidenceCount(id: string) {
+    try {
+      const { data } = await evidenceService.getByEvaluation(id);
+      evidenceCount.value = data.length;
+    } catch {
+      evidenceCount.value = null;
+    }
+  }
+
+  async function loadObservationCounts(id: string) {
+    try {
+      const { data } = await auditService.getObservations(id);
+      observationCounts.value = {
+        total: data.length,
+        open: data.filter((o) => o.status === 'OPEN' || o.status === 'IN_PROGRESS').length,
+      };
+    } catch {
+      observationCounts.value = null;
+    }
+  }
+
+  // Las observaciones solo se piden cuando la organización puede verlas (mismo criterio que el
+  // bloque de abajo); si el estado cambia y pasan a corresponder, se piden en ese momento.
+  watch(
+    showAuditorObservations,
+    (visible) => {
+      if (visible && evaluation.value) loadObservationCounts(evaluation.value.id);
+    },
+    { immediate: true },
+  );
+
+  // «Qué sigue»: lo que le toca hacer a este usuario en el estado actual (ver evaluationActionPlan).
+  const actionPlan = computed(() =>
+    buildActionPlan({
+      status: evaluation.value!.status,
+      evaluationId: evaluation.value!.id,
+      hasRole: (...roles: PlanRole[]) => authStore.hasAnyRole(...roles),
+      canDelete: canDelete.value,
+      showAuditorObservations: showAuditorObservations.value,
+      evidenceCount: evidenceCount.value,
+      observations: observationCounts.value,
+    }),
+  );
+  const actionProgress = computed(() => ({
+    percent: progressPercent.value,
+    answered: responses.value.length,
+    total: totalControls.value,
+  }));
 
   // Árbol del catálogo (podado al perfil si aplica): sirve para contar los controles a responder.
   function loadCatalogTree(version: string, profileId?: string | null) {
@@ -851,9 +941,11 @@
           }
         }
         totalControls.value = controlIds.size;
+        catalogControlIds.value = controlIds;
       })
       .catch(() => {
         totalControls.value = 0;
+        catalogControlIds.value = new Set();
         catalogFunctions.value = [];
       });
   }
@@ -868,6 +960,7 @@
         store.fetchResults(id),
         loadCatalogTree(version, evaluation.value.communityProfileId),
         loadDeletable(id),
+        loadEvidenceCount(id),
       ]);
     }
   });

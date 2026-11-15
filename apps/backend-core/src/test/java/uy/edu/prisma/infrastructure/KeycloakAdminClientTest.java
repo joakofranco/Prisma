@@ -5,6 +5,7 @@ import static org.springframework.test.web.client.match.MockRestRequestMatchers.
 import static org.springframework.test.web.client.response.MockRestResponseCreators.*;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -126,6 +127,99 @@ class KeycloakAdminClientTest {
     server.verify();
   }
 
+  // ---- Invitación (RF-USR-05, PRI-240) ----
+
+  @Test
+  void createInvitedUserSendsNoPasswordAndAnUnverifiedEmail() {
+    UUID keycloakId = UUID.randomUUID();
+    expectAdminToken();
+    server
+        .expect(requestTo(BASE_URL + "/admin/realms/prisma/users"))
+        .andExpect(method(HttpMethod.POST))
+        .andExpect(jsonPath("$.emailVerified").value(false))
+        .andExpect(jsonPath("$.enabled").value(true))
+        .andExpect(jsonPath("$.credentials").doesNotExist())
+        .andRespond(
+            withStatus(HttpStatus.CREATED)
+                .location(
+                    java.net.URI.create(BASE_URL + "/admin/realms/prisma/users/" + keycloakId)));
+    server
+        .expect(
+            requestTo(
+                BASE_URL + "/admin/realms/prisma/users/" + keycloakId + "/role-mappings/realm"))
+        .andExpect(method(HttpMethod.GET))
+        .andRespond(withSuccess("[]", MediaType.APPLICATION_JSON));
+    server
+        .expect(requestTo(BASE_URL + "/admin/realms/prisma/roles/INTERNAL_EVALUATOR"))
+        .andExpect(method(HttpMethod.GET))
+        .andRespond(
+            withSuccess(
+                "{\"id\":\"role-2\",\"name\":\"INTERNAL_EVALUATOR\"}", MediaType.APPLICATION_JSON));
+    server
+        .expect(
+            requestTo(
+                BASE_URL + "/admin/realms/prisma/users/" + keycloakId + "/role-mappings/realm"))
+        .andExpect(method(HttpMethod.POST))
+        .andRespond(withSuccess());
+
+    UUID result =
+        client.createInvitedUser("l@test.com", "Lucía", "Fernández", Set.of("INTERNAL_EVALUATOR"));
+
+    assertEquals(keycloakId, result);
+    server.verify();
+  }
+
+  @Test
+  void sendExecuteActionsEmailAsksForTheActionsWithLifespanAndRedirect() {
+    UUID keycloakId = UUID.randomUUID();
+    expectAdminToken();
+    server
+        .expect(
+            requestTo(
+                org.hamcrest.Matchers.startsWith(
+                    BASE_URL
+                        + "/admin/realms/prisma/users/"
+                        + keycloakId
+                        + "/execute-actions-email")))
+        .andExpect(method(HttpMethod.PUT))
+        .andExpect(queryParam("lifespan", "259200"))
+        .andExpect(queryParam("client_id", "prisma-frontend"))
+        // La URL viaja codificada como valor de query (Keycloak la decodifica).
+        .andExpect(queryParam("redirect_uri", "https%3A%2F%2Fprisma.test"))
+        .andExpect(content().json("[\"VERIFY_EMAIL\",\"UPDATE_PASSWORD\"]"))
+        .andRespond(withNoContent());
+
+    client.sendExecuteActionsEmail(
+        keycloakId,
+        List.of("VERIFY_EMAIL", "UPDATE_PASSWORD"),
+        259200,
+        "prisma-frontend",
+        "https://prisma.test");
+
+    server.verify();
+  }
+
+  @Test
+  void sendExecuteActionsEmailFailureIsReportedAsEmailDelivery() {
+    UUID keycloakId = UUID.randomUUID();
+    expectAdminToken();
+    server
+        .expect(
+            requestTo(
+                org.hamcrest.Matchers.startsWith(
+                    BASE_URL
+                        + "/admin/realms/prisma/users/"
+                        + keycloakId
+                        + "/execute-actions-email")))
+        .andRespond(withServerError());
+
+    assertThrows(
+        KeycloakAdminClient.EmailDeliveryException.class,
+        () ->
+            client.sendExecuteActionsEmail(
+                keycloakId, List.of("UPDATE_PASSWORD"), 60, "prisma-frontend", "https://x.test"));
+  }
+
   @Test
   void updateProfileSendsEnabledFlag() {
     UUID keycloakId = UUID.randomUUID();
@@ -227,6 +321,127 @@ class KeycloakAdminClientTest {
 
     assertDoesNotThrow(() -> client.resetPassword(keycloakId, "NuevaPass1!"));
     server.verify();
+  }
+
+  @Test
+  void removeOtpCredentialsDeletesOnlyTheOtpOnesAndKeepsThePassword() {
+    UUID keycloakId = UUID.randomUUID();
+    String base = BASE_URL + "/admin/realms/prisma/users/" + keycloakId + "/credentials";
+    expectAdminToken();
+    server
+        .expect(requestTo(base))
+        .andExpect(method(HttpMethod.GET))
+        .andRespond(
+            withSuccess(
+                "[{\"id\":\"c-pass\",\"type\":\"password\",\"createdDate\":1},"
+                    + "{\"id\":\"c-otp1\",\"type\":\"otp\",\"userLabel\":\"viejo\"},"
+                    + "{\"id\":\"c-otp2\",\"type\":\"otp\",\"userLabel\":\"nuevo\"}]",
+                MediaType.APPLICATION_JSON));
+    server
+        .expect(requestTo(base + "/c-otp1"))
+        .andExpect(method(HttpMethod.DELETE))
+        .andRespond(withStatus(HttpStatus.NO_CONTENT));
+    server
+        .expect(requestTo(base + "/c-otp2"))
+        .andExpect(method(HttpMethod.DELETE))
+        .andRespond(withStatus(HttpStatus.NO_CONTENT));
+
+    assertEquals(2, client.removeOtpCredentials(keycloakId));
+    // Nunca se pidió borrar «c-pass»: MockRestServiceServer falla ante una request no esperada.
+    server.verify();
+  }
+
+  // ---- PRI-233: bloqueo de cuenta por intentos fallidos ----
+
+  private String bruteForceUrl(UUID keycloakId) {
+    return BASE_URL + "/admin/realms/prisma/attack-detection/brute-force/users/" + keycloakId;
+  }
+
+  @Test
+  void loginFailureStatusReadsTheLockAndTheFailureCount() {
+    UUID keycloakId = UUID.randomUUID();
+    expectAdminToken();
+    server
+        .expect(requestTo(bruteForceUrl(keycloakId)))
+        .andExpect(method(HttpMethod.GET))
+        .andRespond(
+            withSuccess(
+                "{\"numFailures\":10,\"disabled\":true,\"lastIPFailure\":\"10.0.0.1\","
+                    + "\"lastFailure\":1793999000000,\"extra\":\"ignorado\"}",
+                MediaType.APPLICATION_JSON));
+
+    var status = client.loginFailureStatus(keycloakId);
+
+    assertTrue(status.disabled());
+    assertEquals(10, status.numFailures());
+    server.verify();
+  }
+
+  @Test
+  void loginFailureStatusOfAUserWithoutFailuresIsNotLocked() {
+    UUID keycloakId = UUID.randomUUID();
+    expectAdminToken();
+    server
+        .expect(requestTo(bruteForceUrl(keycloakId)))
+        .andRespond(
+            withSuccess(
+                "{\"numFailures\":0,\"disabled\":false,\"lastFailure\":0}",
+                MediaType.APPLICATION_JSON));
+
+    var status = client.loginFailureStatus(keycloakId);
+
+    assertFalse(status.disabled());
+    assertEquals(0, status.numFailures());
+  }
+
+  @Test
+  void clearLoginFailuresDeletesTheBruteForceRecordOfThatUserOnly() {
+    UUID keycloakId = UUID.randomUUID();
+    expectAdminToken();
+    server
+        .expect(requestTo(bruteForceUrl(keycloakId)))
+        .andExpect(method(HttpMethod.DELETE))
+        .andExpect(header("Authorization", "Bearer tok"))
+        .andRespond(withStatus(HttpStatus.NO_CONTENT));
+
+    assertDoesNotThrow(() -> client.clearLoginFailures(keycloakId));
+    server.verify();
+  }
+
+  @Test
+  void unlockErrorsFromKeycloakArePropagated() {
+    UUID keycloakId = UUID.randomUUID();
+    expectAdminToken();
+    server
+        .expect(requestTo(bruteForceUrl(keycloakId)))
+        .andRespond(withStatus(HttpStatus.FORBIDDEN));
+
+    assertThrows(Exception.class, () -> client.clearLoginFailures(keycloakId));
+  }
+
+  @Test
+  void removeOtpCredentialsReturnsZeroWhenTheUserHasNoOtp() {
+    UUID keycloakId = UUID.randomUUID();
+    expectAdminToken();
+    server
+        .expect(requestTo(BASE_URL + "/admin/realms/prisma/users/" + keycloakId + "/credentials"))
+        .andExpect(method(HttpMethod.GET))
+        .andRespond(
+            withSuccess("[{\"id\":\"c-pass\",\"type\":\"password\"}]", MediaType.APPLICATION_JSON));
+
+    assertEquals(0, client.removeOtpCredentials(keycloakId));
+    server.verify();
+  }
+
+  @Test
+  void removeOtpCredentialsPropagatesKeycloakErrors() {
+    UUID keycloakId = UUID.randomUUID();
+    expectAdminToken();
+    server
+        .expect(requestTo(BASE_URL + "/admin/realms/prisma/users/" + keycloakId + "/credentials"))
+        .andRespond(withStatus(HttpStatus.INTERNAL_SERVER_ERROR));
+
+    assertThrows(Exception.class, () -> client.removeOtpCredentials(keycloakId));
   }
 
   @Test
@@ -435,5 +650,115 @@ class KeycloakAdminClientTest {
     List<KeycloakAdminClient.LoginFailureEvent> result = client.fetchLoginFailures(0);
 
     assertTrue(result.isEmpty());
+  }
+
+  // testSmtpConnection: Keycloak (26.x) manda SIEMPRE el correo de prueba al "usuario actualmente
+  // logueado" -- acá, la cuenta de servicio service-account-prisma-backend -- e ignora cualquier
+  // parámetro de destinatario (ver el javadoc del método). Por eso el cliente le cambia el email a
+  // esa cuenta antes de pedir la prueba y SIEMPRE lo restaura después.
+
+  private static final String SA_USERNAME = "service-account-prisma-backend";
+  private static final UUID SA_ID = UUID.randomUUID();
+
+  private void expectFindServiceAccount(String currentEmail) {
+    String body =
+        currentEmail == null
+            ? "[{\"id\":\"" + SA_ID + "\"}]"
+            : "[{\"id\":\"" + SA_ID + "\",\"email\":\"" + currentEmail + "\"}]";
+    server
+        .expect(
+            requestTo(
+                BASE_URL + "/admin/realms/prisma/users?username=" + SA_USERNAME + "&exact=true"))
+        .andExpect(method(HttpMethod.GET))
+        .andRespond(withSuccess(body, MediaType.APPLICATION_JSON));
+  }
+
+  private void expectGetServiceAccountEmail(String currentEmail) {
+    String body =
+        currentEmail == null
+            ? "{\"id\":\"" + SA_ID + "\"}"
+            : "{\"id\":\"" + SA_ID + "\",\"email\":\"" + currentEmail + "\"}";
+    server
+        .expect(requestTo(BASE_URL + "/admin/realms/prisma/users/" + SA_ID))
+        .andExpect(method(HttpMethod.GET))
+        .andRespond(withSuccess(body, MediaType.APPLICATION_JSON));
+  }
+
+  private void expectSetServiceAccountEmail(String email) {
+    server
+        .expect(requestTo(BASE_URL + "/admin/realms/prisma/users/" + SA_ID))
+        .andExpect(method(HttpMethod.PUT))
+        .andExpect(jsonPath("$.email").value(email))
+        .andRespond(withSuccess());
+  }
+
+  @Test
+  void testSmtpConnectionEnviaAlDestinatarioPedidoYRestauraElEmailAnterior() {
+    expectAdminToken();
+    expectFindServiceAccount("anterior@prisma.uy");
+    expectGetServiceAccountEmail("anterior@prisma.uy");
+    expectSetServiceAccountEmail("destino@cualquiera.com");
+    server
+        .expect(requestTo(BASE_URL + "/admin/realms/prisma/testSMTPConnection"))
+        .andExpect(method(HttpMethod.POST))
+        .andRespond(withSuccess());
+    expectSetServiceAccountEmail("anterior@prisma.uy");
+
+    client.testSmtpConnection(Map.of("host", "smtp.test"), "destino@cualquiera.com");
+
+    server.verify();
+  }
+
+  @Test
+  void testSmtpConnectionSinEmailPrevioLoRestauraVacioYNoNulo() {
+    expectAdminToken();
+    expectFindServiceAccount(null);
+    expectGetServiceAccountEmail(null);
+    expectSetServiceAccountEmail("destino@cualquiera.com");
+    server
+        .expect(requestTo(BASE_URL + "/admin/realms/prisma/testSMTPConnection"))
+        .andExpect(method(HttpMethod.POST))
+        .andRespond(withSuccess());
+    expectSetServiceAccountEmail("");
+
+    client.testSmtpConnection(Map.of("host", "smtp.test"), "destino@cualquiera.com");
+
+    server.verify();
+  }
+
+  @Test
+  void testSmtpConnectionSiKeycloakFallaIgualRestauraElEmailYPropagaElError() {
+    expectAdminToken();
+    expectFindServiceAccount("anterior@prisma.uy");
+    expectGetServiceAccountEmail("anterior@prisma.uy");
+    expectSetServiceAccountEmail("destino@cualquiera.com");
+    server
+        .expect(requestTo(BASE_URL + "/admin/realms/prisma/testSMTPConnection"))
+        .andExpect(method(HttpMethod.POST))
+        .andRespond(withStatus(HttpStatus.INTERNAL_SERVER_ERROR));
+    expectSetServiceAccountEmail("anterior@prisma.uy");
+
+    assertThrows(
+        InvalidRequestException.class,
+        () -> client.testSmtpConnection(Map.of("host", "smtp.test"), "destino@cualquiera.com"));
+
+    server.verify();
+  }
+
+  @Test
+  void testSmtpConnectionSinCuentaDeServicioLanzaSinLlamarAKeycloakDeMas() {
+    expectAdminToken();
+    server
+        .expect(
+            requestTo(
+                BASE_URL + "/admin/realms/prisma/users?username=" + SA_USERNAME + "&exact=true"))
+        .andExpect(method(HttpMethod.GET))
+        .andRespond(withSuccess("[]", MediaType.APPLICATION_JSON));
+
+    assertThrows(
+        InvalidRequestException.class,
+        () -> client.testSmtpConnection(Map.of("host", "smtp.test"), "destino@cualquiera.com"));
+
+    server.verify();
   }
 }

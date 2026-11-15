@@ -42,6 +42,7 @@ processors:
 
 output.elasticsearch:
   hosts: ["${ELASTICSEARCH_HOSTS}"]
+  ssl.certificate_authorities: ["/etc/prisma/tls/ca.crt"]
   username: "${ELASTICSEARCH_USERNAME}"
   password: "${ELASTICSEARCH_PASSWORD}"
 

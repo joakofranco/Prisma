@@ -83,13 +83,15 @@ class AiEvidenceClientTest {
   }
 
   @Test
-  void citationsReturnsEmptyListWhenBackendAiFails() {
+  void citationsThrowsAiUnavailableWhenBackendAiFailsInsteadOfReturningEmpty() {
+    // PRI-359: «IA caída» no se puede confundir con «sin resultados».
     server.expect(requestTo(BASE_URL + "/api/v1/evidence/citations")).andRespond(withServerError());
 
-    List<EvidenceCitationDto> result =
-        client.citations(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), "backup policy");
-
-    assertTrue(result.isEmpty());
+    assertThrows(
+        uy.edu.prisma.domain.exception.AiUnavailableException.class,
+        () ->
+            client.citations(
+                UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), "backup policy"));
   }
 
   @Test
@@ -182,6 +184,7 @@ class AiEvidenceClientTest {
 
     assertEquals("Definir una política", result.summary());
     assertEquals(List.of("Paso 1", "Paso 2"), result.tips());
+    assertTrue(result.generated());
     server.verify();
   }
 
@@ -195,5 +198,6 @@ class AiEvidenceClientTest {
 
     assertEquals("", result.summary());
     assertEquals(1, result.tips().size());
+    assertFalse(result.generated());
   }
 }

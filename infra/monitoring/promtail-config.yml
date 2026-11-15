@@ -22,3 +22,58 @@ scrape_configs:
         target_label:  'container'
       - source_labels: ['__meta_docker_container_log_stream']
         target_label:  'stream'
+
+    # Métricas derivadas del access.log de NGINX (DoS y fuerza bruta): Promtail las expone en
+    # :9080/metrics como promtail_custom_* y Prometheus las lee (job "promtail"). Ver
+    # prometheus/rules/security.yml.
+    pipeline_stages:
+      - match:
+          selector: '{container="/prisma-nginx"}'
+          stages:
+            - regex:
+                expression: '^\S+ \S+ \S+ \[[^\]]+\] "(?P<method>\S+) (?P<path>\S+) [^"]*" (?P<status>\d{3}) '
+            - labels:
+                status:
+            - metrics:
+                nginx_requests_total:
+                  type: Counter
+                  description: "Peticiones atendidas por NGINX"
+                  max_idle_duration: 24h
+                  config:
+                    match_all: true
+                    action: inc
+            - match:
+                selector: '{container="/prisma-nginx", status="429"}'
+                stages:
+                  - metrics:
+                      nginx_rate_limited_total:
+                        type: Counter
+                        description: "Peticiones rechazadas por el límite de tasa de NGINX (429)"
+                        max_idle_duration: 24h
+                        config:
+                          match_all: true
+                          action: inc
+            - match:
+                selector: '{container="/prisma-nginx", status="429"} |~ "login-actions/authenticate"'
+                stages:
+                  - metrics:
+                      nginx_auth_login_rate_limited_total:
+                        type: Counter
+                        description: "Intentos de login rechazados por el límite de tasa (429)"
+                        max_idle_duration: 24h
+                        config:
+                          match_all: true
+                          action: inc
+      - match:
+          selector: '{container="/prisma-fail2ban"}'
+          stages:
+            - regex:
+                expression: 'NOTICE\s+\[(?P<jail>[^\]]+)\]\s+Ban (?P<banned_ip>\S+)'
+            - metrics:
+                fail2ban_bans_total:
+                  type: Counter
+                  description: "IPs bloqueadas por fail2ban"
+                  source: banned_ip
+                  max_idle_duration: 24h
+                  config:
+                    action: inc

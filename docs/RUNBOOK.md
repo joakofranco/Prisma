@@ -356,19 +356,166 @@ que no está sujeto a esta política.
 
 **Para apagar la MFA por rol** (p. ej. un ambiente de demo): `make mfa-disable`.
 
-## Backup y recuperación
+## Bloqueo de cuenta por intentos fallidos (RF-AUTH-08)
+
+Keycloak bloquea la cuenta tras **10 intentos fallidos consecutivos en 15 minutos** y la mantiene
+bloqueada **15 minutos** (espera fija, sin crecimiento). Parámetros del realm `prisma`:
+
+| Parámetro | Valor | Significado |
+|---|---|---|
+| `failureFactor` | 10 | intentos fallidos que bloquean |
+| `maxDeltaTimeSeconds` | 900 | ventana en que se cuentan |
+| `waitIncrementSeconds` = `maxFailureWaitSeconds` | 900 | bloqueo de 15 min, siempre igual |
+| `minimumQuickLoginWaitSeconds` / `quickLoginCheckMilliSeconds` | 60 / 1000 | sin cambios: dos fallos con menos de 1 s de diferencia bloquean 60 s antes de llegar a los 10 |
+
+Están en `infra/keycloak/realm-prisma.json` (entornos nuevos) y se aplican en los existentes con
+`make auth-policy`; `make auth-policy-status` los compara con lo esperado.
+
+**Desbloquear a un usuario** sin esperar los 15 minutos: el `PRISMA_ADMIN` abre **Usuarios** y usa el
+botón con el candado abierto («Desbloquear cuenta») de la fila. Queda registrado como
+`UNLOCK_USER` en la bitácora. Si la cuenta no estaba bloqueada, la pantalla lo avisa y no cambia
+nada. Solo el administrador global puede hacerlo (no el `ORG_RESPONSIBLE`).
+
+**Qué ve quien intenta entrar.** Keycloak no avisa que una cuenta está bloqueada (es por diseño: así
+nadie puede averiguar qué cuentas existen): responde con el mismo error que para una contraseña
+incorrecta o un usuario inexistente. Por eso el texto de ese error explica la política
+(«Invalid username or password. After 10 failed attempts in a row the account is locked for 15
+minutes.») y se define en el tema de login `prisma` (`infra/keycloak/themes/prisma/login/messages/`;
+hay una versión en español lista para cuando se habilite el español en el realm). Los números del
+texto (10 intentos, 15 minutos) son los de la tabla de arriba: si se cambian, hay que cambiarlos
+también en esos archivos. El tema se asigna al realm con `make auth-policy`.
+
+**Qué ve el administrador.** La lista de **Usuarios** muestra el estado real de cada cuenta: una
+cuenta bloqueada figura como «Cuenta bloqueada · Hasta las HH:MM» en la columna Acceso (no «Puede
+iniciar sesión») y su candado se resalta en rojo; las demás lo muestran atenuado. El backend lo
+consulta a Keycloak por cada usuario de la página (`locked` y `lockedUntil` en `GET /api/users`); si
+Keycloak no responde, esa fila queda sin marca en vez de fallar la lista.
+
+**Al probar el bloqueo, tené en cuenta el límite de NGINX** (sección siguiente): el login admite una
+ráfaga (`burst`) de 15 intentos seguidos por IP, más que los 10 fallos que bloquean la cuenta, así
+que probando a mano el bloqueo de Keycloak llega antes que cualquier rechazo de NGINX. Pasados esos
+15, NGINX deja pasar un intento cada 3 segundos (20 por minuto) y rechaza el resto con `429`; lo que
+NGINX rechaza no llega a Keycloak y no cuenta para el bloqueo. Dos fallos con menos de 1 segundo de
+diferencia activan además la espera de acceso rápido (60 s): al probar, dejá más de 1 segundo entre
+intentos. Para llegar a 10 fallos sin tocar nada de NGINX también se puede probar contra Keycloak
+directo (puerto 8180).
+
+## Rate limiting de login (RNF-07)
+
+NGINX limita los intentos de login **por IP** (zona `auth_login`, ver `infra/nginx/nginx.conf` y
+`infra/nginx/conf.d/prisma-locations.inc`):
+
+| Parámetro | Valor | Significado |
+|---|---|---|
+| `rate` | `20r/m` | en régimen, un intento cada 3 segundos (20 por minuto) |
+| `burst` | `15` (`nodelay`) | los primeros 16 intentos seguidos de una IP pasan sin esperar |
+| código al rechazar | `429` | `limit_req_status` / `limit_conn_status` (antes 503) |
+
+Se aplica solo al endpoint donde Keycloak procesa usuario/contraseña del formulario de login
+(`/auth/realms/*/login-actions/authenticate`) — no al endpoint de token
+(`protocol/openid-connect/token`), que también usa el refresh silencioso de sesión del frontend y
+no debe verse afectado. Esto es independiente de la protección de fuerza bruta de Keycloak
+(sección anterior), que es por cuenta/usuario tras varios fallos; este límite de NGINX es por IP,
+sin importar a qué usuario se le esté probando la contraseña. El `burst` es mayor que los 10 fallos
+con que Keycloak bloquea una cuenta a propósito: así el bloqueo de la cuenta llega antes que el
+rechazo de NGINX. Como es por IP, varias personas detrás de la misma IP (una red o una VPN)
+comparten el cupo.
+
+El resto de los límites de NGINX: `/api/` admite 30 solicitudes por segundo por IP (`burst=50`) y
+hasta 20 conexiones simultáneas. Todos rechazan con `429`. `backend-ai` no se publica por NGINX:
+solo lo llama `backend-core` por la red interna.
+
+**Síntoma si se excede:** NGINX responde `429 Too Many Requests` (en el login, el navegador muestra
+esa página de NGINX). Esos intentos no llegan a Keycloak. La zona de rate limiting vive en memoria
+compartida: para levantar el límite antes de que se libere solo basta con esperar unos segundos, o
+reiniciar el contenedor (`docker compose restart nginx`). Cambiar `rate`/`burst` no requiere
+reiniciar: se edita el archivo (está montado en el contenedor), se valida con
+`docker exec prisma-nginx nginx -t` y se recarga con `docker exec prisma-nginx nginx -s reload`.
+
+## Backup y recuperación (RNF-13)
 
 ```bash
-make backup    # pg_dump comprimido a backups/postgres_<timestamp>.sql.gz
-make restore   # restaura desde el backup MÁS RECIENTE en backups/
+make backup    # corrida manual inmediata: pg_dump + espejo del bucket de evidencias a backups/
+make restore   # restaura Postgres + evidencias desde el backup MÁS RECIENTE en backups/
 ```
 
-> **Importante — cobertura real del backup:** pese a lo que dice el comentario del target en el
-> `Makefile` ("Backup de Postgres"), **`make backup` solo respalda Postgres.** Los
-> archivos de evidencia en RustFS (bucket `prisma-evidences`) no tienen ningún backup automatizado
-> hoy — sólo viven en el volumen `prisma-evidences-data`. Si se necesita recuperación real ante
-> desastre, hay que agregar `mc mirror` (o equivalente) contra el bucket como parte de la rutina de
-> backup, o al menos documentar el volumen Docker como la única copia existente.
+El respaldo corre automáticamente **una vez al día** (Ofelia, servicio `backup-scheduler`, perfil
+`management` o `full`) ejecutando `scripts/backup/backup.sh` dentro del contenedor
+`backup-runner` — el mismo script que corren los `make` de arriba a mano. Cada corrida genera, en
+`./backups/`:
+
+- `postgres_<timestamp>.sql.gz` — dump completo de Postgres.
+- `evidences_<timestamp>/` — espejo completo del bucket `prisma-evidences` de RustFS (vía `aws s3
+  sync` contra el endpoint de RustFS, el mismo protocolo S3 que ya usa `backend-core` para
+  subir/bajar evidencia).
+
+Cada corrida verifica la integridad del dump de Postgres (`gzip -t` + que no haya quedado vacío)
+antes de darlo por bueno; si falla esa verificación, si el dump queda corrupto, o si no se pudo
+espejar el bucket de evidencias, el script termina con exit code distinto de cero y, si está
+configurada `BACKUP_ALERT_WEBHOOK_URL` (ver `.env.example`), notifica el fallo por webhook
+(Slack/Discord/Teams-compatible).
+
+Los backups con más de `BACKUP_RETENTION_DAYS` días (30 por defecto, ver `.env.example`) se borran
+al final de cada corrida. `make restore` toma siempre el dump de Postgres y el espejo de
+evidencias más recientes; para restaurar un punto en el tiempo específico, correr
+`scripts/backup/restore.sh` a mano dentro del contenedor apuntando al timestamp deseado.
+
+> Antes de esto, `make backup` solo respaldaba Postgres (sin ningún mecanismo diario, solo a
+> mano) y el bucket de evidencias no tenía backup en absoluto — ver el historial de este archivo
+> si hace falta el contexto completo de esa brecha.
+
+## Retención de la bitácora (RF-TRZ-04)
+
+Los registros de `audit.audit_logs` se retienen **al menos 365 días**. Lo garantiza el motor, no
+solo el código: el trigger `trg_audit_logs_retention` (migración
+`V31__audit_log_retention.sql`) rechaza cualquier `DELETE` de una fila con menos de 365 días,
+venga de la aplicación, de un script o de una consola. El error que se ve es:
+
+```
+ERROR:  RF-TRZ-04: los registros de la bitácora se retienen al menos 365 días (registro <id> del <fecha>)
+```
+
+Los backups diarios (30 días, ver arriba) no cubren por sí solos este período: la copia de los 12
+meses vive en la propia base.
+
+**Purga de registros vencidos (opcional, solo si el volumen lo justifica).** La aplicación nunca
+purga sola. Si hace falta liberar espacio, borrar únicamente lo que ya cumplió el período, tras un
+`make backup`:
+
+```sql
+DELETE FROM audit.audit_logs WHERE created_at < now() - INTERVAL '365 days';
+```
+
+Si la condición alcanzara alguna fila más nueva, el trigger aborta el `DELETE` completo y no se
+borra nada. `TRUNCATE` no pasa por el trigger: no usarlo sobre esta tabla salvo en mantenimiento
+deliberado (p. ej. reinicializar un ambiente de pruebas).
+
+## Identidad visual de los correos de Keycloak (PRI-366)
+
+Los correos que envía Keycloak (recuperación de contraseña, verificación de email, etc.) usan
+el theme `prisma` (`infra/keycloak/themes/prisma/email/`), montado al contenedor vía
+`docker-compose.yml` y activado con `"emailTheme": "prisma"` en `realm-prisma.json`. Solo se
+sobrescribe `email/html/template.ftl` (el wrapper que envuelve todos los correos) con una banda
+de color + el wordmark "PRISMA" — el contenido de cada correo (textos, botones, links) sigue
+viniendo del theme `keycloak` por defecto (`parent=keycloak`), así que alcanza con ese único
+archivo para que **todos** los correos, incluido "¿Olvidaste tu contraseña?", queden con la
+identidad visual de PRISMA.
+
+**Cómo probarlo:**
+1. `make up` (o el target que levante el perfil `security`/`full`, que incluye Keycloak).
+2. Si existe el botón "Enviar correo de prueba" en la configuración de SMTP del panel de admin,
+   usarlo apunta a probar la conexión SMTP en sí (PRI-362), no este theme — no sirve para ver el
+   branding.
+3. Para ver el theme real: en la pantalla de login, click en "¿Olvidaste tu contraseña?",
+   ingresar un email de un usuario existente, y revisar la bandeja de ese usuario. El correo
+   debe mostrar la banda azul oscuro con "PRISMA" en el encabezado.
+
+**Si el cambio no se refleja:** Keycloak en `start-dev` (el modo que usa este proyecto, ver el
+`command` del servicio `keycloak`) desactiva el cache de temas por defecto, así que un cambio en
+los archivos del theme se toma sin reiniciar el contenedor — alcanza con refrescar/reintentar el
+envío. Si corre en modo `start` (producción, cache de temas activado), hay que reiniciar el
+contenedor de Keycloak (`docker compose restart keycloak`) después de cambiar cualquier archivo
+de `infra/keycloak/themes/`.
 
 ## Rotación de secretos (JWT/DB)
 
@@ -384,10 +531,120 @@ make restore   # restaura desde el backup MÁS RECIENTE en backups/
 
 - Disponibilidad: 99.5%
 - Latencia p95 API: < 500 ms
-- Backup Postgres: diario, retención 30 días (recordatorio: no cubre RustFS, ver arriba)
+- Backup Postgres + evidencias (RustFS): diario, retención 30 días (ver arriba)
 
 ## Referencias
 
 - Setup completo del entorno: [`Dev-Config.md`](Dev-Config.md)
 - Modelo de seguridad y endurecimientos recientes: [`SECURITY.md`](SECURITY.md)
 - Testing (automatizado + metodología manual que encontró varios de estos incidentes): [`Testing.md`](Testing.md)
+
+## Alertas y monitoreo
+
+Prometheus evalúa las reglas de `infra/monitoring/prometheus/rules/` (`availability.yml`,
+`saturation.yml`, `security.yml`) y manda lo que dispara a Alertmanager, que las envía por correo.
+Las alertas activas se ven en Grafana → carpeta PRISMA → **«PRISMA · Estado general y alertas»**.
+
+| Tablero | Qué muestra |
+|---|---|
+| Estado general y alertas | Alertas activas, estado de cada servicio (ACTIVO/CAÍDO), saturación del host, contenedores, API |
+| Seguridad: DoS y fuerza bruta | Peticiones y 429 de NGINX, logins fallidos de Keycloak, 401/403 de la API, conexiones TCP |
+| Elasticsearch | Estado del clúster, shards, heap, indexación y búsquedas |
+| Observabilidad y sondas | Prometheus, Alertmanager, Loki, Promtail, Grafana, Keycloak y latencia de las sondas |
+
+**Qué alerta:** servicio caído (`ServiceDown`, `ProbeDown`, `ContainerNotRunning`), saturación de
+CPU, memoria, disco, conexiones de PostgreSQL, heap de la JVM y Redis, errores 5xx y latencia de la
+API, y seguridad: DoS (`DosRateLimit*`, `RequestFloodSpike`, `TcpConnectionsFlood`,
+`SynFloodSuspected`) y fuerza bruta (`LoginFailuresHigh`, `BruteForceInProgress`,
+`LoginRateLimitHit`, `ApiUnauthorizedSpike`). Los umbrales están en cada regla.
+
+**Correo:** por defecto las alertas llegan a Mailpit (buzón de pruebas, <http://localhost:8025>).
+Para producción se definen en `.env` `ALERT_EMAIL_TO`, `ALERT_SMTP_FROM`, `ALERT_SMTP_SMARTHOST`,
+`ALERT_SMTP_USER`, `ALERT_SMTP_PASSWORD` y `ALERT_SMTP_REQUIRE_TLS` (cuenta propia del sistema).
+
+**Probar las alertas:** detener un servicio (`docker stop prisma-pgadmin`) dispara `ProbeDown` al
+minuto; 25 logins fallidos seguidos disparan `LoginFailuresHigh`. Tras recrear contenedores,
+`docker exec prisma-nginx nginx -s reload` si `/auth` responde 502.
+
+Validar las reglas: `promtool check rules infra/monitoring/prometheus/rules/*.yml`.
+
+## Bloqueo automático de IPs (fail2ban)
+
+El contenedor `prisma-fail2ban` lee el `access.log` de NGINX y bloquea las IPs que abusan de la plataforma. Un bloqueo agrega `deny <IP>;` a la lista que NGINX incluye (`/etc/nginx/banlist/f2b.conf`) y recarga NGINX con una señal HUP. La IP bloqueada recibe 403.
+
+| Jail | Qué detecta | Umbral | Bloqueo |
+|---|---|---|---|
+| `prisma-nginx-ratelimit` | Respuestas 429 (límite de tasa de NGINX) | 30 en 1 min | 10 min |
+| `prisma-nginx-login` | 429 en `login-actions/authenticate` (fuerza bruta contra el formulario) | 5 en 5 min | 30 min |
+| `prisma-nginx-scan` | 401, 403 o 404 (escaneo o credenciales robadas), sin contar `/assets/` | 60 en 1 min | 10 min |
+
+Cada reincidencia duplica el tiempo de bloqueo, hasta un máximo de 24 h. Los bloqueos se guardan en el volumen `prisma-fail2ban-data` y se restauran al reiniciar el contenedor.
+
+- Ver las IPs bloqueadas: `docker exec prisma-fail2ban fail2ban-client banned`
+- Estado de un jail: `docker exec prisma-fail2ban fail2ban-client status prisma-nginx-ratelimit`
+- Desbloquear una IP: `docker exec prisma-fail2ban fail2ban-client unban <IP>`
+- Probar un filtro contra el log: `docker exec prisma-fail2ban fail2ban-regex /logs/access.log prisma-nginx-ratelimit`
+- Cada bloqueo dispara la alerta `Fail2banIpBanned` (dashboard y correo).
+
+Notas:
+- Para que no se bloquee a los administradores, poner sus IPs en `F2B_IGNORE_IPS` (`.env`).
+- Si NGINX queda detrás de otro proxy o balanceador, todas las peticiones llegan con la IP de ese proxy: agregarla a `F2B_IGNORE_IPS` o configurar `real_ip` en NGINX antes de usar fail2ban.
+- El contenedor usa el socket de Docker solo para enviar la señal de recarga a `prisma-nginx`. El log compartido se vacía solo cuando supera los 50 MB.
+- Protege contra el abuso de una IP o de pocas IPs. No reemplaza una protección de red contra un DDoS volumétrico (CDN o proveedor).
+
+## Configuración de alertas desde la plataforma
+
+El administrador define a dónde y cómo se envían las alertas desde **Configuración → Alertas del sistema**, sin editar archivos:
+
+- Destinatarios (hasta 10), servidor SMTP, puerto, remitente, usuario, contraseña y TLS.
+- **Guardar configuración** valida los datos, reescribe la configuración de Alertmanager y la recarga sin reiniciarlo.
+- **Enviar alerta de prueba** comprueba la conexión con el servidor SMTP y manda una alerta `PruebaDeCorreo` a los destinatarios guardados (llega en menos de un minuto).
+- Los correos de cambio y recuperación de contraseña son otra configuración (pestaña **Correo electrónico**, SMTP de Keycloak).
+
+Cómo funciona:
+
+- backend-core y Alertmanager comparten el volumen `prisma-alertmanager-config`. Un contenedor de arranque (`alertmanager-config-init`) le da permisos para los dos.
+- Los datos (menos la contraseña) se guardan en la tabla `prisma.alert_settings`. La contraseña SMTP solo se escribe en el archivo `smtp_password` del volumen, nunca en la base de datos ni en las respuestas de la API.
+- Hasta la primera vez que se guarda, Alertmanager usa los valores de `ALERT_*` del `.env` (por defecto, el buzón de pruebas Mailpit). Después, manda lo guardado en la plataforma y esas variables dejan de usarse. El archivo `.managed` del volumen marca ese cambio.
+- Al arrancar, backend-core vuelve a escribir la configuración de Alertmanager con lo guardado, para que no quede desfasada si cambia la plantilla.
+- Para volver a los valores del `.env`: borrar `.managed` del volumen y reiniciar Alertmanager.
+
+## Portainer: administrador inicial
+
+Portainer se bloquea («instance timed out for security purposes») si nadie crea el administrador en los 5 minutos siguientes a cada arranque. Para que no pase, el compose lo crea al arrancar con la contraseña del archivo `.secrets/portainer_admin_password` (ignorado por git). Usuario: `admin`.
+
+- En un entorno nuevo, crear el archivo antes de levantar Portainer: `mkdir -p .secrets && openssl rand -base64 24 | tr -d "/+=
+" > .secrets/portainer_admin_password`.
+- Ver la contraseña: `cat .secrets/portainer_admin_password`.
+- La contraseña se aplica solo cuando Portainer todavía no tiene administrador. Para cambiarla después, hacerlo desde la propia interfaz (Users).
+
+## Alta disponibilidad con Docker Swarm (un solo servidor)
+
+El stack `docker-stack.yml` corre sobre un Swarm de un único nodo. Da 2 réplicas de `backend-core`, `frontend` y `keycloak` (configurables con `BACKEND_CORE_REPLICAS`, `FRONTEND_REPLICAS`, `KEYCLOAK_REPLICAS`), actualizaciones sin corte (`start-first` con vuelta atrás automática) y reposición de réplicas caídas. **No protege contra la caída del servidor**: si el host cae, cae todo.
+
+| Servicio | Réplicas | Actualización |
+|---|---|---|
+| `backend-core`, `frontend`, `keycloak` | 2 | `start-first`, sin corte |
+| `nginx` | 1 (puertos en modo `host` para conservar la IP real) | `stop-first`, corte de unos segundos |
+| `backend-ai`, `clamav`, `postgres`, `keycloak-db`, `redis`, `rustfs`, `ollama`, `fail2ban` | 1 | `stop-first` |
+
+Las herramientas de monitoreo, SonarQube, Portainer y pgAdmin siguen en `docker-compose.yml`; se unen a la red `prisma-net` (overlay attachable) del stack.
+
+Despliegue y operación:
+
+```bash
+make swarm-deploy        # no construye: usa imágenes ghcr.io/$GHCR_ORG/prisma-*:$TAG (TAG = commit actual por defecto)
+make swarm-ps            # estado de servicios y tareas
+make swarm-down          # quita el stack (los volúmenes se conservan)
+```
+
+- Las imágenes se construyen y se suben antes con una etiqueta de versión; `latest` no se usa.
+- Los volúmenes conservan los nombres `prisma-*` de Compose, así que migrar desde Compose reutiliza los datos. Detener primero el stack de Compose.
+- `backend-core` usa ShedLock (tabla `shedlock`): con 2 réplicas, el sondeo de logins fallidos y el reanálisis de evidencias corren una sola vez.
+- Keycloak forma un clúster Infinispan con `KC_CACHE_STACK=jdbc-ping`: la sesión sobrevive a la caída de una réplica.
+- Con Cloudflare Tunnel, los puertos en modo `host` escuchan en todas las interfaces (Swarm no permite fijar `127.0.0.1`). Cerrar `NGINX_HTTPS_PORT` y `NGINX_HTTP_PORT` hacia fuera con el firewall del servidor y dejar entrar solo a `cloudflared`.
+- Fail2ban avisa a nginx buscando el servicio Swarm `prisma_nginx` por etiqueta.
+- Primer despliegue sobre una base de Keycloak vacía: desplegar con `KEYCLOAK_REPLICAS=1` y subir a 2 después. Con 2 réplicas desde cero, ambas crean el esquema a la vez y una se reinicia sola (se recupera, pero queda ruido en los logs).
+- Keycloak ancla JGroups a la interfaz de la red overlay (`-Djgroups.bind.address=match-interface:eth0`). Sin eso, los nodos se anuncian con la IP de `docker_gwbridge` y no se ven entre sí.
+- nginx reintenta sin límite al arrancar: Swarm solo resuelve el nombre de un servicio cuando ya tiene tareas en marcha, y nginx falla si algún upstream no resuelve.
+- Para probar en paralelo a un entorno existente: `STACK`, `VOLUME_PREFIX`, `NETWORK_NAME`, `NGINX_HTTP_PORT`, `NGINX_HTTPS_PORT` y `RESOLVE_IMAGE=never` (imágenes locales) se pueden pasar por entorno a `scripts/swarm/deploy.sh`, y pisan lo que diga el `.env`.

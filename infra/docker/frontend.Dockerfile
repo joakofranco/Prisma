@@ -22,16 +22,20 @@ COPY . .
 
 # Argumentos de build para inyectar en el bundle
 ARG VITE_API_BASE_URL
-ARG VITE_AI_API_BASE_URL
 ARG VITE_KEYCLOAK_URL
 ARG VITE_KEYCLOAK_REALM
 ARG VITE_KEYCLOAK_CLIENT_ID
 
 ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
-ENV VITE_AI_API_BASE_URL=${VITE_AI_API_BASE_URL}
 ENV VITE_KEYCLOAK_URL=${VITE_KEYCLOAK_URL}
 ENV VITE_KEYCLOAK_REALM=${VITE_KEYCLOAK_REALM}
 ENV VITE_KEYCLOAK_CLIENT_ID=${VITE_KEYCLOAK_CLIENT_ID}
+
+# Commit y fecha de construcción que muestra el detalle de la versión (los pasa el CI; opcionales).
+ARG VITE_APP_COMMIT=""
+ARG VITE_APP_BUILD_TIME=""
+ENV VITE_APP_COMMIT=${VITE_APP_COMMIT}
+ENV VITE_APP_BUILD_TIME=${VITE_APP_BUILD_TIME}
 
 RUN npm run build
 
@@ -57,6 +61,7 @@ RUN apk update && apk upgrade --no-cache
 
 # Copiar configuración custom de nginx
 COPY --from=builder /app/nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=builder /app/nginx-listen.conf /etc/nginx/frontend-listen.conf
 
 # Copiar el build compilado
 COPY --from=builder /app/dist /usr/share/nginx/html

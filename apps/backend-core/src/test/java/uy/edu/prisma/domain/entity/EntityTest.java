@@ -25,6 +25,8 @@ class EntityTest {
             null,
             null,
             false,
+            null,
+            null,
             roles,
             Set.of(),
             OffsetDateTime.now(),
@@ -78,19 +80,20 @@ class EntityTest {
     UUID id = UUID.randomUUID();
     Organization all =
         new Organization(
-            id, "N", "NIT", "S", "Z", null, true, OffsetDateTime.now(), OffsetDateTime.now());
+            id, "N", "NIT", true, "S", "Z", null, true, OffsetDateTime.now(), OffsetDateTime.now());
     assertEquals(id, all.getId());
     assertEquals("N", all.getName());
-    assertEquals("NIT", all.getRut());
+    assertEquals("NIT", all.getIdentifier());
+    assertTrue(all.getIdentifierIsRut());
     assertEquals("S", all.getSector());
     assertEquals("Z", all.getSize());
     assertNull(all.getResponsible());
     assertTrue(all.getEnabled());
 
     Organization built =
-        Organization.builder().id(id).name("N2").rut("N2").sector("S2").size("Z2").build();
+        Organization.builder().id(id).name("N2").identifier("N2").sector("S2").size("Z2").build();
     built.setName("N3");
-    built.setRut("N3");
+    built.setIdentifier("N3");
     built.setSector("S3");
     built.setSize("Z3");
     built.setResponsible(User.builder().id(UUID.randomUUID()).build());
@@ -115,7 +118,19 @@ class EntityTest {
     OffsetDateTime now = OffsetDateTime.now();
     Evaluation all =
         new Evaluation(
-            id, "N", null, "5.0", null, Evaluation.Status.IN_PROGRESS, 3, null, now, now);
+            id,
+            "N",
+            null,
+            "5.0",
+            null,
+            Evaluation.Status.IN_PROGRESS,
+            3,
+            null,
+            now,
+            now,
+            null,
+            null,
+            null);
     assertEquals(id, all.getId());
     assertEquals("N", all.getName());
     assertNull(all.getOrganization());
@@ -359,7 +374,8 @@ class EntityTest {
   @Test
   void catalogControlBuildersAndAccessors() {
     UUID id = UUID.randomUUID();
-    CatalogControl all = new CatalogControl(id, null, "CT1", "D", 3, 1, new java.util.HashSet<>());
+    CatalogControl all =
+        new CatalogControl(id, null, "CT1", "D", 3, null, null, null, 1, new java.util.HashSet<>());
     assertEquals(id, all.getId());
     assertEquals("CT1", all.getCode());
     assertEquals("D", all.getDescription());
@@ -431,14 +447,28 @@ class EntityTest {
     OffsetDateTime now = OffsetDateTime.now();
     Evidence all =
         new Evidence(
-            id, null, null, "doc.pdf", 1024L, "application/pdf", "k1", null, now, "d", false);
+            id,
+            null,
+            null,
+            "doc.pdf",
+            1024L,
+            "application/pdf",
+            "k1",
+            "h1",
+            null,
+            now,
+            "d",
+            Evidence.ScanStatus.CLEAN,
+            false);
     assertEquals(id, all.getId());
+    assertEquals(Evidence.ScanStatus.CLEAN, all.getScanStatus());
     assertNull(all.getEvaluation());
     assertNull(all.getControl());
     assertEquals("doc.pdf", all.getFileName());
     assertEquals(1024L, all.getFileSize());
     assertEquals("application/pdf", all.getFileType());
     assertEquals("k1", all.getStorageKey());
+    assertEquals("h1", all.getFileHash());
     assertNull(all.getUploadedBy());
     assertEquals(now, all.getUploadedAt());
     assertEquals("d", all.getDescription());
@@ -471,6 +501,8 @@ class EntityTest {
             id,
             null,
             null,
+            null,
+            null,
             AuditObservation.ObservationType.NON_CONFORMITY,
             "d",
             AuditObservation.ObservationStatus.CLOSED,
@@ -479,6 +511,8 @@ class EntityTest {
     assertEquals(id, all.getId());
     assertNull(all.getEvaluation());
     assertNull(all.getControl());
+    assertNull(all.getEvidence());
+    assertNull(all.getSubcategory());
     assertEquals(AuditObservation.ObservationType.NON_CONFORMITY, all.getType());
     assertEquals("d", all.getDescription());
     assertEquals(AuditObservation.ObservationStatus.CLOSED, all.getStatus());
@@ -520,7 +554,9 @@ class EntityTest {
             ImprovementPlan.Priority.HIGH,
             ImprovementPlan.PlanStatus.IN_PROGRESS,
             java.time.LocalDate.of(2026, 12, 31),
+            "Comentario",
             now);
+    assertEquals("Comentario", all.getComments());
     assertEquals(id, all.getId());
     assertNull(all.getEvaluation());
     assertNull(all.getControl());

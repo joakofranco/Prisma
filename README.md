@@ -215,7 +215,7 @@ cp .env.example .env
 
 # 3) Generar el certificado TLS autofirmado de nginx (una vez; sin esto el contenedor
 #    de nginx no arranca -- ver docs/Certificados-TLS.md)
-make certs
+make certs      # también genera la CA interna que cifra nginx/backend-core -> Keycloak
 
 # 4) Levantar TODA la stack (frontend, backends, BD, IAM, monitoreo, etc.)
 make up
@@ -242,7 +242,7 @@ make mvp-up     # postgres, redis, keycloak(+db), backend-core, backend-ai, fron
 Queda **afuera**: el LLM (`ollama` y el modelo de ~4.7 GB — no se descarga), la subida de
 archivos de evidencia (necesita RustFS) y las funciones de RAG (citas de evidencia y tips de
 remediación degradan sin romper). `backend-ai` se levanta ocioso sólo para que nginx arranque.
-Comandos: `make mvp-ps`, `make mvp-logs`, `make mvp-seed`, `make mvp-down`.
+Comandos: `make mvp-ps`, `make mvp-logs`, `make mvp-down`.
 
 No hace falta un paso manual de "seed": el catálogo MCU 5.0 y el usuario administrador semilla
 (`admin@prisma.local`) se cargan solos vía migraciones Flyway al arrancar `backend-core`, y el
@@ -396,7 +396,7 @@ make test-ai            # Solo tests del backend-ai (pytest)
 make lint               # ESLint + Checkstyle/Spotless + Ruff/Black
 make format             # Auto-formateo (Prettier + Spotless + Black/Ruff)
 make pull-llm           # Descarga Llama 3 + el modelo de embeddings en Ollama
-make backup / restore   # Backup y restauración de Postgres
+make backup / restore   # Backup y restauración diarios de Postgres + evidencias (RNF-13)
 make sonar               # Corre el scanner de SonarQube local contra el contenedor propio
 make security-scan       # Trivy local (filesystem)
 make certs / certs-force # Genera/regenera el certificado TLS local de nginx
@@ -404,7 +404,7 @@ make health              # Verifica que frontend/backend-core/backend-ai respond
 make clean / nuke        # Baja la stack; `nuke` además borra volúmenes (¡destructivo!)
 ```
 
-No hace falta `make seed` ni `make migrate`: las migraciones de base de datos las aplica
+No hace falta sembrar datos ni correr `make migrate`: las migraciones de base de datos las aplica
 automáticamente Flyway al arrancar `backend-core` (`spring-boot-starter-flyway`), y el catálogo
 MCU 5.0 se carga como parte de esas mismas migraciones.
 

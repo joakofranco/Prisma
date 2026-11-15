@@ -17,17 +17,41 @@ export interface User {
   createdAt: string;
   /** false = todavía no tiene cuenta en Keycloak y por lo tanto no puede iniciar sesión. */
   canLogin: boolean;
+  /** RF-USR-05 (PRI-240): última invitación por correo enviada; null si se dio de alta con
+   * contraseña temporal. */
+  invitedAt?: string | null;
+  /** Primer ingreso del invitado. Con invitedAt y sin esto, la invitación está pendiente. */
+  invitationAcceptedAt?: string | null;
+  /** RF-AUTH-08: estado real de la cuenta en Keycloak. true = bloqueada ahora por demasiados
+   * intentos fallidos; false = no lo está; null/ausente = no se sabe (sin cuenta o Keycloak no
+   * respondió) y la pantalla no muestra nada. */
+  locked?: boolean | null;
+  /** Hasta cuándo dura el bloqueo (solo si `locked`). */
+  lockedUntil?: string | null;
+}
+
+/** Alta por invitación: el rol es siempre Evaluador interno y lo fija el backend. */
+export interface InviteUserPayload {
+  email: string;
+  firstName: string;
+  lastName: string;
+  /** Solo lo elige PRISMA_ADMIN; para un responsable el backend usa su propia organización. */
+  organizationId?: string;
 }
 
 export interface Organization {
   id: string;
   name: string;
-  /** Uruguay usa "RUT" (Colombia y otros usan "NIT") -- opcional: no toda organización lo tiene
-   * cargado al momento del alta. */
-  rut?: string | null;
+  /** Identificador de la organización (RUT u otro) -- opcional: no toda organización lo tiene
+   * cargado al momento del alta. Si `identifierIsRut`, el servidor lo validó y lo guardó
+   * normalizado (`AA-BBBBBB-001-D`). */
+  identifier?: string | null;
+  identifierIsRut: boolean;
   sector: string;
   size: string;
   responsibleId?: string;
+  /** Nombre (o email) del responsable; null si no tiene (PRI-367, lo muestra Reportes). */
+  responsibleName?: string | null;
   enabled: boolean;
   createdAt: string;
 }
@@ -61,6 +85,23 @@ export interface AuditLog {
   ipAddress?: string | null;
   userAgent?: string | null;
   createdAt: string;
+}
+
+// RF-AUD-10: historial de ciclos de auditoría de UNA evaluación puntual (envíos y devoluciones),
+// a diferencia de AuditLog (bitácora global, solo para PRISMA_ADMIN/ORG_RESPONSIBLE) -- este lo
+// puede consultar cualquiera con acceso a la organización de la evaluación, en particular AUDITOR.
+export interface EvaluationAuditCycleEvent {
+  id: string;
+  action: string;
+  /** Estado al que pasó la evaluación en este evento; null para eventos que no son de cambio de
+   * estado (p.ej. "CERTIFY"). */
+  status: string | null;
+  performedBy?: string | null;
+  performedByName?: string | null;
+  occurredAt: string;
+  /** 0 = autoevaluación inicial, antes del primer envío a auditoría. Se incrementa cada vez que
+   * la evaluación vuelve a READY_FOR_AUDIT -- un reenvío tras ser devuelta es un ciclo nuevo. */
+  cycleNumber: number;
 }
 
 /** Nivel dentro de un Requisito del catálogo real MCU 5.0 (1 = más básico, 4 = más avanzado).
@@ -108,11 +149,37 @@ export interface MaturityRequirement {
   controls: MaturityControl[];
 }
 
+export interface ControlGuide {
+  interpretation: string;
+  example: string;
+  evidence: string;
+}
+
 export interface MaturityControl {
   id: string;
   code: string;
   description: string;
   targetLevel: MaturityLevel;
+  guide?: ControlGuide;
+}
+
+export interface ControlGuideItem {
+  id: string;
+  code: string;
+  description: string;
+  targetLevel: MaturityLevel;
+  requirementCode: string;
+  interpretation: string | null;
+  example: string | null;
+  evidence: string | null;
+}
+
+export interface ControlGuideImportResult {
+  parsed: number;
+  updated: number;
+  notInCatalog: string[];
+  incomplete: string[];
+  catalogWithoutGuide: number;
 }
 
 /** Vista plana de un control del catálogo (GET /catalog/{version}/controls). La usa el selector
@@ -126,6 +193,67 @@ export interface CatalogControlFlat {
   requirementCode: string;
   requirementDescription: string;
   domain: string;
+}
+
+export type OverviewPriority = 'ALTA' | 'MEDIA' | 'BAJA' | null;
+
+export interface OverviewRequirement {
+  id: string;
+  code: string;
+  description: string;
+}
+
+export interface OverviewControl {
+  id: string;
+  code: string;
+  description: string;
+  targetLevel: MaturityLevel;
+  requirementCode: string;
+}
+
+export interface OverviewSubcategory {
+  id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  priority: OverviewPriority;
+  requirements: OverviewRequirement[];
+  controls: OverviewControl[];
+}
+
+export interface OverviewCategory {
+  id: string;
+  code: string;
+  name: string;
+  subcategories: OverviewSubcategory[];
+}
+
+export interface OverviewFunction {
+  id: string;
+  code: string;
+  name: string;
+  categories: OverviewCategory[];
+}
+
+export interface OverviewPriorityCounts {
+  alta: number;
+  media: number;
+  baja: number;
+  sinPrioridad: number;
+}
+
+export interface EvaluationOverview {
+  evaluationId: string;
+  evaluationName: string;
+  catalogVersion: string;
+  catalogLabel: string;
+  communityProfileId: string | null;
+  communityProfileName: string | null;
+  subcategoryCount: number;
+  requirementCount: number;
+  controlCount: number;
+  priorityCounts: OverviewPriorityCounts;
+  functions: OverviewFunction[];
 }
 
 export type EvaluationStatus =
@@ -150,6 +278,12 @@ export interface Evaluation {
   assignedAuditorNames?: string[];
   createdAt: string;
   updatedAt: string;
+  // RF-AUD-09: sello de certificación, completado solo una vez que status === 'APPROVED'.
+  approvedBy?: string | null;
+  approvedAt?: string | null;
+  /** Firma HMAC-SHA256 (hex) de los metadatos de cierre -- ver EvaluationService.sealApproval. */
+  certificationSeal?: string | null;
+  approvedByName?: string | null;
 }
 
 /** Subconjunto curado de controles del catálogo para un sector/comunidad (p.ej. "PYME"). */
@@ -168,6 +302,14 @@ export interface CommunityProfile {
   catalogVersion: string;
   controlIds: string[];
   createdAt: string;
+}
+
+/** Comentario del evaluador sobre una subcategoría completa (RF-EVA-06). */
+export interface SubcategoryComment {
+  subcategoryId: string;
+  comment: string | null;
+  updatedBy: string | null;
+  updatedAt: string | null;
 }
 
 export interface EvaluationResponse {
@@ -193,6 +335,24 @@ export interface MaturityResult {
   currentLevel: number;
   targetLevel: MaturityLevel;
   gap: number;
+  nextLevel: number | null;
+  missingControls: MissingControl[];
+}
+
+export interface MissingControl {
+  id: string;
+  code: string;
+  description: string;
+  targetLevel: number;
+  status: 'NON_COMPLIANT' | 'UNANSWERED';
+}
+
+/** Reglas de carga de evidencias que define el backend (RF-EVI-02). */
+export interface EvidenceRules {
+  /** Extensiones permitidas, en minúscula y sin punto. */
+  allowedExtensions: string[];
+  /** Tamaño máximo de una evidencia, en bytes (RF-EVI-04). */
+  maxSizeBytes: number;
 }
 
 export interface Evidence {
@@ -202,12 +362,15 @@ export interface Evidence {
   fileName: string;
   fileSize: number;
   fileType: string;
+  /** Hash SHA-256 del contenido del archivo, calculado por el backend al subirlo (RF-EVI-05). */
+  fileHash?: string;
   uploadedBy: string;
   uploadedAt: string;
   description?: string;
-  url?: string;
   /** true si el asistente de IA pudo extraer e indexar el contenido para búsqueda de citas. */
   aiIndexed: boolean;
+  /** Resultado del antivirus (RNF-09): CLEAN, QUARANTINED (a la espera del análisis) o INFECTED. */
+  scanStatus?: 'CLEAN' | 'QUARANTINED' | 'INFECTED';
 }
 
 /**
@@ -222,10 +385,22 @@ export interface EvidenceCitation {
   score: number;
 }
 
+/** Decisión del auditor sobre una cita de la IA (PRI-359): alimenta la medición de la búsqueda. */
+export interface CitationFeedbackItem {
+  controlId: string;
+  fileName: string | null;
+  location: string | null;
+  snippet: string;
+  score: number | null;
+  decision: 'ACCEPTED' | 'REJECTED';
+}
+
 export interface AuditObservation {
   id: string;
   evaluationId: string;
   controlId?: string;
+  /** Subcategoría del catálogo a la que está atada la observación (RF-AUD-05), si corresponde. */
+  subcategoryId?: string;
   type: 'OBSERVATION' | 'NON_CONFORMITY' | 'RECOMMENDATION';
   description: string;
   status: 'OPEN' | 'IN_PROGRESS' | 'RESOLVED' | 'CLOSED';
@@ -233,6 +408,31 @@ export interface AuditObservation {
   createdAt: string;
   /** Nombre de quien la registró -- la "estampa" de qué auditor trabajó esta auditoría. */
   createdByName?: string | null;
+  /** Código del control y de la subcategoría a los que está atada (PRI-354), si corresponde. */
+  controlCode?: string | null;
+  subcategoryCode?: string | null;
+  /** Evidencia citada de la que sale la observación (RF-EVI-15) y su nombre de archivo. */
+  evidenceId?: string | null;
+  evidenceFileName?: string | null;
+}
+
+/** Marca «para revisar» de un control dentro de una evaluación (PRI-352). */
+export interface ControlFlag {
+  controlId: string;
+  flaggedBy: string | null;
+  flaggedByName: string | null;
+  flaggedAt: string | null;
+}
+
+/** Dictamen del auditor sobre un control (RF-AUD-06). */
+export type AuditVerdict = 'VALIDATED' | 'NOT_VALIDATED' | 'NEEDS_MORE_EVIDENCE';
+
+export interface ControlVerdict {
+  controlId: string;
+  verdict: AuditVerdict;
+  setBy: string | null;
+  setByName: string | null;
+  updatedAt: string | null;
 }
 
 export interface ImprovementPlan {
@@ -244,6 +444,8 @@ export interface ImprovementPlan {
   priority: 'HIGH' | 'MEDIUM' | 'LOW';
   status: 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'OVERDUE';
   dueDate: string;
+  /** Comentarios libres del ítem (RF-PLN-02), hasta 2000 caracteres. */
+  comments?: string | null;
   createdAt: string;
 }
 
@@ -255,6 +457,8 @@ export interface SuggestedImprovement {
   functionName: string;
   categoryName: string;
   subcategoryName: string;
+  /** Todas las subcategorías donde el control cuenta (la primera es subcategoryName). */
+  subcategoryNames: string[];
   controlCode: string;
   action: string;
   currentLevel: number;
@@ -267,6 +471,19 @@ export interface SuggestedImprovement {
 export interface RemediationTips {
   summary: string;
   tips: string[];
+  /** false = texto de reemplazo porque la IA falló: no se ofrece para usar ni se registra. */
+  generated?: boolean;
+}
+
+/** Qué se hizo con una guía de IA (PRI-370): alimenta el dataset de fine-tuning. */
+export interface AiSuggestionFeedback {
+  controlId: string;
+  currentLevel: number;
+  targetLevel: number;
+  originalSummary: string;
+  originalTips: string[];
+  outcome: 'ACCEPTED_UNEDITED' | 'ACCEPTED_EDITED' | 'REJECTED';
+  editedText?: string;
 }
 
 export interface DashboardStats {
@@ -304,6 +521,59 @@ export interface EmailSettings {
   starttls: boolean;
   ssl: boolean;
   configured: boolean;
+}
+
+/** Configuración de las alertas del sistema (Alertmanager). La contraseña SMTP nunca se devuelve:
+ * `passwordSet` indica si ya hay una guardada. `warning` viene si se guardó pero Alertmanager no
+ * respondió a la recarga. */
+export interface AlertSettings {
+  recipients: string;
+  smtpHost: string;
+  smtpPort: number;
+  from: string;
+  authEnabled: boolean;
+  username: string | null;
+  passwordSet: boolean;
+  requireTls: boolean;
+  configured: boolean;
+  updatedAt: string;
+  warning: string | null;
+}
+
+export interface UpdateAlertSettings {
+  recipients: string;
+  smtpHost: string;
+  smtpPort: number;
+  from: string;
+  authEnabled: boolean;
+  username: string | null;
+  password: string | null;
+  requireTls: boolean;
+}
+
+export interface AlertTestResult {
+  smtpReachable: boolean;
+  alertSent: boolean;
+  message: string;
+}
+
+/** RF-PLN-03: plazos por defecto (en meses) con los que se sugiere la fecha límite de una acción
+ * del plan de mejora según su prioridad. Los configura PRISMA_ADMIN (1–60, Alta ≤ Media ≤ Baja). */
+export interface PlanDeadlines {
+  highMonths: number;
+  mediumMonths: number;
+  lowMonths: number;
+}
+
+/** Servicio de la infraestructura del lanzador «Servicios» (solo PRISMA_ADMIN y solo desde la VPN). */
+export interface PlatformService {
+  id: string;
+  key: string;
+  name: string;
+  description: string;
+  category: string;
+  url: string;
+  defaultUrl: string;
 }
 
 /** Body de actualización: `password` es obligatorio si `authEnabled` es true (Keycloak nunca

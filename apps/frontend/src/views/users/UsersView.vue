@@ -7,11 +7,29 @@
           Gestión de usuarios del sistema
         </p>
       </div>
-      <BaseButton variant="primary" @click="openCreateModal">
-        <PlusIcon class="w-4 h-4" />
-        Nuevo Usuario
-      </BaseButton>
+      <div class="flex flex-wrap items-center gap-2">
+        <BaseButton variant="secondary" @click="openCreateModal">
+          <PlusIcon class="w-4 h-4" />
+          Nuevo Usuario
+        </BaseButton>
+        <!-- RF-USR-05 (PRI-240): alta por invitación, sin contraseña que pasar a mano. -->
+        <BaseButton variant="primary" data-testid="open-invite" @click="showInviteModal = true">
+          <EnvelopeIcon class="w-4 h-4" />
+          Invitar evaluador
+        </BaseButton>
+      </div>
     </div>
+
+    <BaseAlert
+      v-if="inviteSentTo"
+      variant="success"
+      dismissible
+      data-testid="invite-sent"
+      @dismiss="inviteSentTo = ''"
+    >
+      <strong>Invitación enviada a {{ inviteSentTo }}.</strong> Le llega un correo para crear su
+      contraseña; el enlace vence en 72 horas.
+    </BaseAlert>
 
     <div class="flex items-center gap-3">
       <div class="relative flex-1 max-w-md">
@@ -74,15 +92,57 @@
           {{ value ? 'Activo' : 'Inactivo' }}
         </span>
       </template>
-      <template #cell-canLogin="{ value }">
+      <template #cell-canLogin="{ value, row }">
+        <div v-if="isInvitationPending(row as User)" data-testid="invitation-pending">
+          <span
+            class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
+          >
+            Invitación pendiente
+          </span>
+          <span class="block mt-1 text-xs text-slate-500 dark:text-slate-400">
+            Enviada el {{ formatDate((row as User).invitedAt as string) }}
+          </span>
+          <button
+            type="button"
+            class="mt-1 text-xs font-semibold text-amber-700 hover:text-amber-900 hover:underline disabled:opacity-50 dark:text-amber-300 dark:hover:text-amber-200"
+            data-testid="resend-invitation"
+            :disabled="resendingId === (row as User).id"
+            @click="resendInvitation(row as User)"
+          >
+            {{ resendingId === (row as User).id ? 'Reenviando…' : 'Reenviar invitación' }}
+          </button>
+        </div>
         <span
-          v-if="value"
+          v-else-if="value && (row as User).locked !== true"
           class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
         >
           Puede iniciar sesión
         </span>
+        <!-- RF-AUTH-08: bloqueada por intentos fallidos. Hasta que pase el tiempo o un administrador
+        la desbloquee no puede iniciar sesión, aunque esté «Activa». -->
+        <div v-else-if="(row as User).locked === true" data-testid="account-locked">
+          <span
+            class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300"
+          >
+            <LockClosedIcon class="w-3 h-3" aria-hidden="true" />
+            Cuenta bloqueada
+          </span>
+          <span
+            v-if="(row as User).lockedUntil"
+            class="block mt-1 text-xs text-slate-500 dark:text-slate-400"
+            data-testid="locked-until"
+          >
+            Hasta las {{ formatTime((row as User).lockedUntil as string) }}
+          </span>
+        </div>
         <span
-          v-else
+          v-if="(row as User).invitationAcceptedAt"
+          class="block mt-1 text-xs text-slate-500 dark:text-slate-400"
+        >
+          Aceptó la invitación el {{ formatDate((row as User).invitationAcceptedAt as string) }}
+        </span>
+        <span
+          v-else-if="!value"
           class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
           title="Todavía no tiene cuenta para loguearse: edite el usuario y fíjele una contraseña"
         >
@@ -104,6 +164,23 @@
         >
           <NoSymbolIcon v-if="(row as User).enabled" class="w-4 h-4" />
           <CheckCircleIcon v-else class="w-4 h-4" />
+        </button>
+        <button
+          v-if="isPlatformAdmin && (row as User).canLogin"
+          class="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+          :class="[
+            (row as User).locked === true
+              ? 'bg-red-50 text-red-600 hover:bg-red-100 dark:bg-red-950 dark:text-red-300 dark:hover:bg-red-900'
+              : '',
+            (row as User).locked === false ? 'opacity-40' : '',
+          ]"
+          :title="unlockTitle(row as User)"
+          aria-label="Desbloquear cuenta"
+          data-testid="unlock-user"
+          :data-locked="String((row as User).locked ?? 'unknown')"
+          @click="confirmUnlock(row as User)"
+        >
+          <LockOpenIcon class="w-4 h-4" />
         </button>
         <button
           class="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
@@ -162,20 +239,68 @@
             required
           />
           <div>
+            <!-- Alta: la contraseña se genera sola y se muestra en claro para poder copiarla antes
+                 de crear el usuario. Edición: campo oculto, sin generador (la clave que se fija
+                 ahí queda permanente, a diferencia de la del alta, que es temporal). -->
             <BaseInput
               v-model="form.password"
-              label="Contraseña"
-              type="password"
+              :label="editingUser ? 'Contraseña' : 'Contraseña temporal'"
+              :type="editingUser ? 'password' : 'text'"
               placeholder="••••••••"
               :error="errors.password"
               :required="!editingUser"
             />
+            <div v-if="!editingUser" class="mt-2 flex flex-wrap items-center gap-2">
+              <BaseButton
+                variant="secondary"
+                type="button"
+                data-testid="copy-password"
+                @click="copyPassword"
+              >
+                <ClipboardDocumentIcon class="w-4 h-4" /> Copiar
+              </BaseButton>
+              <BaseButton
+                variant="outline"
+                type="button"
+                data-testid="regenerate-password"
+                @click="form.password = generatePassword()"
+              >
+                <ArrowPathIcon class="w-4 h-4" /> Generar otra
+              </BaseButton>
+            </div>
             <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">
               {{
                 editingUser
                   ? 'Dejar en blanco para no cambiarla. Fijar una acá es lo que le habilita el acceso a un usuario que todavía no puede iniciar sesión.'
-                  : 'Sin esto el usuario no va a poder iniciar sesión.'
+                  : 'Es temporal: el usuario deberá cambiarla en su primer inicio de sesión. Copiela y compártasela antes de crear el usuario; después no se vuelve a mostrar.'
               }}
+            </p>
+            <!-- PRI-365: al cambiar la contraseña de otro usuario, el backend (solo para PRISMA_ADMIN)
+                 le quita el MFA registrado. Se avisa ANTES de guardar. -->
+            <BaseAlert
+              v-if="willRemoveMfa"
+              variant="warning"
+              class="mt-2"
+              data-testid="mfa-removal-warning"
+            >
+              <strong
+                >Vas a cambiar la contraseña de este usuario y se le va a quitar el MFA.</strong
+              >
+              Si tenía un autenticador registrado, deja de valer: en su próximo inicio de sesión
+              tendrá que registrar uno nuevo (si la MFA es obligatoria para su rol) y entrar con la
+              contraseña que le pases. Usalo cuando haya perdido el acceso a su autenticador. Si
+              solo olvidó la contraseña, que use «¿Olvidaste tu contraseña?» en el login: no
+              necesita que se la restablezcas.
+            </BaseAlert>
+            <p
+              v-if="!editingUser && mfaRoleSelected"
+              class="mt-1 text-xs text-amber-700 dark:text-amber-400"
+              data-testid="mfa-first-login-hint"
+            >
+              Este rol requiere MFA: si la MFA obligatoria está activa, en ese mismo primer inicio
+              de sesión también se le pedirá registrar la aplicación autenticadora, además de
+              cambiar la contraseña. Son dos pasos distintos; el MFA no se vuelve a pedir al cambiar
+              la contraseña más adelante.
             </p>
           </div>
         </div>
@@ -254,6 +379,15 @@
         </BaseButton>
       </template>
     </BaseModal>
+
+    <InviteEvaluatorModal
+      v-model="showInviteModal"
+      :is-platform-admin="isPlatformAdmin"
+      :own-organization-name="ownOrganizationName"
+      :organization-options="inviteOrganizationOptions"
+      :email-configured="emailConfigured"
+      @invited="onInvited"
+    />
   </div>
 </template>
 
@@ -264,25 +398,33 @@
   import { useUsersStore } from '@/stores/users';
   import { useOrganizationsStore } from '@/stores/organizations';
   import { useAuthStore } from '@/stores/auth';
+  import { generatePassword } from '@/utils/password';
   import { usersService } from '@/services/resources';
   import { useNotification } from '@/composables/useUtils';
   import { ROLE_LABELS } from '@/utils/constants';
-  import { getErrorMessage } from '@/utils/helpers';
+  import { formatDate, getErrorMessage } from '@/utils/helpers';
   import { emailSchema, personNameSchema } from '@/utils/validators';
   import { getOrgMode, validateOrganizationCount } from '@/utils/organizationRules';
   import { assignableOrganizationOptions } from '@/utils/organizationOptions';
   import BaseMultiSelect from '@/components/common/BaseMultiSelect.vue';
   import DataTable from '@/components/common/DataTable.vue';
   import BaseButton from '@/components/common/BaseButton.vue';
+  import BaseAlert from '@/components/common/BaseAlert.vue';
   import BaseModal from '@/components/common/BaseModal.vue';
   import BaseInput from '@/components/common/BaseInput.vue';
+  import InviteEvaluatorModal from '@/components/users/InviteEvaluatorModal.vue';
   import {
     PlusIcon,
     MagnifyingGlassIcon,
     PencilIcon,
     TrashIcon,
     NoSymbolIcon,
+    LockOpenIcon,
+    LockClosedIcon,
     CheckCircleIcon,
+    ClipboardDocumentIcon,
+    ArrowPathIcon,
+    EnvelopeIcon,
   } from '@heroicons/vue/24/outline';
   import type { User, UserRole } from '@/types';
 
@@ -335,6 +477,18 @@
   const isEditingOwnAccount = computed(
     () => !!editingUser.value && editingUser.value.id === authStore.user?.id,
   );
+  // Roles para los que `make mfa-enable` exige MFA (ver scripts/keycloak/enable-mfa.sh).
+  const MFA_ROLES = ['PRISMA_ADMIN', 'ORG_RESPONSIBLE'];
+  // Solo un PRISMA_ADMIN que edita a OTRO usuario y le fija una contraseña: es el caso en que el
+  // backend le quita el MFA (ver UserService.removeMfaIfAdminResetsPassword).
+  const willRemoveMfa = computed(
+    () =>
+      !!editingUser.value &&
+      isPlatformAdmin.value &&
+      !isEditingOwnAccount.value &&
+      form.password.trim().length > 0,
+  );
+  const mfaRoleSelected = computed(() => form.roles.some((r) => MFA_ROLES.includes(r)));
 
   const errors = reactive({
     firstName: '',
@@ -459,6 +613,58 @@
     return needsResponsibleFirst.value && !form.roles.includes(roleValue);
   }
 
+  // ---- RF-USR-05 (PRI-240): invitación por correo ----
+  const showInviteModal = ref(false);
+  const inviteSentTo = ref('');
+  const resendingId = ref('');
+  // null = no se pudo consultar: se deja intentar y el backend responde si falta el correo.
+  const emailConfigured = ref<boolean | null>(null);
+  // El responsable solo ve (y solo puede invitar a) su propia organización.
+  const ownOrganizationName = computed(() => orgOptions.value[0]?.label ?? '');
+  const inviteOrganizationOptions = computed(() =>
+    assignableOrganizationOptions(orgStore.organizations, []),
+  );
+
+  function isInvitationPending(user: User): boolean {
+    return !!user.invitedAt && !user.invitationAcceptedAt;
+  }
+
+  async function loadInvitationAvailability() {
+    try {
+      const { data } = await usersService.invitationAvailability();
+      emailConfigured.value = data.emailConfigured;
+    } catch {
+      emailConfigured.value = null;
+    }
+  }
+
+  async function onInvited(user: User) {
+    inviteSentTo.value = user.email;
+    currentPage.value = 1;
+    await store.fetchUsers(1, pageSize, searchTerm.value);
+  }
+
+  async function resendInvitation(user: User) {
+    if (
+      !confirm(
+        `¿Reenviar la invitación a ${user.email}? Le llega un correo nuevo con un enlace que vence en 72 horas.`,
+      )
+    ) {
+      return;
+    }
+    resendingId.value = user.id;
+    try {
+      const { data } = await usersService.resendInvitation(user.id);
+      const index = users.value.findIndex((u) => u.id === user.id);
+      if (index !== -1) users.value[index] = data;
+      notification.success(`Invitación reenviada a ${user.email}`);
+    } catch (err) {
+      notification.error(getErrorMessage(err, 'No se pudo reenviar la invitación'));
+    } finally {
+      resendingId.value = '';
+    }
+  }
+
   function openCreateModal() {
     editingUser.value = null;
     guidedNewOrgName.value = '';
@@ -468,7 +674,20 @@
       // preseleccionamos ya que el campo queda deshabilitado para ese rol.
       form.organizationIds = [orgOptions.value[0].value];
     }
+    form.password = generatePassword();
     showCreateModal.value = true;
+  }
+
+  // Copia la contraseña generada al portapapeles. Si el navegador no lo permite (contexto no
+  // seguro, permiso denegado), no se falla en silencio: se avisa y se la deja seleccionable para
+  // copiarla a mano.
+  async function copyPassword() {
+    try {
+      await navigator.clipboard.writeText(form.password);
+      notification.success('Contraseña copiada al portapapeles');
+    } catch {
+      notification.warning('No se pudo copiar automáticamente: selecciónela y cópiela a mano');
+    }
   }
 
   let searchTimeout: ReturnType<typeof setTimeout>;
@@ -520,6 +739,48 @@
       );
     } catch (err) {
       notification.error(getErrorMessage(err, `Error al ${verb} el usuario`));
+    }
+  }
+
+  // RF-AUTH-08: Keycloak bloquea la cuenta tras 10 intentos fallidos seguidos en 15 minutos. El
+  // backend informa el estado real de cada usuario de la página (`locked`, `lockedUntil`): la
+  // columna «Acceso» lo muestra y el candado se resalta solo en las cuentas bloqueadas. El
+  // administrador global puede levantar el bloqueo sin esperar; el botón sigue disponible aunque la
+  // fila no figure bloqueada (el estado puede haber cambiado desde que se cargó la lista) y el
+  // backend dice si realmente había algo que limpiar.
+  function formatTime(iso: string): string {
+    return new Date(iso).toLocaleTimeString('es-UY', { hour: '2-digit', minute: '2-digit' });
+  }
+
+  function unlockTitle(user: User): string {
+    if (user.locked === true) {
+      return user.lockedUntil
+        ? `Desbloquear cuenta (bloqueada hasta las ${formatTime(user.lockedUntil)})`
+        : 'Desbloquear cuenta (bloqueada)';
+    }
+    if (user.locked === false) return 'Desbloquear cuenta (no está bloqueada)';
+    return 'Desbloquear cuenta';
+  }
+
+  async function confirmUnlock(user: User) {
+    if (
+      !confirm(
+        `¿Desbloquear la cuenta de ${user.firstName} ${user.lastName}? Podrá volver a iniciar sesión de inmediato.`,
+      )
+    ) {
+      return;
+    }
+    try {
+      const { data } = await usersService.unlock(user.id);
+      if (data.wasLocked) {
+        notification.success(`Cuenta de ${user.firstName} ${user.lastName} desbloqueada`);
+      } else {
+        notification.warning(`La cuenta de ${user.firstName} ${user.lastName} no estaba bloqueada`);
+      }
+      // Se vuelve a pedir la página para que la fila refleje el estado real.
+      await store.fetchUsers(currentPage.value, pageSize, searchTerm.value);
+    } catch (err) {
+      notification.error(getErrorMessage(err, 'No se pudo desbloquear la cuenta'));
     }
   }
 
@@ -592,8 +853,13 @@
       if (form.password) payload.password = form.password;
 
       if (editingUser.value) {
+        const removesMfa = willRemoveMfa.value;
         await store.updateUser(editingUser.value.id, payload);
-        notification.success('Usuario actualizado correctamente');
+        notification.success(
+          removesMfa
+            ? 'Usuario actualizado. Se cambió su contraseña y se le quitó el MFA (si tenía uno).'
+            : 'Usuario actualizado correctamente',
+        );
       } else {
         await store.createUser(payload);
         notification.success('Usuario creado correctamente');
@@ -626,6 +892,7 @@
   }
 
   onMounted(async () => {
+    loadInvitationAvailability();
     await Promise.all([store.fetchUsers(1, pageSize), orgStore.fetchOrganizations(1, 100)]);
 
     // Llegada guiada desde "Nueva Organización": pre-cargamos el formulario para crear
@@ -634,6 +901,7 @@
     if (newOrgId) {
       form.organizationIds = [newOrgId];
       form.roles = ['ORG_RESPONSIBLE'];
+      form.password = generatePassword();
       guidedNewOrgName.value =
         (route.query.newOrgName as string) ||
         orgOptions.value.find((o) => o.value === newOrgId)?.label ||

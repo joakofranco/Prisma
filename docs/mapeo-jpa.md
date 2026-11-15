@@ -49,6 +49,8 @@
 | [`MaturityResult`](#maturityresult) | `maturity_results` | `prisma` |
 | [`Evidence`](#evidence) | `evidence` | `prisma` |
 | [`ImprovementPlan`](#improvementplan) | `improvement_plans` | `prisma` |
+| [`AiSuggestionFeedback`](#aisuggestionfeedback) | `ai_suggestion_feedback` | `prisma` |
+| [`AiCitationFeedback`](#aicitationfeedback) | `ai_citation_feedback` | `prisma` |
 | [`AuditObservation`](#auditobservation) | `audit_observations` | `prisma` |
 | [`AuditLog`](#auditlog) | `audit_logs` | `audit` |
 
@@ -64,12 +66,19 @@
 |---|---|---|
 | `id` | `id` | `UUID`, `@Id @GeneratedValue(UUID)` |
 | `name` | `name` | `@Column(nullable=false, length=200)` |
-| `rut` | `rut` | `@Column(unique=true, length=20)` — **opcional** (nullable). Uruguay usa "RUT" (Colombia y otros usan "NIT"); renombrado desde `nit` en `V17__organization_rut_optional.sql`. `UNIQUE` sigue vigente: Postgres no cuenta `NULL` contra ella, así que varias organizaciones sin RUT conviven sin chocar — el servicio normaliza explícitamente un RUT en blanco (`""`) a `NULL`, porque ahí sí Postgres los trata como valores iguales. |
+| `identifier` | `identifier` | `@Column(unique=true, length=20)` — **opcional** (nullable). Identificador de la organización (RUT u otro); era `nit` y pasó a `rut` en `V17__organization_rut_optional.sql`, y a `identifier` en `V35__organization_identifier.sql`. `UNIQUE` sigue vigente: Postgres no cuenta `NULL` contra ella, así que varias organizaciones sin identificador conviven sin chocar — el servicio normaliza explícitamente uno en blanco (`""`) a `NULL`, porque ahí sí Postgres los trata como valores iguales. El duplicado se controla además en el servicio, sin puntos, guiones ni espacios. |
+| `identifierIsRut` | `identifier_is_rut` | `@Column(nullable=false)` `Boolean`, por defecto `false`. Indica que el identificador es un RUT uruguayo: el servicio validó el dígito verificador y lo guardó normalizado (`AA-BBBBBB-001-D`). |
 | `sector` | `sector` | `@Column(length=100)` |
 | `size` | `size` | `@Column(length=50)` |
 | `responsible` | `responsible_id` | `@ManyToOne(LAZY) @JoinColumn(name="responsible_id")` — usuario responsable, opcional |
 | `enabled` | `enabled` | `@Column(nullable=false)`, `@Builder.Default = true` — baja lógica (ver `OrganizationService.delete()`) |
 | `createdAt`/`updatedAt` | `created_at`/`updated_at` | `OffsetDateTime`, `@PreUpdate` actualiza `updatedAt` |
+
+**Sin perfil comunitario:** `Organization` no tiene ningún campo de perfil. El perfil comunitario
+se elige **por evaluación** (`Evaluation.communityProfile`, columna `community_profile_id`), no por
+organización: una misma organización puede tener evaluaciones con perfiles distintos. Es una
+decisión del equipo que se aparta de la redacción original de RF-ORG-02 («clasificar la
+organización con un perfil comunitario»).
 
 **Sin `@OneToMany` hacia `User`/`Evaluation`:** el lado "muchos" de esas relaciones no está
 mapeado desde `Organization` (no hay `List<User> users` ni `List<Evaluation> evaluations`) —
@@ -312,6 +321,38 @@ original, no es una restricción que Hibernate haga cumplir contra una columna `
 Enums anidados `Priority` (`LOW`/`MEDIUM`/`HIGH`) y `PlanStatus`
 (`PENDING`/`IN_PROGRESS`/`COMPLETED`/`OVERDUE`), ambos `@Enumerated(STRING)`. `control` es
 `@ManyToOne(LAZY)` nullable (una acción de mejora puede ser general, no atada a un control).
+`comments` (`TEXT`, nullable, hasta 2000 caracteres validados en el DTO) guarda los comentarios
+libres del ítem (RF-PLN-02, migración `V27`); los ítems anteriores quedan con `null`.
+
+---
+
+### `AiSuggestionFeedback`
+
+```java
+@Entity @Table(name = "ai_suggestion_feedback", schema = "prisma")
+```
+
+Qué se hizo con cada guía de mejora generada por IA (PRI-370, migración `V32`); alimenta un dataset
+de fine-tuning. Enum anidado `Outcome` (`ACCEPTED_UNEDITED`/`ACCEPTED_EDITED`/`REJECTED`,
+`@Enumerated(STRING)`). `control` es `@ManyToOne(LAZY)` obligatorio: se referencia el control del
+catálogo y **a propósito no** la evaluación, la organización ni el usuario, para que el dataset no
+se pueda rastrear hasta una organización. `originalTips` es `jsonb` (`@JdbcTypeCode(SqlTypes.JSON)`,
+`List<String>`) y `editedText` solo existe en `ACCEPTED_EDITED` (lo exige un `CHECK`).
+
+---
+
+### `AiCitationFeedback`
+
+```java
+@Entity @Table(name = "ai_citation_feedback", schema = "prisma")
+```
+
+Decisión del auditor sobre una cita de la búsqueda asistida (PRI-359, migración `V33`). Enum
+anidado `Decision` (`ACCEPTED`/`REJECTED`, `@Enumerated(STRING)`). Igual que
+`AiSuggestionFeedback`, `control` es `@ManyToOne(LAZY)` obligatorio y **no** hay evaluación,
+organización ni usuario, para que el dataset no se pueda rastrear hasta una organización. Guarda el
+fragmento (`snippet`), el archivo, la ubicación y el puntaje que devolvió la IA. Es solo historial:
+cambiar de opinión agrega otra fila.
 
 ---
 
@@ -324,6 +365,10 @@ Enums anidados `Priority` (`LOW`/`MEDIUM`/`HIGH`) y `PlanStatus`
 Enums anidados `ObservationType` (`OBSERVATION`/`NON_CONFORMITY`/`RECOMMENDATION`) y
 `ObservationStatus` (`OPEN`/`IN_PROGRESS`/`RESOLVED`/`CLOSED`). Misma forma que `ImprovementPlan`:
 `evaluation` obligatorio, `control` y `createdBy` opcionales.
+`subcategory` es opcional (migración `V26`). `evidence` es `@ManyToOne(LAZY)` opcional (columna
+`evidence_id`, migración `V34`, `ON DELETE SET NULL`): la evidencia citada de la que sale la
+observación (RF-EVI-15, PRI-360); el servicio valida que sea de la misma evaluación. Si la evidencia
+se borra, la observación se conserva sin el vínculo.
 
 ---
 

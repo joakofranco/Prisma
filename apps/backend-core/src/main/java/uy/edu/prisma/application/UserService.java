@@ -1,7 +1,17 @@
 package uy.edu.prisma.application;
 
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -14,7 +24,9 @@ import uy.edu.prisma.domain.exception.InvalidRequestException;
 import uy.edu.prisma.domain.exception.ResourceNotFoundException;
 import uy.edu.prisma.domain.repository.*;
 import uy.edu.prisma.infrastructure.KeycloakAdminClient;
+import uy.edu.prisma.infrastructure.KeycloakAdminClient.EmailDeliveryException;
 import uy.edu.prisma.web.dto.Dto.CreateUserDto;
+import uy.edu.prisma.web.dto.Dto.InviteUserDto;
 import uy.edu.prisma.web.dto.Dto.PaginatedDto;
 import uy.edu.prisma.web.dto.Dto.UserDto;
 
@@ -28,6 +40,18 @@ public class UserService {
   private final AuditLogService auditLog;
   private final KeycloakAdminClient keycloakAdmin;
   private final CurrentUserService currentUser;
+  private final EmailSettingsService emailSettings;
+  private final String invitationClientId;
+  private final String invitationRedirectUri;
+
+  /**
+   * Vigencia del enlace de invitación: 72 horas. El correo muestra este valor (ver
+   * infra/keycloak/themes/prisma/email/html/executeActions.ftl, que lo recibe de Keycloak).
+   */
+  static final int INVITATION_LIFESPAN_SECONDS = 72 * 60 * 60;
+
+  /** Lo que el invitado hace desde el enlace: verificar su email y crear su contraseña. */
+  static final List<String> INVITATION_ACTIONS = List.of("VERIFY_EMAIL", "UPDATE_PASSWORD");
 
   public UserService(
       UserRepository userRepo,
@@ -35,13 +59,20 @@ public class UserService {
       PasswordHasher passwordHasher,
       AuditLogService auditLog,
       KeycloakAdminClient keycloakAdmin,
-      CurrentUserService currentUser) {
+      CurrentUserService currentUser,
+      EmailSettingsService emailSettings,
+      @Value("${prisma.invitations.client-id:prisma-frontend}") String invitationClientId,
+      @Value("${prisma.invitations.redirect-uri:http://localhost:8080}")
+          String invitationRedirectUri) {
     this.userRepo = userRepo;
     this.orgRepo = orgRepo;
     this.passwordHasher = passwordHasher;
     this.auditLog = auditLog;
     this.keycloakAdmin = keycloakAdmin;
     this.currentUser = currentUser;
+    this.emailSettings = emailSettings;
+    this.invitationClientId = invitationClientId;
+    this.invitationRedirectUri = invitationRedirectUri;
   }
 
   // Aislamiento multi-tenant, mismo criterio que OrganizationService.list: PRISMA_ADMIN ve todos
@@ -51,18 +82,22 @@ public class UserService {
   @Transactional(readOnly = true)
   public PaginatedDto<UserDto> list(String search, int page, int pageSize) {
     PageRequest pageable = PageRequest.of(page, pageSize, Sort.by("createdAt").descending());
+    // PRI-368: sin tildes, mayúsculas ni puntos; busca email, nombre completo y organización.
+    String pattern = SearchText.pattern(search);
     Page<User> result;
     if (currentUser.isPrismaAdmin()) {
-      result = userRepo.search(search, pageable);
+      result = userRepo.search(pattern, pageable);
     } else {
       Set<UUID> allowedOrgIds = currentUser.organizationIds();
       result =
           allowedOrgIds.isEmpty()
               ? Page.empty(pageable)
-              : userRepo.searchByOrganizationIdIn(allowedOrgIds, search, pageable);
+              : userRepo.searchByOrganizationIdIn(allowedOrgIds, pattern, pageable);
     }
+    List<User> users = result.getContent();
+    Map<UUID, LockState> locks = lockStates(users);
     return new PaginatedDto<>(
-        result.getContent().stream().map(this::toDto).toList(),
+        users.stream().map(u -> toDto(u, locks.get(u.getId()))).toList(),
         result.getTotalElements(),
         page,
         pageSize);
@@ -73,7 +108,60 @@ public class UserService {
     User user =
         userRepo.findById(id).orElseThrow(() -> new ResourceNotFoundException("Usuario", id));
     assertUserAccess(user);
-    return toDto(user);
+    return toDto(user, lockStates(List.of(user)).get(user.getId()));
+  }
+
+  private static final Logger log = LoggerFactory.getLogger(UserService.class);
+
+  // Cuánto se espera, como máximo, a Keycloak para saber si una cuenta está bloqueada: la lista de
+  // usuarios no puede quedar colgada porque Keycloak tarde o no responda.
+  private static final long LOCK_LOOKUP_TIMEOUT_MS = 2000;
+  private static final ExecutorService LOCK_LOOKUPS = Executors.newVirtualThreadPerTaskExecutor();
+
+  /** Bloqueo de una cuenta por intentos fallidos (null = no se sabe). */
+  private record LockState(Boolean locked, OffsetDateTime until) {
+    static final LockState UNKNOWN = new LockState(null, null);
+  }
+
+  /**
+   * Estado de bloqueo (RF-AUTH-08) de cada usuario que ya tiene cuenta en Keycloak, para que la
+   * pantalla de usuarios muestre el estado real y no solo «puede iniciar sesión». Keycloak no tiene
+   * una consulta en lote: se hace una por usuario, en paralelo y con tope de espera. Si una falla o
+   * tarda de más, ese usuario queda con el estado desconocido (la lista igual se devuelve).
+   */
+  private Map<UUID, LockState> lockStates(List<User> users) {
+    Map<UUID, CompletableFuture<LockState>> lookups = new HashMap<>();
+    for (User u : users) {
+      UUID keycloakId = u.getKeycloakId();
+      if (keycloakId == null) {
+        continue;
+      }
+      lookups.put(
+          u.getId(),
+          CompletableFuture.supplyAsync(() -> lockStateOf(keycloakId), LOCK_LOOKUPS)
+              .completeOnTimeout(LockState.UNKNOWN, LOCK_LOOKUP_TIMEOUT_MS, TimeUnit.MILLISECONDS));
+    }
+    Map<UUID, LockState> states = new HashMap<>();
+    lookups.forEach((id, future) -> states.put(id, future.join()));
+    return states;
+  }
+
+  private LockState lockStateOf(UUID keycloakId) {
+    try {
+      var status = keycloakAdmin.loginFailureStatus(keycloakId);
+      if (!status.disabled()) {
+        return new LockState(false, null);
+      }
+      OffsetDateTime until =
+          status.failedLoginNotBefore() > 0
+              ? OffsetDateTime.ofInstant(
+                  Instant.ofEpochSecond(status.failedLoginNotBefore()), ZoneOffset.UTC)
+              : null;
+      return new LockState(true, until);
+    } catch (RuntimeException e) {
+      log.warn("No se pudo consultar el bloqueo de la cuenta {}: {}", keycloakId, e.getMessage());
+      return LockState.UNKNOWN;
+    }
   }
 
   // Un usuario siempre puede ver su propia ficha (p.ej. "Mi Cuenta"); fuera de eso, mismo criterio
@@ -145,6 +233,7 @@ public class UserService {
     user.setPasswordHash(passwordHasher.hash(dto.password()));
     assertOrganizationsActive(user.getOrganizations());
     validateOrganizationsForRoles(user);
+    assertRoleSegregation(user.getRoles());
 
     User saved = userRepo.save(user);
     // Se provisiona en Keycloak DESPUÉS del insert local: si esto lanza, la anotación
@@ -171,6 +260,133 @@ public class UserService {
     UserDto result = toDto(saved);
     auditLog.record("CREATE", "user:" + result.id(), "{\"email\":\"" + result.email() + "\"}");
     return result;
+  }
+
+  /**
+   * RF-USR-05 (PRI-240): invita a un evaluador interno por correo. A diferencia de {@link #create},
+   * nadie le fija una contraseña: la cuenta nace sin ella en Keycloak y la persona la crea desde el
+   * enlace del correo, que también le verifica el email.
+   *
+   * <p>El rol es siempre INTERNAL_EVALUATOR. Un ORG_RESPONSIBLE solo invita a su propia
+   * organización; PRISMA_ADMIN elige una. Sin servidor de correo configurado no se invita (no
+   * llegaría nada). Si Keycloak no logra enviar el correo se deshace todo: la cuenta de Keycloak se
+   * borra y la excepción hace rollback de la fila local.
+   */
+  public UserDto invite(InviteUserDto dto) {
+    if (userRepo.existsByEmail(dto.email())) {
+      throw new ConflictException("Ya existe un usuario con ese email: " + dto.email());
+    }
+    UUID organizationId;
+    if (currentUser.isPrismaAdmin()) {
+      if (dto.organizationId() == null) {
+        throw new InvalidRequestException("Elegí la organización a la que se invita");
+      }
+      organizationId = dto.organizationId();
+    } else {
+      organizationId = currentUser.currentTenantId();
+      currentUser.assertOrganizationAccess(organizationId);
+      assertOrganizationsWithinOwn(
+          dto.organizationId() == null ? null : Set.of(dto.organizationId()), organizationId);
+    }
+    Set<Organization> organizations = resolveOrganizations(Set.of(organizationId));
+    if (organizations.isEmpty()) {
+      throw new ResourceNotFoundException("Organización", organizationId);
+    }
+    assertOrganizationsActive(organizations);
+    assertEmailConfigured();
+
+    User user =
+        User.builder()
+            .email(dto.email())
+            .firstName(dto.firstName())
+            .lastName(dto.lastName())
+            .enabled(true)
+            .roles(new HashSet<>(Set.of(UserRole.INTERNAL_EVALUATOR)))
+            .organizations(organizations)
+            .invitedAt(OffsetDateTime.now())
+            .build();
+    User saved = userRepo.save(user);
+    // Mismo orden que create(): primero la fila local y después Keycloak, para que un fallo de
+    // Keycloak haga rollback del insert.
+    UUID keycloakId =
+        keycloakAdmin.createInvitedUser(
+            dto.email(), dto.firstName(), dto.lastName(), toRoleNames(saved.getRoles()));
+    saved.setKeycloakId(keycloakId);
+    try {
+      sendInvitationEmail(keycloakId);
+    } catch (ConflictException e) {
+      // Sin el correo la persona no tiene cómo crear su contraseña: no se deja una cuenta que nunca
+      // podría usar. El rollback deshace la fila local; la de Keycloak se borra a mano.
+      keycloakAdmin.deleteUser(keycloakId);
+      throw e;
+    }
+
+    UserDto result = toDto(saved);
+    auditLog.record(
+        "INVITE_USER",
+        "user:" + result.id(),
+        "{\"email\":\"" + result.email() + "\",\"organizationId\":\"" + organizationId + "\"}");
+    return result;
+  }
+
+  /**
+   * Reenvía la invitación de un usuario que todavía no ingresó (el enlace anterior pudo vencer o
+   * perderse). Mismo alcance que editarlo: un ORG_RESPONSIBLE solo reenvía las de su organización.
+   */
+  public UserDto resendInvitation(UUID id) {
+    User user =
+        userRepo.findById(id).orElseThrow(() -> new ResourceNotFoundException("Usuario", id));
+    if (!currentUser.isPrismaAdmin()) {
+      assertCanManage(user);
+    }
+    if (!user.isInvitationPending()) {
+      throw new ConflictException(
+          "Este usuario no tiene una invitación pendiente: ya ingresó o se dio de alta con"
+              + " contraseña temporal");
+    }
+    if (!Boolean.TRUE.equals(user.getEnabled())) {
+      throw new InvalidRequestException(
+          "El usuario está deshabilitado: habilitalo antes de reenviar la invitación");
+    }
+    if (user.getKeycloakId() == null) {
+      throw new InvalidRequestException(
+          "El usuario no tiene una cuenta de acceso: no se puede reenviar la invitación");
+    }
+    assertEmailConfigured();
+    sendInvitationEmail(user.getKeycloakId());
+    user.setInvitedAt(OffsetDateTime.now());
+    auditLog.record("RESEND_INVITATION", "user:" + id, "{\"email\":\"" + user.getEmail() + "\"}");
+    return toDto(user);
+  }
+
+  /** Si hay servidor de correo configurado: sin él no se puede invitar. */
+  @Transactional(readOnly = true)
+  public boolean canSendInvitations() {
+    return emailSettings.get().configured();
+  }
+
+  private void assertEmailConfigured() {
+    if (!canSendInvitations()) {
+      throw new ConflictException(
+          "PRISMA todavía no tiene un servidor de correo configurado: no se puede enviar la"
+              + " invitación. Configuralo en Configuración › Correo electrónico, o creá el usuario"
+              + " con contraseña temporal desde «Nuevo Usuario».");
+    }
+  }
+
+  private void sendInvitationEmail(UUID keycloakId) {
+    try {
+      keycloakAdmin.sendExecuteActionsEmail(
+          keycloakId,
+          INVITATION_ACTIONS,
+          INVITATION_LIFESPAN_SECONDS,
+          invitationClientId,
+          invitationRedirectUri);
+    } catch (EmailDeliveryException e) {
+      throw new ConflictException(
+          "No se pudo enviar el correo de invitación. Revisá la configuración de correo en"
+              + " Configuración › Correo electrónico y volvé a intentarlo.");
+    }
   }
 
   public UserDto update(UUID id, CreateUserDto dto) {
@@ -229,6 +445,7 @@ public class UserService {
       user.setOrganizations(requested);
     }
     validateOrganizationsForRoles(user);
+    assertRoleSegregation(user.getRoles());
     boolean passwordProvided = dto.password() != null && !dto.password().isBlank();
     if (passwordProvided) {
       user.setPasswordHash(passwordHasher.hash(dto.password()));
@@ -251,6 +468,7 @@ public class UserService {
         // fijó) esto se ve exactamente como "no funciona", porque esa clave nunca llega a ser la
         // que de verdad habilita el acceso.
         keycloakAdmin.setPermanentPassword(user.getKeycloakId(), dto.password());
+        removeMfaIfAdminResetsPassword(user);
       }
     } else if (passwordProvided) {
       // Auto-sanación: usuarios creados antes de este fix (o cuya creación en Keycloak falló en
@@ -273,6 +491,57 @@ public class UserService {
     UserDto result = toDto(user);
     auditLog.record("UPDATE", "user:" + id, null);
     return result;
+  }
+
+  /**
+   * PRI-365: cuando un PRISMA_ADMIN restablece la contraseña de OTRO usuario, se le quita el MFA
+   * registrado, para que quien perdió el acceso a su autenticador no dependa de que alguien entre a
+   * la consola de Keycloak (recuperar la contraseña por correo ahora exige el OTP actual, así que
+   * no puede resolverlo solo). Con la MFA obligatoria activa, en su próximo inicio de sesión
+   * Keycloak le exige registrar uno nuevo.
+   *
+   * <p>Solo PRISMA_ADMIN: un ORG_RESPONSIBLE que restablece una clave NO toca el MFA. Y no aplica a
+   * la propia cuenta del administrador (se quedaría sin MFA por editarse a sí mismo; para eso está
+   * «Mi cuenta»). Si Keycloak falla, la excepción se propaga: la contraseña ya cambió pero el admin
+   * se entera de que el MFA no se pudo quitar y puede reintentar.
+   */
+  private void removeMfaIfAdminResetsPassword(User user) {
+    if (!currentUser.isPrismaAdmin()) {
+      return;
+    }
+    boolean isOwnAccount =
+        currentUser.currentUser().map(u -> u.getId().equals(user.getId())).orElse(false);
+    if (isOwnAccount) {
+      return;
+    }
+    int removed = keycloakAdmin.removeOtpCredentials(user.getKeycloakId());
+    if (removed > 0) {
+      auditLog.record(
+          "REMOVE_MFA", "user:" + user.getId(), "{\"removedCredentials\":" + removed + "}");
+    }
+  }
+
+  /**
+   * Desbloquea la cuenta de un usuario que Keycloak bloqueó por demasiados intentos fallidos
+   * (PRI-233, RF-AUTH-08). Solo el administrador global (lo exige el controlador). Es idempotente:
+   * si la cuenta no estaba bloqueada no cambia nada y lo dice.
+   *
+   * @return {@code true} si había intentos fallidos o un bloqueo que se limpiaron
+   */
+  public boolean unlock(UUID id) {
+    User user =
+        userRepo.findById(id).orElseThrow(() -> new ResourceNotFoundException("Usuario", id));
+    if (user.getKeycloakId() == null) {
+      throw new InvalidRequestException(
+          "El usuario no tiene una cuenta de acceso todavía: no hay nada que desbloquear");
+    }
+    var status = keycloakAdmin.loginFailureStatus(user.getKeycloakId());
+    boolean wasLocked = status.disabled() || status.numFailures() > 0;
+    if (wasLocked) {
+      keycloakAdmin.clearLoginFailures(user.getKeycloakId());
+    }
+    auditLog.record("UNLOCK_USER", "user:" + id, "{\"wasLocked\":" + wasLocked + "}");
+    return wasLocked;
   }
 
   // Id fija del usuario semilla (ver V4__seed_admin_user.sql) -- es el administrador global del
@@ -338,6 +607,10 @@ public class UserService {
   }
 
   private UserDto toDto(User u) {
+    return toDto(u, null);
+  }
+
+  private UserDto toDto(User u, LockState lock) {
     return new UserDto(
         u.getId(),
         u.getEmail(),
@@ -348,7 +621,11 @@ public class UserService {
         u.getRoles().stream().map(UserRole::name).collect(Collectors.toSet()),
         u.getEnabled(),
         u.getCreatedAt(),
-        u.getKeycloakId() != null);
+        u.getKeycloakId() != null,
+        u.getInvitedAt(),
+        u.getInvitationAcceptedAt(),
+        lock != null ? lock.locked() : null,
+        lock != null ? lock.until() : null);
   }
 
   private Set<String> toRoleNames(Set<UserRole> roles) {
@@ -426,6 +703,18 @@ public class UserService {
     if (roles.contains(UserRole.AUDITOR) && count == 0) {
       throw new InvalidRequestException(
           "El auditor debe tener asignada al menos una organización para auditar");
+    }
+  }
+
+  // RF-USR-04: segregación de funciones -- un mismo usuario no puede ser a la vez quien ejecuta la
+  // autoevaluación (INTERNAL_EVALUATOR) y quien la audita de forma independiente (AUDITOR). El
+  // modelo de roles es global al usuario (no por evaluación), así que la regla se aplica a nivel
+  // de usuario: ninguna combinación de alta/edición puede dejarlo con ambos roles a la vez.
+  private void assertRoleSegregation(Set<UserRole> roles) {
+    if (roles.contains(UserRole.AUDITOR) && roles.contains(UserRole.INTERNAL_EVALUATOR)) {
+      throw new ConflictException(
+          "Un usuario no puede tener simultáneamente el rol de auditor y el de evaluador interno"
+              + " (segregación de funciones)");
     }
   }
 }

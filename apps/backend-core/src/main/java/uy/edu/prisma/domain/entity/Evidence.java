@@ -14,6 +14,12 @@ import lombok.*;
 @Builder
 public class Evidence {
 
+  public enum ScanStatus {
+    CLEAN,
+    QUARANTINED,
+    INFECTED
+  }
+
   @Id
   @GeneratedValue(strategy = GenerationType.UUID)
   private UUID id;
@@ -39,6 +45,9 @@ public class Evidence {
   @Column(name = "storage_key", nullable = false, length = 500)
   private String storageKey;
 
+  @Column(name = "file_hash", length = 64)
+  private String fileHash;
+
   @ManyToOne(fetch = FetchType.LAZY)
   @JoinColumn(name = "uploaded_by")
   private User uploadedBy;
@@ -49,6 +58,11 @@ public class Evidence {
 
   @Column(columnDefinition = "TEXT")
   private String description;
+
+  @Enumerated(EnumType.STRING)
+  @Column(name = "scan_status", nullable = false, length = 20)
+  @Builder.Default
+  private ScanStatus scanStatus = ScanStatus.CLEAN;
 
   @Column(name = "ai_indexed", nullable = false)
   @Builder.Default

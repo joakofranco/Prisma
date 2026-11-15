@@ -21,9 +21,29 @@
           </p>
         </div>
       </div>
-      <BaseButton variant="secondary" :loading="saving" class="shrink-0" @click="saveProgress">
+      <BaseButton
+        variant="secondary"
+        :loading="saving"
+        :disabled="!canEdit"
+        :title="canEdit ? undefined : lockedReason"
+        class="shrink-0"
+        data-testid="save-progress"
+        @click="saveProgress"
+      >
         Guardar progreso
       </BaseButton>
+    </div>
+
+    <!-- Si se llega acá (enlace guardado, historial) con la evaluación ya enviada a auditoría,
+    aprobada o archivada, las respuestas son de solo lectura: el backend las rechazaría. -->
+    <div
+      v-if="!canEdit"
+      class="px-4 py-3 rounded-lg bg-slate-100 border border-slate-200 text-sm text-slate-700 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300"
+      role="status"
+      data-testid="respond-locked"
+    >
+      Las respuestas están en <strong>solo lectura</strong>. {{ lockedReason }} Se pueden editar
+      cuando la evaluación esté en Borrador, En curso o Devuelta.
     </div>
 
     <div v-if="loading" class="flex items-center justify-center py-12">
@@ -50,6 +70,30 @@
         >
           Estructura MCU {{ evaluation?.catalogVersion }}
         </h2>
+        <div
+          v-if="flaggedQuestions.length > 0"
+          class="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950"
+          data-testid="flagged-panel"
+        >
+          <h3 class="text-xs font-semibold text-amber-800 dark:text-amber-300 mb-2">
+            Marcadas para revisar ({{ flaggedQuestions.length }})
+          </h3>
+          <ul class="space-y-1">
+            <li v-for="q in flaggedQuestions" :key="q.control.id">
+              <button
+                class="w-full text-left text-xs rounded px-1.5 py-1 hover:bg-amber-100 dark:hover:bg-amber-900 text-amber-900 dark:text-amber-200"
+                :class="q.control.id === currentQuestion?.control.id ? 'font-semibold' : ''"
+                data-testid="flagged-item"
+                @click="goToControl(q.control.id)"
+              >
+                <span class="font-medium">{{ q.control.code }}</span>
+                <span class="block truncate text-amber-700 dark:text-amber-400">{{
+                  q.control.description
+                }}</span>
+              </button>
+            </li>
+          </ul>
+        </div>
         <nav class="space-y-1">
           <div v-for="(func, fi) in catalogFunctions" :key="func.id">
             <button
@@ -159,12 +203,15 @@
               }}</span>
             </div>
             <button
-              class="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors"
+              class="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               :class="
                 isFlagged
                   ? 'bg-amber-50 border-amber-300 text-amber-700 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-700'
                   : 'bg-white dark:bg-slate-800 border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700'
               "
+              :disabled="!canFlag"
+              :title="canFlag ? undefined : lockedReason"
+              data-testid="flag-control"
               @click="toggleFlag"
             >
               <BookmarkIconSolid v-if="isFlagged" class="w-4 h-4" />
@@ -172,9 +219,48 @@
               Marcar para revisar
             </button>
           </div>
+          <p
+            v-if="isFlagged && currentFlagAuthor"
+            class="text-xs text-amber-700 dark:text-amber-400 mt-1"
+            data-testid="flag-author"
+          >
+            Marcada para revisar por {{ currentFlagAuthor }}
+          </p>
           <h3 class="text-lg font-bold text-slate-900 dark:text-white mt-2">
             {{ currentQuestion.control.description }}
           </h3>
+          <div v-if="currentQuestion.control.guide" class="mt-3 flex justify-end">
+            <button
+              type="button"
+              class="group inline-flex items-center gap-3 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-left transition-colors hover:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:border-blue-900 dark:bg-blue-950/40 dark:hover:bg-blue-950"
+              data-testid="open-control-guide"
+              @click="guideOpen = true"
+            >
+              <span
+                class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-100 text-blue-600 dark:bg-blue-900 dark:text-blue-300"
+              >
+                <LightBulbIcon class="w-4 h-4" />
+              </span>
+              <span>
+                <span class="block text-sm font-semibold text-blue-700 dark:text-blue-300">
+                  Guía del control
+                </span>
+                <span class="block text-xs text-blue-600/80 dark:text-blue-400/80">
+                  Interpretación, ejemplo y evidencia
+                </span>
+              </span>
+              <ChevronRightIcon
+                class="h-4 w-4 text-blue-400 transition-transform group-hover:translate-x-0.5"
+              />
+            </button>
+          </div>
+          <ControlGuideModal
+            v-if="currentQuestion.control.guide"
+            v-model="guideOpen"
+            :code="currentQuestion.control.code"
+            :description="currentQuestion.control.description"
+            :guide="currentQuestion.control.guide"
+          />
           <p
             v-if="currentQuestion.requirement.description"
             class="text-sm text-slate-500 dark:text-slate-400 mt-1 mb-5"
@@ -197,7 +283,8 @@
             <button
               role="radio"
               :aria-checked="currentAnswer === true"
-              class="flex items-center gap-3 p-4 rounded-xl border-2 text-left transition-colors"
+              :disabled="!canEdit"
+              class="flex items-center gap-3 p-4 rounded-xl border-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60"
               :class="
                 currentAnswer === true
                   ? 'bg-emerald-50 border-emerald-500 ring-2 ring-emerald-300 dark:bg-emerald-950'
@@ -218,7 +305,8 @@
             <button
               role="radio"
               :aria-checked="currentAnswer === false"
-              class="flex items-center gap-3 p-4 rounded-xl border-2 text-left transition-colors"
+              :disabled="!canEdit"
+              class="flex items-center gap-3 p-4 rounded-xl border-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60"
               :class="
                 currentAnswer === false
                   ? 'bg-red-50 border-red-500 ring-2 ring-red-300 dark:bg-red-950'
@@ -239,7 +327,8 @@
           <div class="mt-4">
             <button
               v-if="!showObservations && !currentObservations"
-              class="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
+              :disabled="!canEdit"
+              class="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400 disabled:opacity-50 disabled:cursor-not-allowed disabled:no-underline"
               @click="showObservations = true"
             >
               + Agregar observación
@@ -250,14 +339,35 @@
               label="Observaciones (opcional)"
               placeholder="Notas, evidencia disponible o contexto adicional"
               :rows="2"
+              :disabled="!canEdit"
             />
           </div>
         </div>
 
+        <div
+          class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6"
+          data-testid="subcategory-comment"
+        >
+          <BaseTextarea
+            v-model="currentSubcategoryComment"
+            :label="`Comentario de la subcategoría: ${currentQuestion.subcategory.name}`"
+            placeholder="Comentario general sobre esta subcategoría (opcional)"
+            :rows="3"
+            :disabled="!canEdit"
+          />
+        </div>
+
         <div class="flex items-center justify-between gap-3">
           <BaseButton variant="outline" :disabled="isFirst" @click="goPrev"> Anterior </BaseButton>
-          <BaseButton variant="primary" :loading="saving" @click="isLast ? finish() : goNext()">
-            {{ isLast ? 'Guardar y Finalizar' : 'Siguiente' }}
+          <BaseButton
+            variant="primary"
+            :loading="saving"
+            data-testid="next-or-finish"
+            @click="isLast ? (canEdit ? finish() : backToEvaluation()) : goNext()"
+          >
+            {{
+              isLast ? (canEdit ? 'Guardar y Finalizar' : 'Volver a la evaluación') : 'Siguiente'
+            }}
           </BaseButton>
         </div>
       </div>
@@ -272,14 +382,21 @@
   import { catalogService } from '@/services/resources';
   import { useNotification } from '@/composables/useUtils';
   import { getErrorMessage } from '@/utils/helpers';
+  import {
+    canFlagControls,
+    isSelfAssessmentEditable,
+    selfAssessmentLockedReason,
+  } from '@/utils/evaluationRules';
   import { pickEntryIndex } from '@/utils/evaluationNav';
   import BaseButton from '@/components/common/BaseButton.vue';
   import BaseTextarea from '@/components/common/BaseTextarea.vue';
+  import ControlGuideModal from '@/components/evaluations/ControlGuideModal.vue';
   import {
     ArrowLeftIcon,
     ChevronDownIcon,
     ChevronRightIcon,
     BookmarkIcon,
+    LightBulbIcon,
     CheckCircleIcon,
     XCircleIcon,
   } from '@heroicons/vue/24/outline';
@@ -325,6 +442,8 @@
   const expandedFunctions = ref<Set<string>>(new Set());
   const currentIndex = ref(0);
   const flaggedControls = ref<Set<string>>(new Set());
+  // Quien puso cada marca (la ven el resto de los roles de la evaluación, no solo quien la puso).
+  const flagAuthors = reactive<Record<string, string>>({});
   const showObservations = ref(false);
 
   const responseMap = reactive<
@@ -352,6 +471,8 @@
     }
     return out;
   });
+
+  const guideOpen = ref(false);
 
   const currentQuestion = computed(
     () => flatQuestions.value[currentIndex.value] ?? flatQuestions.value[0],
@@ -411,6 +532,22 @@
     return r?.answered ? r.compliant : null;
   });
   const isFlagged = computed(() => flaggedControls.value.has(currentQuestion.value?.control.id));
+  const currentFlagAuthor = computed(() => flagAuthors[currentQuestion.value?.control.id] ?? '');
+  // Conjunto de preguntas marcadas, en el orden del catálogo, para el panel lateral.
+  const flaggedQuestions = computed(() =>
+    flatQuestions.value.filter((q) => flaggedControls.value.has(q.control.id)),
+  );
+
+  // Comentario por subcategoria (RF-EVA-06). `savedSubcategoryComments` es lo que ya esta en el
+  // backend: solo se envian los que cambiaron al guardar el progreso.
+  const subcategoryComments = reactive<Record<string, string>>({});
+  const savedSubcategoryComments = reactive<Record<string, string>>({});
+  const currentSubcategoryComment = computed({
+    get: () => subcategoryComments[currentQuestion.value?.subcategory.id] || '',
+    set: (value: string) => {
+      subcategoryComments[currentQuestion.value.subcategory.id] = value;
+    },
+  });
 
   const currentObservations = computed({
     get: () => responseMap[currentQuestion.value?.control.id]?.observations || '',
@@ -519,19 +656,57 @@
     }
   }
 
+  // Responder, comentar y guardar solo se admiten mientras se está respondiendo (Borrador, En curso,
+  // Devuelta); marcar controles también durante la auditoría. Mismas reglas que el backend. Mientras
+  // la evaluación no cargó no se bloquea nada.
+  const canEdit = computed(() => isSelfAssessmentEditable(evaluation.value?.status));
+  const canFlag = computed(() => canFlagControls(evaluation.value?.status));
+  const lockedReason = computed(() => selfAssessmentLockedReason(evaluation.value?.status));
+
+  function backToEvaluation() {
+    router.push(`/evaluations/${evaluationId}`);
+  }
+
   function selectCompliant(value: boolean) {
+    if (!canEdit.value) return;
     const id = currentQuestion.value.control.id;
     if (!responseMap[id]) responseMap[id] = { compliant: false, answered: false, observations: '' };
     responseMap[id].compliant = value;
     responseMap[id].answered = true;
   }
 
-  function toggleFlag() {
-    const next = new Set(flaggedControls.value);
+  // La marca se guarda en el momento: antes vivía solo en memoria y se perdía al recargar.
+  async function toggleFlag() {
+    if (!canFlag.value) return;
     const id = currentQuestion.value.control.id;
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
+    const wasFlagged = flaggedControls.value.has(id);
+    setFlagLocal(id, !wasFlagged);
+    try {
+      await store.setFlag(evaluationId, id, !wasFlagged);
+    } catch (err) {
+      setFlagLocal(id, wasFlagged);
+      notification.error(getErrorMessage(err, 'No se pudo guardar la marca'));
+    }
+  }
+
+  function setFlagLocal(controlId: string, flagged: boolean) {
+    const next = new Set(flaggedControls.value);
+    if (flagged) next.add(controlId);
+    else {
+      next.delete(controlId);
+      delete flagAuthors[controlId];
+    }
     flaggedControls.value = next;
+  }
+
+  // Salta directo a una pregunta (desde el panel de marcadas), sin pasar por la navegación
+  // secuencial.
+  function goToControl(controlId: string) {
+    const idx = flatQuestions.value.findIndex((q) => q.control.id === controlId);
+    if (idx < 0) return;
+    currentIndex.value = idx;
+    expandedFunctions.value.add(flatQuestions.value[idx].func.id);
+    showObservations.value = false;
   }
 
   function goPrev() {
@@ -585,6 +760,11 @@
           observations: data.observations,
         });
       }
+      for (const [subcategoryId, comment] of Object.entries(subcategoryComments)) {
+        if (comment === (savedSubcategoryComments[subcategoryId] ?? '')) continue;
+        await store.saveSubcategoryComment(evaluationId, subcategoryId, comment);
+        savedSubcategoryComments[subcategoryId] = comment;
+      }
       return true;
     } catch (err) {
       notification.error(getErrorMessage(err, 'Error al guardar las respuestas'));
@@ -595,11 +775,13 @@
   }
 
   async function saveProgress() {
+    if (!canEdit.value) return;
     const ok = await persistResponses();
     if (ok) notification.success('Progreso guardado correctamente');
   }
 
   async function finish() {
+    if (!canEdit.value) return;
     const ok = await persistResponses();
     if (!ok) return;
     try {
@@ -614,11 +796,23 @@
 
   onMounted(async () => {
     try {
-      const [ev, responsesData] = await Promise.all([
+      const [ev, responsesData, commentsData, flagsData] = await Promise.all([
         store.fetchEvaluation(evaluationId),
         store.fetchResponses(evaluationId),
+        store.fetchSubcategoryComments(evaluationId),
+        store.fetchFlags(evaluationId),
       ]);
       evaluation.value = ev;
+
+      flaggedControls.value = new Set(flagsData.map((fl) => fl.controlId));
+      flagsData.forEach((fl) => {
+        if (fl.flaggedByName) flagAuthors[fl.controlId] = fl.flaggedByName;
+      });
+
+      commentsData.forEach((c) => {
+        subcategoryComments[c.subcategoryId] = c.comment || '';
+        savedSubcategoryComments[c.subcategoryId] = c.comment || '';
+      });
 
       responsesData.forEach((r) => {
         responseMap[r.controlId] = {

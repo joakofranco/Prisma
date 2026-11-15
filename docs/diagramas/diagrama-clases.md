@@ -110,7 +110,8 @@ classDiagram
   class Organization {
     +UUID id
     +String name
-    +String rut
+    +String identifier
+    +Boolean identifierIsRut
     +String sector
     +String size
     +Boolean enabled
@@ -199,6 +200,7 @@ classDiagram
     +Priority priority
     +PlanStatus status
     +LocalDate dueDate
+    +String comments
     +OffsetDateTime createdAt
   }
 

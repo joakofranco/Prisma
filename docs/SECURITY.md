@@ -8,8 +8,8 @@
 | **XSS** | Vue escapa interpolaciones por default (no se usa `v-html` con datos de usuario); CSP restrictiva servida por nginx (`default-src 'self'`, ver `apps/frontend/nginx.conf`). |
 | **CSRF** | No aplica en el sentido clásico: la API es 100% stateless (JWT en header `Authorization: Bearer`, sin cookies de sesión que un request cross-site pueda reenviar solo). |
 | **BOLA / IDOR** | **No es un middleware global** — cada `Service` llama explícitamente a `CurrentUserService.assertOrganizationAccess(organizationId)` (o filtra por tenant en la query) antes de devolver/mutar un recurso. Es responsabilidad de quien escribe un `Service` nuevo acordarse de llamarlo; nada a nivel de framework lo fuerza. **Esto no siempre se cumplió**: `OrganizationService`/`UserService` no tuvieron ningún chequeo de este tipo hasta que se detectó en una pasada de QA exhaustiva y se corrigió (cualquier usuario autenticado podía enumerar todas las organizaciones y usuarios de la plataforma, sin importar su propio tenant) — ver "Endurecimientos recientes" más abajo. Al agregar un `Service` nuevo que exponga datos por organización, agregar el chequeo explícitamente y no asumir que "ya está cubierto en otro lado". |
-| **Broken auth** | Keycloak (SSO, JWT firmado RS256, **MFA TOTP obligatoria para `PRISMA_ADMIN` y `ORG_RESPONSIBLE`** — ver "MFA (TOTP) obligatoria por rol" abajo, brute-force protection — `failureFactor: 5`, bloqueo escalonado hasta 900s, configurable en vivo desde la consola de Keycloak sin redeploy) + Argon2id para contraseñas locales. Los intentos fallidos además quedan en la bitácora propia (`LOGIN_FAILED`, ver "Registro de intentos de login fallidos" abajo) para verlos sin entrar a Keycloak. **MFA/TOTP está configurado pero no es obligatorio** para ningún rol (ver [`Arquitectura.md`](Arquitectura.md)) — queda como mejora pendiente, no como control ya activo. |
-| **Sensitive Data Exposure** | HTTPS forzado desde el navegador vía nginx (certificado propio, ver [`Certificados-TLS.md`](Certificados-TLS.md)); evidencias en RustFS con URLs firmadas de corta duración (900s) en vez de un bucket público. |
+| **Broken auth** | Keycloak (SSO, JWT firmado RS256, **MFA TOTP obligatoria para `PRISMA_ADMIN` y `ORG_RESPONSIBLE`** — ver "MFA (TOTP) obligatoria por rol" abajo, brute-force protection — `failureFactor: 10` intentos en una ventana de 15 min y bloqueo fijo de 15 min (ver [`RUNBOOK.md`](RUNBOOK.md#bloqueo-de-cuenta-por-intentos-fallidos-rf-auth-08)); además NGINX limita los intentos de login por IP y responde 429 al excederlo, configurable en vivo desde la consola de Keycloak sin redeploy) + Argon2id para contraseñas locales. Los intentos fallidos además quedan en la bitácora propia (`LOGIN_FAILED`, ver "Registro de intentos de login fallidos" abajo) para verlos sin entrar a Keycloak. **MFA/TOTP está configurado pero no es obligatorio** para ningún rol (ver [`Arquitectura.md`](Arquitectura.md)) — queda como mejora pendiente, no como control ya activo. |
+| **Sensitive Data Exposure** | HTTPS forzado desde el navegador vía nginx (certificado propio, ver [`Certificados-TLS.md`](Certificados-TLS.md)); evidencias en RustFS con URLs firmadas de corta duración (900s) en vez de un bucket público. **Cifrado en tránsito hacia Keycloak (BUG-12 / PRI-369, MCU SC.14-2):** los tramos internos nginx → Keycloak y backend-core → Keycloak (JWKS y Admin API) van por TLS (`keycloak:8443`) con verificación del certificado contra una CA interna (`scripts/generate-internal-ca.sh`); en producción el puerto HTTP de Keycloak está deshabilitado. Los demás tramos internos (backend-core/backend-ai/frontend, Postgres, Elasticsearch, RustFS) siguen en HTTP dentro de `prisma-net` — ver [`Certificados-TLS.md`](Certificados-TLS.md). |
 | **Components with known vulnerabilities** | Trivy (FS + imágenes) + OWASP Dependency-Check + Gitleaks + CodeQL, semanal y en cada push a `main`/`dev` (`security.yml`). |
 | **Insufficient Logging** | Bitácora de auditoría de acciones sensibles (`audit.audit_logs`, escritura síncrona — ver [`Arquitectura.md`](Arquitectura.md)), consultable desde la app ("Actividad del Sistema", `GET /api/audit-logs`) e incluye **login/logout y login fallido** (ver "Registro de intentos de login fallidos" abajo); logs de todos los contenedores centralizados en Loki/Grafana y, opcionalmente, Elasticsearch/Kibana (perfil `elastic`). |
 | **Broken access control (nivel de negocio)** | Ver "Endurecimientos recientes" — el ciclo de vida de una evaluación y la evidencia asociada ahora se bloquean explícitamente por estado, no sólo por rol. |
@@ -114,6 +114,14 @@ Authenticator, Microsoft Authenticator, FreeOTP, etc.). Respalda el Marco de Cib
   código OTP, así que el cliente `prisma-backend` (confidencial, solo servidor) usa el flujo
   `direct-grant-sin-otp`. El resto del realm conserva el direct grant con OTP condicional.
 
+**Estado:** la MFA está funcional y sus flujos de funcionamiento están validados: el registro del
+TOTP con QR en el primer ingreso, el pedido del código en los ingresos siguientes y la
+verificación de la contraseña actual por parte de `backend-core` (flujo `direct-grant-sin-otp`,
+sin OTP). La MFA **no viene incluida en `realm-prisma.json`**: se activa ejecutando el script
+`scripts/keycloak/enable-mfa.sh` (`make mfa-enable`) en cada ambiente, como se explica a
+continuación. Mientras no se ejecute, el ambiente usa el flujo de login original de Keycloak y la
+MFA no es exigida.
+
 **Activar / consultar / desactivar** (idempotente; se corre en cada ambiente después del primer
 arranque de Keycloak, porque `--import-realm` solo importa `realm-prisma.json` cuando el realm no
 existe todavía):
@@ -151,6 +159,16 @@ buscarlo del lado de Keycloak. `LoginFailureAuditSyncService` sondea cada 15s (c
 - El **bloqueo** de la cuenta lo sigue haciendo Keycloak solo (`failureFactor`, ver la tabla de
   arriba) — este mecanismo sólo agrega visibilidad, no reemplaza ni reimplementa el lockout.
 
+## Enmascarado de datos sensibles en logs (RNF-10)
+
+`backend-core` trae un `logback-spring.xml` propio cuyo appender de consola usa
+`MaskingPatternLayout` (`uy.edu.prisma.config.MaskingPatternLayout`) en vez del `PatternLayout` de
+Logback por defecto: antes de escribir cada línea, reemplaza por `***REDACTED***` cualquier valor
+de `password`, `token`/`accessToken`/`refreshToken`/`secret`/`clientSecret` en formato JSON o
+`clave=valor`, y cualquier credencial `Bearer <token>`. Es una red de contención a nivel de
+logging, no un reemplazo de evitar loguear datos sensibles a propósito — sigue sin estar permitido
+loguear explícitamente un objeto `User`/credenciales completas en el código.
+
 ## Pentesting de caja negra (hallazgos y estado)
 
 Batería de pruebas manuales contra el stack local corriendo (puertos expuestos, credenciales por
@@ -180,6 +198,72 @@ no están expuestos (sólo `health`/`info`/`metrics`/`prometheus`); `.env`/`.git
 nginx; headers de seguridad presentes en el frontend (CSP, `X-Frame-Options`,
 `X-Content-Type-Options`); los errores de `backend-core` no filtran stack traces; CORS no refleja
 orígenes arbitrarios.
+
+## Cifrado en reposo (RNF-08)
+
+**Qué cifra la aplicación hoy:** las contraseñas de usuario no se guardan en texto plano ni
+cifradas de forma reversible -- se guardan como hash Argon2id (`PasswordHasher`,
+`users.password_hash`), que es la práctica correcta para contraseñas (un hash de un solo sentido
+es preferible a un cifrado reversible, incluso si la clave de cifrado se filtrara). Revisamos el
+resto de las entidades de `backend-core` y no encontramos ninguna otra columna con datos sensibles
+en texto plano: la configuración SMTP (incluida su contraseña) no se persiste en la base de PRISMA,
+se guarda directamente en Keycloak (`EmailSettingsService` delega en `KeycloakAdminClient`); las
+credenciales reales de los usuarios tampoco viven en esta base, Keycloak es el único *identity
+provider*. Por eso no se agregó cifrado de columnas vía `pgcrypto` u otro mecanismo: no hay ningún
+dato en texto plano en Postgres que lo necesite hoy. Si en el futuro se agrega una columna
+genuinamente sensible (un token de API de terceros, por ejemplo), ese es el momento de evaluar
+`pgcrypto` para esa columna puntual.
+
+**Qué queda fuera del alcance del código de la app -- responsabilidad del operador del host:**
+el cifrado "en reposo" en el sentido de at-rest encryption de disco (que protege los datos si
+alguien roba el disco físico o una copia del volumen) no se puede activar desde dentro de un
+contenedor Docker: Postgres y RustFS escriben a los volúmenes `prisma-postgres-data` y
+`prisma-rustfs-data`, que son carpetas del sistema de archivos del host. Cifrarlos es una decisión
+de infraestructura, no de la aplicación. Para el target de producción real de este proyecto
+(servidor Linux con Docker Engine, ver [`Ambientes-Despliegue.md`](Ambientes-Despliegue.md)), la
+recomendación es:
+
+1. Cifrar la partición/disco donde vive el `docker volume` de Postgres y RustFS con LUKS
+   (`dm-crypt`), *antes* de desplegar: `cryptsetup luksFormat /dev/sdX && cryptsetup luksOpen
+   /dev/sdX prisma_data && mkfs.ext4 /dev/mapper/prisma_data`, montarlo en el punto donde Docker
+   guarda sus volúmenes (o usar `docker volume create --opt device=/dev/mapper/prisma_data`), y
+   agregar la entrada correspondiente a `/etc/crypttab` con la clave en un dispositivo o gestor de
+   secretos aparte del propio disco (si la clave vive en el mismo disco sin cifrar, el cifrado no
+   protege contra el robo físico del equipo completo).
+2. Si el servidor es una VM de un proveedor cloud en lugar de hardware propio, usar en su lugar el
+   cifrado de disco nativo del proveedor (todos los principales lo ofrecen por defecto o con un
+   flag al crear el volumen) en vez de LUKS manual -- es equivalente en protección y evita
+   gestionar la clave vos mismo.
+
+**RustFS y cifrado server-side (SSE):** RustFS expone una API compatible con S3, protocolo que sí
+define SSE-S3/SSE-C, pero no encontramos en este repo (ni en la imagen `rustfs/rustfs:1.0.3` que
+ya se usa) evidencia de que la implementación de RustFS soporte SSE -- no hay variables de entorno
+ni documentación propia al respecto. No se agregó ninguna configuración de SSE para no declarar
+algo que no está verificado: si RustFS lo soporta en una versión más nueva, es preferible
+confirmarlo contra la documentación oficial del proyecto antes de activarlo, en vez de asumirlo. La
+mitigación real disponible hoy es el cifrado de volumen del punto anterior, que cubre tanto a
+Postgres como a RustFS por igual.
+
+## Vulnerabilidades conocidas en dependencias (excepciones aceptadas)
+
+Trivy (jobs `trivy-fs` y `trivy-images` de `security.yml`, `CRITICAL,HIGH` con `ignore-unfixed`)
+detecta tres CVEs con fix disponible que **no se corrigen todavía** porque el fix es un salto de
+versión mayor. Están aceptados y justificados en [`.trivyignore`](../.trivyignore), que es la
+fuente de verdad (la justificación completa y el seguimiento están ahí); el CI los respeta y los
+jobs de Trivy pasan.
+
+| Imagen | Dependencia | CVE | Severidad | Instalada | Corregida en | Por qué no se corrige ya |
+|---|---|---|---|---|---|---|
+| backend-core | `spring-webmvc` | CVE-2026-47884 (RCE por limitación de ruta en `XsltView`) | CRÍTICA | 6.2.19 | 7.0.9 | El fix existe solo en Spring Framework 7 (exige Spring Boot 4); no se usa `XsltView` |
+| backend-core | `spring-webmvc` | CVE-2026-47890 (corrupción de stream en SSE con vistas) | CRÍTICA | 6.2.19 | 7.0.9 | Ídem; no se usan vistas con SSE (API REST con JSON) |
+| backend-ai | `langchain-core` | CVE-2026-34070 (path traversal en `load_prompt`) | ALTA | 0.3.86 | 1.2.22 | Pasar a LangChain 1.x es un cambio de API mayor que puede romper el pipeline RAG; no se usa `load_prompt` |
+
+**Seguimiento:** migrar a Spring Boot 4 y a LangChain 1.x en tareas aparte. La excepción de Spring se
+revisa cada mes (próxima revisión: 2026-11-30) o antes si aparece un 6.2.x con el fix. Cada fila se
+borra de acá y de `.trivyignore` cuando su versión corregida esté desplegada.
+
+**Al escanear en local**, usar el mismo archivo (`--ignorefile .trivyignore`); sin él, Trivy
+informa estos tres como fallos aunque el CI los dé por aceptados.
 
 ## Cumplimiento MCU 5.0
 

@@ -3,6 +3,7 @@ package uy.edu.prisma.application;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -11,19 +12,26 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import uy.edu.prisma.domain.entity.AiSuggestionFeedback;
+import uy.edu.prisma.domain.entity.AiSuggestionFeedback.Outcome;
 import uy.edu.prisma.domain.entity.CatalogControl;
+import uy.edu.prisma.domain.entity.CatalogSubcategory;
 import uy.edu.prisma.domain.entity.Evaluation;
 import uy.edu.prisma.domain.entity.EvaluationResponse;
 import uy.edu.prisma.domain.entity.ImprovementPlan;
 import uy.edu.prisma.domain.entity.ImprovementPlan.PlanStatus;
 import uy.edu.prisma.domain.entity.ImprovementPlan.Priority;
+import uy.edu.prisma.domain.exception.ConflictException;
 import uy.edu.prisma.domain.exception.InvalidRequestException;
 import uy.edu.prisma.domain.exception.ResourceNotFoundException;
+import uy.edu.prisma.domain.repository.AiSuggestionFeedbackRepository;
 import uy.edu.prisma.domain.repository.CatalogControlRepository;
 import uy.edu.prisma.domain.repository.EvaluationRepository;
 import uy.edu.prisma.domain.repository.EvaluationResponseRepository;
 import uy.edu.prisma.domain.repository.ImprovementPlanRepository;
 import uy.edu.prisma.infrastructure.AiEvidenceClient;
+import uy.edu.prisma.web.dto.Dto.AiSuggestionFeedbackBatchDto;
+import uy.edu.prisma.web.dto.Dto.AiSuggestionFeedbackDto;
 import uy.edu.prisma.web.dto.Dto.CreateImprovementPlanDto;
 import uy.edu.prisma.web.dto.Dto.ImprovementPlanDto;
 import uy.edu.prisma.web.dto.Dto.RemediationTipsDto;
@@ -35,12 +43,20 @@ import uy.edu.prisma.web.dto.Dto.UpdateImprovementPlanDto;
 @Transactional
 public class ImprovementPlanService {
 
+  private static final String EXPIRED_APPROVED =
+      "La fecha límite ya venció: con la evaluación aprobada solo se puede pasar a Realizado";
+  private static final String EXPIRED_OPEN =
+      "La fecha límite ya venció: asigne una fecha vigente o pase la acción a Realizado";
+
   private final ImprovementPlanRepository repo;
   private final EvaluationRepository evaluationRepo;
   private final CatalogControlRepository controlRepo;
   private final EvaluationResponseRepository responseRepo;
   private final AiEvidenceClient aiClient;
   private final CurrentUserService currentUser;
+  private final AuditLogService auditLog;
+  private final PlanDeadlineSettingsService deadlines;
+  private final AiSuggestionFeedbackRepository feedbackRepo;
 
   public ImprovementPlanService(
       ImprovementPlanRepository repo,
@@ -48,13 +64,19 @@ public class ImprovementPlanService {
       CatalogControlRepository controlRepo,
       EvaluationResponseRepository responseRepo,
       AiEvidenceClient aiClient,
-      CurrentUserService currentUser) {
+      CurrentUserService currentUser,
+      AuditLogService auditLog,
+      PlanDeadlineSettingsService deadlines,
+      AiSuggestionFeedbackRepository feedbackRepo) {
     this.repo = repo;
     this.evaluationRepo = evaluationRepo;
     this.controlRepo = controlRepo;
     this.responseRepo = responseRepo;
     this.aiClient = aiClient;
     this.currentUser = currentUser;
+    this.auditLog = auditLog;
+    this.deadlines = deadlines;
+    this.feedbackRepo = feedbackRepo;
   }
 
   // On-demand (un control a la vez, ver AiEvidenceClient.suggestRemediation): no necesita
@@ -70,6 +92,44 @@ public class ImprovementPlanService {
         dto.subcategoryName(),
         dto.currentLevel(),
         dto.targetLevel());
+  }
+
+  /**
+   * PRI-370: registra qué se hizo con cada guía de IA (usada tal cual, usada y editada, o
+   * descartada) para armar un dataset de fine-tuning. Guarda el control del catálogo y no la
+   * evaluación, la organización ni el usuario. Las guías que la IA no llegó a generar no se
+   * registran (el frontend no las envía).
+   */
+  public void recordFeedback(AiSuggestionFeedbackBatchDto batch) {
+    Map<UUID, CatalogControl> controls =
+        controlRepo
+            .findAllById(
+                batch.items().stream().map(AiSuggestionFeedbackDto::controlId).distinct().toList())
+            .stream()
+            .collect(Collectors.toMap(CatalogControl::getId, c -> c));
+    List<AiSuggestionFeedback> rows = new java.util.ArrayList<>();
+    for (AiSuggestionFeedbackDto item : batch.items()) {
+      CatalogControl control = controls.get(item.controlId());
+      if (control == null) {
+        throw new ResourceNotFoundException("Control", item.controlId());
+      }
+      Outcome outcome = Outcome.valueOf(item.outcome());
+      boolean hasText = item.editedText() != null && !item.editedText().isBlank();
+      if (outcome == Outcome.ACCEPTED_EDITED && !hasText) {
+        throw new InvalidRequestException("Una sugerencia editada debe incluir el texto final");
+      }
+      rows.add(
+          AiSuggestionFeedback.builder()
+              .control(control)
+              .currentLevel(item.currentLevel())
+              .targetLevel(item.targetLevel())
+              .originalSummary(item.originalSummary() == null ? "" : item.originalSummary())
+              .originalTips(item.originalTips())
+              .outcome(outcome)
+              .editedText(outcome == Outcome.ACCEPTED_EDITED ? item.editedText() : null)
+              .build());
+    }
+    feedbackRepo.saveAll(rows);
   }
 
   // No es readOnly a proposito: markOverdue() es un UPDATE (recalcula que planes vencieron antes
@@ -93,6 +153,18 @@ public class ImprovementPlanService {
             .findById(dto.evaluationId())
             .orElseThrow(() -> new ResourceNotFoundException("Evaluación", dto.evaluationId()));
     currentUser.assertOrganizationAccess(eval.getOrganization().getId());
+    assertPlanOpen(eval);
+    if (eval.getStatus() == Evaluation.Status.APPROVED) {
+      throw new InvalidRequestException(
+          "La evaluación está aprobada: no se pueden agregar acciones al plan de mejora");
+    }
+    Priority priority = parsePriority(dto.priority());
+    LocalDate dueDate = parseDueDate(dto.dueDate());
+    // RF-PLN-03: sin fecha, se estampa el plazo por defecto de la prioridad.
+    if (dueDate == null) {
+      dueDate = deadlines.defaultDueDate(priority, LocalDate.now());
+    }
+    assertNotPast(dueDate);
     // dto.controlId() se ignoraba silenciosamente: la accion quedaba creada pero sin vincular al
     // control del catalogo, asi que suggest() nunca podia detectar que ese control ya tenia un
     // plan y lo volvia a sugerir en cada llamada (duplicados).
@@ -108,33 +180,175 @@ public class ImprovementPlanService {
             .control(control)
             .action(dto.action())
             .responsible(dto.responsible())
-            .priority(parsePriority(dto.priority()))
+            .priority(priority)
             .status(PlanStatus.PENDING)
-            .dueDate(parseDueDate(dto.dueDate()))
+            .dueDate(dueDate)
+            .comments(normalizeComments(dto.comments()))
             .build();
     return toDto(repo.save(plan));
   }
 
+  /**
+   * RF-PLN-04 — Gestión operativa: editar plazo, responsable y estado de una acción. Reglas:
+   *
+   * <ul>
+   *   <li>Con la evaluación en DRAFT o ARCHIVED el plan no está activo: no se edita.
+   *   <li>Con la evaluación APPROVED solo se puede cambiar el estado.
+   *   <li>Una fecha límite nueva no puede ser anterior a hoy (si no cambia, no se revalida: una
+   *       acción vencida se puede seguir editando sin tocar su fecha).
+   *   <li>OVERDUE lo asigna el sistema ({@link ImprovementPlanRepository#markOverdue()}), nunca el
+   *       usuario. Si una acción vencida recibe una fecha nueva y no se pide otro estado, vuelve a
+   *       PENDING.
+   *   <li>No se puede pasar a PENDING / IN_PROGRESS una acción cuya fecha ya venció: el próximo
+   *       listado la volvería a marcar vencida. Hay que darle una fecha vigente o pasarla a
+   *       COMPLETED (con la evaluación aprobada, como la fecha no se edita, solo queda COMPLETED).
+   * </ul>
+   *
+   * Cada cambio real queda en la bitácora como UPDATE_IMPROVEMENT_PLAN.
+   */
   public ImprovementPlanDto update(UUID id, UpdateImprovementPlanDto dto) {
     ImprovementPlan plan =
         repo.findById(id).orElseThrow(() -> new ResourceNotFoundException("Plan de mejora", id));
-    currentUser.assertOrganizationAccess(plan.getEvaluation().getOrganization().getId());
-    if (dto.action() != null && !dto.action().isBlank()) {
-      plan.setAction(dto.action());
+    Evaluation eval = plan.getEvaluation();
+    currentUser.assertOrganizationAccess(eval.getOrganization().getId());
+    assertPlanOpen(eval);
+
+    String action = isBlank(dto.action()) ? plan.getAction() : dto.action();
+    String responsible = dto.responsible() != null ? dto.responsible() : plan.getResponsible();
+    Priority priority =
+        isBlank(dto.priority()) ? plan.getPriority() : parsePriority(dto.priority());
+    LocalDate dueDate = isBlank(dto.dueDate()) ? plan.getDueDate() : parseDueDate(dto.dueDate());
+    // Comentarios: null = sin cambios; una cadena vacía (o en blanco) borra el comentario.
+    String comments =
+        dto.comments() != null ? normalizeComments(dto.comments()) : plan.getComments();
+
+    boolean dueDateChanged = !Objects.equals(dueDate, plan.getDueDate());
+    if (dueDateChanged) {
+      assertNotPast(dueDate);
     }
-    if (dto.responsible() != null) {
-      plan.setResponsible(dto.responsible());
+
+    PlanStatus requested = isBlank(dto.status()) ? null : parseStatus(dto.status());
+    if (requested == PlanStatus.OVERDUE) {
+      if (plan.getStatus() != PlanStatus.OVERDUE) {
+        throw new InvalidRequestException(
+            "El estado Vencida lo asigna el sistema según la fecha límite");
+      }
+      requested = null; // reenviar el estado actual no es un cambio
     }
-    if (dto.priority() != null && !dto.priority().isBlank()) {
-      plan.setPriority(parsePriority(dto.priority()));
+    PlanStatus status;
+    if (requested != null) {
+      status = requested;
+    } else if (plan.getStatus() == PlanStatus.OVERDUE && dueDateChanged) {
+      status = PlanStatus.PENDING;
+    } else {
+      status = plan.getStatus();
     }
-    if (dto.status() != null && !dto.status().isBlank()) {
-      plan.setStatus(parseStatus(dto.status()));
+
+    Map<String, String[]> changes = new LinkedHashMap<>();
+    addChange(changes, "action", plan.getAction(), action);
+    addChange(changes, "responsible", plan.getResponsible(), responsible);
+    addChange(changes, "priority", plan.getPriority(), priority);
+    addChange(changes, "dueDate", plan.getDueDate(), dueDate);
+    addChange(changes, "status", plan.getStatus(), status);
+    addChange(changes, "comments", plan.getComments(), comments);
+
+    boolean approved = eval.getStatus() == Evaluation.Status.APPROVED;
+    if (approved && changes.keySet().stream().anyMatch(field -> !field.equals("status"))) {
+      throw new InvalidRequestException(
+          "La evaluación está aprobada: solo se puede cambiar el estado de la acción");
     }
-    if (dto.dueDate() != null && !dto.dueDate().isBlank()) {
-      plan.setDueDate(parseDueDate(dto.dueDate()));
+
+    boolean reopening =
+        status != plan.getStatus()
+            && (status == PlanStatus.PENDING || status == PlanStatus.IN_PROGRESS);
+    if (reopening && dueDate != null && dueDate.isBefore(LocalDate.now())) {
+      throw new InvalidRequestException(approved ? EXPIRED_APPROVED : EXPIRED_OPEN);
     }
-    return toDto(repo.save(plan));
+
+    plan.setAction(action);
+    plan.setResponsible(responsible);
+    plan.setPriority(priority);
+    plan.setDueDate(dueDate);
+    plan.setStatus(status);
+    plan.setComments(comments);
+    ImprovementPlan saved = repo.save(plan);
+
+    if (!changes.isEmpty()) {
+      auditLog.record("UPDATE_IMPROVEMENT_PLAN", "improvement_plan:" + id, changesJson(changes));
+    }
+    return toDto(saved);
+  }
+
+  /** El plan solo está activo mientras la evaluación no sea un borrador ni esté archivada. */
+  private static void assertPlanOpen(Evaluation eval) {
+    if (eval.getStatus() == Evaluation.Status.DRAFT
+        || eval.getStatus() == Evaluation.Status.ARCHIVED) {
+      throw new InvalidRequestException(
+          "El plan de mejora no está activo: la evaluación está en borrador o archivada");
+    }
+  }
+
+  private static void assertNotPast(LocalDate dueDate) {
+    if (dueDate != null && dueDate.isBefore(LocalDate.now())) {
+      throw new InvalidRequestException("La fecha límite no puede ser anterior a hoy");
+    }
+  }
+
+  private static boolean isBlank(String value) {
+    return value == null || value.isBlank();
+  }
+
+  private static void addChange(
+      Map<String, String[]> changes, String field, Object from, Object to) {
+    if (!Objects.equals(from, to)) {
+      changes.put(field, new String[] {Objects.toString(from, null), Objects.toString(to, null)});
+    }
+  }
+
+  /**
+   * {"changes":{"campo":{"from":…,"to":…}}}. La columna payload es jsonb, así que los textos libres
+   * (acción, responsable, comentarios) se escapan.
+   */
+  private static String changesJson(Map<String, String[]> changes) {
+    StringBuilder sb = new StringBuilder("{\"changes\":{");
+    boolean first = true;
+    for (Map.Entry<String, String[]> e : changes.entrySet()) {
+      if (!first) {
+        sb.append(',');
+      }
+      first = false;
+      sb.append(jsonString(e.getKey()))
+          .append(":{\"from\":")
+          .append(jsonString(e.getValue()[0]))
+          .append(",\"to\":")
+          .append(jsonString(e.getValue()[1]))
+          .append('}');
+    }
+    return sb.append("}}").toString();
+  }
+
+  private static String jsonString(String value) {
+    if (value == null) {
+      return "null";
+    }
+    StringBuilder sb = new StringBuilder("\"");
+    for (char c : value.toCharArray()) {
+      switch (c) {
+        case '"' -> sb.append("\\\"");
+        case '\\' -> sb.append("\\\\");
+        case '\n' -> sb.append("\\n");
+        case '\r' -> sb.append("\\r");
+        case '\t' -> sb.append("\\t");
+        default -> {
+          if (c < 0x20) {
+            sb.append(String.format("\\u%04x", (int) c));
+          } else {
+            sb.append(c);
+          }
+        }
+      }
+    }
+    return sb.append('"').toString();
   }
 
   /**
@@ -145,6 +359,11 @@ public class ImprovementPlanService {
    * sugerencias para que el usuario las revise/edite y recien ahi las cree via POST
    * /api/improvement. Los controles que ya tienen un plan de mejora asociado se excluyen para no
    * repetir sugerencias en llamadas sucesivas.
+   *
+   * <p>Precondicion (RF-PLN-01): la madurez de la evaluacion tiene que estar calculada
+   * (globalMaturity != null; «Calculada» no existe como estado) y la evaluacion no puede estar en
+   * borrador. Se arma UNA sugerencia por control, con todas las subcategorias donde cuenta para la
+   * madurez (CatalogControl.effectiveSubcategories), no una por subcategoria.
    */
   @Transactional(readOnly = true)
   public List<SuggestedImprovementDto> suggest(UUID evaluationId) {
@@ -153,6 +372,10 @@ public class ImprovementPlanService {
             .findById(evaluationId)
             .orElseThrow(() -> new ResourceNotFoundException("Evaluación", evaluationId));
     currentUser.assertOrganizationAccess(eval.getOrganization().getId());
+    if (eval.getStatus() == Evaluation.Status.DRAFT || eval.getGlobalMaturity() == null) {
+      throw new ConflictException(
+          "Calculá la madurez de la evaluación antes de generar sugerencias de mejora");
+    }
 
     Map<UUID, EvaluationResponse> responsesByControl =
         responseRepo.findByEvaluationId(evaluationId).stream()
@@ -173,6 +396,10 @@ public class ImprovementPlanService {
                 .collect(Collectors.toSet())
             : null;
 
+    // RF-PLN-03: plazos por defecto vigentes (una sola lectura para todas las sugerencias).
+    Map<Priority, Integer> monthsByPriority = deadlines.currentMonths();
+    LocalDate today = LocalDate.now();
+
     List<SuggestedImprovementDto> suggestions = new java.util.ArrayList<>();
     for (CatalogControl control : controlRepo.findByVersionOrdered(eval.getCatalogVersion())) {
       if (alreadyPlanned.contains(control.getId())) {
@@ -191,27 +418,36 @@ public class ImprovementPlanService {
       // NINGUN nivel mientras falten controles de nivel 1 -- son el bloqueante de todo lo demas.
       Priority priority = suggestPriority(control.getTargetLevel());
 
-      // Un Requisito puede pertenecer a varias Subcategorias (ver CatalogRequirementSubcategory):
-      // se arma una sugerencia por cada una, mismo control con el contexto de esa subcategoria.
-      // alreadyPlanned sigue siendo por control (un plan real ya creado sobre el control descarta
-      // TODAS sus sugerencias sin importar la subcategoria).
-      for (var subcategory : control.getRequirement().getSubcategories()) {
-        var category = subcategory.getCategory();
-        var function = category.getFunction_();
-        suggestions.add(
-            new SuggestedImprovementDto(
-                control.getId(),
-                subcategory.getId(),
-                function.getName(),
-                category.getName(),
-                subcategory.getName(),
-                control.getCode(),
-                suggestAction(control, subcategory.getName()),
-                0,
-                control.getTargetLevel(),
-                priority.name(),
-                suggestDueDate(priority).toString()));
+      // Una sola sugerencia por control. El control puede contar en varias subcategorias
+      // (mapeo curado control<->subcategoria o, si el catalogo no lo trae,
+      // Requisito->Subcategoria):
+      // la primera por nombre da el contexto principal y el resto viaja como informacion. Un
+      // control sin subcategoria no se puede ubicar en la jerarquia, por lo que no se sugiere.
+      // alreadyPlanned es por control: un plan real ya creado lo descarta.
+      List<CatalogSubcategory> subcategories =
+          control.effectiveSubcategories().stream()
+              .sorted(Comparator.comparing(CatalogSubcategory::getName))
+              .toList();
+      if (subcategories.isEmpty()) {
+        continue;
       }
+      CatalogSubcategory main = subcategories.get(0);
+      var category = main.getCategory();
+      var function = category.getFunction_();
+      suggestions.add(
+          new SuggestedImprovementDto(
+              control.getId(),
+              main.getId(),
+              function.getName(),
+              category.getName(),
+              main.getName(),
+              subcategories.stream().map(CatalogSubcategory::getName).toList(),
+              control.getCode(),
+              suggestAction(control, main.getName()),
+              0,
+              control.getTargetLevel(),
+              priority.name(),
+              today.plusMonths(monthsByPriority.get(priority)).toString()));
     }
 
     suggestions.sort(
@@ -225,16 +461,6 @@ public class ImprovementPlanService {
       return Priority.HIGH;
     }
     return controlLevel == 2 ? Priority.MEDIUM : Priority.LOW;
-  }
-
-  private LocalDate suggestDueDate(Priority priority) {
-    int daysAhead =
-        switch (priority) {
-          case HIGH -> 30;
-          case MEDIUM -> 60;
-          case LOW -> 90;
-        };
-    return LocalDate.now().plusDays(daysAhead);
   }
 
   private int priorityRank(String priority) {
@@ -281,6 +507,14 @@ public class ImprovementPlanService {
     }
   }
 
+  /** Sin espacios de más y {@code null} si quedó vacío: un comentario en blanco no se guarda. */
+  private static String normalizeComments(String comments) {
+    if (comments == null || comments.isBlank()) {
+      return null;
+    }
+    return comments.strip();
+  }
+
   private ImprovementPlanDto toDto(ImprovementPlan p) {
     Long dueInDays = null;
     if (p.getDueDate() != null) {
@@ -296,6 +530,7 @@ public class ImprovementPlanService {
         p.getStatus().name(),
         p.getDueDate() != null ? p.getDueDate().toString() : null,
         dueInDays,
+        p.getComments(),
         p.getCreatedAt());
   }
 }

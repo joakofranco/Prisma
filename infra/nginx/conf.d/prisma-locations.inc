@@ -15,7 +15,7 @@ add_header X-Content-Type-Options nosniff always;
 location /api/ {
     limit_req zone=api burst=50 nodelay;
     limit_conn addr 20;
-    proxy_pass         http://backend_core;
+    include            /etc/nginx/conf.d/proxy-backend-core.inc;
     proxy_set_header   Host              $http_host;
     proxy_set_header   X-Real-IP         $remote_addr;
     # $remote_addr, NO $proxy_add_x_forwarded_for: este nginx es el único hop confiable frente
@@ -29,18 +29,31 @@ location /api/ {
     # prisma.conf), así que tiene que reflejar el protocolo real de cada request -- si no,
     # backend-core recibiría siempre "https" aunque el cliente haya entrado por HTTP.
     proxy_set_header   X-Forwarded-Proto $scheme;
-    proxy_read_timeout 60s;
+    # PRI-358: tiene que ser MAYOR que las esperas de backend-core hacia backend-ai (lectura 60 s y
+    # guía de mejora 120 s, ver AiProperties): si nginx corta antes, el usuario recibe un 504 HTML en
+    # vez del 503 JSON «IA no disponible» y la guía nunca llega a usar su espera larga.
+    proxy_read_timeout 130s;
 }
 
-# ---- API IA / RAG ----
-location /ai/ {
-    limit_req zone=api burst=20 nodelay;
-    proxy_pass         http://backend_ai/;
+# ---- Keycloak (SSO) -- login (RNF-07: límite de intentos por IP, zona auth_login en nginx.conf) ----
+# Location regex ("location ~"): nginx siempre la prioriza por sobre el prefijo "location /auth/"
+# de abajo cuando ambas matchean, sin importar el orden en que estén escritas acá -- matchea sólo
+# el POST donde Keycloak procesa usuario/contraseña del formulario de login, no el resto de
+# /auth/ (token exchange, refresh, logout, etc.), que sí deben poder repetirse más seguido sin
+# que esto los corte.
+location ~ ^/auth/realms/[^/]+/login-actions/authenticate {
+    # burst=15 nodelay: los primeros 16 intentos de una IP pasan sin esperar, a propósito más que los 10
+    # fallos (failureFactor) con que Keycloak bloquea la cuenta: así, probando a mano o a ritmo humano,
+    # el bloqueo de la cuenta llega ANTES que el 503 de nginx. Pasado el burst se admite lo que
+    # permita el rate de la zona (nginx.conf); lo que nginx rechaza no llega a Keycloak y no cuenta.
+    limit_req zone=auth_login burst=15 nodelay;
+    proxy_pass         https://keycloak_svc;
+    include            /etc/nginx/conf.d/keycloak-upstream-tls.inc;
     proxy_set_header   Host              $http_host;
     proxy_set_header   X-Real-IP         $remote_addr;
-    # $remote_addr, NO $proxy_add_x_forwarded_for -- ver el comentario en location /api/.
     proxy_set_header   X-Forwarded-For   $remote_addr;
-    proxy_read_timeout 300s;         # RAG puede tardar
+    proxy_set_header   X-Forwarded-Proto $scheme;
+    proxy_set_header   X-Forwarded-Host  $http_host;
 }
 
 # ---- Keycloak (SSO) ----
@@ -48,7 +61,8 @@ location /auth/ {
     # SIN barra final en el destino: a diferencia de /api y /ai, acá se preserva el prefijo
     # /auth tal cual llegó (Keycloak corre con KC_HTTP_RELATIVE_PATH=/auth, así que espera
     # recibir ese prefijo -- ver el servicio "keycloak" en docker-compose.yml).
-    proxy_pass         http://keycloak_svc;
+    proxy_pass         https://keycloak_svc;
+    include            /etc/nginx/conf.d/keycloak-upstream-tls.inc;
     proxy_set_header   Host              $http_host;
     proxy_set_header   X-Real-IP         $remote_addr;
     # $remote_addr, NO $proxy_add_x_forwarded_for -- ver el comentario en location /api/.
@@ -72,7 +86,7 @@ location /auth/ {
 
 # ---- Frontend (SPA Vue) ----
 location / {
-    proxy_pass         http://frontend_svc;
+    include            /etc/nginx/conf.d/proxy-frontend.inc;
     proxy_set_header   Host              $http_host;
     proxy_set_header   X-Real-IP         $remote_addr;
     # $remote_addr, NO $proxy_add_x_forwarded_for -- ver el comentario en location /api/.

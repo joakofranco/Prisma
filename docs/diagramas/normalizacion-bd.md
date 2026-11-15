@@ -52,7 +52,7 @@ Revisión tabla por tabla de las que tienen más atributos:
 
 | Tabla | Atributos no-clave | ¿Dependen solo de la PK? |
 |---|---|---|
-| `organizations` | `name`, `rut`, `sector`, `size`, `enabled`, `responsible_id` | Sí — ninguno se puede derivar de otro atributo no-clave de la misma fila. |
+| `organizations` | `name`, `identifier`, `identifier_is_rut`, `sector`, `size`, `enabled`, `responsible_id` | Sí — ninguno se puede derivar de otro atributo no-clave de la misma fila. |
 | `users` | `email`, `first_name`, `last_name`, `password_hash`, `keycloak_id`, `tenant_id`, `enabled` | Sí. |
 | `evaluations` | `name`, `organization_id`, `catalog_version`, `status`, `global_maturity`, `community_profile_id`, `created_by` | Sí — `global_maturity` es un valor *calculado* por `EvaluationService.calculateMaturity`, pero se **almacena** (no se recalcula al vuelo en cada lectura) por rendimiento: es una decisión de materializar un cálculo costoso, no una dependencia transitiva de otra columna de `evaluations` — depende de datos de OTRA tabla (`maturity_results`), lo cual es un patrón válido de caché de agregado, siempre que (como acá) se recalcule explícitamente en cada cambio relevante en vez de quedar desactualizado. |
 | `catalog_controls` | `code`, `description`, `target_level`, `sort_order` | Sí. |

@@ -3,25 +3,42 @@ import type {
   User,
   Organization,
   Evaluation,
+  EvaluationOverview,
   EvaluationResponse,
+  EvaluationAuditCycleEvent,
+  SubcategoryComment,
+  ControlVerdict,
+  ControlFlag,
+  AuditVerdict,
   Evidence,
   EvidenceCitation,
+  CitationFeedbackItem,
+  EvidenceRules,
   AuditObservation,
   AuditLog,
   ImprovementPlan,
   SuggestedImprovement,
   RemediationTips,
+  AiSuggestionFeedback,
   MaturityResult,
   DashboardStats,
   PaginatedResponse,
   CommunityProfile,
   CommunityProfileSummary,
   EmailSettings,
+  AlertSettings,
+  UpdateAlertSettings,
+  AlertTestResult,
   UpdateEmailSettings,
+  PlanDeadlines,
+  PlatformService,
   ChangePasswordPayload,
   CatalogImportPayload,
   CatalogControlFlat,
+  ControlGuideItem,
+  ControlGuideImportResult,
   OrganizationReactivation,
+  InviteUserPayload,
 } from '@/types';
 
 export const usersService = {
@@ -39,6 +56,22 @@ export const usersService = {
   },
   delete(id: string) {
     return apiClient.delete(`/users/${id}`);
+  },
+  /** Desbloquea la cuenta bloqueada por intentos fallidos de login (solo PRISMA_ADMIN, RF-AUTH-08). */
+  unlock(id: string) {
+    return apiClient.post<{ wasLocked: boolean }>(`/users/${id}/unlock`);
+  },
+  /** Invita a un evaluador interno por correo (RF-USR-05). */
+  invite(data: InviteUserPayload) {
+    return apiClient.post<User>('/users/invitations', data);
+  },
+  /** Reenvía la invitación de quien todavía no ingresó. */
+  resendInvitation(id: string) {
+    return apiClient.post<User>(`/users/${id}/invitation/resend`);
+  },
+  /** Si hay servidor de correo para invitar. */
+  invitationAvailability() {
+    return apiClient.get<{ emailConfigured: boolean }>('/users/invitations/availability');
   },
 };
 
@@ -97,11 +130,35 @@ export const evaluationsService = {
   saveResponse(evaluationId: string, data: Partial<EvaluationResponse>) {
     return apiClient.post<EvaluationResponse>(`/evaluations/${evaluationId}/responses`, data);
   },
+  getFlags(evaluationId: string) {
+    return apiClient.get<ControlFlag[]>(`/evaluations/${evaluationId}/flags`);
+  },
+  /** Marca o desmarca «para revisar»; se guarda en el momento, no con «Guardar progreso». */
+  setFlag(evaluationId: string, controlId: string, flagged: boolean) {
+    const url = `/evaluations/${evaluationId}/flags/${controlId}`;
+    return flagged ? apiClient.put<void>(url) : apiClient.delete<void>(url);
+  },
+  getSubcategoryComments(evaluationId: string) {
+    return apiClient.get<SubcategoryComment[]>(`/evaluations/${evaluationId}/subcategory-comments`);
+  },
+  saveSubcategoryComment(evaluationId: string, subcategoryId: string, comment: string) {
+    return apiClient.put<SubcategoryComment>(
+      `/evaluations/${evaluationId}/subcategory-comments/${subcategoryId}`,
+      { comment },
+    );
+  },
+  getOverview(evaluationId: string) {
+    return apiClient.get<EvaluationOverview>(`/evaluations/${evaluationId}/overview`);
+  },
   getResults(evaluationId: string) {
     return apiClient.get<MaturityResult[]>(`/evaluations/${evaluationId}/results`);
   },
   calculateMaturity(evaluationId: string) {
     return apiClient.post(`/evaluations/${evaluationId}/calculate`);
+  },
+  // RF-AUD-10: ciclos de auditoría (envíos/devoluciones) de esta evaluación puntual.
+  getAuditTrail(evaluationId: string) {
+    return apiClient.get<EvaluationAuditCycleEvent[]>(`/evaluations/${evaluationId}/audit-trail`);
   },
 };
 
@@ -122,6 +179,28 @@ export const catalogService = {
   },
   deleteVersion(version: string) {
     return apiClient.delete(`/catalog/${version}`);
+  },
+  getGuideItems(version: string) {
+    return apiClient.get<ControlGuideItem[]>(`/catalog/${version}/guide/items`);
+  },
+  exportGuide(version: string) {
+    return apiClient.get<Blob>(`/catalog/${version}/guide/export`, { responseType: 'blob' });
+  },
+  importGuide(version: string, file: File) {
+    const data = new FormData();
+    data.append('file', file);
+    return apiClient.post<ControlGuideImportResult>(`/catalog/${version}/guide`, data, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+  saveGuide(
+    controlId: string,
+    data: { interpretation: string; example: string; evidence: string },
+  ) {
+    return apiClient.put<ControlGuideItem>(`/catalog/controls/${controlId}/guide`, data);
+  },
+  deleteGuides(controlIds: string[]) {
+    return apiClient.post<{ removed: number }>('/catalog/guide/delete', { controlIds });
   },
 };
 
@@ -169,6 +248,10 @@ export const communityProfilesService = {
 };
 
 export const evidenceService = {
+  /** Reglas de carga vigentes: extensiones permitidas, sin punto (RF-EVI-02). */
+  getAllowedFormats() {
+    return apiClient.get<EvidenceRules>('/evidence/allowed-formats');
+  },
   getByEvaluation(evaluationId: string) {
     return apiClient.get<Evidence[]>(`/evidence/evaluation/${evaluationId}`);
   },
@@ -180,8 +263,9 @@ export const evidenceService = {
   delete(id: string) {
     return apiClient.delete(`/evidence/${id}`);
   },
-  getSignedUrl(id: string) {
-    return apiClient.get<{ url: string }>(`/evidence/${id}/download`);
+  /** Descarga el archivo: el backend lo sirve con el JWT en cada petición (PRI-286). */
+  download(id: string) {
+    return apiClient.get<Blob>(`/evidence/${id}/download`, { responseType: 'blob' });
   },
   /** Reintenta indexar la evidencia en el asistente de IA (p.ej. si falló al subirla). */
   reindex(id: string) {
@@ -192,6 +276,10 @@ export const evidenceService = {
     return apiClient.get<EvidenceCitation[]>(
       `/evidence/evaluation/${evaluationId}/control/${controlId}/citations`,
     );
+  },
+  /** El auditor acepta o rechaza las citas de la IA (la evaluación solo valida acceso y estado). */
+  sendCitationFeedback(evaluationId: string, items: CitationFeedbackItem[]) {
+    return apiClient.post<void>('/evidence/citations/feedback', { evaluationId, items });
   },
 };
 
@@ -205,6 +293,14 @@ export const auditService = {
   updateObservation(id: string, data: Partial<AuditObservation>) {
     return apiClient.put<AuditObservation>(`/audit/observations/${id}`, data);
   },
+  getVerdicts(evaluationId: string) {
+    return apiClient.get<ControlVerdict[]>(`/audit/verdicts/${evaluationId}`);
+  },
+  setVerdict(evaluationId: string, controlId: string, verdict: AuditVerdict) {
+    return apiClient.put<ControlVerdict>(`/audit/verdicts/${evaluationId}/controls/${controlId}`, {
+      verdict,
+    });
+  },
 };
 
 // Distinto de `auditService` (arriba): ese es la Auditoría MCU (AuditObservation, hallazgos de
@@ -214,6 +310,9 @@ export const auditService = {
 export const auditLogsService = {
   getAll(params?: { page?: number; pageSize?: number; search?: string; action?: string }) {
     return apiClient.get<PaginatedResponse<AuditLog>>('/audit-logs', { params });
+  },
+  exportCsv(params?: { search?: string; action?: string }) {
+    return apiClient.get('/audit-logs/export', { params, responseType: 'blob' });
   },
 };
 
@@ -237,6 +336,10 @@ export const improvementService = {
   }) {
     return apiClient.post<RemediationTips>('/improvement/suggestions/tips', data);
   },
+  /** Registra qué se hizo con las guías de IA (usada, editada o descartada). */
+  sendSuggestionFeedback(items: AiSuggestionFeedback[]) {
+    return apiClient.post<void>('/improvement/suggestions/feedback', { items });
+  },
   create(data: Partial<ImprovementPlan>) {
     return apiClient.post<ImprovementPlan>('/improvement', data);
   },
@@ -252,11 +355,74 @@ export const reportsService = {
   generateExcel(evaluationId: string) {
     return apiClient.get(`/reports/${evaluationId}/excel`, { responseType: 'blob' });
   },
+  /** Reporte ejecutivo gerencial (RF-REP-01): 1 a 2 páginas, solo con la evaluación aprobada. */
+  generateExecutivePDF(evaluationId: string) {
+    return apiClient.get(`/reports/${evaluationId}/executive/pdf`, { responseType: 'blob' });
+  },
+  /** Reporte técnico detallado (RF-REP-02): control por control, con veredictos, observaciones y
+   * evidencias. Mismos estados que el reporte final (aprobada, o archivada que fue aprobada). */
+  generateTechnicalPDF(evaluationId: string) {
+    return apiClient.get(`/reports/${evaluationId}/technical/pdf`, { responseType: 'blob' });
+  },
+  generatePreliminaryPDF(evaluationId: string) {
+    return apiClient.get(`/reports/${evaluationId}/preliminary/pdf`, { responseType: 'blob' });
+  },
+  generatePreliminaryExcel(evaluationId: string) {
+    return apiClient.get(`/reports/${evaluationId}/preliminary/excel`, { responseType: 'blob' });
+  },
+  exportImprovementPlanPDF(evaluationId: string) {
+    return apiClient.get(`/reports/${evaluationId}/improvement-plan/pdf`, {
+      responseType: 'blob',
+    });
+  },
+  exportImprovementPlanExcel(evaluationId: string) {
+    return apiClient.get(`/reports/${evaluationId}/improvement-plan/excel`, {
+      responseType: 'blob',
+    });
+  },
 };
 
 export const dashboardService = {
   getStats(tenantId?: string) {
     return apiClient.get<DashboardStats>('/dashboard/stats', { params: { tenantId } });
+  },
+};
+
+// RF-PLN-03: leerlos puede cualquier usuario autenticado (el alta de una acción precarga la fecha);
+// cambiarlos, solo PRISMA_ADMIN.
+export const planDeadlinesService = {
+  get() {
+    return apiClient.get<PlanDeadlines>('/settings/plan-deadlines');
+  },
+  update(data: PlanDeadlines) {
+    return apiClient.put<PlanDeadlines>('/settings/plan-deadlines', data);
+  },
+};
+
+export const platformServicesService = {
+  getAll() {
+    return apiClient.get<PlatformService[]>('/admin/services');
+  },
+  updateUrl(id: string, url: string) {
+    return apiClient.put<PlatformService>(`/admin/services/${id}`, { url });
+  },
+  reset(id: string) {
+    return apiClient.post<PlatformService>(`/admin/services/${id}/reset`);
+  },
+  replaceHost(host: string) {
+    return apiClient.post<PlatformService[]>('/admin/services/replace-host', { host });
+  },
+};
+
+export const alertSettingsService = {
+  get() {
+    return apiClient.get<AlertSettings>('/admin/alert-settings');
+  },
+  update(data: UpdateAlertSettings) {
+    return apiClient.put<AlertSettings>('/admin/alert-settings', data);
+  },
+  test() {
+    return apiClient.post<AlertTestResult>('/admin/alert-settings/test');
   },
 };
 
@@ -266,5 +432,8 @@ export const emailSettingsService = {
   },
   update(data: UpdateEmailSettings) {
     return apiClient.put<EmailSettings>('/admin/email-settings', data);
+  },
+  test(recipientEmail: string) {
+    return apiClient.post<void>('/admin/email-settings/test', { recipientEmail });
   },
 };

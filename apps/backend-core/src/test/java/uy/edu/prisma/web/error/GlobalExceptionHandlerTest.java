@@ -4,6 +4,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 import jakarta.validation.Valid;
+import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -12,10 +13,15 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.util.unit.DataSize;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import uy.edu.prisma.config.EvidenceConfig.EvidenceProperties;
 import uy.edu.prisma.domain.exception.ConflictException;
 import uy.edu.prisma.domain.exception.InvalidRequestException;
+import uy.edu.prisma.domain.exception.MalwareDetectedException;
+import uy.edu.prisma.domain.exception.PayloadTooLargeException;
 import uy.edu.prisma.domain.exception.ResourceNotFoundException;
 import uy.edu.prisma.web.dto.Dto.CreateOrganizationDto;
 
@@ -27,7 +33,9 @@ class GlobalExceptionHandlerTest {
   void setUp() {
     mockMvc =
         MockMvcBuilders.standaloneSetup(new FixtureController())
-            .setControllerAdvice(new GlobalExceptionHandler())
+            .setControllerAdvice(
+                new GlobalExceptionHandler(
+                    new EvidenceProperties(List.of("pdf"), DataSize.ofMegabytes(50))))
             .build();
   }
 
@@ -45,6 +53,46 @@ class GlobalExceptionHandlerTest {
         .perform(get("/conflict"))
         .andExpect(status().isConflict())
         .andExpect(jsonPath("$.message").value("dup"));
+  }
+
+  @Test
+  void aiUnavailableMapsTo503WithItsOwnCode() throws Exception {
+    mockMvc
+        .perform(get("/ai-unavailable"))
+        .andExpect(status().isServiceUnavailable())
+        .andExpect(jsonPath("$.code").value("AI_UNAVAILABLE"))
+        .andExpect(jsonPath("$.message").value("IA caída"));
+  }
+
+  @Test
+  void payloadTooLargeMapsTo413WithItsMessage() throws Exception {
+    mockMvc
+        .perform(get("/too-large"))
+        .andExpect(status().isPayloadTooLarge())
+        .andExpect(jsonPath("$.code").value("PAYLOAD_TOO_LARGE"))
+        .andExpect(jsonPath("$.message").value("demasiado"));
+  }
+
+  @Test
+  void malwareDetectedMapsTo422() throws Exception {
+    mockMvc
+        .perform(get("/malware"))
+        .andExpect(status().isUnprocessableEntity())
+        .andExpect(jsonPath("$.code").value("MALWARE_DETECTED"))
+        .andExpect(jsonPath("$.details.signature[0]").value("Eicar"))
+        .andExpect(
+            jsonPath("$.message")
+                .value("El archivo fue rechazado: se detectó contenido malicioso."));
+  }
+
+  @Test
+  void multipartLimitExceededMapsTo413WithTheConfiguredLimit() throws Exception {
+    mockMvc
+        .perform(get("/multipart-too-large"))
+        .andExpect(status().isPayloadTooLarge())
+        .andExpect(jsonPath("$.code").value("PAYLOAD_TOO_LARGE"))
+        .andExpect(
+            jsonPath("$.message").value("El archivo supera el tamaño máximo permitido de 50 MB"));
   }
 
   @Test
@@ -86,18 +134,39 @@ class GlobalExceptionHandlerTest {
         .perform(get("/conflict-field"))
         .andExpect(status().isConflict())
         .andExpect(jsonPath("$.code").value("CONFLICT"))
-        .andExpect(jsonPath("$.details.rut[0]").value("rut repetido"));
+        .andExpect(jsonPath("$.details.identifier[0]").value("identificador repetido"));
   }
 
   @Test
-  void duplicateRutConstraintViolationGetsAClearMessage() throws Exception {
-    // Red de seguridad: dos altas simultáneas con el mismo RUT que se adelantan al chequeo previo.
+  void duplicateIdentifierConstraintViolationGetsAClearMessage() throws Exception {
+    // Red de seguridad: dos altas simultáneas con el mismo identificador que se adelantan al
+    // chequeo previo.
     mockMvc
-        .perform(get("/rut-constraint"))
+        .perform(get("/identifier-constraint"))
         .andExpect(status().isConflict())
         .andExpect(jsonPath("$.code").value("CONFLICT"))
-        .andExpect(jsonPath("$.message").value("Ya existe una organización con ese RUT"))
-        .andExpect(jsonPath("$.details.rut[0]").value("Ya existe una organización con ese RUT"));
+        .andExpect(jsonPath("$.message").value("Ya existe una organización con ese identificador"))
+        .andExpect(
+            jsonPath("$.details.identifier[0]")
+                .value("Ya existe una organización con ese identificador"));
+  }
+
+  @Test
+  void invalidRequestWithAFieldReturnsItInDetails() throws Exception {
+    mockMvc
+        .perform(get("/invalid-field"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value("INVALID_REQUEST"))
+        .andExpect(jsonPath("$.details.identifier[0]").value("identificador inválido"));
+  }
+
+  @Test
+  void invalidRequestWithoutAFieldHasNoDetails() throws Exception {
+    mockMvc
+        .perform(get("/invalid"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value("INVALID_REQUEST"))
+        .andExpect(jsonPath("$.details").isEmpty());
   }
 
   @Test
@@ -132,13 +201,101 @@ class GlobalExceptionHandlerTest {
         .andExpect(jsonPath("$.code").value("INTERNAL_ERROR"));
   }
 
+  @Test
+  void pathVariableOfTheWrongTypeMapsTo400() throws Exception {
+    mockMvc
+        .perform(get("/by-id/no-es-uuid"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value("BAD_REQUEST"))
+        .andExpect(jsonPath("$.message").value("El valor del parámetro «id» no es válido"))
+        .andExpect(jsonPath("$.details.id").isNotEmpty());
+  }
+
+  @Test
+  void requestParameterOfTheWrongTypeMapsTo400() throws Exception {
+    mockMvc
+        .perform(get("/paged").param("page", "abc"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value("BAD_REQUEST"))
+        .andExpect(jsonPath("$.details.page").isNotEmpty());
+  }
+
+  @Test
+  void missingRequiredParameterMapsTo400() throws Exception {
+    mockMvc
+        .perform(get("/paged"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value("BAD_REQUEST"))
+        .andExpect(jsonPath("$.message").value("Falta el parámetro obligatorio «page»"))
+        .andExpect(jsonPath("$.details.page").isNotEmpty());
+  }
+
+  @Test
+  void unknownRouteMapsTo404() throws Exception {
+    mockMvc
+        .perform(get("/no-resource"))
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.code").value("NOT_FOUND"))
+        .andExpect(jsonPath("$.message").value("El recurso solicitado no existe"));
+  }
+
+  @Test
+  void unsupportedMethodMapsTo405() throws Exception {
+    mockMvc
+        .perform(delete("/notfound"))
+        .andExpect(status().isMethodNotAllowed())
+        .andExpect(jsonPath("$.code").value("METHOD_NOT_ALLOWED"))
+        .andExpect(
+            jsonPath("$.message").value("El método DELETE no está permitido para este recurso"));
+  }
+
+  @Test
+  void unsupportedContentTypeMapsTo415() throws Exception {
+    mockMvc
+        .perform(post("/body").contentType(MediaType.TEXT_PLAIN).content("name=x"))
+        .andExpect(status().isUnsupportedMediaType())
+        .andExpect(jsonPath("$.code").value("UNSUPPORTED_MEDIA_TYPE"));
+  }
+
+  @Test
+  void clientDisconnectIsNotReportedAsAnInternalError() throws Exception {
+    mockMvc.perform(get("/client-gone")).andExpect(status().isOk()).andExpect(content().string(""));
+  }
+
   @RestController
   @Validated
   static class FixtureController {
 
+    @GetMapping("/by-id/{id}")
+    public String byId(@PathVariable java.util.UUID id) {
+      return id.toString();
+    }
+
+    @GetMapping("/paged")
+    public String paged(@RequestParam int page) {
+      return String.valueOf(page);
+    }
+
+    @GetMapping("/no-resource")
+    public String noResource() throws Exception {
+      throw new org.springframework.web.servlet.resource.NoResourceFoundException(
+          org.springframework.http.HttpMethod.GET, "no-resource");
+    }
+
+    @GetMapping("/client-gone")
+    public String clientGone() throws Exception {
+      throw new org.springframework.web.context.request.async.AsyncRequestNotUsableException(
+          "ServletOutputStream failed to write: java.io.IOException: Broken pipe");
+    }
+
     @GetMapping("/notfound")
     public String notFound() {
       throw new ResourceNotFoundException("nope");
+    }
+
+    @GetMapping("/ai-unavailable")
+    public String aiUnavailable() {
+      throw new uy.edu.prisma.domain.exception.AiUnavailableException("IA caída", null);
     }
 
     @GetMapping("/conflict")
@@ -148,15 +305,36 @@ class GlobalExceptionHandlerTest {
 
     @GetMapping("/conflict-field")
     public String conflictField() {
-      throw new ConflictException("rut repetido", "rut");
+      throw new ConflictException("identificador repetido", "identifier");
     }
 
-    @GetMapping("/rut-constraint")
-    public String rutConstraint() {
+    @GetMapping("/invalid-field")
+    public String invalidField() {
+      throw new uy.edu.prisma.domain.exception.InvalidRequestException(
+          "identificador inválido", "identifier");
+    }
+
+    @GetMapping("/identifier-constraint")
+    public String identifierConstraint() {
       throw new DataIntegrityViolationException(
           "could not execute statement",
           new RuntimeException(
-              "ERROR: duplicate key value violates unique constraint \"organizations_rut_key\""));
+              "ERROR: duplicate key value violates unique constraint \"organizations_identifier_key\""));
+    }
+
+    @GetMapping("/malware")
+    public String malware() {
+      throw new MalwareDetectedException("Eicar");
+    }
+
+    @GetMapping("/too-large")
+    public String tooLarge() {
+      throw new PayloadTooLargeException("demasiado");
+    }
+
+    @GetMapping("/multipart-too-large")
+    public String multipartTooLarge() {
+      throw new MaxUploadSizeExceededException(52_428_800L);
     }
 
     @GetMapping("/invalid")

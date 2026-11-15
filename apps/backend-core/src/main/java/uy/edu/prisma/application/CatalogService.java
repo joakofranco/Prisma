@@ -347,6 +347,13 @@ public class CatalogService {
               ctMap.put("code", ct.getCode());
               ctMap.put("description", ct.getDescription());
               ctMap.put("targetLevel", ct.getTargetLevel());
+              if (ct.getGuideInterpretation() != null) {
+                Map<String, Object> guide = new LinkedHashMap<>();
+                guide.put("interpretation", ct.getGuideInterpretation());
+                guide.put("example", ct.getGuideExample());
+                guide.put("evidence", ct.getGuideEvidence());
+                ctMap.put("guide", guide);
+              }
               ctrlsList.add(ctMap);
             }
             if (ctrlsList.isEmpty()) {

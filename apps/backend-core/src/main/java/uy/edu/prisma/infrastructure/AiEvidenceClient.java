@@ -5,9 +5,12 @@ import java.util.List;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
+import uy.edu.prisma.domain.exception.AiUnavailableException;
 import uy.edu.prisma.web.dto.Dto.EvidenceCitationDto;
 import uy.edu.prisma.web.dto.Dto.RemediationTipsDto;
 
@@ -15,10 +18,10 @@ import uy.edu.prisma.web.dto.Dto.RemediationTipsDto;
  * Cliente hacia backend-ai: el pipeline RAG de evidencias (app.api.v1.evidence en Python) y, desde
  * acá, también las sugerencias de remediación de brechas (app.api.v1.rag).
  *
- * <p>Ninguna llamada acá lanza hacia el llamador: la ingesta es best-effort (una evidencia ya quedó
- * guardada en el almacenamiento/Postgres aunque backend-ai esté caído), y tanto las citas como las
- * sugerencias de remediación son asistentes opcionales (si fallan, el usuario simplemente no ve esa
- * ayuda puntual, pero puede seguir trabajando).
+ * <p>La ingesta y la guía de remediación no lanzan hacia el llamador: la ingesta es best-effort
+ * (una evidencia ya quedó guardada en el almacenamiento/Postgres aunque backend-ai esté caído) y la
+ * guía devuelve un texto de reemplazo. Las citas sí lanzan {@link AiUnavailableException} si
+ * backend-ai no responde, para no confundir «IA caída» con «sin resultados» (PRI-359).
  */
 @Component
 public class AiEvidenceClient {
@@ -26,9 +29,19 @@ public class AiEvidenceClient {
   private static final Logger log = LoggerFactory.getLogger(AiEvidenceClient.class);
 
   private final RestClient restClient;
+  // Con la espera larga de la guía de mejora (genera con el LLM, tarda cerca de un minuto).
+  private final RestClient guideRestClient;
+
+  @Autowired
+  public AiEvidenceClient(
+      @Qualifier("aiRestClient") RestClient aiRestClient,
+      @Qualifier("aiGuideRestClient") RestClient aiGuideRestClient) {
+    this.restClient = aiRestClient;
+    this.guideRestClient = aiGuideRestClient;
+  }
 
   public AiEvidenceClient(RestClient aiRestClient) {
-    this.restClient = aiRestClient;
+    this(aiRestClient, aiRestClient);
   }
 
   /** Devuelve true si backend-ai reporta al menos un fragmento indexado. */
@@ -65,7 +78,11 @@ public class AiEvidenceClient {
     }
   }
 
-  /** Recuperación pura de fragmentos relevantes; nunca un veredicto. Vacía si algo falla. */
+  /**
+   * Recuperación pura de fragmentos relevantes; nunca un veredicto. Lista vacía solo si backend-ai
+   * respondió sin resultados; si no responde (caído, colgado o con error) lanza {@link
+   * AiUnavailableException} para que la pantalla distinga «IA no disponible» de «sin resultados».
+   */
   public List<EvidenceCitationDto> citations(
       UUID organizationId, UUID evaluationId, UUID controlId, String query) {
     try {
@@ -92,7 +109,7 @@ public class AiEvidenceClient {
           "No se pudieron obtener citas de evidencia para el control {}: {}",
           controlId,
           e.getMessage());
-      return List.of();
+      throw new AiUnavailableException("El asistente de IA no está disponible en este momento", e);
     }
   }
 
@@ -104,7 +121,8 @@ public class AiEvidenceClient {
           "",
           List.of(
               "No se pudo generar una sugerencia automática en este momento -- intentá de nuevo"
-                  + " más tarde."));
+                  + " más tarde."),
+          false);
 
   /**
    * Pide una guía práctica (resumen + pasos concretos) para cerrar una brecha puntual. On-demand,
@@ -121,7 +139,7 @@ public class AiEvidenceClient {
       int targetLevel) {
     try {
       RemediationTipsResponse response =
-          restClient
+          guideRestClient
               .post()
               .uri("/api/v1/rag/remediation-tips")
               .contentType(MediaType.APPLICATION_JSON)

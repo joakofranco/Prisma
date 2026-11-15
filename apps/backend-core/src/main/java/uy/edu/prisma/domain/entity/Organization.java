@@ -21,11 +21,16 @@ public class Organization {
   @Column(nullable = false, length = 200)
   private String name;
 
-  // Opcional (no toda organización tiene uno cargado al momento del alta) -- único sólo entre los
-  // valores no nulos, Postgres no cuenta NULL contra una UNIQUE constraint, así que varias
-  // organizaciones sin RUT conviven sin problema. Ver V17__organization_rut_optional.sql.
+  // Identificador de la organización (RUT u otro): opcional, único sólo entre los valores no nulos
+  // (Postgres no cuenta NULL contra una UNIQUE constraint, así que varias organizaciones sin
+  // identificador conviven sin problema). Si `identifierIsRut` es true, el servicio ya validó el
+  // dígito verificador y lo guardó normalizado («AA-BBBBBB-001-D»). Ver V35.
   @Column(unique = true, length = 20)
-  private String rut;
+  private String identifier;
+
+  @Column(name = "identifier_is_rut", nullable = false)
+  @Builder.Default
+  private Boolean identifierIsRut = false;
 
   @Column(length = 100)
   private String sector;

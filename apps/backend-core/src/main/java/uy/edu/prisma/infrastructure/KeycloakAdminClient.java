@@ -10,6 +10,7 @@ import java.util.Set;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
@@ -17,6 +18,7 @@ import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
 import uy.edu.prisma.config.KeycloakAdminConfig.KeycloakAdminProperties;
 import uy.edu.prisma.domain.exception.InvalidRequestException;
 
@@ -44,7 +46,8 @@ public class KeycloakAdminClient {
   private volatile Instant tokenExpiresAt = Instant.EPOCH;
 
   public KeycloakAdminClient(
-      RestClient keycloakAdminRestClient, KeycloakAdminProperties properties) {
+      @Qualifier("keycloakAdminRestClient") RestClient keycloakAdminRestClient,
+      KeycloakAdminProperties properties) {
     this.restClient = keycloakAdminRestClient;
     this.properties = properties;
   }
@@ -53,9 +56,66 @@ public class KeycloakAdminClient {
   public UUID createUser(
       String email, String firstName, String lastName, String password, Set<String> realmRoles) {
     CredentialRepresentation credential = new CredentialRepresentation("password", password, true);
-    UserRepresentation body =
-        new UserRepresentation(email, email, firstName, lastName, true, true, List.of(credential));
+    return provision(
+        new UserRepresentation(email, email, firstName, lastName, true, true, List.of(credential)),
+        realmRoles);
+  }
 
+  /**
+   * Crea un usuario invitado (RF-USR-05, PRI-240): sin contraseña y con el email sin verificar. No
+   * puede iniciar sesión hasta seguir el enlace de {@link #sendExecuteActionsEmail}, que le pide
+   * verificar el email y crear su contraseña: nadie más la conoce.
+   */
+  public UUID createInvitedUser(
+      String email, String firstName, String lastName, Set<String> realmRoles) {
+    return provision(
+        new UserRepresentation(email, email, firstName, lastName, true, false, null), realmRoles);
+  }
+
+  /**
+   * Pide a Keycloak que le envíe al usuario el correo de «acciones requeridas» (en PRISMA, la
+   * invitación: ver infra/keycloak/themes/prisma/email/html/executeActions.ftl). El enlace vence en
+   * {@code lifespanSeconds} y, completadas las acciones, lleva a {@code redirectUri}. Si el correo
+   * no sale (SMTP mal configurado, Keycloak caído...) lanza {@link EmailDeliveryException}: quien
+   * llama decide si deshace el alta.
+   */
+  public void sendExecuteActionsEmail(
+      UUID keycloakId,
+      List<String> actions,
+      int lifespanSeconds,
+      String clientId,
+      String redirectUri) {
+    try {
+      restClient
+          .put()
+          .uri(
+              "/admin/realms/{realm}/users/{id}/execute-actions-email"
+                  + "?lifespan={lifespan}&client_id={clientId}&redirect_uri={redirectUri}",
+              properties.realm(),
+              keycloakId,
+              lifespanSeconds,
+              clientId,
+              redirectUri)
+          .header("Authorization", "Bearer " + adminToken())
+          .contentType(MediaType.APPLICATION_JSON)
+          .body(actions)
+          .retrieve()
+          .toBodilessEntity();
+    } catch (RestClientException e) {
+      log.warn(
+          "Keycloak no pudo enviar el correo de acciones a {}: {}", keycloakId, e.getMessage());
+      throw new EmailDeliveryException(e);
+    }
+  }
+
+  /** El correo de {@link #sendExecuteActionsEmail} no se pudo enviar. */
+  public static class EmailDeliveryException extends RuntimeException {
+    public EmailDeliveryException(Throwable cause) {
+      super("Keycloak no pudo enviar el correo", cause);
+    }
+  }
+
+  private UUID provision(UserRepresentation body, Set<String> realmRoles) {
     ResponseEntity<Void> response;
     try {
       response =
@@ -176,6 +236,77 @@ public class KeycloakAdminClient {
    */
   public void setPermanentPassword(UUID keycloakId, String newPassword) {
     setPassword(keycloakId, newPassword, false);
+  }
+
+  /**
+   * Borra TODAS las credenciales OTP (MFA) del usuario en Keycloak y devuelve cuántas borró. Es lo
+   * que hace un PRISMA_ADMIN cuando le restablece la contraseña a quien perdió el acceso a su
+   * autenticador (PRI-365): así no hace falta entrar a la consola de Keycloak. A diferencia de
+   * {@link #deleteUser}, NO es best-effort: si falla, quien lo pidió tiene que enterarse (si no, el
+   * usuario seguiría pidiendo un código que ya no puede generar).
+   */
+  public int removeOtpCredentials(UUID keycloakId) {
+    CredentialSummary[] credentials =
+        restClient
+            .get()
+            .uri("/admin/realms/{realm}/users/{id}/credentials", properties.realm(), keycloakId)
+            .header("Authorization", "Bearer " + adminToken())
+            .retrieve()
+            .body(CredentialSummary[].class);
+    int removed = 0;
+    for (CredentialSummary credential :
+        credentials != null ? credentials : new CredentialSummary[0]) {
+      if (!"otp".equals(credential.type())) {
+        continue;
+      }
+      restClient
+          .delete()
+          .uri(
+              "/admin/realms/{realm}/users/{id}/credentials/{credentialId}",
+              properties.realm(),
+              keycloakId,
+              credential.id())
+          .header("Authorization", "Bearer " + adminToken())
+          .retrieve()
+          .toBodilessEntity();
+      removed++;
+    }
+    return removed;
+  }
+
+  /**
+   * Estado de la protección contra fuerza bruta de Keycloak para un usuario (PRI-233): cuántos
+   * intentos fallidos lleva seguidos y si está bloqueado ahora. Igual que {@link
+   * #removeOtpCredentials}, NO es best-effort: si falla, quien lo pidió tiene que enterarse.
+   */
+  public LoginFailureStatus loginFailureStatus(UUID keycloakId) {
+    LoginFailureStatus status =
+        restClient
+            .get()
+            .uri(
+                "/admin/realms/{realm}/attack-detection/brute-force/users/{id}",
+                properties.realm(),
+                keycloakId)
+            .header("Authorization", "Bearer " + adminToken())
+            .retrieve()
+            .body(LoginFailureStatus.class);
+    return status != null ? status : new LoginFailureStatus(false, 0, 0);
+  }
+
+  /**
+   * Borra los intentos fallidos de login de un usuario: si la cuenta estaba bloqueada
+   * temporalmente, queda habilitada de inmediato y el contador vuelve a cero (PRI-233).
+   */
+  public void clearLoginFailures(UUID keycloakId) {
+    restClient
+        .delete()
+        .uri(
+            "/admin/realms/{realm}/attack-detection/brute-force/users/{id}",
+            properties.realm(),
+            keycloakId)
+        .header("Authorization", "Bearer " + adminToken())
+        .retrieve()
+        .toBodilessEntity();
   }
 
   private void setPassword(UUID keycloakId, String newPassword, boolean temporary) {
@@ -313,6 +444,104 @@ public class KeycloakAdminClient {
   }
 
   /**
+   * Envía un correo de prueba con la configuración SMTP dada (la misma que devuelve {@link
+   * #getSmtpConfig()}, incluido el password enmascarado "**********" si no se cambió -- Keycloak
+   * resuelve ese valor al password real ya persistido, igual que hace al guardar la config, así que
+   * no hace falta pedirle al admin que lo reingrese sólo para probar). Lanza {@link
+   * InvalidRequestException} con el detalle de Keycloak si el envío falla (credenciales inválidas,
+   * host inalcanzable, etc.) -- a diferencia del resto de los métodos de esta clase, acá SÍ
+   * conviene traducir el error de Keycloak en vez de dejarlo propagar tal cual, porque quien llama
+   * necesita mostrárselo al admin para que corrija la configuración.
+   *
+   * <p><b>Por qué cambia el email de la cuenta de servicio:</b> el endpoint {@code
+   * testSMTPConnection} de Keycloak (verificado decompilando {@code RealmAdminResource} de la
+   * versión 26.7.5 en uso) SIEMPRE manda la prueba al "usuario actualmente logueado" -- su propio
+   * resumen OpenAPI dice literalmente "Test SMTP connection with current logged in user" -- y no
+   * declara ningún parámetro de destinatario: el {@code ?user=...} que tenía antes este método era
+   * inofensivo pero Keycloak lo ignoraba por completo. Como backend-core llama a esta API como la
+   * cuenta de servicio {@code service-account-<clientId>}, el correo de prueba siempre terminaba en
+   * el email que esa cuenta tuviera guardado, sin importar qué destinatario pidiera el admin (si
+   * coincidía era por casualidad). Para que funcione con cualquier destinatario, sin introducir un
+   * camino de envío paralelo a Keycloak, se le asigna temporalmente ese email a la cuenta de
+   * servicio, se dispara la prueba y SIEMPRE se restaura el valor anterior (éxito o error) -- ver
+   * {@code finally}. {@code synchronized} porque dos pruebas simultáneas pisarían el email de la
+   * misma cuenta de servicio.
+   */
+  public synchronized void testSmtpConnection(
+      Map<String, String> smtpServer, String testRecipientEmail) {
+    UUID serviceAccountId = findServiceAccountId();
+    String previousEmail = getUserEmail(serviceAccountId);
+    updateUserEmail(serviceAccountId, testRecipientEmail);
+    try {
+      restClient
+          .post()
+          .uri("/admin/realms/{realm}/testSMTPConnection", properties.realm())
+          .header("Authorization", "Bearer " + adminToken())
+          .contentType(MediaType.APPLICATION_JSON)
+          .body(smtpServer)
+          .retrieve()
+          .toBodilessEntity();
+    } catch (org.springframework.web.client.RestClientResponseException e) {
+      // RestClientResponseException (no sólo HttpClientErrorException): un SMTP que cuelga o un
+      // host inalcanzable hace que Keycloak responda 500, no sólo 4xx.
+      throw new InvalidRequestException(
+          "No se pudo enviar el correo de prueba: verificá la configuración SMTP (host, puerto,"
+              + " credenciales). Detalle de Keycloak: "
+              + e.getStatusCode());
+    } finally {
+      // Keycloak ignora un PUT con email=null (lo trata como "no tocar"); sólo "" borra el campo
+      // de verdad -- así que si la cuenta de servicio no tenía email configurado, hay que
+      // restaurarla con "" y no con null, o el destinatario de prueba quedaría pegado.
+      updateUserEmail(serviceAccountId, previousEmail == null ? "" : previousEmail);
+    }
+  }
+
+  private UUID findServiceAccountId() {
+    String username = "service-account-" + properties.clientId();
+    ServiceAccountUser[] users =
+        restClient
+            .get()
+            .uri(
+                "/admin/realms/{realm}/users?username={username}&exact=true",
+                properties.realm(),
+                username)
+            .header("Authorization", "Bearer " + adminToken())
+            .retrieve()
+            .body(ServiceAccountUser[].class);
+    if (users == null || users.length == 0) {
+      throw new InvalidRequestException(
+          "No se encontró en Keycloak la cuenta de servicio de la plataforma (" + username + ")");
+    }
+    return UUID.fromString(users[0].id());
+  }
+
+  private String getUserEmail(UUID id) {
+    ServiceAccountUser user =
+        restClient
+            .get()
+            .uri("/admin/realms/{realm}/users/{id}", properties.realm(), id)
+            .header("Authorization", "Bearer " + adminToken())
+            .retrieve()
+            .body(ServiceAccountUser.class);
+    return user == null ? null : user.email();
+  }
+
+  private void updateUserEmail(UUID id, String email) {
+    restClient
+        .put()
+        .uri("/admin/realms/{realm}/users/{id}", properties.realm(), id)
+        .header("Authorization", "Bearer " + adminToken())
+        .contentType(MediaType.APPLICATION_JSON)
+        .body(Map.of("email", email))
+        .retrieve()
+        .toBodilessEntity();
+  }
+
+  /** Representación mínima de un usuario de Keycloak: sólo lo que necesita el método de arriba. */
+  @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+  private record ServiceAccountUser(String id, String email) {}
+
+  /**
    * Intentos de login fallidos desde {@code sinceEpochMillisExclusive} (exclusivo), más recientes
    * primero según Keycloak. Requiere {@code eventsEnabled=true} en el realm (ver realm-prisma.json)
    * -- si no, Keycloak simplemente no guarda estos eventos y esto siempre devuelve vacío, no falla.
@@ -348,6 +577,20 @@ public class KeycloakAdminClient {
   }
 
   public record LoginFailureEvent(long time, String ipAddress, String username, String error) {}
+
+  /**
+   * Lo que Keycloak informa del bloqueo de un usuario: {@code disabled} es {@code true} mientras la
+   * cuenta está bloqueada, {@code numFailures} los intentos fallidos seguidos que lleva y {@code
+   * failedLoginNotBefore} hasta cuándo (segundos desde 1970) no la deja iniciar sesión; 0 si no hay
+   * bloqueo.
+   */
+  @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+  public record LoginFailureStatus(boolean disabled, int numFailures, long failedLoginNotBefore) {
+
+    public LoginFailureStatus(boolean disabled, int numFailures) {
+      this(disabled, numFailures, 0);
+    }
+  }
 
   // Representación PARCIAL del evento de Keycloak -- sólo los campos que se usan. "details" trae
   // el username tal cual se escribió en el formulario de login (existe o no la cuenta), que es
@@ -394,6 +637,12 @@ public class KeycloakAdminClient {
       @JsonProperty("expires_in") long expiresIn) {}
 
   private record CredentialRepresentation(String type, String value, boolean temporary) {}
+
+  /**
+   * Credencial tal como la lista Keycloak (solo interesan el id y el tipo: «password», «otp»...).
+   */
+  @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+  private record CredentialSummary(String id, String type) {}
 
   private record UserRepresentation(
       String username,

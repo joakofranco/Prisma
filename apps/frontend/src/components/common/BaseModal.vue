@@ -28,13 +28,16 @@
               'relative bg-white dark:bg-slate-800 rounded-2xl shadow-2xl w-full flex flex-col max-h-[calc(100dvh-2rem)]',
               // Proporcional a la ventana (nunca un ancho fijo en px): en móvil ocupa todo; desde `md`,
               // sm = avisos/confirmaciones cortos (40%), md = formularios medianos (60%) y lg =
-              // formularios y contenidos grandes (90%). El `min-w` solo evita que un diálogo corto
+              // formularios y contenidos grandes (90%) y xl = visores (vista previa de documentos, 95%).
+              // El `min-w` solo evita que un diálogo corto
               // quede ilegible en tabletas angostas.
               size === 'sm'
                 ? 'md:w-[40%] md:min-w-[22rem]'
-                : size === 'lg'
-                  ? 'md:w-[90%]'
-                  : 'md:w-[60%] md:min-w-[28rem]',
+                : size === 'xl'
+                  ? 'md:w-[95%]'
+                  : size === 'lg'
+                    ? 'md:w-[90%]'
+                    : 'md:w-[60%] md:min-w-[28rem]',
             ]"
           >
             <div
@@ -82,7 +85,7 @@
     defineProps<{
       modelValue: boolean;
       title?: string;
-      size?: 'sm' | 'md' | 'lg';
+      size?: 'sm' | 'md' | 'lg' | 'xl';
       persistent?: boolean;
     }>(),
     {

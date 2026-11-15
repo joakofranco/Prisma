@@ -51,22 +51,38 @@ public class Dto {
     return value == null ? null : value.trim();
   }
 
+  // ---- Versión de la aplicación ----
+  // `development`: el entorno es de desarrollo (el frontend muestra un cartel). `commit` y
+  // `buildTime` solo vienen con sesión iniciada.
+  public record AppVersionDto(
+      String application,
+      String version,
+      String environment,
+      boolean development,
+      String commit,
+      String buildTime) {}
+
   // ---- Organization ----
   public record OrganizationDto(
       UUID id,
       String name,
-      // Uruguay usa "RUT" (Colombia y otros usan "NIT") -- opcional, ver
-      // V17__organization_rut_optional.sql.
-      String rut,
+      // Identificador (RUT u otro), opcional. `identifierIsRut`: el servicio lo validó como RUT
+      // uruguayo y lo guardó normalizado. Ver V35__organization_identifier.sql.
+      String identifier,
+      boolean identifierIsRut,
       String sector,
       String size,
       UUID responsibleId,
+      // Nombre (o email, si no tiene nombre cargado) del responsable; null si no tiene. Lo muestra
+      // la pantalla de Reportes junto a los datos de la organización (PRI-367).
+      String responsibleName,
       Boolean enabled,
       OffsetDateTime createdAt) {}
 
   public record CreateOrganizationDto(
       @NotBlank(message = "El nombre es obligatorio") String name,
-      String rut,
+      String identifier,
+      Boolean identifierIsRut,
       String sector,
       String size,
       UUID responsibleId) {}
@@ -78,6 +94,11 @@ public class Dto {
   public record OrganizationReactivationDto(OrganizationDto organization, int disabledUsers) {}
 
   // ---- User ----
+  /**
+   * Resultado de desbloquear una cuenta: {@code wasLocked} es false si no había nada que limpiar.
+   */
+  public record UnlockUserResultDto(boolean wasLocked) {}
+
   public record UserDto(
       UUID id,
       String email,
@@ -96,11 +117,80 @@ public class Dto {
       // false = no tiene cuenta en Keycloak todavía y por lo tanto NO puede iniciar sesión
       // (p.ej. usuarios creados antes de que esto se corrigiera). El admin lo resuelve editando
       // el usuario y fijándole una contraseña.
-      boolean canLogin) {
+      boolean canLogin,
+      // RF-USR-05 (PRI-240): cuándo se le envió la última invitación por correo y cuándo ingresó
+      // por primera vez. invitedAt != null && invitationAcceptedAt == null = invitación pendiente.
+      // Ambos null = alta con contraseña temporal.
+      OffsetDateTime invitedAt,
+      OffsetDateTime invitationAcceptedAt,
+      // Bloqueo por intentos fallidos de login (Keycloak, RF-AUTH-08): true = la cuenta está
+      // bloqueada ahora mismo; false = no lo está; null = no se sabe (todavía no tiene cuenta en
+      // Keycloak, o Keycloak no respondió) -- la pantalla no muestra nada en ese caso.
+      // lockedUntil = hasta cuándo dura el bloqueo; solo viene si locked es true.
+      Boolean locked,
+      OffsetDateTime lockedUntil) {
     public UserDto {
       organizationIds = organizationIds == null ? Set.of() : Set.copyOf(organizationIds);
       organizationNames = organizationNames == null ? List.of() : List.copyOf(organizationNames);
       roles = roles == null ? Set.of() : Set.copyOf(roles);
+    }
+
+    // Compat: firma previa al estado de bloqueo (se desconoce).
+    public UserDto(
+        UUID id,
+        String email,
+        String firstName,
+        String lastName,
+        Set<UUID> organizationIds,
+        List<String> organizationNames,
+        Set<String> roles,
+        Boolean enabled,
+        OffsetDateTime createdAt,
+        boolean canLogin,
+        OffsetDateTime invitedAt,
+        OffsetDateTime invitationAcceptedAt) {
+      this(
+          id,
+          email,
+          firstName,
+          lastName,
+          organizationIds,
+          organizationNames,
+          roles,
+          enabled,
+          createdAt,
+          canLogin,
+          invitedAt,
+          invitationAcceptedAt,
+          null,
+          null);
+    }
+
+    // Compat: firma previa a la invitación por correo (usuario no invitado).
+    public UserDto(
+        UUID id,
+        String email,
+        String firstName,
+        String lastName,
+        Set<UUID> organizationIds,
+        List<String> organizationNames,
+        Set<String> roles,
+        Boolean enabled,
+        OffsetDateTime createdAt,
+        boolean canLogin) {
+      this(
+          id,
+          email,
+          firstName,
+          lastName,
+          organizationIds,
+          organizationNames,
+          roles,
+          enabled,
+          createdAt,
+          canLogin,
+          null,
+          null);
     }
 
     // Compat (tests): firma previa con una organización (`tenantId`) y las organizaciones a auditar
@@ -199,6 +289,36 @@ public class Dto {
   // autenticarse (o justo antes de cerrar sesión) para que quede una entrada en la bitácora; ver
   // AccountService.recordSessionEvent.
   public record SessionEventDto(@NotBlank(message = "El evento es obligatorio") String event) {}
+
+  /**
+   * «Invitar evaluador» (RF-USR-05, PRI-240). El rol es siempre INTERNAL_EVALUATOR y no viaja.
+   * {@code organizationId}: solo lo elige PRISMA_ADMIN; para un ORG_RESPONSIBLE el backend usa su
+   * propia organización y rechaza cualquier otra.
+   */
+  public record InviteUserDto(
+      @NotBlank(message = "El email es obligatorio")
+          @Size(max = 254, message = "El email no puede superar los 254 caracteres")
+          @Email(message = EMAIL_MESSAGE)
+          @Pattern(regexp = EMAIL_DOMAIN_REGEX, message = EMAIL_MESSAGE)
+          String email,
+      @NotBlank(message = "El nombre es obligatorio")
+          @Size(min = 2, max = 100, message = "El nombre debe tener entre 2 y 100 caracteres")
+          @Pattern(regexp = PERSON_NAME_REGEX, message = PERSON_NAME_MESSAGE_FIRST)
+          String firstName,
+      @NotBlank(message = "El apellido es obligatorio")
+          @Size(min = 2, max = 100, message = "El apellido debe tener entre 2 y 100 caracteres")
+          @Pattern(regexp = PERSON_NAME_REGEX, message = PERSON_NAME_MESSAGE_LAST)
+          String lastName,
+      UUID organizationId) {
+    public InviteUserDto {
+      email = trimOrNull(email);
+      firstName = trimOrNull(firstName);
+      lastName = trimOrNull(lastName);
+    }
+  }
+
+  /** {@code emailConfigured}: hay servidor de correo, así que se puede invitar por email. */
+  public record InvitationAvailabilityDto(boolean emailConfigured) {}
 
   public record CreateUserDto(
       @NotBlank(message = "El email es obligatorio")
@@ -375,6 +495,61 @@ public class Dto {
           @Max(value = 4, message = "El nivel objetivo debe ser entre 1 y 4")
           Integer targetLevel) {}
 
+  public record ControlGuideItemDto(
+      UUID id,
+      String code,
+      String description,
+      Integer targetLevel,
+      String requirementCode,
+      String interpretation,
+      String example,
+      String evidence) {}
+
+  public record SaveControlGuideDto(
+      @Size(max = 4000, message = "La interpretación no puede superar los 4000 caracteres")
+          String interpretation,
+      @Size(max = 4000, message = "El ejemplo no puede superar los 4000 caracteres") String example,
+      @Size(max = 4000, message = "La evidencia no puede superar los 4000 caracteres")
+          String evidence) {}
+
+  public record DeleteControlGuidesDto(
+      @NotEmpty(message = "Indique al menos un control") List<UUID> controlIds) {
+    public DeleteControlGuidesDto {
+      controlIds = controlIds == null ? null : List.copyOf(controlIds);
+    }
+
+    @Override
+    public List<UUID> controlIds() {
+      return controlIds == null ? null : Collections.unmodifiableList(controlIds);
+    }
+  }
+
+  public record DeleteControlGuidesResultDto(int removed) {}
+
+  public record ControlGuideSummaryDto(int total, int withGuide) {}
+
+  public record ControlGuideImportResultDto(
+      int parsed,
+      int updated,
+      List<String> notInCatalog,
+      List<String> incomplete,
+      int catalogWithoutGuide) {
+    public ControlGuideImportResultDto {
+      notInCatalog = notInCatalog == null ? List.of() : List.copyOf(notInCatalog);
+      incomplete = incomplete == null ? List.of() : List.copyOf(incomplete);
+    }
+
+    @Override
+    public List<String> notInCatalog() {
+      return Collections.unmodifiableList(notInCatalog);
+    }
+
+    @Override
+    public List<String> incomplete() {
+      return Collections.unmodifiableList(incomplete);
+    }
+  }
+
   public record CatalogImportDto(
       @NotBlank(message = "La versión es obligatoria")
           @Size(max = 20, message = "La versión no puede superar los 20 caracteres")
@@ -462,6 +637,13 @@ public class Dto {
       UUID createdBy,
       OffsetDateTime createdAt,
       OffsetDateTime updatedAt,
+      // RF-AUD-09: metadatos del sello de certificación, completados solo al aprobar (APPROVED) --
+      // ver EvaluationService.sealApproval. Todos null si la evaluación nunca fue aprobada.
+      UUID approvedBy,
+      OffsetDateTime approvedAt,
+      String certificationSeal,
+      // Nombre de quien aprobó/selló la evaluación (null si approvedBy es null).
+      String approvedByName,
       // Nombre de quien la creó/evaluó (null si createdBy es null -- p.ej. datos históricos de
       // antes de que se empezara a registrar). Se resuelve acá para que la grilla de evaluaciones
       // del admin no necesite un lookup aparte por fila.
@@ -476,7 +658,8 @@ public class Dto {
           assignedAuditorNames == null ? List.of() : List.copyOf(assignedAuditorNames);
     }
 
-    // Compat: firma previa sin createdByName ni assignedAuditorNames (usada en tests existentes).
+    // Compat: firma previa sin los campos del sello de certificación, createdByName ni
+    // assignedAuditorNames (usada en tests existentes).
     public EvaluationDto(
         UUID id,
         String name,
@@ -503,6 +686,10 @@ public class Dto {
           createdBy,
           createdAt,
           updatedAt,
+          null,
+          null,
+          null,
+          null,
           null,
           List.of());
     }
@@ -538,6 +725,12 @@ public class Dto {
 
   public record SaveResponseDto(UUID controlId, Boolean compliant, String observations) {}
 
+  // Comentario por subcategoria de una evaluacion (RF-EVA-06). Un comentario vacio lo elimina.
+  public record SubcategoryCommentDto(
+      UUID subcategoryId, String comment, UUID updatedBy, OffsetDateTime updatedAt) {}
+
+  public record SaveSubcategoryCommentDto(@Size(max = 5000) String comment) {}
+
   // ---- Maturity Result ----
   public record MaturityResultDto(
       UUID functionId,
@@ -548,7 +741,45 @@ public class Dto {
       String subcategoryName,
       Integer currentLevel,
       Integer targetLevel,
-      Integer gap) {}
+      Integer gap,
+      Integer nextLevel,
+      List<MissingControlDto> missingControls) {
+    public MaturityResultDto {
+      missingControls = missingControls == null ? List.of() : List.copyOf(missingControls);
+    }
+
+    public MaturityResultDto(
+        UUID functionId,
+        String functionName,
+        UUID categoryId,
+        String categoryName,
+        UUID subcategoryId,
+        String subcategoryName,
+        Integer currentLevel,
+        Integer targetLevel,
+        Integer gap) {
+      this(
+          functionId,
+          functionName,
+          categoryId,
+          categoryName,
+          subcategoryId,
+          subcategoryName,
+          currentLevel,
+          targetLevel,
+          gap,
+          null,
+          List.of());
+    }
+
+    @Override
+    public List<MissingControlDto> missingControls() {
+      return Collections.unmodifiableList(missingControls);
+    }
+  }
+
+  public record MissingControlDto(
+      UUID id, String code, String description, int targetLevel, String status) {}
 
   // ---- Dashboard ----
   public record DashboardStatsDto(
@@ -585,15 +816,22 @@ public class Dto {
       String fileName,
       Long fileSize,
       String fileType,
+      String fileHash,
       String description,
       UUID uploadedBy,
       OffsetDateTime uploadedAt,
-      String url,
-      boolean aiIndexed) {}
+      boolean aiIndexed,
+      String scanStatus) {}
 
-  public record UploadEvidenceResponseDto(UUID id, String fileName, Long fileSize) {}
+  /** Reglas de carga de evidencias: extensiones permitidas, sin punto, y tamaño máximo en bytes. */
+  public record EvidenceRulesDto(List<String> allowedExtensions, long maxSizeBytes) {
+    public EvidenceRulesDto {
+      allowedExtensions = List.copyOf(allowedExtensions);
+    }
+  }
 
-  public record DownloadUrlDto(String url) {}
+  public record UploadEvidenceResponseDto(
+      UUID id, String fileName, Long fileSize, String scanStatus) {}
 
   // ---- Evidence RAG (citas para el auditor) ----
   // Recuperación pura: ningún campo acá representa un veredicto. location es "Página N"
@@ -606,6 +844,7 @@ public class Dto {
       UUID id,
       UUID evaluationId,
       UUID controlId,
+      UUID subcategoryId,
       String type,
       String description,
       String status,
@@ -613,8 +852,17 @@ public class Dto {
       OffsetDateTime createdAt,
       // Nombre del auditor que la registró -- es la "estampa" de quién trabajó esta auditoría:
       // null si createdBy es null (dato histórico) o no se pudo resolver.
-      String createdByName) {
-    // Compat: firma previa sin createdByName (usada en tests existentes).
+      String createdByName,
+      // Código del control y de la subcategoría a los que está atada (null si no lo está): la
+      // organización que lee las observaciones al volver la evaluación no tiene el catálogo a mano.
+      String controlCode,
+      String subcategoryCode,
+      // Evidencia citada de la que sale la observación (RF-EVI-15) y su nombre de archivo: la
+      // organización que la lee al volver la evaluación ve de qué documento habla (null si no
+      // viene de una cita o si la evidencia se borró).
+      UUID evidenceId,
+      String evidenceFileName) {
+    // Compat: firma previa sin subcategoryId ni createdByName (usada en tests existentes).
     public AuditObservationDto(
         UUID id,
         UUID evaluationId,
@@ -624,19 +872,71 @@ public class Dto {
         String status,
         UUID createdBy,
         OffsetDateTime createdAt) {
-      this(id, evaluationId, controlId, type, description, status, createdBy, createdAt, null);
+      this(
+          id,
+          evaluationId,
+          controlId,
+          null,
+          type,
+          description,
+          status,
+          createdBy,
+          createdAt,
+          null,
+          null,
+          null,
+          null,
+          null);
     }
   }
 
   public record CreateAuditObservationDto(
       UUID evaluationId,
       UUID controlId,
+      UUID subcategoryId,
       String type,
       @NotBlank(message = "La descripción es obligatoria") String description,
-      String status) {}
+      String status,
+      // Evidencia citada de la que sale la observación (opcional, RF-EVI-15): tiene que ser de la
+      // misma evaluación.
+      UUID evidenceId) {
+
+    public CreateAuditObservationDto(
+        UUID evaluationId,
+        UUID controlId,
+        UUID subcategoryId,
+        String type,
+        String description,
+        String status) {
+      this(evaluationId, controlId, subcategoryId, type, description, status, null);
+    }
+  }
 
   public record UpdateAuditObservationDto(
-      UUID controlId, String type, String description, String status) {}
+      UUID controlId,
+      UUID subcategoryId,
+      String type,
+      String description,
+      String status,
+      UUID evidenceId) {
+
+    public UpdateAuditObservationDto(
+        UUID controlId, UUID subcategoryId, String type, String description, String status) {
+      this(controlId, subcategoryId, type, description, status, null);
+    }
+  }
+
+  // ---- Audit control verdicts (dictamen) ----
+  // verdict: VALIDATED | NOT_VALIDATED | NEEDS_MORE_EVIDENCE.
+  public record ControlVerdictDto(
+      UUID controlId, String verdict, UUID setBy, String setByName, OffsetDateTime updatedAt) {}
+
+  public record SetControlVerdictDto(
+      @NotBlank(message = "El dictamen es obligatorio") String verdict) {}
+
+  // ---- Marca "para revisar" por control (PRI-352) ----
+  public record ControlFlagDto(
+      UUID controlId, UUID flaggedBy, String flaggedByName, OffsetDateTime flaggedAt) {}
 
   // ---- Improvement Plans ----
   public record ImprovementPlanDto(
@@ -649,6 +949,7 @@ public class Dto {
       String status,
       String dueDate,
       Long dueInDays,
+      String comments,
       OffsetDateTime createdAt) {}
 
   public record CreateImprovementPlanDto(
@@ -657,10 +958,18 @@ public class Dto {
       @NotBlank(message = "La acción es obligatoria") String action,
       String responsible,
       String priority,
-      String dueDate) {}
+      String dueDate,
+      @Size(max = 2000, message = "Los comentarios no pueden superar los 2000 caracteres")
+          String comments) {}
 
   public record UpdateImprovementPlanDto(
-      String action, String responsible, String priority, String dueDate, String status) {}
+      String action,
+      String responsible,
+      String priority,
+      String dueDate,
+      String status,
+      @Size(max = 2000, message = "Los comentarios no pueden superar los 2000 caracteres")
+          String comments) {}
 
   // Sugerencia generada por reglas (RF-PLN-01), todavia no persistida como ImprovementPlan:
   // el usuario la revisa/edita en el frontend y recien ahi se crea via POST /api/improvement.
@@ -670,12 +979,22 @@ public class Dto {
       String functionName,
       String categoryName,
       String subcategoryName,
+      List<String> subcategoryNames,
       String controlCode,
       String action,
       int currentLevel,
       int targetLevel,
       String priority,
-      String suggestedDueDate) {}
+      String suggestedDueDate) {
+    public SuggestedImprovementDto {
+      subcategoryNames = subcategoryNames == null ? List.of() : List.copyOf(subcategoryNames);
+    }
+
+    @Override
+    public List<String> subcategoryNames() {
+      return Collections.unmodifiableList(subcategoryNames);
+    }
+  }
 
   // Pedido on-demand (un click por brecha, no se genera para toda la lista de sugerencias de
   // una) de una guía práctica para cerrarla -- ver ImprovementPlanController/AiEvidenceClient.
@@ -690,14 +1009,87 @@ public class Dto {
       @Min(0) @Max(4) int currentLevel,
       @Min(0) @Max(4) int targetLevel) {}
 
-  public record RemediationTipsDto(String summary, List<String> tips) {
+  // generated=false es el texto de reemplazo cuando la IA falla: el frontend no lo ofrece para
+  // usar en la acción ni lo registra como retroalimentación (PRI-370).
+  public record RemediationTipsDto(String summary, List<String> tips, boolean generated) {
     public RemediationTipsDto {
       tips = tips == null ? List.of() : List.copyOf(tips);
+    }
+
+    public RemediationTipsDto(String summary, List<String> tips) {
+      this(summary, tips, true);
     }
 
     @Override
     public List<String> tips() {
       return Collections.unmodifiableList(tips);
+    }
+  }
+
+  // Qué se hizo con una guía de IA (PRI-370). Sin evaluación ni organización a propósito: es
+  // material para fine-tuning y se referencia solo el control del catálogo.
+  public record AiSuggestionFeedbackDto(
+      @NotNull(message = "El control es obligatorio") UUID controlId,
+      @Min(0) @Max(4) int currentLevel,
+      @Min(0) @Max(4) int targetLevel,
+      String originalSummary,
+      List<String> originalTips,
+      @NotNull(message = "El resultado es obligatorio")
+          @Pattern(
+              regexp = "ACCEPTED_UNEDITED|ACCEPTED_EDITED|REJECTED",
+              message = "Resultado inválido")
+          String outcome,
+      @Size(max = 20000, message = "El texto editado es demasiado largo") String editedText) {
+    public AiSuggestionFeedbackDto {
+      originalTips = originalTips == null ? List.of() : List.copyOf(originalTips);
+    }
+
+    @Override
+    public List<String> originalTips() {
+      return Collections.unmodifiableList(originalTips);
+    }
+  }
+
+  public record AiSuggestionFeedbackBatchDto(
+      @NotEmpty(message = "Debe enviar al menos un registro")
+          @Size(max = 200, message = "Demasiados registros")
+          List<@Valid AiSuggestionFeedbackDto> items) {
+    public AiSuggestionFeedbackBatchDto {
+      items = items == null ? List.of() : List.copyOf(items);
+    }
+
+    @Override
+    public List<AiSuggestionFeedbackDto> items() {
+      return Collections.unmodifiableList(items);
+    }
+  }
+
+  // Decisión del auditor sobre una cita de la IA (PRI-359). La evaluación solo sirve para validar
+  // acceso y estado (IN_AUDIT): no se guarda, a propósito, igual que la organización y el usuario.
+  public record CitationFeedbackItemDto(
+      @NotNull(message = "El control es obligatorio") UUID controlId,
+      @Size(max = 255, message = "El nombre del archivo es demasiado largo") String fileName,
+      @Size(max = 255, message = "La ubicación es demasiado larga") String location,
+      @NotBlank(message = "El fragmento es obligatorio")
+          @Size(max = 20000, message = "El fragmento es demasiado largo")
+          String snippet,
+      Double score,
+      @NotNull(message = "La decisión es obligatoria")
+          @Pattern(regexp = "ACCEPTED|REJECTED", message = "Decisión inválida")
+          String decision) {}
+
+  public record CitationFeedbackBatchDto(
+      @NotNull(message = "La evaluación es obligatoria") UUID evaluationId,
+      @NotEmpty(message = "Debe enviar al menos un registro")
+          @Size(max = 100, message = "Demasiados registros")
+          List<@Valid CitationFeedbackItemDto> items) {
+    public CitationFeedbackBatchDto {
+      items = items == null ? List.of() : List.copyOf(items);
+    }
+
+    @Override
+    public List<CitationFeedbackItemDto> items() {
+      return Collections.unmodifiableList(items);
     }
   }
 
@@ -736,6 +1128,59 @@ public class Dto {
       boolean starttls,
       boolean ssl) {}
 
+  // Envía un correo de prueba con la configuración SMTP YA GUARDADA (no permite probar valores
+  // sin guardar) para que el admin pueda verificar que el servidor realmente puede enviar antes
+  // de confiar en "¿Olvidaste tu contraseña?" en producción.
+  public record TestEmailSettingsDto(
+      @NotBlank(message = "El email de destino es obligatorio") @Email(message = "Email inválido")
+          String recipientEmail) {}
+
+  // RF-PLN-03: plazos por defecto (meses) del plan de mejora por prioridad. El rango y el orden
+  // (Alta <= Media <= Baja) los valida PlanDeadlineSettingsService.
+  public record PlanDeadlinesDto(Integer highMonths, Integer mediumMonths, Integer lowMonths) {}
+
+  // ---- Lanzador de servicios de la infraestructura (solo PRISMA_ADMIN y solo desde la VPN) ----
+  public record PlatformServiceDto(
+      UUID id,
+      String key,
+      String name,
+      String description,
+      String category,
+      String url,
+      String defaultUrl) {}
+
+  public record UpdatePlatformServiceUrlDto(String url) {}
+
+  public record ReplaceServicesHostDto(String host) {}
+
+  // ---- Configuración de alertas del sistema (solo PRISMA_ADMIN) ----
+  public record AlertSettingsDto(
+      String recipients,
+      String smtpHost,
+      int smtpPort,
+      String from,
+      boolean authEnabled,
+      String username,
+      boolean passwordSet,
+      boolean requireTls,
+      boolean configured,
+      OffsetDateTime updatedAt,
+      String warning) {}
+
+  public record UpdateAlertSettingsDto(
+      String recipients,
+      String smtpHost,
+      Integer smtpPort,
+      String from,
+      boolean authEnabled,
+      String username,
+      String password,
+      boolean requireTls) {}
+
+  public record AlertTestResultDto(boolean smtpReachable, boolean alertSent, String message) {}
+
+  public record SessionSettingsDto(Integer idleTimeoutMinutes, Integer warningSeconds) {}
+
   // ---- Audit log (bitácora de acciones del sistema, distinta de AuditObservation/"Auditoría"
   // MCU) ----
   public record AuditLogDto(
@@ -763,12 +1208,107 @@ public class Dto {
       String userAgent,
       OffsetDateTime createdAt) {}
 
+  // ---- Evaluation audit cycles (RF-AUD-10) ----
+  // Historial de transiciones de estado de UNA evaluación puntual, agrupado por "ciclo" de
+  // auditoría -- ver AuditLogService.getEvaluationAuditTrail. A diferencia de AuditLogDto (bitácora
+  // global, solo para PRISMA_ADMIN/ORG_RESPONSIBLE), esto lo puede consultar cualquiera con acceso
+  // a la organización de la evaluación, en particular el AUDITOR.
+  public record EvaluationAuditCycleEventDto(
+      UUID id,
+      String action,
+      // Estado al que pasó la evaluación en este evento; null para eventos que no son de cambio
+      // de estado (p.ej. "CERTIFY").
+      String status,
+      UUID performedBy,
+      String performedByName,
+      OffsetDateTime occurredAt,
+      // 0 = autoevaluación inicial, antes del primer envío a auditoría. Se incrementa cada vez que
+      // la evaluación vuelve a READY_FOR_AUDIT -- un reenvío tras ser devuelta es un ciclo nuevo.
+      int cycleNumber) {}
+
   // ---- API error ----
   public record ApiErrorDto(String message, String code, Map<String, List<String>> details) {
     public ApiErrorDto {
       details = details == null ? Map.of() : Map.copyOf(details);
     }
   }
+
+  public record EvaluationOverviewDto(
+      UUID evaluationId,
+      String evaluationName,
+      String catalogVersion,
+      String catalogLabel,
+      UUID communityProfileId,
+      String communityProfileName,
+      int subcategoryCount,
+      int requirementCount,
+      int controlCount,
+      OverviewPriorityCountsDto priorityCounts,
+      List<OverviewFunctionDto> functions) {
+    public EvaluationOverviewDto {
+      functions = functions == null ? List.of() : List.copyOf(functions);
+    }
+
+    @Override
+    public List<OverviewFunctionDto> functions() {
+      return Collections.unmodifiableList(functions);
+    }
+  }
+
+  public record OverviewPriorityCountsDto(int alta, int media, int baja, int sinPrioridad) {}
+
+  public record OverviewFunctionDto(
+      UUID id, String code, String name, List<OverviewCategoryDto> categories) {
+    public OverviewFunctionDto {
+      categories = categories == null ? List.of() : List.copyOf(categories);
+    }
+
+    @Override
+    public List<OverviewCategoryDto> categories() {
+      return Collections.unmodifiableList(categories);
+    }
+  }
+
+  public record OverviewCategoryDto(
+      UUID id, String code, String name, List<OverviewSubcategoryDto> subcategories) {
+    public OverviewCategoryDto {
+      subcategories = subcategories == null ? List.of() : List.copyOf(subcategories);
+    }
+
+    @Override
+    public List<OverviewSubcategoryDto> subcategories() {
+      return Collections.unmodifiableList(subcategories);
+    }
+  }
+
+  public record OverviewSubcategoryDto(
+      UUID id,
+      String code,
+      String name,
+      String description,
+      String priority,
+      List<OverviewRequirementDto> requirements,
+      List<OverviewControlDto> controls) {
+    public OverviewSubcategoryDto {
+      requirements = requirements == null ? List.of() : List.copyOf(requirements);
+      controls = controls == null ? List.of() : List.copyOf(controls);
+    }
+
+    @Override
+    public List<OverviewRequirementDto> requirements() {
+      return Collections.unmodifiableList(requirements);
+    }
+
+    @Override
+    public List<OverviewControlDto> controls() {
+      return Collections.unmodifiableList(controls);
+    }
+  }
+
+  public record OverviewRequirementDto(UUID id, String code, String description) {}
+
+  public record OverviewControlDto(
+      UUID id, String code, String description, int targetLevel, String requirementCode) {}
 
   // ---- Paginated ----
   public record PaginatedDto<T>(List<T> data, long total, int page, int pageSize) {

@@ -1,17 +1,22 @@
 package uy.edu.prisma.application;
 
+import java.text.Normalizer;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
@@ -20,12 +25,14 @@ import uy.edu.prisma.domain.entity.CatalogVersion;
 import uy.edu.prisma.domain.entity.Evaluation;
 import uy.edu.prisma.domain.entity.Organization;
 import uy.edu.prisma.domain.entity.User;
+import uy.edu.prisma.domain.exception.ResourceNotFoundException;
 import uy.edu.prisma.domain.repository.AuditLogRepository;
 import uy.edu.prisma.domain.repository.CatalogVersionRepository;
 import uy.edu.prisma.domain.repository.EvaluationRepository;
 import uy.edu.prisma.domain.repository.OrganizationRepository;
 import uy.edu.prisma.domain.repository.UserRepository;
 import uy.edu.prisma.web.dto.Dto.AuditLogDto;
+import uy.edu.prisma.web.dto.Dto.EvaluationAuditCycleEventDto;
 import uy.edu.prisma.web.dto.Dto.PaginatedDto;
 
 /** Registro de auditoría (append-only) de las acciones sensibles. */
@@ -72,10 +79,131 @@ public class AuditLogService {
       }
     }
     PageRequest pageable = PageRequest.of(page, pageSize, Sort.by("createdAt").descending());
-    Page<AuditLog> result =
-        auditRepo.search(tenantId, blankToNull(action), blankToNull(search), pageable);
+    Page<AuditLog> result = searchLogs(tenantId, action, search, pageable);
 
-    List<AuditLog> content = result.getContent();
+    return new PaginatedDto<>(
+        toDtos(result.getContent()), result.getTotalElements(), page, pageSize);
+  }
+
+  // PRI-368: etiquetas en español que la bitácora muestra en pantalla. Se repiten acá (están en
+  // apps/frontend/src/utils/constants.ts: AUDIT_ACTION_LABELS y AUDIT_RESOURCE_TYPE_LABELS) para
+  // que quien busque pueda escribir lo que ve («Inicio de Sesión», «Usuario») además del código
+  // interno («LOGIN», «user»). Si se agrega una acción o un tipo nuevo, sumarlo en los dos lados.
+  private static final Map<String, String> ACTION_LABELS =
+      Map.ofEntries(
+          Map.entry("CREATE", "Creación"),
+          Map.entry("UPDATE", "Actualización"),
+          Map.entry("DELETE", "Eliminación"),
+          Map.entry("UPDATE_STATUS", "Cambio de Estado"),
+          Map.entry("UPDATE_PROFILE", "Actualización de Perfil"),
+          Map.entry("CHANGE_PASSWORD", "Cambio de Contraseña"),
+          Map.entry("LINK_KEYCLOAK_ACCOUNT", "Vinculación de Cuenta"),
+          Map.entry("REACTIVATE", "Reactivación"),
+          Map.entry("SAVE_RESPONSE", "Respuesta Guardada"),
+          Map.entry("LOGIN", "Inicio de Sesión"),
+          Map.entry("LOGOUT", "Cierre de Sesión"),
+          Map.entry("SESSION_TIMEOUT", "Sesión Cerrada por Inactividad"),
+          Map.entry("LOGIN_FAILED", "Inicio de Sesión Fallido"));
+
+  private static final Map<String, String> RESOURCE_TYPE_LABELS =
+      Map.of(
+          "user", "Usuario",
+          "organization", "Organización",
+          "evaluation", "Evaluación",
+          "catalog_version", "Versión de Catálogo",
+          "email-settings", "Configuración de Email",
+          "platform-service", "Servicio de Infraestructura",
+          "alert-settings", "Configuración de Alertas",
+          "session-settings", "Configuración de Sesión");
+
+  // Marcador que no coincide con ninguna acción ni tipo real: el IN de la consulta no admite una
+  // lista vacía.
+  private static final List<String> NO_MATCH = List.of("__sin_coincidencia__");
+
+  /** Minúsculas y sin tildes: «Sesión» y «sesion» comparan igual (la consulta pliega lo mismo). */
+  static String fold(String text) {
+    return Normalizer.normalize(text, Normalizer.Form.NFD)
+        .replaceAll("\\p{M}", "")
+        .toLowerCase(Locale.ROOT);
+  }
+
+  private Page<AuditLog> searchLogs(
+      UUID tenantId, String action, String search, PageRequest pageable) {
+    String term = blankToNull(search == null ? null : search.trim());
+    if (term == null) {
+      return auditRepo.search(tenantId, blankToNull(action), null, NO_MATCH, NO_MATCH, pageable);
+    }
+    String folded = fold(term);
+    return auditRepo.search(
+        tenantId,
+        blankToNull(action),
+        "%" + folded + "%",
+        codesWhoseLabelContains(ACTION_LABELS, folded),
+        codesWhoseLabelContains(RESOURCE_TYPE_LABELS, folded),
+        pageable);
+  }
+
+  private static List<String> codesWhoseLabelContains(Map<String, String> labels, String folded) {
+    List<String> codes =
+        labels.entrySet().stream()
+            .filter(e -> fold(e.getValue()).contains(folded))
+            .map(Map.Entry::getKey)
+            .toList();
+    return codes.isEmpty() ? NO_MATCH : codes;
+  }
+
+  // Tope de filas de un export CSV: evita cargar en memoria una bitácora de años sin paginar. Para
+  // "auditorías externas" (RF-TRZ-05) 50.000 filas ya es un volumen enorme -- quien necesite más
+  // puede acotar el filtro de búsqueda/acción.
+  private static final int EXPORT_MAX_ROWS = 50_000;
+
+  /**
+   * RF-TRZ-05: exporta a CSV la bitácora que matchea el mismo filtro de búsqueda/acción que {@link
+   * #list}, sin paginar (hasta {@link #EXPORT_MAX_ROWS}), para que un auditor pueda llevarse el set
+   * de datos filtrado a una herramienta externa.
+   */
+  @Transactional(readOnly = true)
+  public String exportCsv(String search, String action) {
+    UUID tenantId = null;
+    if (!currentUser.isPrismaAdmin()) {
+      tenantId = currentUser.currentTenantId();
+      if (tenantId == null) {
+        return CSV_HEADER;
+      }
+    }
+    PageRequest pageable = PageRequest.of(0, EXPORT_MAX_ROWS, Sort.by("createdAt").descending());
+    Page<AuditLog> result = searchLogs(tenantId, action, search, pageable);
+
+    StringBuilder csv = new StringBuilder(CSV_HEADER);
+    for (AuditLogDto dto : toDtos(result.getContent())) {
+      csv.append(
+          String.join(
+              ",",
+              csvField(dto.createdAt() != null ? dto.createdAt().toString() : ""),
+              csvField(dto.userFullName() != null ? dto.userFullName() : ""),
+              csvField(dto.userEmail() != null ? dto.userEmail() : ""),
+              csvField(dto.tenantName() != null ? dto.tenantName() : ""),
+              csvField(dto.action()),
+              csvField(dto.resourceName() != null ? dto.resourceName() : dto.resource()),
+              csvField(dto.ipAddress() != null ? dto.ipAddress() : "")));
+      csv.append("\r\n");
+    }
+    return csv.toString();
+  }
+
+  private static final String CSV_HEADER = "Fecha,Usuario,Email,Organizacion,Accion,Recurso,IP\r\n";
+
+  // RFC 4180: un campo que contenga coma, comilla o salto de linea va entre comillas, con las
+  // comillas internas duplicadas. El resto de los campos de esta bitacora no necesitan quoting,
+  // pero nombres/recursos arbitrarios si pueden traer una coma.
+  private static String csvField(String value) {
+    if (value.contains(",") || value.contains("\"") || value.contains("\n")) {
+      return "\"" + value.replace("\"", "\"\"") + "\"";
+    }
+    return value;
+  }
+
+  private List<AuditLogDto> toDtos(List<AuditLog> content) {
     List<ResourceRef> resourceRefs =
         content.stream().map(log -> parseResource(log.getResource())).toList();
 
@@ -143,8 +271,70 @@ public class AuditLogService {
               evaluationsById,
               catalogVersionsById));
     }
+    return dtos;
+  }
 
-    return new PaginatedDto<>(dtos, result.getTotalElements(), page, pageSize);
+  // Tolera espacios alrededor de «:»: el payload es JSONB y Postgres lo devuelve normalizado como
+  // {"status": "X"} (con espacio), no como se guardó. Sin esto el estado quedaba null y el reporte
+  // técnico, el aviso de reapertura y el historial de ciclos mostraban «UPDATE_STATUS».
+  private static final Pattern STATUS_PAYLOAD_PATTERN =
+      Pattern.compile("\"status\"\\s*:\\s*\"(\\w+)\"");
+
+  /**
+   * RF-AUD-10: historial completo de ciclos de auditoría de UNA evaluación puntual -- todas sus
+   * transiciones de estado (y el "CERTIFY" si llegó a aprobarse), en orden cronológico, agrupadas
+   * por ciclo (cada reenvío a auditoría tras una devolución cuenta como un ciclo nuevo). A
+   * diferencia de {@link #list}, que es la bitácora global (solo PRISMA_ADMIN/ORG_RESPONSIBLE),
+   * esto lo puede consultar cualquiera con acceso a la organización de la evaluación -- en
+   * particular el AUDITOR, que es quien más necesita reconstruir cuántas idas y vueltas tuvo esta
+   * auditoría puntual (antes no tenía forma de verlo: AuditLogController exige esos dos roles).
+   */
+  @Transactional(readOnly = true)
+  public List<EvaluationAuditCycleEventDto> getEvaluationAuditTrail(UUID evaluationId) {
+    Evaluation eval =
+        evaluationRepo
+            .findById(evaluationId)
+            .orElseThrow(() -> new ResourceNotFoundException("Evaluación", evaluationId));
+    currentUser.assertOrganizationAccess(eval.getOrganization().getId());
+
+    List<AuditLog> logs =
+        auditRepo.findByResourceAndActionInOrderByCreatedAtAsc(
+            "evaluation:" + evaluationId, List.of("UPDATE_STATUS", "CERTIFY"));
+    Set<UUID> userIds =
+        logs.stream().map(AuditLog::getUserId).filter(Objects::nonNull).collect(Collectors.toSet());
+    Map<UUID, User> usersById =
+        userIds.isEmpty()
+            ? Map.of()
+            : userRepo.findAllById(userIds).stream().collect(Collectors.toMap(User::getId, u -> u));
+
+    List<EvaluationAuditCycleEventDto> result = new ArrayList<>(logs.size());
+    int cycle = 0;
+    for (AuditLog log : logs) {
+      String status =
+          "UPDATE_STATUS".equals(log.getAction()) ? extractStatus(log.getPayload()) : null;
+      if ("READY_FOR_AUDIT".equals(status)) {
+        cycle++;
+      }
+      User actor = log.getUserId() != null ? usersById.get(log.getUserId()) : null;
+      result.add(
+          new EvaluationAuditCycleEventDto(
+              log.getId(),
+              log.getAction(),
+              status,
+              log.getUserId(),
+              actor != null ? (actor.getFirstName() + " " + actor.getLastName()).trim() : null,
+              log.getCreatedAt(),
+              cycle));
+    }
+    return result;
+  }
+
+  // El payload de UPDATE_STATUS siempre es exactamente {"status":"X"} (ver
+  // EvaluationService.updateStatus) -- no amerita traer una dependencia de parseo JSON para esto.
+  private static String extractStatus(String payload) {
+    if (payload == null) return null;
+    Matcher m = STATUS_PAYLOAD_PATTERN.matcher(payload);
+    return m.find() ? m.group(1) : null;
   }
 
   private AuditLogDto toDto(
@@ -256,6 +446,25 @@ public class AuditLogService {
             .resource(attemptedUsername != null ? attemptedUsername : "desconocido")
             .ipAddress(ip)
             .createdAt(occurredAt != null ? occurredAt : OffsetDateTime.now())
+            .build();
+    auditRepo.save(log);
+  }
+
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public void recordIndependently(String action, String resource, String payloadJson) {
+    record(action, resource, payloadJson);
+  }
+
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public void recordSystemEvent(
+      String action, String resource, String payloadJson, UUID userId, UUID tenantId) {
+    AuditLog log =
+        AuditLog.builder()
+            .userId(userId)
+            .tenantId(tenantId)
+            .action(action)
+            .resource(resource)
+            .payload(payloadJson)
             .build();
     auditRepo.save(log);
   }

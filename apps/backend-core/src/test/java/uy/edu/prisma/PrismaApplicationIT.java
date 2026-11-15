@@ -101,7 +101,7 @@ class PrismaApplicationIT {
   void servicesExposeAllDataTransferRecords() {
     OrganizationDto org =
         organizationService.create(
-            new CreateOrganizationDto("Acme S.A.", "NIT-ACME-SERV", "TECH", "MEDIUM", null));
+            new CreateOrganizationDto("Acme S.A.", "NIT-ACME-SERV", false, "TECH", "MEDIUM", null));
     assertNotNull(org.id());
     assertEquals("Acme S.A.", org.name());
 
@@ -201,7 +201,8 @@ class PrismaApplicationIT {
     assertEquals("PD.8-10", controls.get(controls.size() - 1).getCode());
 
     Organization org =
-        orgRepo.save(Organization.builder().name("Orden").rut("NIT-ORDER").sector("TECH").build());
+        orgRepo.save(
+            Organization.builder().name("Orden").identifier("NIT-ORDER").sector("TECH").build());
     EvaluationDto eval =
         evaluationService.create(new CreateEvaluationDto("E", org.getId(), "5.0", null));
     List<MaturityResultDto> results = evaluationService.getResults(eval.id());
@@ -214,7 +215,7 @@ class PrismaApplicationIT {
         orgRepo.save(
             Organization.builder()
                 .name("Lifecycle")
-                .rut("NIT-LIFE")
+                .identifier("NIT-LIFE")
                 .sector("FIN")
                 .size("SMALL")
                 .enabled(true)
@@ -276,7 +277,11 @@ class PrismaApplicationIT {
   void calculateMaturityRecomputesOverPreviousResults() {
     Organization org =
         orgRepo.save(
-            Organization.builder().name("Recompute").rut("NIT-RECOMPUTE").sector("TECH").build());
+            Organization.builder()
+                .name("Recompute")
+                .identifier("NIT-RECOMPUTE")
+                .sector("TECH")
+                .build());
     EvaluationDto created =
         evaluationService.create(new CreateEvaluationDto("Re", org.getId(), "5.0", null));
 

@@ -8,11 +8,14 @@ import org.springframework.web.bind.annotation.*;
 import uy.edu.prisma.application.EvaluationService;
 import uy.edu.prisma.web.dto.Dto.ChangeProfileDto;
 import uy.edu.prisma.web.dto.Dto.CreateEvaluationDto;
+import uy.edu.prisma.web.dto.Dto.EvaluationAuditCycleEventDto;
 import uy.edu.prisma.web.dto.Dto.EvaluationDto;
 import uy.edu.prisma.web.dto.Dto.EvaluationResponseDto;
 import uy.edu.prisma.web.dto.Dto.MaturityResultDto;
 import uy.edu.prisma.web.dto.Dto.PaginatedDto;
 import uy.edu.prisma.web.dto.Dto.SaveResponseDto;
+import uy.edu.prisma.web.dto.Dto.SaveSubcategoryCommentDto;
+import uy.edu.prisma.web.dto.Dto.SubcategoryCommentDto;
 
 @RestController
 @RequestMapping("/api/evaluations")
@@ -103,10 +106,34 @@ public class EvaluationController {
     return ResponseEntity.ok(service.saveResponse(id, dto));
   }
 
+  // ---- Subcategory comments ----
+  @GetMapping("/{id}/subcategory-comments")
+  public ResponseEntity<List<SubcategoryCommentDto>> getSubcategoryComments(@PathVariable UUID id) {
+    return ResponseEntity.ok(service.getSubcategoryComments(id));
+  }
+
+  @PutMapping("/{id}/subcategory-comments/{subcategoryId}")
+  @PreAuthorize("hasAnyRole('PRISMA_ADMIN','INTERNAL_EVALUATOR','ORG_RESPONSIBLE')")
+  public ResponseEntity<SubcategoryCommentDto> saveSubcategoryComment(
+      @PathVariable UUID id,
+      @PathVariable UUID subcategoryId,
+      @Valid @RequestBody SaveSubcategoryCommentDto dto) {
+    return ResponseEntity.ok(service.saveSubcategoryComment(id, subcategoryId, dto));
+  }
+
   // ---- Results ----
   @GetMapping("/{id}/results")
   public ResponseEntity<List<MaturityResultDto>> getResults(@PathVariable UUID id) {
     return ResponseEntity.ok(service.getResults(id));
+  }
+
+  // RF-AUD-10: historial de ciclos de auditoría -- igual que getResponses/getResults, sin
+  // @PreAuthorize propio: EvaluationService (vía AuditLogService) exige acceso a la organización
+  // de la evaluación, lo que ya incluye al AUDITOR asignado (antes solo podía verlo
+  // PRISMA_ADMIN/ORG_RESPONSIBLE desde la bitácora global, ver AuditLogController).
+  @GetMapping("/{id}/audit-trail")
+  public ResponseEntity<List<EvaluationAuditCycleEventDto>> getAuditTrail(@PathVariable UUID id) {
+    return ResponseEntity.ok(service.getAuditTrail(id));
   }
 
   @PostMapping("/{id}/calculate")

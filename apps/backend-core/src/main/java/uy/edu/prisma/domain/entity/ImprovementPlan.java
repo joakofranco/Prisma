@@ -59,6 +59,10 @@ public class ImprovementPlan {
   @Column(name = "due_date")
   private LocalDate dueDate;
 
+  // RF-PLN-02: comentarios libres del ítem. Opcional (null = sin comentarios).
+  @Column(columnDefinition = "TEXT")
+  private String comments;
+
   @Column(name = "created_at", nullable = false, updatable = false)
   @Builder.Default
   private OffsetDateTime createdAt = OffsetDateTime.now();

@@ -25,6 +25,7 @@ import uy.edu.prisma.domain.entity.User;
 import uy.edu.prisma.domain.entity.UserRole;
 import uy.edu.prisma.domain.exception.ConflictException;
 import uy.edu.prisma.domain.exception.InvalidRequestException;
+import uy.edu.prisma.domain.exception.ResourceNotFoundException;
 import uy.edu.prisma.domain.repository.OrganizationRepository;
 import uy.edu.prisma.domain.repository.UserRepository;
 import uy.edu.prisma.infrastructure.KeycloakAdminClient;
@@ -40,6 +41,7 @@ class UserServiceTest {
   @Mock private AuditLogService auditLog;
   @Mock private KeycloakAdminClient keycloakAdmin;
   @Mock private CurrentUserService currentUser;
+  @Mock private EmailSettingsService emailSettings;
 
   private UserService service;
   private User user;
@@ -48,7 +50,17 @@ class UserServiceTest {
   @BeforeEach
   void setUp() {
     service =
-        new UserService(userRepo, orgRepo, passwordHasher, auditLog, keycloakAdmin, currentUser);
+        new UserService(
+            userRepo,
+            orgRepo,
+            passwordHasher,
+            auditLog,
+            keycloakAdmin,
+            currentUser,
+            emailSettings,
+            "prisma-frontend",
+            "https://prisma.test");
+    emailConfigured(true);
     // Los tests existentes asumen la vista sin restricciones de PRISMA_ADMIN; los tests de
     // aislamiento multi-tenant de mas abajo pisan este stub con isPrismaAdmin=false.
     when(currentUser.isPrismaAdmin()).thenReturn(true);
@@ -57,7 +69,7 @@ class UserServiceTest {
         Organization.builder()
             .id(UUID.randomUUID())
             .name("Acme")
-            .rut("NIT-1")
+            .identifier("NIT-1")
             .sector("TECH")
             .size("SMALL")
             .enabled(true)
@@ -251,6 +263,55 @@ class UserServiceTest {
     verify(keycloakAdmin, never()).assignRealmRoles(any(), any());
   }
 
+  // RF-USR-04: segregación de funciones -- un usuario no puede ser auditor y evaluador interno
+  // a la vez (ni al crearse, ni al editarse para sumar el rol que le falta).
+  @Test
+  void createThrowsWhenAuditorAndInternalEvaluatorAssignedTogether() {
+    when(userRepo.existsByEmail("dual@test.com")).thenReturn(false);
+    when(orgRepo.findById(tenant.getId())).thenReturn(Optional.of(tenant));
+    when(orgRepo.findAllById(Set.of(tenant.getId()))).thenReturn(List.of(tenant));
+
+    CreateUserDto dto =
+        new CreateUserDto(
+            "dual@test.com",
+            "N",
+            "L",
+            tenant.getId(),
+            Set.of("AUDITOR", "INTERNAL_EVALUATOR"),
+            Set.of(tenant.getId()),
+            "Secreto123!");
+
+    assertThrows(ConflictException.class, () -> service.create(dto));
+    verify(userRepo, never()).save(any());
+    verify(keycloakAdmin, never()).createUser(any(), any(), any(), any(), any());
+  }
+
+  @Test
+  void updateThrowsWhenAddingAuditorRoleToExistingInternalEvaluator() {
+    user.setRoles(new java.util.HashSet<>(Set.of(UserRole.INTERNAL_EVALUATOR)));
+    when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
+
+    CreateUserDto dto =
+        new CreateUserDto(
+            "u@test.com", "Jane", "Doe", null, Set.of("INTERNAL_EVALUATOR", "AUDITOR"), null);
+
+    assertThrows(ConflictException.class, () -> service.update(user.getId(), dto));
+    verify(keycloakAdmin, never()).assignRealmRoles(any(), any());
+  }
+
+  @Test
+  void updateAllowsChangingBetweenAuditorAndInternalEvaluatorSeparately() {
+    user.setRoles(new java.util.HashSet<>(Set.of(UserRole.AUDITOR)));
+    when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
+
+    CreateUserDto dto =
+        new CreateUserDto("u@test.com", "Jane", "Doe", null, Set.of("INTERNAL_EVALUATOR"), null);
+
+    UserDto result = service.update(user.getId(), dto);
+
+    assertEquals(Set.of("INTERNAL_EVALUATOR"), result.roles());
+  }
+
   @Test
   void createWithoutTenantPersistsUser() {
     when(userRepo.existsByEmail("solo@test.com")).thenReturn(false);
@@ -368,6 +429,173 @@ class UserServiceTest {
 
     verify(keycloakAdmin, times(1)).setPermanentPassword(keycloakId, "NuevaClave1!");
     verify(keycloakAdmin, never()).resetPassword(any(), any());
+  }
+
+  // ---- PRI-233: el administrador desbloquea una cuenta ----
+
+  @Test
+  void unlockClearsTheFailuresOfALockedAccountAndAuditsIt() {
+    UUID keycloakId = UUID.randomUUID();
+    user.setKeycloakId(keycloakId);
+    when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
+    when(keycloakAdmin.loginFailureStatus(keycloakId))
+        .thenReturn(new KeycloakAdminClient.LoginFailureStatus(true, 10));
+
+    assertTrue(service.unlock(user.getId()));
+
+    verify(keycloakAdmin).clearLoginFailures(keycloakId);
+    verify(auditLog)
+        .record(eq("UNLOCK_USER"), eq("user:" + user.getId()), contains("\"wasLocked\":true"));
+  }
+
+  @Test
+  void unlockAlsoClearsAnAccountWithFailuresThatIsNotLockedYet() {
+    UUID keycloakId = UUID.randomUUID();
+    user.setKeycloakId(keycloakId);
+    when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
+    when(keycloakAdmin.loginFailureStatus(keycloakId))
+        .thenReturn(new KeycloakAdminClient.LoginFailureStatus(false, 4));
+
+    assertTrue(service.unlock(user.getId()));
+
+    verify(keycloakAdmin).clearLoginFailures(keycloakId);
+  }
+
+  @Test
+  void unlockOfAnAccountThatWasNotLockedChangesNothingAndSaysSo() {
+    UUID keycloakId = UUID.randomUUID();
+    user.setKeycloakId(keycloakId);
+    when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
+    when(keycloakAdmin.loginFailureStatus(keycloakId))
+        .thenReturn(new KeycloakAdminClient.LoginFailureStatus(false, 0));
+
+    assertFalse(service.unlock(user.getId()));
+
+    verify(keycloakAdmin, never()).clearLoginFailures(any());
+    verify(auditLog)
+        .record(eq("UNLOCK_USER"), eq("user:" + user.getId()), contains("\"wasLocked\":false"));
+  }
+
+  @Test
+  void unlockOfAUserWithoutKeycloakAccountIsRejected() {
+    user.setKeycloakId(null);
+    when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
+
+    assertThrows(InvalidRequestException.class, () -> service.unlock(user.getId()));
+
+    verify(keycloakAdmin, never()).loginFailureStatus(any());
+    verify(auditLog, never()).record(eq("UNLOCK_USER"), any(), any());
+  }
+
+  @Test
+  void unlockOfAMissingUserIsNotFound() {
+    UUID id = UUID.randomUUID();
+    when(userRepo.findById(id)).thenReturn(Optional.empty());
+
+    assertThrows(ResourceNotFoundException.class, () -> service.unlock(id));
+  }
+
+  @Test
+  void unlockDoesNotHideKeycloakErrors() {
+    UUID keycloakId = UUID.randomUUID();
+    user.setKeycloakId(keycloakId);
+    when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
+    when(keycloakAdmin.loginFailureStatus(keycloakId))
+        .thenReturn(new KeycloakAdminClient.LoginFailureStatus(true, 10));
+    doThrow(new RuntimeException("Keycloak caído"))
+        .when(keycloakAdmin)
+        .clearLoginFailures(keycloakId);
+
+    assertThrows(RuntimeException.class, () -> service.unlock(user.getId()));
+
+    verify(auditLog, never()).record(eq("UNLOCK_USER"), any(), any());
+  }
+
+  // ---- PRI-365: el admin que restablece una contraseña le quita el MFA al usuario ----
+
+  private CreateUserDto passwordChange() {
+    return new CreateUserDto("u@test.com", "Jane", "Doe", null, null, "NuevaClave1!");
+  }
+
+  @Test
+  void adminResettingAnotherUsersPasswordRemovesTheirMfaAndAuditsIt() {
+    UUID keycloakId = UUID.randomUUID();
+    user.setKeycloakId(keycloakId);
+    when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
+    when(keycloakAdmin.removeOtpCredentials(keycloakId)).thenReturn(2);
+
+    service.update(user.getId(), passwordChange());
+
+    var order = inOrder(keycloakAdmin);
+    order.verify(keycloakAdmin).setPermanentPassword(keycloakId, "NuevaClave1!");
+    order.verify(keycloakAdmin).removeOtpCredentials(keycloakId);
+    verify(auditLog)
+        .record(eq("REMOVE_MFA"), eq("user:" + user.getId()), contains("\"removedCredentials\":2"));
+  }
+
+  @Test
+  void noMfaAuditWhenTheUserHadNoMfa() {
+    UUID keycloakId = UUID.randomUUID();
+    user.setKeycloakId(keycloakId);
+    when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
+    when(keycloakAdmin.removeOtpCredentials(keycloakId)).thenReturn(0);
+
+    service.update(user.getId(), passwordChange());
+
+    verify(keycloakAdmin).removeOtpCredentials(keycloakId);
+    verify(auditLog, never()).record(eq("REMOVE_MFA"), any(), any());
+  }
+
+  @Test
+  void mfaIsNotRemovedWhenThePasswordIsNotChanged() {
+    UUID keycloakId = UUID.randomUUID();
+    user.setKeycloakId(keycloakId);
+    when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
+
+    service.update(user.getId(), new CreateUserDto("u@test.com", "Jane", "Doe", null, null, null));
+
+    verify(keycloakAdmin, never()).removeOtpCredentials(any());
+  }
+
+  @Test
+  void orgResponsibleResettingAPasswordDoesNotTouchTheMfa() {
+    UUID keycloakId = UUID.randomUUID();
+    user.setKeycloakId(keycloakId);
+    user.setOrganizations(Set.of(tenant));
+    when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
+    when(currentUser.isPrismaAdmin()).thenReturn(false);
+    when(currentUser.currentTenantId()).thenReturn(tenant.getId());
+    when(currentUser.organizationIds()).thenReturn(Set.of(tenant.getId()));
+
+    service.update(user.getId(), passwordChange());
+
+    verify(keycloakAdmin).setPermanentPassword(keycloakId, "NuevaClave1!");
+    verify(keycloakAdmin, never()).removeOtpCredentials(any());
+  }
+
+  @Test
+  void adminEditingTheirOwnAccountKeepsTheirMfa() {
+    UUID keycloakId = UUID.randomUUID();
+    user.setKeycloakId(keycloakId);
+    when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
+    when(currentUser.currentUser()).thenReturn(Optional.of(user));
+
+    service.update(user.getId(), passwordChange());
+
+    verify(keycloakAdmin).setPermanentPassword(keycloakId, "NuevaClave1!");
+    verify(keycloakAdmin, never()).removeOtpCredentials(any());
+  }
+
+  @Test
+  void keycloakFailureRemovingMfaPropagatesSoTheAdminKnows() {
+    UUID keycloakId = UUID.randomUUID();
+    user.setKeycloakId(keycloakId);
+    when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
+    when(keycloakAdmin.removeOtpCredentials(keycloakId))
+        .thenThrow(new IllegalStateException("keycloak caído"));
+
+    assertThrows(IllegalStateException.class, () -> service.update(user.getId(), passwordChange()));
+    verify(auditLog, never()).record(eq("REMOVE_MFA"), any(), any());
   }
 
   @Test
@@ -1056,5 +1284,363 @@ class UserServiceTest {
 
     assertEquals(Set.of(tenant.getId()), user.organizationIds());
     verify(orgRepo, never()).findAllById(any());
+  }
+
+  // ---- RF-USR-05 (PRI-240): invitación de evaluadores internos ----
+
+  private void emailConfigured(boolean configured) {
+    when(emailSettings.get())
+        .thenReturn(
+            new EmailSettingsDto(
+                configured ? "smtp.test" : "",
+                587,
+                configured ? "no-reply@prisma.test" : "",
+                null,
+                false,
+                null,
+                true,
+                false,
+                configured));
+  }
+
+  private void actAsResponsibleOf(Organization organization) {
+    when(currentUser.isPrismaAdmin()).thenReturn(false);
+    when(currentUser.currentTenantId()).thenReturn(organization.getId());
+    when(currentUser.organizationIds()).thenReturn(Set.of(organization.getId()));
+  }
+
+  private User invitedUser(OffsetDateTime acceptedAt) {
+    return User.builder()
+        .id(UUID.randomUUID())
+        .email("lucia@test.com")
+        .firstName("Lucía")
+        .lastName("Fernández")
+        .organizations(new java.util.HashSet<>(Set.of(tenant)))
+        .enabled(true)
+        .roles(Set.of(UserRole.INTERNAL_EVALUATOR))
+        .keycloakId(UUID.randomUUID())
+        .invitedAt(OffsetDateTime.now().minusDays(5))
+        .invitationAcceptedAt(acceptedAt)
+        .build();
+  }
+
+  @Test
+  void inviteCreatesAnInternalEvaluatorOfTheResponsiblesOrganizationAndSendsTheEmail() {
+    actAsResponsibleOf(tenant);
+    when(orgRepo.findAllById(Set.of(tenant.getId()))).thenReturn(List.of(tenant));
+    when(userRepo.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
+    UUID keycloakId = UUID.randomUUID();
+    when(keycloakAdmin.createInvitedUser(
+            "lucia@test.com", "Lucía", "Fernández", Set.of("INTERNAL_EVALUATOR")))
+        .thenReturn(keycloakId);
+
+    UserDto result =
+        service.invite(new InviteUserDto("lucia@test.com", "Lucía", "Fernández", null));
+
+    assertEquals(Set.of("INTERNAL_EVALUATOR"), result.roles());
+    assertEquals(Set.of(tenant.getId()), result.organizationIds());
+    assertNotNull(result.invitedAt());
+    assertNull(result.invitationAcceptedAt());
+    assertTrue(result.canLogin());
+    verify(userRepo).save(argThat(u -> u.getPasswordHash() == null));
+    verify(keycloakAdmin)
+        .sendExecuteActionsEmail(
+            keycloakId,
+            List.of("VERIFY_EMAIL", "UPDATE_PASSWORD"),
+            259200,
+            "prisma-frontend",
+            "https://prisma.test");
+    verify(keycloakAdmin, never()).createUser(any(), any(), any(), any(), any());
+    verify(auditLog).record(eq("INVITE_USER"), any(), contains("lucia@test.com"));
+  }
+
+  @Test
+  void aResponsibleCannotInviteToAnotherOrganization() {
+    actAsResponsibleOf(tenant);
+
+    assertThrows(
+        org.springframework.security.access.AccessDeniedException.class,
+        () ->
+            service.invite(
+                new InviteUserDto("lucia@test.com", "Lucía", "Fernández", UUID.randomUUID())));
+    verify(userRepo, never()).save(any());
+  }
+
+  @Test
+  void theAdminMustChooseTheOrganization() {
+    assertThrows(
+        InvalidRequestException.class,
+        () -> service.invite(new InviteUserDto("lucia@test.com", "Lucía", "Fernández", null)));
+    verify(userRepo, never()).save(any());
+  }
+
+  @Test
+  void theAdminInvitesToTheOrganizationChosen() {
+    when(orgRepo.findAllById(Set.of(tenant.getId()))).thenReturn(List.of(tenant));
+    when(userRepo.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
+    when(keycloakAdmin.createInvitedUser(any(), any(), any(), any())).thenReturn(UUID.randomUUID());
+
+    UserDto result =
+        service.invite(new InviteUserDto("lucia@test.com", "Lucía", "Fernández", tenant.getId()));
+
+    assertEquals(Set.of(tenant.getId()), result.organizationIds());
+  }
+
+  @Test
+  void inviteRejectsAnEmailAlreadyRegistered() {
+    when(userRepo.existsByEmail("lucia@test.com")).thenReturn(true);
+
+    assertThrows(
+        ConflictException.class,
+        () ->
+            service.invite(
+                new InviteUserDto("lucia@test.com", "Lucía", "Fernández", tenant.getId())));
+  }
+
+  @Test
+  void inviteRejectsAnInactiveOrganization() {
+    tenant.setEnabled(false);
+    when(orgRepo.findAllById(Set.of(tenant.getId()))).thenReturn(List.of(tenant));
+
+    assertThrows(
+        InvalidRequestException.class,
+        () ->
+            service.invite(
+                new InviteUserDto("lucia@test.com", "Lucía", "Fernández", tenant.getId())));
+    verify(userRepo, never()).save(any());
+  }
+
+  @Test
+  void inviteRejectsAnOrganizationThatDoesNotExist() {
+    when(orgRepo.findAllById(any())).thenReturn(List.of());
+
+    assertThrows(
+        ResourceNotFoundException.class,
+        () ->
+            service.invite(
+                new InviteUserDto("lucia@test.com", "Lucía", "Fernández", UUID.randomUUID())));
+  }
+
+  @Test
+  void withoutAMailServerNobodyIsInvited() {
+    emailConfigured(false);
+    when(orgRepo.findAllById(Set.of(tenant.getId()))).thenReturn(List.of(tenant));
+
+    ConflictException e =
+        assertThrows(
+            ConflictException.class,
+            () ->
+                service.invite(
+                    new InviteUserDto("lucia@test.com", "Lucía", "Fernández", tenant.getId())));
+    assertTrue(e.getMessage().contains("servidor de correo"));
+    verify(userRepo, never()).save(any());
+    verify(keycloakAdmin, never()).createInvitedUser(any(), any(), any(), any());
+  }
+
+  @Test
+  void whenTheEmailFailsTheKeycloakAccountIsRemoved() {
+    when(orgRepo.findAllById(Set.of(tenant.getId()))).thenReturn(List.of(tenant));
+    when(userRepo.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
+    UUID keycloakId = UUID.randomUUID();
+    when(keycloakAdmin.createInvitedUser(any(), any(), any(), any())).thenReturn(keycloakId);
+    doThrow(new KeycloakAdminClient.EmailDeliveryException(new RuntimeException("smtp")))
+        .when(keycloakAdmin)
+        .sendExecuteActionsEmail(any(), any(), anyInt(), any(), any());
+
+    assertThrows(
+        ConflictException.class,
+        () ->
+            service.invite(
+                new InviteUserDto("lucia@test.com", "Lucía", "Fernández", tenant.getId())));
+    verify(keycloakAdmin).deleteUser(keycloakId);
+    verify(auditLog, never()).record(eq("INVITE_USER"), any(), any());
+  }
+
+  @Test
+  void resendInvitationSendsTheEmailAgainAndRenewsTheDate() {
+    User invited = invitedUser(null);
+    OffsetDateTime before = invited.getInvitedAt();
+    when(userRepo.findById(invited.getId())).thenReturn(Optional.of(invited));
+
+    UserDto result = service.resendInvitation(invited.getId());
+
+    assertTrue(result.invitedAt().isAfter(before));
+    verify(keycloakAdmin)
+        .sendExecuteActionsEmail(eq(invited.getKeycloakId()), any(), eq(259200), any(), any());
+    verify(auditLog).record(eq("RESEND_INVITATION"), eq("user:" + invited.getId()), any());
+  }
+
+  @Test
+  void resendInvitationRejectsWhoAlreadyEntered() {
+    User invited = invitedUser(OffsetDateTime.now());
+    when(userRepo.findById(invited.getId())).thenReturn(Optional.of(invited));
+
+    assertThrows(ConflictException.class, () -> service.resendInvitation(invited.getId()));
+    verify(keycloakAdmin, never()).sendExecuteActionsEmail(any(), any(), anyInt(), any(), any());
+  }
+
+  @Test
+  void resendInvitationRejectsAUserCreatedWithATemporaryPassword() {
+    when(userRepo.findById(user.getId())).thenReturn(Optional.of(user));
+
+    assertThrows(ConflictException.class, () -> service.resendInvitation(user.getId()));
+  }
+
+  @Test
+  void resendInvitationRejectsADisabledUser() {
+    User invited = invitedUser(null);
+    invited.setEnabled(false);
+    when(userRepo.findById(invited.getId())).thenReturn(Optional.of(invited));
+
+    assertThrows(InvalidRequestException.class, () -> service.resendInvitation(invited.getId()));
+  }
+
+  @Test
+  void resendInvitationRejectsAUserWithoutKeycloakAccount() {
+    User invited = invitedUser(null);
+    invited.setKeycloakId(null);
+    when(userRepo.findById(invited.getId())).thenReturn(Optional.of(invited));
+
+    assertThrows(InvalidRequestException.class, () -> service.resendInvitation(invited.getId()));
+  }
+
+  @Test
+  void aResponsibleCannotResendAnInvitationOfAnotherOrganization() {
+    User invited = invitedUser(null);
+    when(userRepo.findById(invited.getId())).thenReturn(Optional.of(invited));
+    when(currentUser.isPrismaAdmin()).thenReturn(false);
+    when(currentUser.organizationIds()).thenReturn(Set.of(UUID.randomUUID()));
+
+    assertThrows(
+        org.springframework.security.access.AccessDeniedException.class,
+        () -> service.resendInvitation(invited.getId()));
+  }
+
+  @Test
+  void resendInvitationTranslatesAnEmailFailure() {
+    User invited = invitedUser(null);
+    when(userRepo.findById(invited.getId())).thenReturn(Optional.of(invited));
+    doThrow(new KeycloakAdminClient.EmailDeliveryException(new RuntimeException("smtp")))
+        .when(keycloakAdmin)
+        .sendExecuteActionsEmail(any(), any(), anyInt(), any(), any());
+
+    assertThrows(ConflictException.class, () -> service.resendInvitation(invited.getId()));
+  }
+
+  // ---- Estado de bloqueo de cada usuario (RF-AUTH-08): la lista refleja lo que dice Keycloak ----
+
+  private User withKeycloakAccount(String email) {
+    return User.builder()
+        .id(UUID.randomUUID())
+        .email(email)
+        .firstName("N")
+        .lastName("L")
+        .enabled(true)
+        .roles(Set.of(UserRole.VIEWER))
+        .keycloakId(UUID.randomUUID())
+        .createdAt(OffsetDateTime.now())
+        .build();
+  }
+
+  private PaginatedDto<UserDto> listOf(User... users) {
+    PageRequest pr = PageRequest.of(0, 10, Sort.by("createdAt").descending());
+    when(userRepo.search(any(), any()))
+        .thenReturn(new PageImpl<>(List.of(users), pr, users.length));
+    return service.list(null, 0, 10);
+  }
+
+  private static UserDto byEmail(PaginatedDto<UserDto> page, String email) {
+    return page.data().stream().filter(u -> u.email().equals(email)).findFirst().orElseThrow();
+  }
+
+  @Test
+  void theListMarksALockedAccountWithTheTimeItStaysLockedUntil() {
+    User locked = withKeycloakAccount("locked@test.com");
+    long until = java.time.Instant.parse("2026-11-13T19:29:04Z").getEpochSecond();
+    when(keycloakAdmin.loginFailureStatus(locked.getKeycloakId()))
+        .thenReturn(new KeycloakAdminClient.LoginFailureStatus(true, 10, until));
+
+    UserDto dto = byEmail(listOf(locked), "locked@test.com");
+
+    assertEquals(Boolean.TRUE, dto.locked());
+    assertEquals(java.time.Instant.ofEpochSecond(until), dto.lockedUntil().toInstant());
+  }
+
+  @Test
+  void theListShowsAnAccountWithFailuresButNotLockedAsNotLocked() {
+    User tryingUser = withKeycloakAccount("trying@test.com");
+    when(keycloakAdmin.loginFailureStatus(tryingUser.getKeycloakId()))
+        .thenReturn(new KeycloakAdminClient.LoginFailureStatus(false, 4, 0));
+
+    UserDto dto = byEmail(listOf(tryingUser), "trying@test.com");
+
+    assertEquals(Boolean.FALSE, dto.locked());
+    assertNull(dto.lockedUntil());
+  }
+
+  @Test
+  void aUserWithoutAnAccountHasNoLockStateAndKeycloakIsNotAskedAboutIt() {
+    user.setKeycloakId(null);
+
+    UserDto dto = byEmail(listOf(user), "u@test.com");
+
+    assertNull(dto.locked());
+    assertNull(dto.lockedUntil());
+    verify(keycloakAdmin, never()).loginFailureStatus(any());
+  }
+
+  @Test
+  void eachUserInThePageGetsItsOwnState() {
+    User a = withKeycloakAccount("a@test.com");
+    User b = withKeycloakAccount("b@test.com");
+    when(keycloakAdmin.loginFailureStatus(a.getKeycloakId()))
+        .thenReturn(new KeycloakAdminClient.LoginFailureStatus(true, 10, 4_000_000_000L));
+    when(keycloakAdmin.loginFailureStatus(b.getKeycloakId()))
+        .thenReturn(new KeycloakAdminClient.LoginFailureStatus(false, 0, 0));
+
+    PaginatedDto<UserDto> page = listOf(a, b);
+
+    assertEquals(Boolean.TRUE, byEmail(page, "a@test.com").locked());
+    assertEquals(Boolean.FALSE, byEmail(page, "b@test.com").locked());
+  }
+
+  @Test
+  void ifKeycloakFailsTheListIsStillReturnedWithTheStateUnknown() {
+    User u = withKeycloakAccount("down@test.com");
+    when(keycloakAdmin.loginFailureStatus(u.getKeycloakId()))
+        .thenThrow(new IllegalStateException("Keycloak no responde"));
+
+    UserDto dto = byEmail(listOf(u), "down@test.com");
+
+    assertNull(dto.locked());
+    assertEquals("down@test.com", dto.email());
+  }
+
+  @Test
+  void ifKeycloakIsTooSlowTheListDoesNotWaitForeverAndTheStateIsUnknown() {
+    User slow = withKeycloakAccount("slow@test.com");
+    when(keycloakAdmin.loginFailureStatus(slow.getKeycloakId()))
+        .thenAnswer(
+            inv -> {
+              Thread.sleep(10_000);
+              return new KeycloakAdminClient.LoginFailureStatus(true, 10, 4_000_000_000L);
+            });
+
+    long started = System.nanoTime();
+    UserDto dto = byEmail(listOf(slow), "slow@test.com");
+    long elapsedMs = (System.nanoTime() - started) / 1_000_000;
+
+    assertNull(dto.locked());
+    assertTrue(elapsedMs < 5_000, "esperó " + elapsedMs + " ms");
+  }
+
+  @Test
+  void theDetailAlsoReportsTheLockState() {
+    User locked = withKeycloakAccount("detail@test.com");
+    when(userRepo.findById(locked.getId())).thenReturn(Optional.of(locked));
+    when(keycloakAdmin.loginFailureStatus(locked.getKeycloakId()))
+        .thenReturn(new KeycloakAdminClient.LoginFailureStatus(true, 10, 4_000_000_000L));
+
+    assertEquals(Boolean.TRUE, service.getById(locked.getId()).locked());
   }
 }

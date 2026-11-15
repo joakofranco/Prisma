@@ -19,8 +19,8 @@
         <input
           v-model="searchTerm"
           type="text"
-          placeholder="Buscar por acción o recurso..."
-          aria-label="Buscar por acción o recurso"
+          placeholder="Buscar por usuario, organización, acción, recurso o ID..."
+          aria-label="Buscar por usuario, organización, acción, recurso o ID"
           class="w-full pl-10 pr-4 py-2 rounded-lg border border-slate-300 dark:border-slate-500 bg-white dark:bg-slate-700 text-slate-900 dark:text-white placeholder:text-slate-500 dark:placeholder:text-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           @input="debouncedSearch"
         />
@@ -32,6 +32,15 @@
         class="w-64"
         @update:model-value="refresh"
       />
+      <button
+        type="button"
+        :disabled="exporting"
+        class="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-500 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-600 disabled:opacity-50"
+        @click="exportCsv"
+      >
+        <ArrowDownTrayIcon class="w-4 h-4" />
+        {{ exporting ? 'Exportando...' : 'Exportar CSV' }}
+      </button>
     </div>
 
     <DataTable
@@ -92,15 +101,19 @@
   import { storeToRefs } from 'pinia';
   import { useAuditLogsStore } from '@/stores/auditLogs';
   import { useAuthStore } from '@/stores/auth';
+  import { useNotification } from '@/composables/useUtils';
   import { formatDateTime } from '@/utils/helpers';
   import { AUDIT_ACTION_LABELS, AUDIT_RESOURCE_TYPE_LABELS } from '@/utils/constants';
+  import { auditLogsService } from '@/services/resources';
   import DataTable from '@/components/common/DataTable.vue';
   import BaseSelect from '@/components/common/BaseSelect.vue';
-  import { MagnifyingGlassIcon } from '@heroicons/vue/24/outline';
+  import { MagnifyingGlassIcon, ArrowDownTrayIcon } from '@heroicons/vue/24/outline';
   import type { AuditLog } from '@/types';
 
   const store = useAuditLogsStore();
   const authStore = useAuthStore();
+  const notification = useNotification();
+  const exporting = ref(false);
 
   // El backend ya acota la consulta al tenant del usuario para todo rol que no sea PRISMA_ADMIN
   // (ver AuditLogService.list) -- esto sólo decide si mostramos la columna "Organización" (no
@@ -128,11 +141,20 @@
     'UPDATE_PROFILE',
     'CHANGE_PASSWORD',
     'LINK_KEYCLOAK_ACCOUNT',
+    'INVITE_USER',
+    'RESEND_INVITATION',
+    'ACCEPT_INVITATION',
     'REACTIVATE',
     'SAVE_RESPONSE',
+    'UPDATE_IMPROVEMENT_PLAN',
     'LOGIN',
     'LOGOUT',
     'LOGIN_FAILED',
+    'EVIDENCE_SCAN_CLEAN',
+    'EVIDENCE_SCAN_INFECTED',
+    'EVIDENCE_QUARANTINED',
+    'EVIDENCE_QUARANTINE_RELEASED',
+    'EVIDENCE_QUARANTINE_INFECTED',
   ];
 
   const columns = computed(() => {
@@ -148,7 +170,7 @@
   });
 
   function actionBadgeClass(action: string): string {
-    if (action === 'CREATE' || action === 'REACTIVATE')
+    if (action === 'CREATE' || action === 'REACTIVATE' || action === 'ACCEPT_INVITATION')
       return 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300';
     if (action === 'DELETE') return 'bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300';
     if (action === 'LOGIN') return 'bg-teal-50 text-teal-700 dark:bg-teal-950 dark:text-teal-300';
@@ -160,7 +182,9 @@
       action.startsWith('UPDATE') ||
       action === 'CHANGE_PASSWORD' ||
       action === 'LINK_KEYCLOAK_ACCOUNT' ||
-      action === 'SAVE_RESPONSE'
+      action === 'SAVE_RESPONSE' ||
+      action === 'INVITE_USER' ||
+      action === 'RESEND_INVITATION'
     )
       return 'bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300';
     return 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300';
@@ -192,6 +216,28 @@
   function debouncedSearch() {
     clearTimeout(searchTimeout);
     searchTimeout = setTimeout(refresh, 300);
+  }
+
+  async function exportCsv() {
+    exporting.value = true;
+    try {
+      const { data } = await auditLogsService.exportCsv({
+        search: searchTerm.value || undefined,
+        action: actionFilter.value || undefined,
+      });
+      const url = window.URL.createObjectURL(new Blob([data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', 'bitacora.csv');
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      notification.success('Bitácora exportada a CSV');
+    } catch {
+      notification.error('Error al exportar la bitácora');
+    } finally {
+      exporting.value = false;
+    }
   }
 
   function handlePageChange(page: number) {

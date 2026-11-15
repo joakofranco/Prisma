@@ -23,9 +23,9 @@ useThemeStore().init();
 // El router debe instalarse (y disparar su navegación inicial) recién
 // después de que Keycloak haya terminado de inicializarse. Si se instala
 // antes, el guard de navegación corre con `isAuthenticated=false` por
-// defecto y redirige a /login, lo que reescribe la URL vía History API y
+// defecto y redirige a Keycloak, lo que reescribe la URL vía History API y
 // destruye el fragmento `#state=...&code=...` que Keycloak necesita para
-// completar el login al volver del redirect (ver bug: loop /login).
+// completar el login al volver del redirect.
 const authStore = useAuthStore();
 authStore.init().finally(() => {
   app.use(router);

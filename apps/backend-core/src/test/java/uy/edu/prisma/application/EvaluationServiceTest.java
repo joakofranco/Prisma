@@ -30,6 +30,7 @@ class EvaluationServiceTest {
 
   @Mock private EvaluationRepository evalRepo;
   @Mock private EvaluationResponseRepository respRepo;
+  @Mock private EvaluationSubcategoryCommentRepository subcatCommentRepo;
   @Mock private MaturityResultRepository matRepo;
   @Mock private OrganizationRepository orgRepo;
   @Mock private CatalogControlRepository controlRepo;
@@ -60,6 +61,7 @@ class EvaluationServiceTest {
         new EvaluationService(
             evalRepo,
             respRepo,
+            subcatCommentRepo,
             matRepo,
             orgRepo,
             controlRepo,
@@ -69,9 +71,10 @@ class EvaluationServiceTest {
             profileRepo,
             userRepo,
             currentUser,
-            auditLog);
+            auditLog,
+            "test-certification-secret");
 
-    org = Organization.builder().id(UUID.randomUUID()).name("Acme").rut("N1").build();
+    org = Organization.builder().id(UUID.randomUUID()).name("Acme").identifier("N1").build();
     eval =
         Evaluation.builder()
             .id(UUID.randomUUID())
@@ -372,6 +375,38 @@ class EvaluationServiceTest {
   }
 
   @Test
+  void updateStatusRejectsAMissingStatus() {
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+
+    var missing =
+        assertThrows(
+            uy.edu.prisma.domain.exception.InvalidRequestException.class,
+            () -> service.updateStatus(eval.getId(), null));
+    var blank =
+        assertThrows(
+            uy.edu.prisma.domain.exception.InvalidRequestException.class,
+            () -> service.updateStatus(eval.getId(), "  "));
+
+    assertEquals("El estado es obligatorio", missing.getMessage());
+    assertEquals("status", missing.getField());
+    assertEquals("El estado es obligatorio", blank.getMessage());
+    verify(evalRepo, never()).save(any());
+  }
+
+  @Test
+  void updateStatusRejectsAnUnknownStatusWithoutLeakingInternals() {
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+
+    var ex =
+        assertThrows(
+            uy.edu.prisma.domain.exception.InvalidRequestException.class,
+            () -> service.updateStatus(eval.getId(), "NO_EXISTE"));
+
+    assertEquals("El estado «NO_EXISTE» no es válido", ex.getMessage());
+    verify(evalRepo, never()).save(any());
+  }
+
+  @Test
   void updateStatusRejectsSkippingStates() {
     // DRAFT no puede saltar directo a APPROVED: tiene que pasar por IN_PROGRESS,
     // READY_FOR_AUDIT e IN_AUDIT primero.
@@ -449,6 +484,44 @@ class EvaluationServiceTest {
     EvaluationDto result = service.updateStatus(eval.getId(), "IN_AUDIT");
 
     assertEquals("IN_AUDIT", result.status());
+  }
+
+  @Test
+  void updateStatusSealsCertificationWhenApproved() {
+    // RF-AUD-09: al pasar a APPROVED, se registran quién aprobó, cuándo, y una firma del sello --
+    // nunca antes de esa transición.
+    User auditor =
+        User.builder().id(UUID.randomUUID()).firstName("Ana").lastName("Auditora").build();
+    eval.setStatus(Evaluation.Status.IN_AUDIT);
+    when(currentUser.isPrismaAdmin()).thenReturn(false);
+    when(currentUser.hasAllOrganizationsAccess()).thenReturn(false);
+    when(currentUser.isAuditor()).thenReturn(true);
+    when(currentUser.currentUser()).thenReturn(Optional.of(auditor));
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(evalRepo.save(any(Evaluation.class))).thenAnswer(inv -> inv.getArgument(0));
+
+    EvaluationDto result = service.updateStatus(eval.getId(), "APPROVED");
+
+    assertEquals("APPROVED", result.status());
+    assertEquals(auditor.getId(), result.approvedBy());
+    assertEquals("Ana Auditora", result.approvedByName());
+    assertNotNull(result.approvedAt());
+    assertNotNull(result.certificationSeal());
+    assertEquals(64, result.certificationSeal().length());
+    verify(auditLog).record(eq("CERTIFY"), eq("evaluation:" + eval.getId()), anyString());
+  }
+
+  @Test
+  void updateStatusDoesNotSealWhenNotApproving() {
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(evalRepo.save(any(Evaluation.class))).thenAnswer(inv -> inv.getArgument(0));
+
+    EvaluationDto result = service.updateStatus(eval.getId(), "IN_PROGRESS");
+
+    assertNull(result.approvedBy());
+    assertNull(result.approvedAt());
+    assertNull(result.certificationSeal());
+    verify(auditLog, never()).record(eq("CERTIFY"), any(), any());
   }
 
   @Test
@@ -774,6 +847,113 @@ class EvaluationServiceTest {
   }
 
   @Test
+  void saveSubcategoryCommentCreatesNew() {
+    CatalogSubcategory sub = CatalogSubcategory.builder().id(UUID.randomUUID()).build();
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(subcategoryRepo.findById(sub.getId())).thenReturn(Optional.of(sub));
+    when(subcatCommentRepo.findByEvaluationIdAndSubcategoryId(eval.getId(), sub.getId()))
+        .thenReturn(Optional.empty());
+    when(subcatCommentRepo.save(any(EvaluationSubcategoryComment.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+
+    SubcategoryCommentDto result =
+        service.saveSubcategoryComment(
+            eval.getId(), sub.getId(), new SaveSubcategoryCommentDto("  nota  "));
+
+    assertEquals("nota", result.comment());
+    assertEquals(sub.getId(), result.subcategoryId());
+    verify(subcatCommentRepo, times(1)).save(any(EvaluationSubcategoryComment.class));
+  }
+
+  @Test
+  void saveSubcategoryCommentUpdatesExisting() {
+    CatalogSubcategory sub = CatalogSubcategory.builder().id(UUID.randomUUID()).build();
+    EvaluationSubcategoryComment existing =
+        EvaluationSubcategoryComment.builder()
+            .id(UUID.randomUUID())
+            .evaluation(eval)
+            .subcategory(sub)
+            .comment("viejo")
+            .build();
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(subcategoryRepo.findById(sub.getId())).thenReturn(Optional.of(sub));
+    when(subcatCommentRepo.findByEvaluationIdAndSubcategoryId(eval.getId(), sub.getId()))
+        .thenReturn(Optional.of(existing));
+    when(subcatCommentRepo.save(any(EvaluationSubcategoryComment.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+
+    SubcategoryCommentDto result =
+        service.saveSubcategoryComment(
+            eval.getId(), sub.getId(), new SaveSubcategoryCommentDto("nuevo"));
+
+    assertEquals("nuevo", result.comment());
+    assertEquals("nuevo", existing.getComment());
+  }
+
+  @Test
+  void saveSubcategoryCommentBlankDeletesExisting() {
+    CatalogSubcategory sub = CatalogSubcategory.builder().id(UUID.randomUUID()).build();
+    EvaluationSubcategoryComment existing =
+        EvaluationSubcategoryComment.builder().id(UUID.randomUUID()).comment("viejo").build();
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(subcategoryRepo.findById(sub.getId())).thenReturn(Optional.of(sub));
+    when(subcatCommentRepo.findByEvaluationIdAndSubcategoryId(eval.getId(), sub.getId()))
+        .thenReturn(Optional.of(existing));
+
+    SubcategoryCommentDto result =
+        service.saveSubcategoryComment(
+            eval.getId(), sub.getId(), new SaveSubcategoryCommentDto("   "));
+
+    assertNull(result.comment());
+    verify(subcatCommentRepo).delete(existing);
+    verify(subcatCommentRepo, never()).save(any());
+  }
+
+  @Test
+  void saveSubcategoryCommentRejectedWhenEvaluationNotEditable() {
+    eval.setStatus(Evaluation.Status.APPROVED);
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+
+    UUID subId = UUID.randomUUID();
+    SaveSubcategoryCommentDto dto = new SaveSubcategoryCommentDto("x");
+    assertThrows(
+        RuntimeException.class, () -> service.saveSubcategoryComment(eval.getId(), subId, dto));
+    verify(subcatCommentRepo, never()).save(any());
+  }
+
+  @Test
+  void saveSubcategoryCommentRejectedWhenOrganizationAccessDenied() {
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    doThrow(new RuntimeException("403")).when(currentUser).assertOrganizationAccess(any());
+
+    UUID subId = UUID.randomUUID();
+    SaveSubcategoryCommentDto dto = new SaveSubcategoryCommentDto("x");
+    assertThrows(
+        RuntimeException.class, () -> service.saveSubcategoryComment(eval.getId(), subId, dto));
+    verify(subcatCommentRepo, never()).save(any());
+  }
+
+  @Test
+  void getSubcategoryCommentsReturnsSavedOnes() {
+    CatalogSubcategory sub = CatalogSubcategory.builder().id(UUID.randomUUID()).build();
+    EvaluationSubcategoryComment c =
+        EvaluationSubcategoryComment.builder()
+            .id(UUID.randomUUID())
+            .evaluation(eval)
+            .subcategory(sub)
+            .comment("hola")
+            .build();
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(subcatCommentRepo.findByEvaluationId(eval.getId())).thenReturn(List.of(c));
+
+    List<SubcategoryCommentDto> result = service.getSubcategoryComments(eval.getId());
+
+    assertEquals(1, result.size());
+    assertEquals("hola", result.get(0).comment());
+    assertEquals(sub.getId(), result.get(0).subcategoryId());
+  }
+
+  @Test
   void saveResponseThrowsWhenEvaluationMissing() {
     UUID evalId = UUID.randomUUID();
     when(evalRepo.findById(evalId)).thenReturn(Optional.empty());
@@ -901,6 +1081,40 @@ class EvaluationServiceTest {
     assertEquals(2, dto.currentLevel());
     assertEquals(4, dto.targetLevel());
     assertEquals(2, dto.gap());
+  }
+
+  @Test
+  void getResultsIncludesNextLevelAndMissingControls() {
+    SubGraph graph = buildSubgraph();
+    CatalogControl c1 = controlAtLevel(graph, 1);
+    CatalogControl c2 = controlAtLevel(graph, 2);
+    MaturityResult result =
+        MaturityResult.builder()
+            .id(UUID.randomUUID())
+            .evaluation(eval)
+            .functionId(graph.function().getId())
+            .functionName("F1")
+            .categoryId(graph.category().getId())
+            .categoryName("C1")
+            .subcategoryId(graph.subcategory().getId())
+            .subcategoryName("S1")
+            .currentLevel(1)
+            .targetLevel(2)
+            .gap(1)
+            .build();
+    EvaluationResponse answered =
+        EvaluationResponse.builder().id(UUID.randomUUID()).control(c1).compliant(true).build();
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(matRepo.findByEvaluationId(eval.getId())).thenReturn(List.of(result));
+    when(controlRepo.findByVersionOrdered("5.0")).thenReturn(List.of(c1, c2));
+    when(respRepo.findByEvaluationId(eval.getId())).thenReturn(List.of(answered));
+
+    MaturityResultDto dto = service.getResults(eval.getId()).get(0);
+
+    assertEquals(2, dto.nextLevel());
+    assertEquals(1, dto.missingControls().size());
+    assertEquals(c2.getId(), dto.missingControls().get(0).id());
+    assertEquals("UNANSWERED", dto.missingControls().get(0).status());
   }
 
   @Test
@@ -1115,5 +1329,54 @@ class EvaluationServiceTest {
     assertNull(dto.globalMaturity());
     assertNull(dto.createdBy());
     assertEquals(eval.getCreatedAt(), dto.createdAt());
+  }
+
+  // ---- Evaluación cerrada: no se recalcula la madurez ----
+
+  @Test
+  void calculateMaturityIsRejectedOnceTheEvaluationIsApprovedOrArchived() {
+    for (Evaluation.Status status :
+        List.of(Evaluation.Status.APPROVED, Evaluation.Status.ARCHIVED)) {
+      eval.setStatus(status);
+      when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+
+      uy.edu.prisma.domain.exception.InvalidRequestException ex =
+          assertThrows(
+              uy.edu.prisma.domain.exception.InvalidRequestException.class,
+              () -> service.calculateMaturity(eval.getId()),
+              "estado " + status);
+
+      assertTrue(ex.getMessage().contains(status.name()), ex.getMessage());
+    }
+    // Ni se borraron los resultados que respaldan la certificación ni se tocó la evaluación.
+    verify(matRepo, never()).deleteAllInBatch(any());
+    verify(matRepo, never()).saveAll(any());
+    verify(evalRepo, never()).save(any(Evaluation.class));
+  }
+
+  @Test
+  void calculateMaturityStillWorksWhileTheEvaluationIsOpen() {
+    SubGraph graph = buildSubgraph();
+    CatalogControl c1 = controlAtLevel(graph, 1);
+    // Se stubea una sola vez: volver a stubear un método con matchers dentro del bucle invocaría
+    // la respuesta anterior con argumentos nulos.
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(controlRepo.findByVersionOrdered("5.0")).thenReturn(List.of(c1));
+    when(respRepo.findByEvaluationId(eval.getId())).thenReturn(List.of());
+    when(matRepo.findByEvaluationId(eval.getId())).thenReturn(List.of());
+    when(matRepo.saveAll(any())).thenAnswer(inv -> new java.util.ArrayList<>(inv.getArgument(0)));
+    when(evalRepo.save(any(Evaluation.class))).thenAnswer(inv -> inv.getArgument(0));
+
+    for (Evaluation.Status status :
+        List.of(
+            Evaluation.Status.DRAFT,
+            Evaluation.Status.IN_PROGRESS,
+            Evaluation.Status.RETURNED,
+            Evaluation.Status.READY_FOR_AUDIT,
+            Evaluation.Status.IN_AUDIT)) {
+      eval.setStatus(status);
+
+      assertDoesNotThrow(() -> service.calculateMaturity(eval.getId()), "estado " + status);
+    }
   }
 }
