@@ -195,6 +195,9 @@ escribir_efectivo() {
     [ -n "${ITERACIONES:-}" ] && echo "iteraciones=$ITERACIONES"
     [ -n "${PAUSA_MS:-}" ] && echo "pausa_ms=$PAUSA_MS"
     [ -n "${ENDPOINTS:-}" ] && echo "endpoints=$ENDPOINTS"
+    [ -n "${PROMETHEUS_URL:-}" ] && echo "prometheus_url=$PROMETHEUS_URL"
+    [ -n "${ALERTMANAGER_URL:-}" ] && echo "alertmanager_url=$ALERTMANAGER_URL"
+    [ -n "${MAILPIT_URL:-}" ] && echo "mailpit_url=$MAILPIT_URL"
     local par var val forzados="" guardado
     guardado="$(prop "$caso.p95_ms" "$UMBRALES_GUARDADOS")"
     if [ -n "$guardado" ]; then
@@ -236,6 +239,7 @@ lanzar_jmeter() {
     -q /perf/data/.secretos.properties \
     ${DEST_OPTS[@]+"${DEST_OPTS[@]}"} ${extra[@]+"${extra[@]}"} \
     -Jjmeter.save.saveservice.output_format=csv \
+    "-Jmuestra_pdf=/perf/$salida_rel/muestra.pdf" \
     -l "/perf/$salida_rel/resultados.jtl" \
     -j "/perf/$salida_rel/jmeter.log" \
     -e -o "/perf/$salida_rel/html" > "$PERF/$salida_rel/consola.log" 2>&1
@@ -276,6 +280,37 @@ correr_caso() {
   return $rc
 }
 
+verificar_observabilidad() {
+  local caso="$1" archivo="$2" defs="$PERF/casos/_defaults.properties" obligatorio par nombre url ok=1
+  obligatorio="$(prop dos_alerta_obligatoria "$defs" "$archivo")"
+  local prom am correo
+  prom="${PROMETHEUS_URL:-$(prop prometheus_url "$defs" "$archivo")}"
+  am="${ALERTMANAGER_URL:-$(prop alertmanager_url "$defs" "$archivo")}"
+  correo="${MAILPIT_URL:-$(prop mailpit_url "$defs" "$archivo")}"
+  for par in "Prometheus|$prom|/-/ready" "Alertmanager|$am|/-/ready" "Mailpit|$correo|/api/v1/info"; do
+    nombre="${par%%|*}"
+    url="${par#*|}"
+    ruta_url="${url#*|}"
+    url="${url%%|*}"
+    [ -n "$url" ] || continue
+    if contenedor "$DEST_RED" "$IMAGEN" wget -q -T 6 -O /dev/null "$url$ruta_url" >/dev/null 2>&1; then
+      echo "   $nombre responde en $url"
+    else
+      echo "   $nombre NO responde en $url" >&2
+      ok=0
+    fi
+  done
+  if [ "$ok" = 0 ]; then
+    echo "   Por la VPN suelen ser: PROMETHEUS_URL=http://10.8.0.1:9090 ALERTMANAGER_URL=http://10.8.0.1:9093 MAILPIT_URL=http://10.8.0.1:8025" >&2
+    if [ "$obligatorio" = "true" ]; then
+      echo "ERROR: $caso necesita llegar a Prometheus, Alertmanager y Mailpit antes de lanzar la ráfaga. Corregí las URL y repetí. No se lanzó la carga." >&2
+      return 1
+    fi
+    echo "   Sin Prometheus no hay métricas del servidor en el informe." >&2
+  fi
+  return 0
+}
+
 correr_una() {
   local caso="$1" fase="$2"
   local usuarios_corrida="${2:-${USERS:-}}"
@@ -292,6 +327,7 @@ correr_una() {
   destino "$modo"
   validar_permisos "$caso" "$disruptivo"
   asegurar_imagen
+  verificar_observabilidad "$caso" "$archivo" || return 1
 
   local sello salida_rel
   sello="$(date -u +%Y%m%d-%H%M%S)"
@@ -352,6 +388,8 @@ cmd_all() {
   local casos="$MEDICION" caso salida fallo=0 dirs=() incumplidos=""
   [ "${INCLUIR_DISRUPTIVOS:-0}" = 1 ] && casos="$casos $DISRUPTIVOS"
   for caso in $casos; do
+    case " ${EXCLUIR:-} " in *" $caso "*) echo "== $caso: excluido (EXCLUIR)"; continue ;; esac
+    case ",${EXCLUIR:-}," in *",$caso,"*) echo "== $caso: excluido (EXCLUIR)"; continue ;; esac
     if correr_caso "$caso"; then :; else fallo=1; incumplidos="$incumplidos $caso"; fi
     for salida in ${ULTIMAS_SALIDAS[@]+"${ULTIMAS_SALIDAS[@]}"}; do dirs+=("/perf/$salida"); done
   done

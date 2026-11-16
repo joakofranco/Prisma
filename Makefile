@@ -161,6 +161,7 @@ perf-setup: ## Crear los datos de prueba PERF- (organización, usuarios y evalua
 #> PERF_USUARIOS=20  cantidad de usuarios de prueba a crear
 #> BASE_URL=... PERF_PERMITIR_REMOTO=1  crear los datos en otro entorno en lugar del stack local
 #> PERF_SIN_PREGUNTAS=1  no pedir los p95: conserva los guardados o los de cada caso
+#> PERF_EVAL_APROBADAS=5  evaluaciones aprobadas que se crean para los reportes PDF (una por usuario virtual)
 	@bash perf/scripts/perf.sh setup
 
 perf-umbrales: ## Cambiar el p95 aceptable (ms) de cada caso CP sin recrear los datos. Se guarda en perf/data/umbrales.properties
@@ -177,12 +178,14 @@ perf: ## Correr un caso de performance y generar su informe (PDF, HTML y resumen
 #> UMBRAL_P95_MS=2000  UMBRAL_P99_MS=4000  UMBRAL_MEDIA_MS=800  tiempos máximos aceptados (RNF); reemplazan los del caso, también los de cada petición
 #> UMBRAL_ERROR_PCT=1  porcentaje máximo de errores    UMBRAL_THROUGHPUT_MIN=20  peticiones por segundo mínimas
 #> UMBRAL_MIN_429=100  mínimo de respuestas 429 esperadas (solo CP-OBS-08)
+#> PROMETHEUS_URL=http://10.8.0.1:9090  ALERTMANAGER_URL=http://10.8.0.1:9093  MAILPIT_URL=http://10.8.0.1:8025  servicios de observabilidad a consultar (por defecto, los nombres de la red Docker); se comprueban antes de empezar
 #> CP-RND-03, 04 y 05 corren primero con 1 usuario y después con la carga completa (dos informes); USERS=n corre una sola fase
 #> CP-RND-06 termina con una corrida de recuperación de 5 minutos con 1 usuario, comparada con el último CP-RND-01 (RECUPERACION_S=0 la omite)
 	@bash perf/scripts/perf.sh run $(CASO)
 
 perf-all: ## Correr todos los casos de medición y generar el informe consolidado en PDF. Termina con error si alguno no cumple
-#> INCLUIR_DISRUPTIVOS=1 PERF_PERMITIR_DISRUPTIVO=1  sumar el estrés y la inundación
+#> INCLUIR_DISRUPTIVOS=1 PERF_PERMITIR_DISRUPTIVO=1  sumar el estrés y la inundación (CP-OBS-08 corre al final)
+#> EXCLUIR=CP-RND-04,CP-TRV-07  casos que no se corren
 #> Acepta además los parámetros de carga, de destino y de umbrales (UMBRAL_*) de make perf; los umbrales se aplican a todos los casos
 	@bash perf/scripts/perf.sh all
 

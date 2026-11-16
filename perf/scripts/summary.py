@@ -7,6 +7,7 @@ import math
 import os
 import ssl
 import sys
+import re
 import time
 import urllib.parse
 import urllib.request
@@ -112,6 +113,23 @@ def consulta_http(url, timeout=8):
         return json.loads(r.read().decode("utf-8"))
 
 
+def p95_servidor(props, uri_regex, inicio_ms, fin_ms):
+    base = props.get("prometheus_url", "").rstrip("/")
+    if not base:
+        return None, "Prometheus no configurado (`prometheus_url` vacío)"
+    ventana = max(15, int((fin_ms - inicio_ms) / 1000) + 15)
+    consulta = (f'histogram_quantile(0.95, sum(increase(http_server_requests_seconds_bucket{{uri=~"{uri_regex}"}}[{ventana}s])) by (le)) * 1000')
+    url = f"{base}/api/v1/query?query={urllib.parse.quote(consulta)}&time={fin_ms / 1000 + 10:.0f}"
+    try:
+        resultado = consulta_http(url).get("data", {}).get("result", [])
+    except Exception as e:
+        return None, f"Prometheus no disponible en `{base}` ({type(e).__name__})"
+    valores = [float(r["value"][1]) for r in resultado if r["value"][1] not in ("NaN", "+Inf", "-Inf")]
+    if not valores:
+        return None, "Prometheus no devolvió datos para esa ruta (¿lo scrapea backend-core?)"
+    return valores[0], None
+
+
 def metricas_servidor(props, inicio_ms, fin_ms):
     base = props.get("prometheus_url", "").rstrip("/")
     if not base:
@@ -150,10 +168,52 @@ def metricas_servidor(props, inicio_ms, fin_ms):
     return "\n".join(lineas) + "\n"
 
 
-def alerta_activa(props, nombres):
+def segundos_desde(marca_iso, inicio_ms):
+    try:
+        t = datetime.fromisoformat(marca_iso.replace("Z", "+00:00"))
+        return round(t.timestamp() - inicio_ms / 1000)
+    except (ValueError, AttributeError):
+        return None
+
+
+def validar_muestra_pdf(directorio):
+    ruta = os.path.join(directorio, "muestra.pdf")
+    if not os.path.isfile(ruta):
+        return False, "No se guardó ningún PDF de muestra (ninguna respuesta válida de más de 10 KB)."
+    with open(ruta, "rb") as f:
+        datos = f.read()
+    paginas = len(re.findall(rb"/Type\s*/Page(?![s\w])", datos))
+    valido = datos.startswith(b"%PDF-") and b"%%EOF" in datos[-2048:] and len(datos) > 10240 and paginas >= 1
+    detalle = f"{len(datos) / 1024:.1f} KB, {paginas} página(s), {'encabezado y cierre PDF correctos' if valido else 'estructura PDF inválida'}"
+    return valido, f"PDF de muestra guardado en `muestra.pdf`: {detalle}."
+
+
+def correo_mailpit(props, nombres, inicio_ms):
+    base = props.get("mailpit_url", "").rstrip("/")
+    if not base:
+        return None, "Mailpit no configurado (`mailpit_url` vacío)", None
+    nombres = [n.strip() for n in nombres.split(",") if n.strip()]
+    espera = int(float(props.get("correo_espera_s", "60") or 60))
+    limite = time.time() + espera
+    while True:
+        try:
+            datos = consulta_http(f"{base}/api/v1/messages?limit=100")
+            for m in datos.get("messages", []):
+                texto = f"{m.get('Subject', '')} {m.get('Snippet', '')}"
+                creado = segundos_desde(m.get("Created", ""), inicio_ms)
+                if any(n in texto for n in nombres) and creado is not None and creado >= -5:
+                    return True, f"correo recibido en Mailpit: «{m.get('Subject', '')}»", m
+        except Exception as e:
+            return None, f"Mailpit no disponible en `{base}` ({type(e).__name__})", None
+        if time.time() >= limite:
+            return False, f"no llegó a Mailpit ningún correo de {' o '.join(nombres)} tras esperar {espera} s", None
+        time.sleep(5)
+
+
+def alerta_activa(props, nombres, inicio_ms=None):
     base = props.get("alertmanager_url", "").rstrip("/")
     if not base:
-        return None, "Alertmanager no configurado (`alertmanager_url` vacío)"
+        return None, "Alertmanager no configurado (`alertmanager_url` vacío)", None
     nombres = [n.strip() for n in nombres.split(",") if n.strip()]
     etiqueta = " o ".join(f"`{n}`" for n in nombres)
     espera = int(float(props.get("dos_espera_alerta_s", "0") or 0))
@@ -167,11 +227,19 @@ def alerta_activa(props, nombres):
                 if a.get("labels", {}).get("alertname") in nombres and a.get("status", {}).get("state") == "active"
             ]
             if activas:
-                return True, f"{etiqueta} activa en Alertmanager (`{activas[0]['labels']['alertname']}`)"
+                alerta = activas[0]
+                segundos = segundos_desde(alerta.get("startsAt", ""), inicio_ms) if inicio_ms else None
+                limite_s = int(float(props.get("dos_alerta_max_s", "300") or 300))
+                texto = f"{etiqueta} activa en Alertmanager (`{alerta['labels']['alertname']}`)"
+                if segundos is not None:
+                    en_plazo = segundos <= limite_s
+                    texto += f", disparada a los {segundos} s de iniciada la ráfaga (límite {limite_s} s): {'en plazo' if en_plazo else 'FUERA DE PLAZO'}"
+                    return en_plazo, texto, alerta
+                return True, texto, alerta
         except Exception as e:
-            return None, f"Alertmanager no disponible en `{base}` ({type(e).__name__})"
+            return None, f"Alertmanager no disponible en `{base}` ({type(e).__name__})", None
         if time.time() >= limite:
-            return False, f"{etiqueta} no apareció en Alertmanager tras esperar {espera} s"
+            return False, f"{etiqueta} no apareció en Alertmanager tras esperar {espera} s", None
         time.sleep(10)
 
 
@@ -258,10 +326,37 @@ def resumir(directorio):
                      "`docker exec <contenedor-fail2ban> fail2ban-client unban <IP>` (ver `fail2ban-client banned`).")
         nombre_alerta = props.get("dos_alerta", "")
         if nombre_alerta:
-            estado, detalle = alerta_activa(props, nombre_alerta)
+            estado, detalle, alerta = alerta_activa(props, nombre_alerta, total["inicio"])
             extra.append(f"- Alerta: {detalle}.")
+            if alerta:
+                with open(os.path.join(directorio, "evidencia-alerta.json"), "w", encoding="utf-8", newline="\n") as f:
+                    json.dump(alerta, f, ensure_ascii=False, indent=2)
             if estado is False and props.get("dos_alerta_obligatoria", "false") == "true":
                 cumple = False
+            if props.get("mailpit_url", ""):
+                ok_correo, detalle_correo, mensaje = correo_mailpit(props, nombre_alerta, total["inicio"])
+                extra.append(f"- Correo: {detalle_correo}.")
+                if mensaje:
+                    with open(os.path.join(directorio, "evidencia-correo.json"), "w", encoding="utf-8", newline="\n") as f:
+                        json.dump({k: mensaje.get(k) for k in ("From", "To", "Subject", "Created", "Snippet")}, f, ensure_ascii=False, indent=2)
+                if ok_correo is False and props.get("mailpit_obligatorio", "false") == "true":
+                    cumple = False
+    uri_servidor = {"madurez": ".*/calculate", "reporte-pdf": ".*/reports/.*"}.get(props.get("plan", ""))
+    if uri_servidor:
+        valor, motivo = p95_servidor(props, uri_servidor, total["inicio"], total["fin"])
+        nombre = "cálculo de madurez" if props.get("plan") == "madurez" else "reporte"
+        if valor is not None:
+            extra.append(f"- p95 medido en el servidor ({nombre}, Prometheus): {valor:.0f} ms. "
+                         "La tabla de abajo mide desde el generador de carga e incluye la red y el cliente.")
+        else:
+            extra.append(f"- p95 medido en el servidor ({nombre}): no disponible. {motivo}.")
+    if props.get("plan") == "reporte-pdf":
+        ok_pdf, detalle_pdf = validar_muestra_pdf(directorio)
+        extra.append(f"- {detalle_pdf}")
+        extra.append("- La primera generación de cada evaluación se mide aparte (petición `reporte-primera-generacion`); "
+                     "las repeticiones figuran como `reporte`. El servidor no cachea los reportes.")
+        if not ok_pdf:
+            cumple = False
     if login_fallidos and min_429 not in (None, ""):
         extra.append(f"- Inicios de sesión rechazados durante la ráfaga: {login_fallidos} (esperable cuando fail2ban banea al generador).")
     elif login_fallidos:

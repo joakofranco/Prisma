@@ -10,6 +10,7 @@ from summary import leer_props
 
 DATOS = "/perf/data/datos.properties"
 CANTIDAD = int(os.environ.get("PERF_USUARIOS", "20"))
+CANTIDAD_APROBADAS = int(os.environ.get("PERF_EVAL_APROBADAS", "5"))
 
 
 def clave_nueva():
@@ -103,25 +104,30 @@ def main():
     api("POST", f"/api/evaluations/{completa['id']}/calculate", token)
     print(f"Evaluación {PREFIJO}EVAL-COMPLETA: {len(controles)} controles respondidos ({len(faltan)} cargados ahora) y madurez calculada")
 
-    aprobada, _ = asegurar_evaluacion(token, evaluaciones, f"{PREFIJO}EVAL-APROBADA", org_id, version)
-    if aprobada.get("status") != "APPROVED":
-        poner_en_curso(token, aprobada)
-        respondidos = {r.get("controlId") for r in api("GET", f"/api/evaluations/{aprobada['id']}/responses", token) or []}
-        for control in [c for c in controles if c not in respondidos]:
-            api("POST", f"/api/evaluations/{aprobada['id']}/responses", token,
-                {"controlId": control, "compliant": True, "observations": "PERF"})
-        api("POST", f"/api/evaluations/{aprobada['id']}/calculate", token)
-        actual = api("GET", f"/api/evaluations/{aprobada['id']}", token).get("status")
-        for estado in ("READY_FOR_AUDIT", "IN_AUDIT", "APPROVED"):
-            if actual == "APPROVED":
-                break
-            if estado == "READY_FOR_AUDIT" and actual != "IN_PROGRESS":
-                continue
-            if estado == "IN_AUDIT" and actual not in ("IN_PROGRESS", "READY_FOR_AUDIT"):
-                continue
-            api("PATCH", f"/api/evaluations/{aprobada['id']}/status", token, {"status": estado})
-            actual = estado
-    print(f"Evaluación {PREFIJO}EVAL-APROBADA lista para reportes PDF (estado APPROVED)")
+    aprobadas = []
+    for n in range(1, CANTIDAD_APROBADAS + 1):
+        nombre = f"{PREFIJO}EVAL-APROBADA" if n == 1 else f"{PREFIJO}EVAL-APROBADA-{n:02d}"
+        aprobada, _ = asegurar_evaluacion(token, evaluaciones, nombre, org_id, version)
+        if aprobada.get("status") != "APPROVED":
+            poner_en_curso(token, aprobada)
+            respondidos = {r.get("controlId") for r in api("GET", f"/api/evaluations/{aprobada['id']}/responses", token) or []}
+            for control in [c for c in controles if c not in respondidos]:
+                api("POST", f"/api/evaluations/{aprobada['id']}/responses", token,
+                    {"controlId": control, "compliant": True, "observations": "PERF"})
+            api("POST", f"/api/evaluations/{aprobada['id']}/calculate", token)
+            actual = api("GET", f"/api/evaluations/{aprobada['id']}", token).get("status")
+            for estado in ("READY_FOR_AUDIT", "IN_AUDIT", "APPROVED"):
+                if actual == "APPROVED":
+                    break
+                if estado == "READY_FOR_AUDIT" and actual != "IN_PROGRESS":
+                    continue
+                if estado == "IN_AUDIT" and actual not in ("IN_PROGRESS", "READY_FOR_AUDIT"):
+                    continue
+                api("PATCH", f"/api/evaluations/{aprobada['id']}/status", token, {"status": estado})
+                actual = estado
+        aprobadas.append(aprobada)
+        print(f"Evaluación {nombre} lista para reportes PDF (estado APPROVED)")
+    aprobada = aprobadas[0]
 
     token_password(f"{USUARIO_PREFIJO}01@{USUARIO_DOMINIO}", clave)
     print("Inicio de sesión de un usuario PERF- verificado")
@@ -136,8 +142,10 @@ def main():
         f"catalog_version={version}",
         f"eval_completa={completa['id']}",
         f"eval_aprobada={aprobada['id']}",
+        f"total_aprobadas={len(aprobadas)}",
         f"total_controles={len(controles)}",
-    ] + lineas + [f"control_{i}={c}" for i, c in enumerate(controles, 1)]
+    ] + lineas + [f"eval_aprobada_{i}={a['id']}" for i, a in enumerate(aprobadas, 1)] + \
+        [f"control_{i}={c}" for i, c in enumerate(controles, 1)]
     os.makedirs(os.path.dirname(DATOS), exist_ok=True)
     with open(DATOS, "w", encoding="utf-8", newline="\n") as f:
         f.write("\n".join(salida) + "\n")

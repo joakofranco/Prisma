@@ -32,6 +32,24 @@ Permite medir tiempos de respuesta, concurrencia, cálculo de madurez, generaci�
 | CP-TRV-07 | madurez | Cálculo de madurez con el catálogo completo |
 | CP-OBS-08 | borde-dos | Ráfaga por NGINX: 429 y alerta DosRateLimitTriggered o RequestFloodSpike en 5 minutos como máximo (disruptivo) |
 
+### Tiempo en el servidor (CP-RND-04, CP-TRV-07 y CP-RND-05)
+
+El requisito de cálculo de madurez habla del tiempo en el servidor, y la tabla de cada informe mide desde el generador de carga (incluye red y cliente). Si Prometheus es accesible, el resumen agrega el p95 medido en el servidor sobre toda la corrida (`http_server_requests_seconds_bucket` de la ruta `calculate`, o de `reports` en el PDF). Es informativo: el veredicto sigue calculándose con la tabla del generador, hasta que el equipo decida cuál de las dos medidas es la del requisito. Para que haya dato, Prometheus tiene que scrapear backend-core y ser alcanzable desde el generador (`PROMETHEUS_URL`).
+
+### Reporte PDF (CP-RND-05)
+
+- **Validaciones:** cada respuesta debe ser `application/pdf` y pesar más de 10 KB; si no, cuenta como error.
+- **PDF de muestra:** la corrida guarda el primer PDF válido en `muestra.pdf`, dentro de la carpeta del informe, y el resumen indica su tamaño, sus páginas y si tiene encabezado y cierre PDF correctos. Un PDF inválido o ausente hace que el caso no cumpla. Conviene abrirlo para confirmar que tiene contenido.
+- **Primera generación aparte:** la primera petición de cada usuario a su evaluación se mide como `reporte-primera-generacion` y las repeticiones como `reporte`. Cada usuario virtual usa su propia evaluación aprobada: `make perf-setup` crea 5 (`PERF_EVAL_APROBADAS`). El backend no tiene caché de reportes; la primera generación sirve para ver el costo de arrancar en frío.
+
+### Alertas de saturación (CP-OBS-08)
+
+- **Antes de la ráfaga** se comprueba que lleguen Prometheus, Alertmanager y Mailpit. Si no responden, el caso se detiene sin lanzar la carga y sugiere las URL de la VPN: `PROMETHEUS_URL=http://10.8.0.1:9090 ALERTMANAGER_URL=http://10.8.0.1:9093 MAILPIT_URL=http://10.8.0.1:8025`. En los demás casos solo advierte, porque sin Prometheus el informe no trae métricas del servidor.
+- **Para que cumpla:** respuestas 429 como mínimo (`umbral.min_429`), que se dispare `DosRateLimitTriggered` o `RequestFloodSpike` en 5 minutos o menos desde el inicio de la ráfaga (`dos_alerta_max_s`) y que el correo llegue a Mailpit.
+- **Evidencia:** el resumen indica en cuántos segundos se disparó la alerta y deja `evidencia-alerta.json` y `evidencia-correo.json` en la carpeta del informe, además de la captura que se saque a mano de Alertmanager y de Mailpit.
+- **Orden:** `make perf-all INCLUIR_DISRUPTIVOS=1` lo corre al final, porque fail2ban banea la IP del generador. Para liberarla: `docker exec <contenedor-fail2ban> fail2ban-client unban <IP>`.
+- **Excluir casos:** `EXCLUIR=CP-RND-04` en `make perf-all` salta los casos indicados, por ejemplo uno que está esperando una optimización.
+
 ### Fases con 1 usuario y recuperación tras el estrés
 
 - **CP-RND-03, CP-RND-04 y CP-RND-05** corren primero con 1 usuario y después con la carga completa (`fases_usuarios=1,20`, `1,10` y `1,5` en su `.properties`). Cada fase deja su propia carpeta (`...-CP-RND-03-1u`, `...-CP-RND-03-20u`), su informe y su fila en el consolidado, y el caso cumple solo si cumplen todas. Con `USERS=n` se corre una única fase con esa cantidad.
