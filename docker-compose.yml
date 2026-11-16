@@ -163,6 +163,8 @@ services:
       JWT_ACCESS_EXPIRATION_MINUTES: ${JWT_ACCESS_EXPIRATION_MINUTES:-15}
       JWT_REFRESH_EXPIRATION_DAYS: ${JWT_REFRESH_EXPIRATION_DAYS:-7}
       KEYCLOAK_AUTH_SERVER_URL: https://keycloak:8443
+      # URL pública de la app para las invitaciones por correo (PRI-379), ver .env.example.
+      PRISMA_APP_URL: ${PRISMA_APP_URL:-http://localhost:8080}
       # Habilita/deshabilita el JwtDecoder de Keycloak (ver SecurityConfig.MissingIssuerCondition)
       # -- su valor concreto ya no es lo que valida el claim "iss" (eso lo hace
       # KEYCLOAK_TRUSTED_ISSUERS más abajo, que admite una lista).
