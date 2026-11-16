@@ -444,6 +444,7 @@ make auth-policy / auth-policy-status        # Vigencia del enlace de recuperaci
 make swarm-deploy / swarm-ps / swarm-down    # Despliegue con réplicas en Docker Swarm (docker-stack.yml)
 make prod-up / prod-secrets                  # Producción: generar las contraseñas al azar, mostrarlas y levantar el stack
 make perf-setup / perf CASO=... / perf-all   # Pruebas de performance con JMeter (ver docs/desarrollo/PERFORMANCE.md)
+make vuln-scan                               # Escaneo de vulnerabilidades (Trivy) con tablero en Grafana (ver docs/operacion/Vulnerabilidades.md)
 make health              # Verifica que frontend/backend-core/backend-ai respondan OK
 make clean / nuke        # Baja la stack; `nuke` además borra volúmenes (¡destructivo!)
 ```

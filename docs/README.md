@@ -31,6 +31,7 @@ La documentación está ordenada por área. `CONTRIBUTING.md` y `SECURITY.md` qu
 | [`RUNBOOK.md`](operacion/RUNBOOK.md) | Incidentes con causa raíz y procedimientos de rutina (respaldos, alertas, fail2ban, Swarm). |
 | [`Ambientes-Despliegue.md`](operacion/Ambientes-Despliegue.md) | Cómo levantar cada ambiente: local, dev remoto, staging y producción. |
 | [`CI-CD-Infra.md`](operacion/CI-CD-Infra.md) | Pipelines de GitHub Actions y componentes del despliegue. |
+| [`Vulnerabilidades.md`](operacion/Vulnerabilidades.md) | Escaneo de vulnerabilidades con `make vuln-scan` y su tablero de Grafana. |
 | [`PUBLICACION-CLOUDFLARE.md`](operacion/PUBLICACION-CLOUDFLARE.md) | Publicación en internet con un VPS y Cloudflare Tunnel. |
 | [`Certificados-TLS.md`](operacion/Certificados-TLS.md) | HTTPS, certificado de nginx, CA interna y hostname dinámico de Keycloak. |
 | [`Notificaciones-Email.md`](operacion/Notificaciones-Email.md) | Correo de cuentas (SMTP de Keycloak). |

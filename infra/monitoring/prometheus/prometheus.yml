@@ -32,6 +32,12 @@ scrape_configs:
     static_configs:
       - targets: ['backend-ai:8000']
 
+  # ---------- Resultados de make vuln-scan (Trivy) vía Pushgateway ----------
+  - job_name: pushgateway
+    honor_labels: true
+    static_configs:
+      - targets: ['pushgateway:9091']
+
   # ---------- Node exporter (métricas del host) ----------
   - job_name: node-exporter
     static_configs:

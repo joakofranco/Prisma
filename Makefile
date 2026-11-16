@@ -44,6 +44,7 @@ DC := docker compose
         shell-core shell-ai shell-db shell-front \
         prod-secrets prod-up swarm-deploy swarm-ps swarm-down \
         perf-build perf-setup perf-umbrales perf perf-all perf-clean \
+        vuln-scan \
         mcu50-build mcu50-validate bugasura-build
 
 # Archivos de compose para el stack MVP (mínimo, sin LLM ni servicios extra)
@@ -235,6 +236,16 @@ sonar: ## Analizar el código con SonarQube contra el contenedor local (perfil q
 	  -e SONAR_TOKEN=$${SONAR_TOKEN} \
 	  -v $(PWD):/usr/src \
 	  sonarsource/sonar-scanner-cli
+
+vuln-scan: ## Escanear ahora con Trivy las imágenes de la stack y las dependencias del código y publicar el resultado en el tablero «PRISMA · Vulnerabilidades» de Grafana (con make up, el servicio vuln-scanner también lo hace solo todos los días)
+#> VULN_SOLO=imagenes|dependencias  escanear solo uno de los dos (por defecto, ambos)
+#> VULN_IMAGENES=redis:7-alpine,nginx:1.30-alpine  escanear solo esas imágenes (por defecto, las de docker compose que haya en el equipo)
+#> VULN_SOLO_CON_PARCHE=1  contar solo las vulnerabilidades que ya tienen versión corregida
+#> VULN_FALLAR=1  terminar con error si hay críticas con parche (para usarlo en una automatización)
+#> VULN_SIN_PUSH=1  no publicar en Grafana: deja solo el informe local en vuln-reports/
+#> PUSHGATEWAY_URL=http://localhost:9091  Pushgateway al que publicar (perfil observability)
+#> En .env: VULN_HORA=03:00  hora del escaneo diario automático    VULN_ESCANEAR_AL_INICIAR=true  escanear también al levantar el servicio
+	@bash scripts/vuln-scan.sh
 
 security-scan: ## Escanear el repositorio con Trivy (vulnerabilidades CRITICAL y HIGH en dependencias y archivos)
 	@echo "$(CYAN)Ejecutando Trivy...$(RESET)"

@@ -44,6 +44,9 @@ volumes:
   sonar-extensions:     { name: prisma-sonar-extensions }
   sonar-logs:           { name: prisma-sonar-logs }
   prometheus-data:      { name: prisma-prometheus-data }
+  pushgateway-data:     { name: prisma-pushgateway-data }
+  vuln-scanner-data:    { name: prisma-vuln-scanner-data }
+  trivy-cache:          { name: prisma-trivy-cache }
   alertmanager-data:    { name: prisma-alertmanager-data }
   alertmanager-config:  { name: prisma-alertmanager-config }
   grafana-data:         { name: prisma-grafana-data }
@@ -560,6 +563,43 @@ services:
       - ./infra/monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./infra/monitoring/prometheus/rules:/etc/prometheus/rules:ro
       - prometheus-data:/prometheus
+    networks: [prisma-net]
+
+  pushgateway:
+    image: prom/pushgateway:v1.11.1
+    container_name: prisma-pushgateway
+    restart: unless-stopped
+    profiles: [observability, full]
+    user: "0:0"
+    command:
+      - "--persistence.file=/data/metrics"
+      - "--persistence.interval=1m"
+    ports:
+      - "127.0.0.1:9091:9091"
+    volumes:
+      - pushgateway-data:/data
+    networks: [prisma-net]
+
+  vuln-scanner:
+    build:
+      context: .
+      dockerfile: infra/vuln-scanner/Dockerfile
+    image: prisma-vuln-scanner:local
+    container_name: prisma-vuln-scanner
+    restart: unless-stopped
+    profiles: [observability, full]
+    depends_on: [pushgateway]
+    environment:
+      TZ: ${TZ}
+      PUSHGATEWAY_URL: http://pushgateway:9091
+      VULN_HORA: ${VULN_HORA:-03:00}
+      VULN_ESCANEAR_AL_INICIAR: ${VULN_ESCANEAR_AL_INICIAR:-true}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./apps/frontend:/src/apps/frontend:ro
+      - ./apps/backend-ai:/src/apps/backend-ai:ro
+      - vuln-scanner-data:/data
+      - trivy-cache:/root/.cache
     networks: [prisma-net]
 
   grafana:
