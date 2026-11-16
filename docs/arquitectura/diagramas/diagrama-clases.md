@@ -224,7 +224,7 @@ classDiagram
     +String name
   }
 
-  Organization "1" *-- "0..*" User : tenant
+  Organization "0..*" o-- "0..*" User : organizations
   Organization "1" *-- "0..*" Evaluation
   User "0..1" ..> "0..*" Evaluation : createdBy
   CommunityProfile "0..1" -- "0..*" Evaluation : communityProfile
@@ -246,9 +246,9 @@ classDiagram
 
 **Notas:**
 - Todas las flechas `Organization → *` son la frontera del **aislamiento multi-tenant**:
-  `CurrentUserService.assertOrganizationAccess` valida en cada operación que el `tenant_id` del
-  usuario coincide con el de la `Organization`/`Evaluation` sobre la que opera (salvo roles
-  globales `PRISMA_ADMIN`/`AUDITOR`).
+  `CurrentUserService.assertOrganizationAccess` valida en cada operación que la
+  `Organization` (o la de la `Evaluation`) sobre la que opera esté entre las organizaciones del
+  usuario (salvo `PRISMA_ADMIN`, que es global, y el evaluador general sin organizaciones).
 - `Organization`, al "eliminarse", solo cambia `enabled=false` (baja lógica) — nunca se borra la
   fila ni lo que cuelga de ella, justamente para no perder este historial.
 - `EvaluationResponse`, `Evidence`, `ImprovementPlan` y `AuditObservation` cuelgan de `Evaluation`

@@ -2,7 +2,7 @@
 
 ## Vista general
 
-PRISMA sigue una **arquitectura hexagonal (Ports & Adapters)** distribuida en microservicios contenerizados, con estricto aislamiento multitenant y una capa de IA opcional basada en RAG.
+PRISMA sigue una **arquitectura en capas** (aplicación, dominio, infraestructura y web) distribuida en servicios contenerizados, con estricto aislamiento multitenant y una capa de IA opcional basada en RAG.
 
 ## Componentes clave
 
@@ -19,14 +19,14 @@ PRISMA sigue una **arquitectura hexagonal (Ports & Adapters)** distribuida en mi
 
 ### 2. Backend Core (Spring Boot)
 
-Estructura hexagonal:
+Estructura por capas:
 
 ```
 uy.edu.prisma
  ├── application      # Casos de uso, orquestación
- ├── domain           # Entidades, agregados, value objects, puertos
+ ├── domain           # Entidades JPA, repositorios y excepciones de dominio
  ├── infrastructure   # Adaptadores hacia sistemas externos: Keycloak Admin API, backend-ai (RAG)
- └── web              # Controllers REST, DTOs, mappers
+ └── web              # Controllers REST, DTOs y manejo de errores
 ```
 
 Responsabilidades:
@@ -34,7 +34,7 @@ Responsabilidades:
 - CRUD del catálogo MCU 5.0 (versionado)
 - Motor de evaluación y cálculo de madurez
 - Máquina de estados del workflow de auditoría
-- Almacenamiento seguro de evidencias (RustFS + URLs firmadas)
+- Almacenamiento seguro de evidencias (RustFS), con análisis antivirus previo
 - Bitácora inmutable de auditoría (append-only)
 - Generación de reportes PDF/Excel (los PDF cumplen PDF/A-1b, RNF-12; ver [`Codigo.md`](Codigo.md#pdfa-1b-rnf-12))
 
@@ -66,7 +66,7 @@ Endpoints:
   (`CurrentUserService.assertOrganizationAccess()` llamado explícitamente por cada `Service`), no
   con políticas RLS de Postgres. Esto es deliberado pero tiene un costo real: es responsabilidad de
   cada `Service` nuevo llamarlo — nada a nivel de base de datos lo hace por vos. Ver
-  [`SECURITY.md`](SECURITY.md) para un caso real donde este chequeo faltaba en dos servicios
+  [`SECURITY.md`](../SECURITY.md) para un caso real donde este chequeo faltaba en dos servicios
   enteros (`OrganizationService`/`UserService`) hasta que se detectó y corrigió.
 - Migrations con Flyway (`src/main/resources/db/migration/V*__*.sql`).
 
@@ -82,7 +82,9 @@ implementar rate-limiting real.
 
 - Servidor de objetos S3-compatible (RustFS); `backend-core` lo consume con el AWS SDK v2 (path-style).
 - Bucket `prisma-evidences` — evidencias privadas; lo crea `backend-core` en la primera subida.
-- URLs firmadas (SigV4) con TTL para descargas.
+- Las descargas las sirve `backend-core` por streaming, validando JWT, organización y rol en cada una.
+  Las URLs firmadas (SigV4) con TTL se usan solo dentro de la red de contenedores, para que
+  `backend-ai` lea el archivo al indexarlo.
 
 ### 6b. Antivirus (ClamAV, RNF-09)
 
@@ -105,7 +107,7 @@ implementar rate-limiting real.
 - Realm `prisma` con roles: `PRISMA_ADMIN`, `ORG_RESPONSIBLE`, `INTERNAL_EVALUATOR`, `AUDITOR`, `VIEWER`.
 - **MFA (TOTP) obligatoria para `PRISMA_ADMIN` y `ORG_RESPONSIBLE`**: el flujo de login
   `browser-mfa-por-rol` (se instala con `make mfa-enable`, ver
-  [`SECURITY.md`](SECURITY.md#mfa-totp-obligatoria-por-rol)) obliga a registrar una app
+  [`SECURITY.md`](../SECURITY.md#mfa-totp-obligatoria-por-rol)) obliga a registrar una app
   autenticadora en el primer login y a pedir el código en los siguientes. Está funcional y sus
   flujos están validados; el flujo no viene en `realm-prisma.json`, por eso hay que ejecutar el
   script (`scripts/keycloak/enable-mfa.sh`) en cada ambiente. El resto de los roles
@@ -117,12 +119,12 @@ implementar rate-limiting real.
 - `eventsEnabled: true` — Keycloak audita sus propios eventos de login (éxito/error); el rol
   `view-events` de `realm-management`, concedido al *service account* `prisma-backend`, es lo que
   le permite a `backend-core` leerlos (`LoginFailureAuditSyncService`) y reflejar los intentos
-  fallidos en la bitácora propia — ver [`SECURITY.md`](SECURITY.md).
+  fallidos en la bitácora propia — ver [`SECURITY.md`](../SECURITY.md).
 
 ## Seguridad transversal
 
 - HTTPS en todos los entornos (certificado autofirmado propio o `mkcert` en local — ver
-  [`Certificados-TLS.md`](Certificados-TLS.md) —, Let's Encrypt o el certificado del balanceador en producción).
+  [`Certificados-TLS.md`](../operacion/Certificados-TLS.md) —, Let's Encrypt o el certificado del balanceador en producción).
 - Argon2id para el hash de contraseñas locales (`PasswordHasher`, ver [`Codigo.md`](Codigo.md));
   Keycloak gestiona el suyo propio para las credenciales con las que se loguea.
 - JWT firmado por Keycloak (RS256), validado por `backend-core` contra las JWKS del realm; sin
@@ -130,11 +132,13 @@ implementar rate-limiting real.
   Redis más arriba).
 - Aislamiento multi-tenant verificado **explícitamente en cada `Service`**
   (`CurrentUserService.assertOrganizationAccess()`), no por un middleware/filtro transversal — ver
-  la advertencia en la sección de PostgreSQL y el detalle en [`SECURITY.md`](SECURITY.md).
-- Rate limiting a nivel de nginx (`infra/nginx/conf.d/prisma.conf`, zonas `limit_req`/`limit_conn`
-  en `/api` y `/ai`); no hay un rate limiter adicional del lado de Spring.
+  la advertencia en la sección de PostgreSQL y el detalle en [`SECURITY.md`](../SECURITY.md).
+- Rate limiting a nivel de nginx (zonas `limit_req`/`limit_conn` en `infra/nginx/nginx.conf`,
+  aplicadas en `infra/nginx/conf.d/prisma-locations.inc`); no hay un rate limiter adicional del
+  lado de Spring. fail2ban bloquea temporalmente las IPs que abusan (límite de tasa, fuerza bruta
+  en el login o escaneo) — ver [`RUNBOOK.md`](../operacion/RUNBOOK.md).
 - Escaneo continuo: Trivy, OWASP Dependency-Check, Snyk (opcional), CodeQL, Gitleaks — ver
-  `security.yml` en [`CI-CD-Infra.md`](CI-CD-Infra.md).
+  `security.yml` en [`CI-CD-Infra.md`](../operacion/CI-CD-Infra.md).
 
 ## Trazabilidad (Audit Logs)
 
@@ -147,14 +151,14 @@ con:
   rollback. Un efecto colateral real de esto: al auditar un `DELETE` sobre el propio usuario
   autenticado, `AuditLogService` intenta resolver "quién hizo esto" *después* de que la fila ya se
   borró en esa misma transacción, y la resuelve vacía (ver el caso real documentado en
-  [`RUNBOOK.md`](RUNBOOK.md)).
+  [`RUNBOOK.md`](../operacion/RUNBOOK.md)).
 - **Login/logout/login fallido:** Keycloak maneja el login directamente (Authorization Code +
   PKCE) — `backend-core` nunca ve ese request, así que estas tres acciones no siguen el camino
   normal de arriba. `LOGIN`/`LOGOUT` los reporta el frontend explícitamente
   (`POST /account/session-event`, una vez por sesión de pestaña) justo después de autenticarse y
   justo antes de desloguear. `LOGIN_FAILED` lo trae un job programado
   (`LoginFailureAuditSyncService`, cada 15s) desde los eventos que Keycloak ya audita solo — ver
-  [`SECURITY.md`](SECURITY.md#registro-de-intentos-de-login-fallidos).
+  [`SECURITY.md`](../SECURITY.md#registro-de-intentos-de-login-fallidos).
 - **Consultable desde la UI:** "Actividad del Sistema" (`GET /api/audit-logs`,
   `ActivityLogView.vue`), acotado por tenant como el resto de la app (`PRISMA_ADMIN` ve todos,
   `ORG_RESPONSIBLE` sólo el propio). `AuditLogService.list()` resuelve en batch el nombre real de

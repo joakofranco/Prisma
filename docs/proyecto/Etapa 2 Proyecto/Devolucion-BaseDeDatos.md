@@ -36,7 +36,7 @@ La elección no fue "PostgreSQL porque es popular", sino el resultado de contras
 
 ## 4. Modelo de datos: esquema lógico y evidencia de diseño
 
-> El modelo completo, transcripto directamente de las migraciones Flyway aplicadas (`V1` a `V17`), está documentado en `docs/diagramas/modelo-entidad-relacion.md`; esta sección resume lo relevante para la pauta de evaluación.
+> El modelo completo, transcripto directamente de las migraciones Flyway aplicadas (`V1` a `V17`), está documentado en `docs/arquitectura/diagramas/modelo-entidad-relacion.md`; esta sección resume lo relevante para la pauta de evaluación.
 
 ### 4.1 Dos esquemas separados a propósito
 
@@ -115,7 +115,7 @@ El único uso de `JSONB` en todo el esquema es `audit.audit_logs.payload`, y es 
 
 - **Migraciones versionadas con Flyway** (`V1` a `V17`): cada cambio de esquema es un archivo `.sql` numerado, aplicado automáticamente al arrancar `backend-core`, con historial completo y reproducible en cualquier entorno (local, CI con Testcontainers, staging, producción) — nunca un cambio de esquema aplicado a mano contra una base viva.
 - **Esquema normalizado (sección 4.4):** al no duplicar datos salvo el caso justificado y documentado, un cambio de negocio (por ejemplo, renombrar una subcategoría del catálogo) se escribe en un único lugar y se propaga por `JOIN`, sin scripts de sincronización entre copias.
-- **Documentación del modelo como artefacto versionado junto al código:** el ER, la normalización y el mapeo objeto-relacional (`docs/diagramas/modelo-entidad-relacion.md`, `normalizacion-bd.md`, `mapeo-jpa.md`) se generan y actualizan junto con cada migración, evitando que la documentación del modelo diverja del esquema real — riesgo habitual cuando el diagrama se dibuja una vez al inicio y no se vuelve a tocar.
+- **Documentación del modelo como artefacto versionado junto al código:** el ER, la normalización y el mapeo objeto-relacional (`docs/arquitectura/diagramas/modelo-entidad-relacion.md`, `normalizacion-bd.md`, `mapeo-jpa.md`) se generan y actualizan junto con cada migración, evitando que la documentación del modelo diverja del esquema real — riesgo habitual cuando el diagrama se dibuja una vez al inicio y no se vuelve a tocar.
 - **Convenciones de nombrado consistentes** (`snake_case`, sufijo `_id` para FK, `created_at`/`updated_at` en las tablas que lo requieren) que reducen la carga cognitiva de incorporar a alguien nuevo al esquema.
 
 ### 5.3 Disponibilidad

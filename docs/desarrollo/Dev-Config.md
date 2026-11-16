@@ -12,7 +12,7 @@ Esta guía cubre el setup local **por primera vez** para cada integrante del equ
 | **Git** | 2.40+ | https://git-scm.com/downloads |
 | **GitHub CLI (`gh`)** | 2.30+ | https://cli.github.com/ |
 | **Make** | 4.0+ | Linux/Mac ya lo tiene; en Windows via `choco install make` o WSL |
-| **mkcert** | 1.4+ | Para HTTPS local — `brew install mkcert` / `choco install mkcert` |
+| **mkcert** (opcional) | 1.4+ | Solo si querés un certificado local sin advertencia del navegador — `brew install mkcert` / `choco install mkcert` |
 
 Recursos mínimos:
 - **CPU:** 4 cores
@@ -24,8 +24,8 @@ Opcional (para desarrollo fuera de contenedores):
 | Servicio | Herramienta |
 |---|---|
 | Frontend | **Node.js 24 LTS**, npm o pnpm |
-| Backend Core | **JDK 25**, Maven 3.9 (o el wrapper `./mvnw`) |
-| Backend AI | **Python 3.14**, pip + venv |
+| Backend Core | **JDK 25**, Maven 3.9 (el repo no trae el wrapper `mvnw`) |
+| Backend AI | **Python 3.13** (la versión del contenedor), pip + venv |
 
 ---
 
@@ -33,8 +33,8 @@ Opcional (para desarrollo fuera de contenedores):
 
 ```bash
 # Configurar tu identidad
-git config --global user.name "Fernando Apellido"
-git config --global user.email "fernando@dominio.uy"
+git config --global user.name "Nombre Apellido"
+git config --global user.email "nombre.apellido@estudiantes.utec.edu.uy"
 
 # Firma de commits con GPG o SSH (recomendado)
 git config --global commit.gpgsign true
@@ -50,46 +50,43 @@ gh auth login
 ## 🌿 3. Clonar el repo y crear tu rama de trabajo
 
 > **No existen ramas personales `dev/<nombre>`** — eso fue el plan original del anteproyecto
-> (`docs/Proyecto.md`) pero en la práctica el repo usa **trunk-based con ramas cortas por PR**,
-> todas contra `main` directamente (ver [`README.md` → Estrategia de
-> branching](../README.md#estrategia-de-branching), que documenta esto explícitamente). Existe una
-> rama `dev` en el remoto (histórica, referenciada por `deploy.yml` para el entorno de desarrollo
-> remoto) pero el flujo de trabajo diario de cualquier integrante **no pasa por ella**: se rama
-> desde `main`, se abre PR contra `main`.
+> (`docs/proyecto/Proyecto.md`). En la práctica el repo usa **ramas cortas por PR sobre `dev`**, la rama de
+> integración (ver [`README.md` → Estrategia de branching](../../README.md#estrategia-de-branching)):
+> se rama desde `dev` y se abre el PR contra `dev`; `dev` se promueve a `main`.
 
 ```bash
 git clone https://github.com/joakofranco/Prisma.git
 cd Prisma
-git checkout main
+git checkout dev
 git pull
 ```
 
 ### Ciclo de trabajo diario
 
 ```bash
-# 1) Partir siempre de main actualizado
-git checkout main
-git pull origin main
+# 1) Partir siempre de dev actualizado
+git checkout dev
+git pull origin dev
 
-# 2) Crear una rama corta (feature/ o fix/), nombre descriptivo
-git checkout -b fix/PRISMA-123-lock-evidence-during-audit
+# 2) Crear una rama corta (feat/, fix/ o chore/), nombre descriptivo
+git checkout -b fix/lock-evidence-during-audit
 
 # 3) Trabajar, commit (Conventional Commits), push
 git add .
 git commit -m "fix(core): bloquea evidencia mientras la evaluación está en auditoría"
-git push -u origin fix/PRISMA-123-lock-evidence-during-audit
+git push -u origin fix/lock-evidence-during-audit
 
-# 4) Abrir PR contra main (NO contra dev)
-gh pr create --base main --title "fix(core): bloquea evidencia durante auditoría" \
+# 4) Abrir PR contra dev
+gh pr create --base dev --title "fix(core): bloquea evidencia durante auditoría" \
   --body-file .github/PULL_REQUEST_TEMPLATE/pull_request_template.md
 
-# 5) Con CI verde (o sin CI configurado localmente, ver docs/Testing.md para correr todo a mano)
-#    y aprobación de CODEOWNERS si aplica, mergear a main
+# 5) Con CI verde (o sin CI configurado localmente, ver docs/desarrollo/Testing.md para correr todo a mano)
+#    y aprobación de CODEOWNERS si aplica, mergear a dev
 gh pr merge --merge   # o --squash, según el tamaño/atomicidad del PR
 ```
 
 Ramas cortas (< 1 semana idealmente), un PR = una responsabilidad. Ver
-[`CONTRIBUTING.md`](CONTRIBUTING.md) para la convención de nombres/commits completa y el checklist
+[`CONTRIBUTING.md`](../CONTRIBUTING.md) para la convención de nombres/commits completa y el checklist
 de revisión.
 
 ---
@@ -106,19 +103,20 @@ cp .env.example .env
 ### 4.2 Certificados HTTPS locales
 
 ```bash
-./scripts/generate-nginx-cert.sh    # certificado autofirmado, válido 5 años por defecto
+make certs    # certificado autofirmado de nginx (5 años) + CA interna y certificados por servicio
 ```
 
-Genera `infra/nginx/certs/prisma.crt`/`prisma.key` (gitignored, uno por máquina). El navegador va
+Genera `infra/nginx/certs/prisma.crt`/`prisma.key` y la CA interna en `infra/tls/` (gitignored, uno
+por máquina). Sin la CA interna los contenedores no arrancan. El navegador va
 a mostrar la advertencia de "conexión no privada" la primera vez (es autofirmado, no lo emite una
 CA pública) — se acepta una sola vez. Procedimiento completo, renovación al expirar y la
 alternativa con `mkcert` (certificado confiable para el navegador, pero limitado a ~825 días de
-validez) en [`Certificados-TLS.md`](Certificados-TLS.md).
+validez) en [`Certificados-TLS.md`](../operacion/Certificados-TLS.md).
 
 ### 4.3 (Opcional) Agregar `prisma.local` a `/etc/hosts`
 
 Keycloak usa hostname dinámico (arma sus URLs a partir del host real de cada request, ver
-[`Certificados-TLS.md`](Certificados-TLS.md#3-hostname-dinámico-de-keycloak-el-login-funciona-por-cualquier-host-configurado)),
+[`Certificados-TLS.md`](../operacion/Certificados-TLS.md#3-hostname-dinámico-de-keycloak-el-login-funciona-por-cualquier-host-configurado)),
 así que **el login funciona sin este paso**: `https://localhost` alcanza para todo, login
 incluido. Si preferís usar `prisma.local` de forma estable (es el CN del certificado por defecto):
 
@@ -137,19 +135,19 @@ Add-Content -Path C:\Windows\System32\drivers\etc\hosts -Value "127.0.0.1 prisma
 ### Opción rápida (sólo la aplicación)
 
 ```bash
-make up-app                # frontend + backends + BD + Redis + Ollama
+make up-app                # frontend + backends + BD + Redis + Ollama + ClamAV
 ```
 
 ### Opción media (con IAM y almacenamiento)
 
 ```bash
-make up-core               # + Keycloak + RustFS
+make up-core               # + Keycloak + RustFS + nginx + fail2ban
 ```
 
 ### Opción completa (todo, incluye monitoreo y calidad)
 
 ```bash
-make up                    # incluye Portainer, Grafana, SonarQube, Watchtower, pgAdmin
+make up                    # incluye monitoreo y alertas, Elasticsearch/Kibana, SonarQube, Portainer, pgAdmin y respaldos
 ```
 
 ### Descargar el modelo Llama 3 (primera vez, ~4.7 GB)
@@ -172,19 +170,20 @@ make ps
 ```
 
 Abrí estas URLs en el navegador (usuario/contraseña son los que hayas puesto en tu `.env` al copiar
-`.env.example` — los `CHANGE_ME_*` de ahí sirven tal cual para desarrollo local, ver la nota en el
+`.env.example` — las contraseñas iniciales de ahí (`Admin1234!`) sirven tal cual para desarrollo local, ver la nota en el
 propio `.env.example`; **excepción:** `KEYCLOAK_ADMIN_CLIENT_SECRET` debe coincidir EXACTO con
 `CHANGE_ME_IN_PRODUCTION`, el valor que trae hardcodeado `infra/keycloak/realm-prisma.json` —
 Keycloak no lee variables de entorno de ese JSON, así que rotarlo solo en `.env` rompe el alta de
-usuarios nuevos, ver [`SECURITY.md`](SECURITY.md)):
+usuarios nuevos, ver [`SECURITY.md`](../SECURITY.md)):
 
-- 🌐 **PRISMA:** https://prisma.local (o https://localhost — el login funciona en ambos, ver [`Certificados-TLS.md`](Certificados-TLS.md#3-hostname-dinámico-de-keycloak-el-login-funciona-por-cualquier-host-configurado); `http://localhost:8080` sirve la SPA directo desde el contenedor `frontend`, sin pasar por nginx/TLS)
+- 🌐 **PRISMA:** https://prisma.local (o https://localhost — el login funciona en ambos, ver [`Certificados-TLS.md`](../operacion/Certificados-TLS.md#3-hostname-dinámico-de-keycloak-el-login-funciona-por-cualquier-host-configurado); `http://localhost:8080` sirve la SPA directo desde el contenedor `frontend`, sin pasar por nginx/TLS)
   - Usuario semilla: `admin@prisma.local` / `Admin1234!` (temporal — Keycloak pide cambiarla al primer login)
 - 📘 **API docs (backend-core):** http://localhost:8081/swagger-ui
 - 🤖 **API docs (backend-ai):** http://localhost:8000/docs
 - 🔐 **Keycloak admin:** http://localhost:8180/auth (usuario `admin`, contraseña = `KEYCLOAK_ADMIN_PASSWORD` de tu `.env`)
 - 🗂️ **RustFS Console:** http://localhost:9002 (usuario = `RUSTFS_ACCESS_KEY`, contraseña = `RUSTFS_SECRET_KEY`)
-- 🐳 **Portainer:** http://localhost:9000 (`make up` solamente — setup inicial en la propia UI)
+- 🐳 **Portainer:** http://localhost:9000 (`make up` solamente — usuario `admin`, contraseña en `.secrets/portainer_admin_password`, ver [`RUNBOOK.md`](../operacion/RUNBOOK.md#portainer-administrador-inicial))
+- ✉️ **Mailpit** (buzón de pruebas de las alertas): http://localhost:8025
 - 📊 **Grafana:** http://localhost:3000 (usuario `admin`, contraseña = `GF_SECURITY_ADMIN_PASSWORD`)
 - 🔬 **SonarQube:** http://localhost:9003 (usuario/contraseña por defecto `admin`/`admin`, pide cambiarla al primer login)
 - 🔎 **Kibana** (perfil `elastic`): http://localhost:5601 (usuario `elastic`, contraseña = `ELASTIC_PASSWORD`)
@@ -220,17 +219,8 @@ Configurá tu IDE (IntelliJ, VS Code) con un debugger remoto apuntando a `localh
 
 ### Backend AI (Python)
 
-```bash
-# En VS Code, añadí a launch.json:
-{
-  "name": "Attach Backend AI",
-  "type": "python",
-  "request": "attach",
-  "connect": { "host": "localhost", "port": 5678 }
-}
-```
-
-Y arranca uvicorn con `debugpy`.
+El stack no trae un depurador remoto configurado para `backend-ai`. Para depurarlo, corré el servicio
+fuera de Docker desde tu IDE (`uvicorn app.main:app --reload`, ver [`Testing.md`](Testing.md)).
 
 ### Frontend
 
@@ -279,7 +269,7 @@ recrear `backend-core` (`docker compose up -d --force-recreate backend-core`). S
 completa pero **todas las llamadas a la API dan 401 en loop** (el dashboard se queda cargando para
 siempre): el token que Keycloak emite trae como `iss` justo esa URL con el puerto nuevo, y si no
 está en la lista de orígenes confiables, backend-core lo rechaza aunque la firma sea válida. Mismo
-mecanismo que explica [`Certificados-TLS.md` §4](Certificados-TLS.md#4-referencia-rápida--variables-involucradas).
+mecanismo que explica [`Certificados-TLS.md` §4](../operacion/Certificados-TLS.md#4-referencia-rápida--variables-involucradas).
 
 </details>
 
@@ -295,7 +285,7 @@ carácter por carácter.
 </details>
 
 <details>
-<summary><b>El tests con Testcontainers falla</b></summary>
+<summary><b>Los tests con Testcontainers fallan</b></summary>
 
 Verificá que Docker esté corriendo y tu usuario esté en el grupo `docker`: `sudo usermod -aG docker $USER` (relogueate después).
 
@@ -307,7 +297,7 @@ Verificá que Docker esté corriendo y tu usuario esté en el grupo `docker`: `s
 Es esperable con el certificado autofirmado por defecto (`scripts/generate-nginx-cert.sh`) — el
 navegador no tiene forma de verificar quién lo emitió. Aceptá la advertencia una vez (queda
 recordado por origen). Si preferís que el navegador no muestre ninguna advertencia, usá `mkcert`
-en su lugar (ver [`Certificados-TLS.md`](Certificados-TLS.md#alternativa-mkcert-sin-advertencia-del-navegador)):
+en su lugar (ver [`Certificados-TLS.md`](../operacion/Certificados-TLS.md#alternativa-mkcert-sin-advertencia-del-navegador)):
 `mkcert -install` instala su CA local, después generás el certificado con `mkcert` en vez del
 script.
 

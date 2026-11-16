@@ -36,10 +36,10 @@
 |---|---|---|
 | [`Organization`](#organization) | `organizations` | `prisma` |
 | [`User`](#user) | `users` (+ `user_roles`) | `prisma` |
-| [`CatalogVersion`](#catalogversion) | `catalog_versions` | `prisma` |
-| [`CatalogFunction`](#catalogfunction) | `catalog_functions` | `prisma` |
-| [`CatalogCategory`](#catalogcategory) | `catalog_categories` | `prisma` |
-| [`CatalogSubcategory`](#catalogsubcategory) | `catalog_subcategories` | `prisma` |
+| [`CatalogVersion`](#catalogversion--catalogfunction--catalogcategory) | `catalog_versions` | `prisma` |
+| [`CatalogFunction`](#catalogversion--catalogfunction--catalogcategory) | `catalog_functions` | `prisma` |
+| [`CatalogCategory`](#catalogversion--catalogfunction--catalogcategory) | `catalog_categories` | `prisma` |
+| [`CatalogSubcategory`](#catalogversion--catalogfunction--catalogcategory) | `catalog_subcategories` | `prisma` |
 | [`CatalogRequirement`](#catalogrequirement) | `catalog_requirements` | `prisma` |
 | [`CatalogRequirementSubcategory`](#catalogrequirementsubcategory) | `catalog_requirement_subcategories` | `prisma` |
 | [`CatalogControl`](#catalogcontrol) | `catalog_controls` | `prisma` |
@@ -53,6 +53,13 @@
 | [`AiCitationFeedback`](#aicitationfeedback) | `ai_citation_feedback` | `prisma` |
 | [`AuditObservation`](#auditobservation) | `audit_observations` | `prisma` |
 | [`AuditLog`](#auditlog) | `audit_logs` | `audit` |
+| `AuditControlVerdict` | `audit_control_verdicts` | `prisma` |
+| `EvaluationControlFlag` | `evaluation_control_flags` | `prisma` |
+| `EvaluationSubcategoryComment` | `evaluation_subcategory_comments` | `prisma` |
+| `PlanDefaultDeadline` | `plan_default_deadlines` | `prisma` |
+| `SessionSettings` | `session_settings` | `prisma` |
+| `PlatformService` | `platform_services` | `prisma` |
+| `AlertSettings` | `alert_settings` | `prisma` |
 
 ---
 
@@ -83,7 +90,7 @@ organización con un perfil comunitario»).
 **Sin `@OneToMany` hacia `User`/`Evaluation`:** el lado "muchos" de esas relaciones no está
 mapeado desde `Organization` (no hay `List<User> users` ni `List<Evaluation> evaluations`) —
 se consultan explícitamente por repositorio (`UserRepository`/`EvaluationRepository` filtrando
-por `tenant_id`/`organization_id`), evitando cargar colecciones potencialmente enormes al pedir
+por organización), evitando cargar colecciones potencialmente enormes al pedir
 una organización.
 
 ---
@@ -100,7 +107,8 @@ una organización.
 | `firstName`/`lastName` | `first_name`/`last_name` | `@Column(nullable=false, length=100)` |
 | `passwordHash` | `password_hash` | `@Column(length=255)`, nullable — respaldo local (Argon2id vía `PasswordHasher`), la fuente de verdad es Keycloak |
 | `keycloakId` | `keycloak_id` | `UUID`, nullable = "no provisionado en Keycloak todavía" |
-| `tenant` | `tenant_id` | `@ManyToOne(LAZY) @JoinColumn(name="tenant_id")` |
+| `organizations` | tabla `user_organizations` | `@ManyToMany(EAGER) @JoinTable(...)`: organizaciones a las que accede el usuario (una para `ORG_RESPONSIBLE`/`VIEWER`, varias para `AUDITOR`/`INTERNAL_EVALUATOR`, ninguna para `PRISMA_ADMIN`) |
+| `invitedAt`/`invitationAcceptedAt` | `invited_at`/`invitation_accepted_at` | `OffsetDateTime`, nullable — alta por invitación |
 | `enabled` | `enabled` | `@Column(nullable=false)` |
 | `roles` | tabla `user_roles` | Ver abajo |
 
@@ -401,6 +409,26 @@ la forma `"tipo:id"` (ej. `"user:38dab301-..."`), que `AuditLogService.list()` p
 consulta en batch por tipo, no N+1). La acción `LOGIN_FAILED` (`LoginFailureAuditSyncService`) es
 la única que no sigue esa convención: ahí `resource` es directamente el email/username intentado,
 sin id — un intento contra un email que no existe no tiene ninguna fila que referenciar.
+
+### Entidades de auditoría por control, marcas y configuración
+
+Entidades simples, sin colecciones, agregadas después de las anteriores:
+
+| Entidad | Qué representa | Relaciones |
+|---|---|---|
+| `AuditControlVerdict` | Dictamen del auditor sobre un control de una evaluación (`VALIDATED`, `NOT_VALIDATED`, `NEEDS_MORE_EVIDENCE`). Único por evaluación y control. | `@ManyToOne` a `Evaluation`, `CatalogControl` y `User` (quien lo fijó) |
+| `EvaluationControlFlag` | Control marcado para revisar dentro de una evaluación. Único por evaluación y control. | `@ManyToOne` a `Evaluation`, `CatalogControl` y `User` |
+| `EvaluationSubcategoryComment` | Comentario por subcategoría de una evaluación. Único por evaluación y subcategoría. | `@ManyToOne` a `Evaluation`, `CatalogSubcategory` y `User` |
+| `PlanDefaultDeadline` | Plazo por defecto, en meses, de las acciones del plan de mejora para cada prioridad. La clave es la prioridad. | — |
+| `SessionSettings` | Tiempo de inactividad y aviso previo al cierre de sesión. Fila única. | — |
+| `PlatformService` | Servicio de la infraestructura del lanzador de Servicios, con su URL editable. | — |
+| `AlertSettings` | Configuración del correo de alertas de Alertmanager. Fila única; la contraseña SMTP no se persiste. | — |
+
+Además, `User.organizations` (tabla `user_organizations`) es una relación `@ManyToMany`, igual que
+`CatalogControl` con sus subcategorías (tabla `catalog_control_subcategories`). La tabla `shedlock`
+no tiene entidad: la usa la librería ShedLock para coordinar las tareas programadas.
+
+---
 
 ## Referencias
 

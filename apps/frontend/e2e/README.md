@@ -4,8 +4,8 @@ Suite de Playwright para PRISMA: humo de navegación end-to-end (login real cont
 recorrido de las vistas principales) y verificación de accesibilidad **WCAG 2.1 AA**, el nivel
 exigido a los sitios del Estado uruguayo por el **Decreto N° 406/022** (accesibilidad digital,
 normativa técnica de AGESIC) — ver [impo.com.uy/bases/decretos-originales/406-2022](https://www.impo.com.uy/bases/decretos-originales/406-2022).
-PRISMA es una herramienta de AGESIC (Marco de Ciberseguridad v5.0), así que la norma aplica de
-lleno.
+PRISMA es un proyecto académico que evalúa el Marco de Ciberseguridad v5.0 de AGESIC y está pensado
+para organizaciones del Estado, por eso se adopta esa norma como objetivo.
 
 ## Estructura
 
@@ -55,10 +55,10 @@ El `/auth` es obligatorio: Keycloak corre con `KC_HTTP_RELATIVE_PATH=/auth` (ver
 `docker-compose.yml`), así que nunca responde en la raíz del host.
 
 Playwright arma el frontend con `vite build && vite preview` en el puerto **5173** (no el 4173 por
-defecto de `vite preview`): es el único puerto, junto con `https://prisma.local`/`https://localhost`
-detrás de nginx, que el client `prisma-frontend` de Keycloak tiene whitelisteado como
-`redirectUri` (ver `infra/keycloak/realm-prisma.json`). Contra el 4173 el login real falla en la
-propia pantalla de Keycloak con "Invalid parameter: redirect_uri".
+defecto de `vite preview`; ver `playwright.config.ts`). El realm versionado acepta cualquier
+`redirectUri` (`"*"` en `infra/keycloak/realm-prisma.json`); si el realm de tu ambiente tiene una
+lista fija de hosts, el login real falla en la pantalla de Keycloak con "Invalid parameter:
+redirect_uri" hasta que se agregue `http://localhost:5173`.
 
 **Importante — issuer del token:** si accedés a Keycloak directo por `localhost:8180` (como hace
 esta suite en local, sin pasar por nginx), el JWT que emite tiene `iss=http://localhost:8180/auth/realms/prisma`.
@@ -96,9 +96,8 @@ por `E2E_ADMIN_EMAIL` / `E2E_ADMIN_PASSWORD` para correr contra otro realm.
 
 Quedan documentados para que quien los aborde no tenga que re-descubrirlos:
 
-1. **Botón de colapsar sidebar sin nombre accesible** (`AppSidebar.vue`, el botón con el ícono
-   `ChevronLeftIcon`) — regla axe `button-name`, impacto **crítico**, WCAG 4.1.2. No tiene texto,
-   `aria-label` ni `title`. Aparece en **todas** las vistas autenticadas.
+1. **Botón de colapsar sidebar sin nombre accesible** (`AppSidebar.vue`) — **corregido**: el botón
+   ya tiene `aria-label` y `title` («Contraer menú» / «Expandir menú»).
 2. **Contraste insuficiente en texto `slate-400`** (regla axe `color-contrast`, impacto
    **serio**) — se ve sobre todo en estados vacíos ("sin resultados") y textos secundarios
    `text-xs`. WCAG 1.4.3.

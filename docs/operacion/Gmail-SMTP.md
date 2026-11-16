@@ -65,12 +65,12 @@ ALERT_SMTP_REQUIRE_TLS=true
 ALERT_EMAIL_TO=destino@dominio.com
 ```
 
-Reiniciar Alertmanager. Estos valores solo se usan hasta que un administrador guarde la configuración desde la plataforma (Configuración → Alertas); desde ese momento manda la guardada.
+Reiniciar Alertmanager. Estos valores solo se usan hasta que un administrador guarde la configuración desde la plataforma (Configuración → Alertas del sistema); desde ese momento manda la guardada.
 
 ## 5. Probar
 
-- Keycloak: en la plataforma, Configuración → Correo, botón de prueba. El correo llega a la cuenta del sistema.
-- Alertmanager: Configuración → Alertas, enviar alerta de prueba.
+- Keycloak: en la plataforma, Configuración → Correo electrónico, **Enviar correo de prueba**. El correo llega al email de destino que se indique.
+- Alertmanager: Configuración → Alertas del sistema, **Enviar alerta de prueba**.
 
 ## 6. Problemas frecuentes
 

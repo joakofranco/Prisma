@@ -9,9 +9,9 @@ documento cubre las cinco.
 | Suite | Dónde | Herramienta | Qué cubre |
 |---|---|---|---|
 | Backend Core (unit) | `apps/backend-core/src/test` | JUnit 5 + Mockito | Cada `Service`, `Controller` (MockMvc standalone, sin Spring Security real), entidades, DTOs, config |
-| Backend Core (integración) | `PrismaApplicationIT.java` | JUnit 5 + Testcontainers | Contexto Spring real + Postgres real (contenedor efímero) — migraciones Flyway aplicadas de cero, catálogo sembrado, ciclo de vida completo de una evaluación |
+| Backend Core (integración) | `*IT.java` (`PrismaApplicationIT`, `MaturityValidationIT`, `AuditLogRetentionIT`, `AuditLogSearchIT`, `UserOrganizationSearchIT`, `VersionEndpointIT`) | JUnit 5 + Testcontainers | Contexto Spring real + Postgres real (contenedor efímero) — migraciones Flyway aplicadas de cero, catálogo sembrado, ciclo de vida completo de una evaluación, cálculo de madurez contra la planilla de Agesic, retención y búsqueda de la bitácora |
 | Backend AI | `apps/backend-ai/tests` | pytest + pytest-asyncio | Endpoints FastAPI (`TestClient`), loaders de documentos, vector store, seguridad del header interno |
-| Frontend (unit) | `apps/frontend/tests` | Vitest + Vue Test Utils | Lógica pura (`utils/validators.ts`, `utils/helpers.ts`) y montaje de `App.vue` — **cobertura real de componentes/vistas es baja hoy**, ver "Estado real de la cobertura" abajo |
+| Frontend (unit) | `apps/frontend/tests` | Vitest + Vue Test Utils | Lógica pura (`utils/`), stores, composables, router y montaje de componentes y vistas — ver "Estado real de la cobertura" abajo |
 | Frontend (e2e) | `apps/frontend/e2e` | Playwright + axe-core | Login real contra Keycloak, navegación por las vistas autenticadas, accesibilidad WCAG 2.1 AA |
 
 ## Correr todo
@@ -35,7 +35,7 @@ mvn clean verify
 quedar con migraciones Flyway de un checkout anterior, y Testcontainers levanta un Postgres nuevo
 con ESAS migraciones viejas en vez de las del código actual — se manifiesta como columnas
 inexistentes o conteos que no cierran, y hace perder tiempo pensando que es un bug real. Ver el
-incidente completo en [`RUNBOOK.md`](RUNBOOK.md).
+incidente completo en [`RUNBOOK.md`](../operacion/RUNBOOK.md).
 
 Este repo no trae `mvnw` versionado — si no tenés Maven en el PATH, hay que apuntar
 `JAVA_HOME`/`PATH` a una instalación local (JDK 25 + Maven 3.9) antes de correr los comandos de
@@ -54,7 +54,7 @@ arriba.
   para exigir 100% en el motor de cálculo de madurez, pero apunta a un paquete
   (`uy.edu.prisma.maturity.*`) que no existe — la lógica real vive en
   `EvaluationService.calculateMaturity` dentro de `application`, cubierta sólo por la regla del
-  80%. Ver [`CONTRIBUTING.md`](CONTRIBUTING.md).
+  80%. Ver [`CONTRIBUTING.md`](../CONTRIBUTING.md).
 
 ## Backend AI — pytest
 
@@ -77,16 +77,15 @@ npm run test:unit -- --coverage
 
 ### Estado real de la cobertura
 
-`utils/validators.ts` y `utils/helpers.ts` están cerca del 100% (los 6 schemas de Zod y todo el
-formateo/etiquetado de estados). El resto de `src/` — los 19 `views/`, los `stores/` de Pinia, los
-componentes reutilizables (`BaseButton`, `DataTable`, etc.) — **no tiene tests unitarios propios
-todavía**. No es una regresión reciente, es cobertura que nunca se escribió; escribirla en serio
-(mocks de `keycloak-js`/Axios, montaje de componentes con Vue Test Utils) es un esfuerzo del
-tamaño de un proyecto aparte, no algo para sumar de pasada arreglando otra cosa.
+La suite tiene 49 archivos de test: `utils/` (17, con `validators.ts` y `helpers.ts` cerca del
+100%), vistas (14), componentes (12), stores (2), composables (2) y router (1). La cobertura no es
+pareja: de las 20 vistas de `src/views/` hay tests para 14, y varios componentes reutilizables
+todavía no tienen test propio. Los tests de componentes y vistas mockean los servicios HTTP
+(`services/resources.ts`) y montan con Vue Test Utils.
 
 ## Frontend — Playwright (E2E + accesibilidad)
 
-Documentado en detalle en [`../apps/frontend/e2e/README.md`](../apps/frontend/e2e/README.md) —
+Documentado en detalle en [`apps/frontend/e2e/README.md`](../../apps/frontend/e2e/README.md) —
 resumen:
 
 ```bash
@@ -97,10 +96,9 @@ npm run test:e2e:ui   # con la UI de Playwright, para depurar
 ```
 
 Necesita Keycloak + backend-core corriendo y **el mismo ajuste de `KEYCLOAK_TRUSTED_ISSUERS`** que
-cualquier acceso directo a Keycloak sin pasar por nginx (ver [`RUNBOOK.md`](RUNBOOK.md) y el propio
-README de `e2e/`). Trae una lista de hallazgos de accesibilidad ya detectados y **no corregidos
-todavía** (falta de `aria-label` en el botón de colapsar el sidebar, contraste insuficiente en
-texto secundario, headings duplicados) — leerla antes de asumir que un fallo nuevo de axe es tuyo.
+cualquier acceso directo a Keycloak sin pasar por nginx (ver [`RUNBOOK.md`](../operacion/RUNBOOK.md) y el propio
+README de `e2e/`). Trae una lista de hallazgos de accesibilidad ya detectados; siguen **abiertos** el
+contraste insuficiente en texto secundario y los headings duplicados — leerla antes de asumir que un fallo nuevo de axe es tuyo.
 
 ## QA manual contra el stack real
 
@@ -115,7 +113,7 @@ un test unitario:
 | Login roto en `http://localhost:8080` (nginx reenviaba `X-Forwarded-Host` sin puerto) | Es un problema de configuración de nginx + Keycloak real — no hay nginx en ningún test |
 | `KEYCLOAK_TRUSTED_ISSUERS` sin el origen correcto → 401 en loop | Necesita un JWT real emitido por un Keycloak real, con el `iss` que le corresponde a cómo se accedió |
 | `GET /api/organizations`/`GET /api/users` sin aislamiento por tenant | Los tests unitarios de `OrganizationServiceTest`/`UserServiceTest` de ese momento nunca probaban "un segundo tenant no debería ver esto" porque nadie había escrito ese caso — hacía falta *dos organizaciones reales* para notarlo |
-| URL de evidencia con el hostname interno de Docker | El mock de `MinioClient` no valida si la URL resultante es alcanzable desde fuera de la red de contenedores |
+| URL de evidencia con el hostname interno de Docker | El mock del cliente S3 (`S3Client`/`S3Presigner`) no valida si la URL resultante es alcanzable desde fuera de la red de contenedores |
 | Compatibilidad del servidor S3 (path-style, checksums, URLs firmadas) | Sólo aparece contra un RustFS real, corriendo dentro de Docker |
 | Filebeat 9.x dejó de indexar nada tras el upgrade de ELK 8→9 (input `container` removido, deprecado desde 8.x) | El contenedor arrancaba "sano" (healthcheck en verde) y sin errores visibles a simple vista — el log de error quedaba en un archivo dentro del propio contenedor, no en stdout; sólo se notó al confirmar `docs.count` en Elasticsearch |
 | `X-Forwarded-For` spoofeable en la bitácora (nginx usaba `$proxy_add_x_forwarded_for`, que hereda el header del cliente en vez de fijarlo) | Sólo se nota probando con un cliente que manda su propio header — ningún test unitario ni de integración pasa por nginx |
@@ -134,7 +132,7 @@ de vida de evaluación:**
 4. Para cada endpoint mutante nuevo o tocado, probar explícitamente el caso negativo: ¿un usuario
    de OTRA organización puede verlo/tocarlo? ¿Un rol sin permiso recibe 403 real (no sólo lo
    esconde la UI)?
-5. Ver `iss` del token real (jwt.io) si algo da 401 inesperado — ver [`RUNBOOK.md`](RUNBOOK.md).
+5. Ver `iss` del token real (jwt.io) si algo da 401 inesperado — ver [`RUNBOOK.md`](../operacion/RUNBOOK.md).
 
 ### Obtener un token para probar la API a mano
 
@@ -150,11 +148,11 @@ curl -s -X POST http://localhost:8180/auth/realms/prisma/protocol/openid-connect
 
 Si el usuario tiene la contraseña marcada como temporal (todo usuario recién creado, incluido el
 semilla), esto falla con `invalid_grant: Account is not fully set up` — ver la solución en
-[`RUNBOOK.md`](RUNBOOK.md).
+[`RUNBOOK.md`](../operacion/RUNBOOK.md).
 
 ## Referencias
 
 - Setup del entorno: [`Dev-Config.md`](Dev-Config.md)
-- Incidentes reales y sus causas raíz: [`RUNBOOK.md`](RUNBOOK.md)
-- Referencia de endpoints (para saber qué probar): [`API.md`](API.md)
-- Convenciones de código por tecnología: [`CONTRIBUTING.md`](CONTRIBUTING.md)
+- Incidentes reales y sus causas raíz: [`RUNBOOK.md`](../operacion/RUNBOOK.md)
+- Referencia de endpoints (para saber qué probar): [`API.md`](../arquitectura/API.md)
+- Convenciones de código por tecnología: [`CONTRIBUTING.md`](../CONTRIBUTING.md)

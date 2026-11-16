@@ -920,8 +920,8 @@ class ReportServiceTest {
 
   /**
    * Validación con veraPDF si está disponible: define {@code VERAPDF_CLI} con el ejecutable (por
-   * ejemplo {@code verapdf}). Se omite si no está definido (ver docs/Codigo.md para correrlo con
-   * Docker).
+   * ejemplo {@code verapdf}). Se omite si no está definido (ver docs/arquitectura/Codigo.md para
+   * correrlo con Docker).
    */
   @org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable(
       named = "VERAPDF_CLI",
@@ -953,8 +953,9 @@ class ReportServiceTest {
   }
 
   /**
-   * Vuelca los PDF de reportes a un directorio para validarlos con veraPDF (ver docs/Codigo.md).
-   * Solo corre con {@code -Dpdfa.dumpDir=<directorio>}; en el CI normal se omite.
+   * Vuelca los PDF de reportes a un directorio para validarlos con veraPDF (ver
+   * docs/arquitectura/Codigo.md). Solo corre con {@code -Dpdfa.dumpDir=<directorio>}; en el CI
+   * normal se omite.
    */
   @org.junit.jupiter.api.condition.EnabledIfSystemProperty(named = "pdfa.dumpDir", matches = ".+")
   @Test

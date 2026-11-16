@@ -10,7 +10,7 @@ Todos los workflows están en `.github/workflows/`.
 
 ### 1. `ci.yml` — Integración continua principal
 
-**Trigger:** push y PR a cualquier rama.
+**Trigger:** push a `main`, `dev` y a las ramas `dev/**`, `feature/**`, `bugfix/**`, `hotfix/**` y `release/**`; PR contra `main` o `dev`.
 
 **Componentes:**
 | Job | Qué hace | Cuándo se ejecuta |
@@ -27,7 +27,7 @@ Todos los workflows están en `.github/workflows/`.
 
 ### 2. `security.yml` — Escaneo de seguridad
 
-**Trigger:** push a `dev`/`main`, semanal (domingo 03:00 UTC), manual.
+**Trigger:** push y PR a `dev`/`main`, semanal (domingo 03:00 UTC), manual.
 
 | Job | Herramienta | Qué detecta |
 |---|---|---|
@@ -94,13 +94,14 @@ Cada servicio en `docker-compose.yml` tiene un rol claro. Los perfiles (`--profi
 | **`backend-core`** | Build local Spring Boot | API principal. Endpoints REST, motor de cálculo de madurez, workflow de auditoría, RBAC. Actuator expuesto en `/actuator`. |
 | **`backend-ai`** | Build local FastAPI | Servicio de IA que consulta a Ollama y hace RAG sobre la documentación MCU. |
 | **`ollama`** | `ollama/ollama:0.40.6` | Motor de LLM local (Llama 3 8B por defecto). Corre inferencia sin salir a internet — cumple con requisito de privacidad. |
+| **`clamav`** | `clamav/clamav:1.4` | Antivirus. `backend-core` le envía cada evidencia antes de guardarla (RNF-09). |
 | **`frontend`** | Build local Nginx+Vue | SPA con dashboards, cuestionario, visor de evidencias. |
 
 ### Perfil `security` — IAM y almacenamiento
 
 | Servicio | Imagen | Rol |
 |---|---|---|
-| **`keycloak`** | `quay.io/keycloak/keycloak:26.7` | Identity Provider. SSO, OAuth2, políticas de contraseña. Política de OTP/TOTP configurada a nivel de realm. La MFA obligatoria para `PRISMA_ADMIN` y `ORG_RESPONSIBLE` está funcional y validada, pero **no viene en el realm importado**: se activa en cada ambiente con `make mfa-enable` (`scripts/keycloak/enable-mfa.sh`, ver [`SECURITY.md`](SECURITY.md)). Realm `prisma` importado automáticamente desde `infra/keycloak/realm-prisma.json`. |
+| **`keycloak`** | `quay.io/keycloak/keycloak:26.7` | Identity Provider. SSO, OAuth2, políticas de contraseña. Política de OTP/TOTP configurada a nivel de realm. La MFA obligatoria para `PRISMA_ADMIN` y `ORG_RESPONSIBLE` está funcional y validada, pero **no viene en el realm importado**: se activa en cada ambiente con `make mfa-enable` (`scripts/keycloak/enable-mfa.sh`, ver [`SECURITY.md`](../SECURITY.md)). Realm `prisma` importado automáticamente desde `infra/keycloak/realm-prisma.json`. |
 | **`keycloak-db`** | `postgres:17-alpine` | BD dedicada de Keycloak (separada de la de la app). |
 | **`rustfs`** | `rustfs/rustfs:1.0.3` | Storage S3-compatible para evidencias. El bucket lo crea `backend-core` en la primera subida (no hay job de init). |
 
@@ -114,6 +115,12 @@ Cada servicio en `docker-compose.yml` tiene un rol claro. Los perfiles (`--profi
 | **`promtail`** | `grafana/promtail:3.6.11` | Agente que envía los logs de los contenedores a Loki. |
 | **`cadvisor`** | `ghcr.io/google/cadvisor:v0.60.6` | Métricas de recursos por contenedor. |
 | **`node-exporter`** | `prom/node-exporter:v1.12.1` | Métricas del host (CPU, RAM, disco, red). |
+| **`postgres-exporter`** | `prometheuscommunity/postgres-exporter:v0.20.1` | Métricas de PostgreSQL. |
+| **`redis-exporter`** | `oliver006/redis_exporter:v1.94.0` | Métricas de Redis. |
+| **`elasticsearch-exporter`** | `quay.io/prometheuscommunity/elasticsearch-exporter:v1.9.0` | Métricas de Elasticsearch. |
+| **`blackbox-exporter`** | `prom/blackbox-exporter:v0.27.0` | Sondas de disponibilidad de los servicios. |
+| **`alertmanager`** | `prom/alertmanager:v0.28.1` | Envía por correo las alertas de Prometheus. La configuración SMTP se administra desde Configuración → Alertas del sistema. `alertmanager-config-init` prepara el volumen de configuración. |
+| **`mailpit`** | `axllent/mailpit:v1.27` | Buzón de pruebas: recibe las alertas mientras no se configura un servidor SMTP real. |
 
 ### Perfil `elastic` — Logs centralizados (Elasticsearch)
 
@@ -181,12 +188,15 @@ o `docker.container.labels.com_docker_compose_service` acotan a un servicio punt
 | **`portainer`** | `portainer/portainer-ce:2.45.2` | UI web para gestionar contenedores, imágenes, volúmenes y redes. Alternativa gráfica a la CLI de Docker. |
 | **`watchtower`** | `containrrr/watchtower:1.7.1` | Auto-update de contenedores cuando aparece una nueva imagen en el registry. Sólo actúa sobre los que tienen la label `com.centurylinklabs.watchtower.enable=true`. |
 | **`pgadmin`** | `dpage/pgadmin4:9.18.0` | Cliente web para PostgreSQL. Servers preconfigurados en `scripts/db/pgadmin-servers.json`. |
+| **`backup-runner`** | imagen propia | Ejecuta el respaldo y la restauración de PostgreSQL y evidencias (`scripts/backup/`). |
+| **`backup-scheduler`** | `mcuadros/ofelia` | Dispara el respaldo diario en `backup-runner` (RNF-13). |
 
 ### Perfil `proxy`
 
 | Servicio | Imagen | Rol |
 |---|---|---|
-| **`nginx`** | `nginx:1.27-alpine` | Reverse proxy HTTPS. Termina TLS, rutea `/api/*` → backend-core, `/auth/*` → Keycloak, `/*` → frontend. Rate limiting, headers de seguridad. |
+| **`nginx`** | `nginx:1.30-alpine` | Reverse proxy HTTPS. Termina TLS, rutea `/api/*` → backend-core, `/auth/*` → Keycloak, `/*` → frontend. Rate limiting, headers de seguridad. |
+| **`fail2ban`** | imagen propia (`infra/fail2ban`) | Lee el log de nginx y bloquea temporalmente las IPs que superan el límite de tasa, fallan el login repetidamente o escanean rutas. También forma parte del perfil `security`. |
 
 ---
 
@@ -207,16 +217,13 @@ usa sus propios secrets de GitHub: `DEV_*`, `STAGING_*` y `PROD_*` (cada uno con
 | **staging** | tag `v*.*.*-rc*` | SSH al servidor de staging + `docker compose -f docker-compose.yml -f docker-compose.prod.yml` con `TAG` = el tag |
 | **prod** | tag `v*.*.*` (semver, sin `-rc`) | Igual que staging contra el servidor de producción; requiere 2 aprobadores en el Environment `prod` de GitHub |
 
-> **Sobre la rama `dev`:** existe en el remoto y el trigger de arriba es real (el workflow sí la
-> escucha), pero **no forma parte del flujo de trabajo diario** de nadie en el equipo — el
-> desarrollo va directo contra `main` en ramas cortas (`fix/*`/`feature/*`), ver
-> [`README.md` → Estrategia de branching](../README.md#estrategia-de-branching) y
-> [`CONTRIBUTING.md`](CONTRIBUTING.md). En la práctica, el deploy automático a "dev" de esta tabla
-> no se ha disparado en el ciclo de vida del proyecto hasta ahora — documentado tal cual está
-> configurado, no tal cual se usa, para que quien lo active sepa qué esperar.
+> **Sobre la rama `dev`:** es la rama de integración del equipo: las ramas cortas (`feat/*`,
+> `fix/*`, `chore/*`) se mergean a `dev` por Pull Request — ver
+> [`README.md` → Estrategia de branching](../../README.md#estrategia-de-branching) y
+> [`CONTRIBUTING.md`](../CONTRIBUTING.md).
 
 Una eventual migración a Kubernetes es viable pero no está implementada: el análisis está en
-[`mcu-5.0/Kubernetes-Analisis-Viabilidad.md`](mcu-5.0/Kubernetes-Analisis-Viabilidad.md).
+[`proyecto/Kubernetes-Analisis-Viabilidad.md`](../proyecto/Kubernetes-Analisis-Viabilidad.md).
 
 ---
 
@@ -225,7 +232,7 @@ Una eventual migración a Kubernetes es viable pero no está implementada: el an
 | Elemento | Archivo | Efecto |
 |---|---|---|
 | **CODEOWNERS** | `.github/CODEOWNERS` | Reviewers automáticos por path. `require_code_owner_reviews` bloquea el merge si no aprueban. |
-| **Branch protection** | `.github/branch-protection.yml` + `scripts/apply-branch-protection.sh` | `main`: 2 aprobaciones + todos los checks. `dev`: 1 aprobación. Ramas `dev/<user>`: sólo el owner pushea. |
+| **Branch protection** | `.github/branch-protection.yml` + `scripts/apply-branch-protection.sh` | `main`, `dev`, `release/*` y `hotfix/*`: 1 aprobación + los checks obligatorios de cada una. |
 | **PR template** | `.github/PULL_REQUEST_TEMPLATE/` | Formato consistente para descripción, checklist, capturas. |
 | **Issue templates** | `.github/ISSUE_TEMPLATE/` | Bug reports y feature requests estructurados. |
 | **Environments** | Configurados vía script | `prod` requiere 2 aprobadores + rama protegida. |

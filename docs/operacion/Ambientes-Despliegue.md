@@ -18,20 +18,25 @@ configurados — no hace falta correr nada a mano en el día a día. Pero **cada
 puesta a punto manual la primera vez** (servidor + secrets de GitHub): eso es lo que cubre
 cada sección de abajo.
 
-> **Placeholders que vas a tener que rotar en cualquier ambiente que no sea tu máquina local**:
-> `.env.example` trae valores
-> `CHANGE_ME_*` a propósito — nunca uses esos valores tal cual en un servidor real. Generá cada
-> uno con, por ejemplo, `openssl rand -base64 32`:
+> **Contraseñas por ambiente.** En local, dev y staging el valor inicial de todas las contraseñas del
+> `.env` es `Admin1234!` (así viene `.env.example`); donde el servicio exige 12 caracteres, como
+> Portainer, es `Admin1234!!!`. En **producción** no se usan esos valores:
+> `make prod-up` (o `make prod-secrets`) genera una contraseña aleatoria para cada una, la escribe
+> en el `.env` del servidor y la muestra una sola vez en su salida — ver
+> [Producción](#4-producción--docker-compose-por-ssh-por-tag-semver--aprobación).
+>
+> **Variables que se generan en producción**:
 >
 > | Variable | Para qué es |
 > |---|---|
 > | `POSTGRES_PASSWORD`, `REDIS_PASSWORD`, `KEYCLOAK_DB_PASSWORD`, `SONAR_DB_PASSWORD` | Acceso a las bases de datos |
-> | `JWT_SECRET` | Firma de las sesiones de la app — el más crítico de rotar |
+> | `JWT_SECRET` | Clave HMAC del sello de certificación de las evaluaciones aprobadas (salvo que se defina `CERTIFICATION_SECRET`) y del decodificador JWT alternativo que se usa sin Keycloak |
 > | `AI_INTERNAL_API_KEY` | Sin esto, `backend-ai` queda alcanzable sin autenticación interna |
-> | `KEYCLOAK_ADMIN_PASSWORD`, `KEYCLOAK_ADMIN_CLIENT_SECRET` | Admin de Keycloak (IAM completo) |
-> | `MINIO_ROOT_PASSWORD` | Acceso a las evidencias almacenadas |
-> | `GF_SECURITY_ADMIN_PASSWORD`, `PORTAINER_ADMIN_PASSWORD` | Admin de las herramientas de infraestructura |
+> | `KEYCLOAK_ADMIN_PASSWORD` | Admin de Keycloak (IAM completo) |
+> | `RUSTFS_SECRET_KEY` | Acceso a las evidencias almacenadas |
+> | `GF_SECURITY_ADMIN_PASSWORD`, `ELASTIC_PASSWORD`, `KIBANA_SYSTEM_PASSWORD` | Grafana, Elasticsearch y Kibana |
 > | `PGADMIN_DEFAULT_PASSWORD` | Admin de pgAdmin |
+> | `.secrets/portainer_admin_password` (archivo) | Admin de Portainer |
 >
 > `KEYCLOAK_ADMIN_CLIENT_SECRET` es distinto al resto de la tabla: no alcanza con cambiar el
 > `.env` — Keycloak no lee variables de entorno de `infra/keycloak/realm-prisma.json`, así que el
@@ -46,7 +51,7 @@ cada sección de abajo.
 
 ### Prerrequisitos
 
-Ver [Requisitos previos](../README.md#requisitos-previos) del README principal — en resumen:
+Ver [Requisitos previos](../../README.md#requisitos-previos) del README principal — en resumen:
 Docker Desktop, Git, y opcionalmente `make`. En Windows sin `make` instalado, cada comando `make
 <target>` de esta guía tiene su equivalente `docker compose ...` explícito en el `Makefile` — abrilo
 y copiá el comando del target que necesites.
@@ -63,7 +68,7 @@ cp .env.example .env
 ```
 
 **Qué configurar en el `.env` para desarrollo local**: en general, nada es obligatorio para que
-`make up` funcione — los valores `CHANGE_ME_*` de `.env.example` sirven tal cual para levantar la
+`make up` funcione — las contraseñas iniciales de `.env.example` (`Admin1234!`) sirven tal cual para levantar la
 stack en tu máquina (no está expuesta a nadie más). Igual, revisá:
 
 - Si ya tenés algo corriendo en tu máquina en los puertos 5432, 6379, 8080, 8081, 8180, 9000-9003,
@@ -74,7 +79,7 @@ stack en tu máquina (no está expuesta a nadie más). Igual, revisá:
 ```bash
 # 3) Generar el certificado TLS autofirmado de nginx y la CA interna con los certificados de
 #    cada servicio (una vez; sin esto nginx y los demas contenedores no arrancan -- ver
-#    docs/Certificados-TLS.md)
+#    docs/operacion/Certificados-TLS.md)
 make certs
 
 # 4) Levantar TODA la stack (frontend, backends, BD, IAM, monitoreo, etc.)
@@ -97,7 +102,7 @@ make health
 http://localhost:8080, logueate con `admin@prisma.local` / `Admin1234!` (Keycloak va a pedir
 cambiarla en el primer login — es esperado) y confirmá que el dashboard carga con el catálogo MCU
 5.0 ya sembrado. La tabla completa de URLs/credenciales de cada herramienta está en
-[Puesta en marcha local](../README.md#puesta-en-marcha-local-quickstart) del README principal.
+[Puesta en marcha local](../../README.md#puesta-en-marcha-local-quickstart) del README principal.
 
 ### Problemas comunes
 
@@ -140,30 +145,11 @@ cp .env.example .env
 
 **Qué configurar en el `.env` de este servidor** (a diferencia de local, acá SÍ importa):
 
-1. **Generar un valor real para cada `CHANGE_ME_*`** de la tabla al principio de este documento —
-   un servidor con las contraseñas de ejemplo del repo (públicas, en GitHub) es una puerta
-   abierta. Generar 12 valores de un saque (uno por línea, en el mismo orden que la tabla):
-   ```bash
-   for i in $(seq 1 12); do openssl rand -base64 32; done
-   ```
-   Abrir el `.env` y pegar cada valor generado en su variable, reemplazando el placeholder
-   completo:
-   ```bash
-   nano .env   # o vi/vim — cualquier editor de texto en el servidor sirve
-   ```
-   Variables a completar (mismas 12 de la tabla del principio del documento):
-   `POSTGRES_PASSWORD`, `REDIS_PASSWORD`, `KEYCLOAK_DB_PASSWORD`, `SONAR_DB_PASSWORD`,
-   `JWT_SECRET`, `AI_INTERNAL_API_KEY`, `KEYCLOAK_ADMIN_PASSWORD`,
-   `KEYCLOAK_ADMIN_CLIENT_SECRET`, `MINIO_ROOT_PASSWORD`, `GF_SECURITY_ADMIN_PASSWORD`,
-   `PORTAINER_ADMIN_PASSWORD`, `PGADMIN_DEFAULT_PASSWORD`. Al terminar, confirmar que no quedó
-   ninguno sin reemplazar:
-   ```bash
-   grep CHANGE_ME .env   # sin salida = OK; si imprime algo, falta esa variable
-   ```
-   `KEYCLOAK_ADMIN_CLIENT_SECRET` es el único que necesita un paso extra (ver la nota arriba de
-   esta sección): además de pegarlo en `.env`, hay que rotarlo A MANO en Keycloak después del
-   primer arranque (Admin Console → Clients → `prisma-backend` → Credentials → Regenerate,
-   pegando ahí el mismo valor).
+1. **Contraseñas:** en dev y staging se dejan los valores iniciales de `.env.example`
+   (`Admin1234!`); no hay que generar nada. Por eso estos ambientes no deben quedar expuestos a
+   internet sin otra protección (VPN, firewall o Cloudflare): las contraseñas son conocidas. En
+   **producción** se generan al azar al desplegar, ver
+   [Contraseñas de producción](#contraseñas-de-producción).
 2. **`GHCR_ORG`**: abrir `.env` y reemplazar el placeholder `your-github-org` por el dueño real
    del repo en GHCR (tu usuario u organización de GitHub) — si lo dejás como está, `docker
    compose pull` va a intentar traer `ghcr.io/your-github-org/...`, que no existe:
@@ -193,7 +179,7 @@ cp .env.example .env
 
 ```bash
 # Certificado TLS (si tenés un dominio real, mejor un cert de una CA pública -- este autofirmado
-# es la opción rápida, igual que en local; ver docs/Certificados-TLS.md)
+# es la opción rápida, igual que en local; ver docs/operacion/Certificados-TLS.md)
 scripts/generate-nginx-cert.sh --cn <tu-host> --san <tu-host>,localhost,127.0.0.1
 
 # CA interna y certificados de cada servicio (cifrado entre contenedores); el workflow de deploy la
@@ -223,13 +209,13 @@ la primera vez). Deja el enlace de «¿Olvidaste tu contraseña?» con 30 minuto
 la cuenta 15 minutos tras 10 intentos fallidos en 15 minutos:
 
 ```bash
-make auth-policy          # idempotente; detalle en docs/RUNBOOK.md → "Bloqueo de cuenta"
+make auth-policy          # idempotente; detalle en docs/operacion/RUNBOOK.md → "Bloqueo de cuenta"
 make auth-policy-status   # muestra los valores vigentes contra los esperados
 ```
 
 **Accedas por el host que accedas** (una IP, un dominio real, `localhost`) no hace falta tocar
 nada en Keycloak: el client `prisma-frontend` trae `redirectUris`/`webOrigins` en `"*"` a propósito
-(ver [`SECURITY.md`](SECURITY.md#endurecimientos-recientes-para-que-no-se-repitan), ítem 10) —
+(ver [`SECURITY.md`](../SECURITY.md#endurecimientos-recientes-para-que-no-se-repitan), ítem 10) —
 justamente para no depender de un paso manual por cada IP/dominio distinto en el que se despliegue.
 
 ### Configurar el pipeline (para que el deploy automático funcione)
@@ -282,8 +268,8 @@ servidor propio de staging y disparado por un tag release-candidate.
 ### Prerrequisitos y configuración inicial del servidor (una sola vez)
 
 Repetir la sección "Prerrequisitos" y "Configuración inicial del servidor" de Dev remoto en el
-servidor de staging: Docker + Compose, repo clonado en `/opt/prisma`, `.env` con todos los
-`CHANGE_ME_*` reemplazados, `GHCR_ORG`/login a GHCR y certificado TLS. Un dominio real apuntando
+servidor de staging: Docker + Compose, repo clonado en `/opt/prisma`, `.env` copiado de
+`.env.example` (contraseñas iniciales `Admin1234!`), `GHCR_ORG`/login a GHCR y certificado TLS. Un dominio real apuntando
 (DNS) al servidor, ej. `staging.prisma.example.uy`, y las variables `KEYCLOAK_TRUSTED_ISSUERS` y
 `CORS_ALLOWED_ORIGINS` del `.env` con ese dominio.
 
@@ -354,6 +340,38 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
 docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile full up -d --remove-orphans
 ```
 
+### Contraseñas de producción
+
+Las contraseñas de producción no se escriben a mano ni se copian de `.env.example`: se generan al
+desplegar.
+
+```bash
+make prod-up        # genera las que falten, las muestra y levanta el stack de producción
+make prod-secrets   # solo genera y muestra, sin levantar nada
+```
+
+- Se genera un valor aleatorio (32 caracteres alfanuméricos; 64 para `JWT_SECRET`) para
+  `POSTGRES_PASSWORD`, `KEYCLOAK_DB_PASSWORD`, `KEYCLOAK_ADMIN_PASSWORD`, `REDIS_PASSWORD`,
+  `RUSTFS_SECRET_KEY`, `GF_SECURITY_ADMIN_PASSWORD`, `ELASTIC_PASSWORD`, `KIBANA_SYSTEM_PASSWORD`,
+  `SONAR_DB_PASSWORD`, `PGADMIN_DEFAULT_PASSWORD`, `JWT_SECRET` y `AI_INTERNAL_API_KEY`, y la
+  contraseña del administrador de Portainer (`.secrets/portainer_admin_password`).
+- **Solo se reemplaza lo que sigue en su valor inicial** (`Admin1234!`, `Admin1234!!!`, vacío o `change_me*`). Lo que
+  ya se cambió no se toca, así que repetir el comando no rota nada.
+- La salida muestra una tabla con variable, servicio, usuario y contraseña. **Se muestra una sola
+  vez**: guardala en un gestor de contraseñas. Los valores quedan en el `.env` (permisos 600) y se
+  deja una copia del `.env` anterior (`.env.bak.<fecha>`).
+- **Ambiente que ya tiene datos:** las contraseñas de las bases, Keycloak, Grafana, pgAdmin y RustFS
+  quedan fijadas en los volúmenes al primer arranque. Si esos volúmenes ya existen, el comando no las
+  cambia y avisa cuáles siguen con el valor inicial, para rotarlas a mano (ver
+  [`RUNBOOK.md`](RUNBOOK.md)). `PROD_SECRETS_FORCE=1` las genera igual: usarlo solo en una
+  instalación nueva.
+- `KEYCLOAK_ADMIN_CLIENT_SECRET` no se genera solo, porque tiene que coincidir con el secreto del
+  cliente `prisma-backend` dentro de Keycloak: el comando lo recuerda al final.
+- En GitHub Actions los valores no se imprimen, para que no queden en los logs del pipeline.
+- `make swarm-deploy` hace lo mismo antes de desplegar cuando el `.env` tiene `ENV=production`.
+
+El script es `scripts/generate-prod-secrets.sh`.
+
 ## Versión y entorno
 
 **Versión.** PRISMA tiene una sola versión (SemVer `MAJOR.MINOR.PATCH`, hoy `0.6.0`) compartida por la
@@ -389,7 +407,9 @@ iniciada. En una construcción local: `GIT_SHA=$(git rev-parse --short HEAD) doc
 ## Referencias
 
 - Detalle de cada job del pipeline que dispara estos despliegues: [`CI-CD-Infra.md`](CI-CD-Infra.md)
-- Análisis de viabilidad de una eventual migración a Kubernetes (no implementada): [`mcu-5.0/Kubernetes-Analisis-Viabilidad.md`](mcu-5.0/Kubernetes-Analisis-Viabilidad.md)
+- Publicación en internet con un VPS y Cloudflare Tunnel: [`PUBLICACION-CLOUDFLARE.md`](PUBLICACION-CLOUDFLARE.md)
+- Alta disponibilidad con Docker Swarm en un servidor: [`RUNBOOK.md`](RUNBOOK.md#alta-disponibilidad-con-docker-swarm-un-solo-servidor)
+- Análisis de viabilidad de una eventual migración a Kubernetes (no implementada): [`proyecto/Kubernetes-Analisis-Viabilidad.md`](../proyecto/Kubernetes-Analisis-Viabilidad.md)
 - HTTPS, certificado autofirmado y su renovación: [`Certificados-TLS.md`](Certificados-TLS.md)
-- Setup de desarrollo local por SO, con más detalle que la sección 1 de acá: [`Dev-Config.md`](Dev-Config.md)
+- Setup de desarrollo local por SO, con más detalle que la sección 1 de acá: [`Dev-Config.md`](../desarrollo/Dev-Config.md)
 - Incidentes reales de operación y su causa raíz: [`RUNBOOK.md`](RUNBOOK.md)

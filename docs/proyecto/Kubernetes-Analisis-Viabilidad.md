@@ -217,7 +217,7 @@ Cuatro ambientes, tres mecanismos distintos.
 | Rol de operación / on-call | No existe. |
 | Presupuesto para cluster gestionado | No asignado. |
 | Continuidad post-entrega | El equipo se disuelve; no hay quién mantenga el cluster. |
-| Runbook de incidentes para K8s | docs/RUNBOOK.md existe pero está escrito para el stack Compose. |
+| Runbook de incidentes para K8s | docs/operacion/RUNBOOK.md existe pero está escrito para el stack Compose. |
 
 **Conclusión de factibilidad**
 
@@ -327,7 +327,7 @@ Principio rector: cada fase entrega valor y es reversible. Nada obliga a la sigu
 
 - **Gate 1:** existe un sponsor real (AGESIC, cliente, cátedra) que financia el cluster.  
 - **Gate 2:** hay una persona designada y con acceso para operarlo y responder incidentes.  
-- **Gate 3:** docs/RUNBOOK.md extendido con procedimientos K8s (rollback, restore de PVC, rotación de secretos, upgrade de cluster).
+- **Gate 3:** docs/operacion/RUNBOOK.md extendido con procedimientos K8s (rollback, restore de PVC, rotación de secretos, upgrade de cluster).
 
 Si no se cumplen: producción \= 1 VPS con docker-compose.prod.yml (que ya existe y está pensado para eso), con backups make backup a almacenamiento externo. Los manifiestos K8s se conservan versionados y validados para el día que los gates se cumplan.
 

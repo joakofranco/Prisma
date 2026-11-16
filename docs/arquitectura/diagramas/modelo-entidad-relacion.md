@@ -1,7 +1,7 @@
 # 🗄️ Modelo Entidad-Relación — PRISMA
 
 > Transcripto directamente de las migraciones Flyway
-> (`apps/backend-core/src/main/resources/db/migration/V1` a `V17`), no del modelo JPA — refleja el
+> (`apps/backend-core/src/main/resources/db/migration/V1` a `V40`), no del modelo JPA — refleja el
 > esquema real de PostgreSQL, con todos los `ALTER TABLE` ya aplicados. Dos schemas: **`prisma`**
 > (dominio de negocio) y **`audit`** (bitácora técnica, deliberadamente aislada).
 
@@ -9,7 +9,8 @@
 
 ```mermaid
 erDiagram
-  ORGANIZATIONS ||--o{ USERS : "tenant_id"
+  USERS ||--o{ USER_ORGANIZATIONS : "user_id (CASCADE)"
+  ORGANIZATIONS ||--o{ USER_ORGANIZATIONS : "organization_id (CASCADE)"
   ORGANIZATIONS ||--o{ EVALUATIONS : "organization_id"
   USERS ||--o{ USER_ROLES : "user_id (CASCADE)"
   USERS |o--o{ ORGANIZATIONS : "responsible_id"
@@ -25,6 +26,8 @@ erDiagram
   CATALOG_REQUIREMENTS ||--o{ CATALOG_CONTROLS : "requirement_id (CASCADE)"
   CATALOG_REQUIREMENTS ||--o{ CATALOG_REQUIREMENT_SUBCATEGORIES : "requirement_id (CASCADE)"
   CATALOG_SUBCATEGORIES ||--o{ CATALOG_REQUIREMENT_SUBCATEGORIES : "subcategory_id (CASCADE)"
+  CATALOG_CONTROLS ||--o{ CATALOG_CONTROL_SUBCATEGORIES : "control_id (CASCADE)"
+  CATALOG_SUBCATEGORIES ||--o{ CATALOG_CONTROL_SUBCATEGORIES : "subcategory_id (CASCADE)"
 
   COMMUNITY_PROFILES ||--o{ COMMUNITY_PROFILE_CONTROLS : "profile_id (CASCADE)"
   CATALOG_CONTROLS ||--o{ COMMUNITY_PROFILE_CONTROLS : "control_id (CASCADE)"
@@ -35,11 +38,22 @@ erDiagram
   EVALUATIONS ||--o{ EVIDENCE : "evaluation_id (CASCADE)"
   EVALUATIONS ||--o{ IMPROVEMENT_PLANS : "evaluation_id (CASCADE)"
   EVALUATIONS ||--o{ AUDIT_OBSERVATIONS : "evaluation_id (CASCADE)"
+  EVALUATIONS ||--o{ EVALUATION_SUBCATEGORY_COMMENTS : "evaluation_id (CASCADE)"
+  EVALUATIONS ||--o{ AUDIT_CONTROL_VERDICTS : "evaluation_id (CASCADE)"
+  EVALUATIONS ||--o{ EVALUATION_CONTROL_FLAGS : "evaluation_id (CASCADE)"
+  USERS |o--o{ EVALUATIONS : "approved_by"
+  EVIDENCE |o--o{ AUDIT_OBSERVATIONS : "evidence_id (SET NULL)"
+  CATALOG_SUBCATEGORIES |o--o{ AUDIT_OBSERVATIONS : "subcategory_id"
+  CATALOG_SUBCATEGORIES ||--o{ EVALUATION_SUBCATEGORY_COMMENTS : "subcategory_id"
 
   CATALOG_CONTROLS ||--o{ EVALUATION_RESPONSES : "control_id"
   CATALOG_CONTROLS |o--o{ EVIDENCE : "control_id"
   CATALOG_CONTROLS |o--o{ IMPROVEMENT_PLANS : "control_id"
   CATALOG_CONTROLS |o--o{ AUDIT_OBSERVATIONS : "control_id"
+  CATALOG_CONTROLS ||--o{ AUDIT_CONTROL_VERDICTS : "control_id"
+  CATALOG_CONTROLS ||--o{ EVALUATION_CONTROL_FLAGS : "control_id"
+  CATALOG_CONTROLS ||--o{ AI_SUGGESTION_FEEDBACK : "control_id"
+  CATALOG_CONTROLS ||--o{ AI_CITATION_FEEDBACK : "control_id"
 
   ORGANIZATIONS {
     uuid id PK
@@ -61,8 +75,9 @@ erDiagram
     varchar_100 last_name
     varchar_255 password_hash
     uuid keycloak_id
-    uuid tenant_id FK
     boolean enabled
+    timestamptz invited_at "nullable"
+    timestamptz invitation_accepted_at "nullable"
     timestamptz created_at
     timestamptz updated_at
   }
@@ -129,6 +144,9 @@ erDiagram
     text description
     int target_level "CHECK 1-5 (catalogo real usa 1-4)"
     int sort_order
+    text guide_interpretation "nullable"
+    text guide_example "nullable"
+    text guide_evidence "nullable"
   }
 
   COMMUNITY_PROFILES {
@@ -154,6 +172,9 @@ erDiagram
     int global_maturity "CHECK 1-5, nullable"
     uuid community_profile_id FK "nullable"
     uuid created_by FK
+    uuid approved_by FK "nullable"
+    timestamptz approved_at "nullable"
+    varchar_64 certification_seal "nullable"
     timestamptz created_at
     timestamptz updated_at
   }
@@ -194,6 +215,8 @@ erDiagram
     timestamptz uploaded_at
     text description
     boolean ai_indexed "V5"
+    varchar_64 file_hash "nullable"
+    varchar_20 scan_status "CLEAN por defecto"
   }
 
   IMPROVEMENT_PLANS {
@@ -216,7 +239,68 @@ erDiagram
     varchar_30 type
     text description
     varchar_20 status
+    uuid subcategory_id FK "nullable"
+    uuid evidence_id FK "nullable"
     uuid created_by FK
+    timestamptz created_at
+  }
+
+  USER_ORGANIZATIONS {
+    uuid user_id PK_FK
+    uuid organization_id PK_FK
+  }
+
+  CATALOG_CONTROL_SUBCATEGORIES {
+    uuid control_id PK_FK
+    uuid subcategory_id PK_FK
+  }
+
+  EVALUATION_SUBCATEGORY_COMMENTS {
+    uuid id PK
+    uuid evaluation_id FK "UNIQUE(evaluation_id, subcategory_id)"
+    uuid subcategory_id FK
+    text comment
+    uuid updated_by FK
+    timestamptz updated_at
+  }
+
+  AUDIT_CONTROL_VERDICTS {
+    uuid id PK
+    uuid evaluation_id FK "UNIQUE(evaluation_id, control_id)"
+    uuid control_id FK
+    varchar_30 verdict "VALIDATED, NOT_VALIDATED o NEEDS_MORE_EVIDENCE"
+    uuid set_by FK
+    timestamptz updated_at
+  }
+
+  EVALUATION_CONTROL_FLAGS {
+    uuid id PK
+    uuid evaluation_id FK "UNIQUE(evaluation_id, control_id)"
+    uuid control_id FK
+    uuid flagged_by FK
+    timestamptz flagged_at
+  }
+
+  AI_SUGGESTION_FEEDBACK {
+    uuid id PK
+    uuid control_id FK
+    int current_level
+    int target_level
+    text original_summary
+    jsonb original_tips
+    varchar_20 outcome
+    text edited_text "nullable"
+    timestamptz created_at
+  }
+
+  AI_CITATION_FEEDBACK {
+    uuid id PK
+    uuid control_id FK
+    varchar_255 file_name
+    varchar_255 location
+    text snippet
+    double score
+    varchar_10 decision
     timestamptz created_at
   }
 ```
@@ -246,11 +330,26 @@ erDiagram
 > resueltos a nombre en la capa de aplicación al momento de mostrarlo. Índice compuesto
 > `(tenant_id, created_at)` para las consultas de auditoría por organización y rango de fechas.
 
+## Tablas de configuración y soporte
+
+No tienen relaciones con el resto del modelo: guardan parámetros de la plataforma.
+
+| Tabla | Migración | Contenido |
+|---|---|---|
+| `plan_default_deadlines` | V29 | Plazo por defecto (en meses) de las acciones del plan de mejora según la prioridad (`HIGH`, `MEDIUM`, `LOW`). Una fila por prioridad. |
+| `session_settings` | V37 | Minutos de inactividad antes de cerrar la sesión y segundos de aviso previo. Fila única (`id = 1`). |
+| `platform_services` | V38 | Servicios de la infraestructura que muestra el lanzador de Servicios, con su URL editable y la URL por defecto. |
+| `alert_settings` | V39 | Configuración del correo de alertas de Alertmanager (destinatarios, servidor SMTP, TLS). Fila única (`id = 1`). La contraseña SMTP no se guarda en la base: solo `password_set`. |
+| `shedlock` | V40 | Bloqueos de las tareas programadas, para que con varias réplicas de `backend-core` cada tarea corra una sola vez. Está en el schema por defecto, no en `prisma`. |
+
 ## Cardinalidades — resumen
 
 | Relación | Cardinalidad | `ON DELETE` |
 |---|---|---|
-| `organizations` → `users` (tenant) | 1:N | (sin acción — ver Normalización) |
+| `users` ↔ `organizations` (membresía y organizaciones que audita un `AUDITOR`) | N:M (`user_organizations`, desde V20: reemplaza a `users.tenant_id` y a `user_audited_organizations`) | `CASCADE` en ambos lados |
+| `catalog_controls` ↔ `catalog_subcategories` | N:M (`catalog_control_subcategories`, desde V18) | `CASCADE` en ambos lados |
+| `evaluations` → `evaluation_subcategory_comments` / `audit_control_verdicts` / `evaluation_control_flags` | 1:N | `CASCADE` |
+| `evidence` → `audit_observations` | 1:N (opcional) | `SET NULL` |
 | `users` → `organizations` (responsible) | 1:N | (sin acción) |
 | `users` → `user_roles` | 1:N | `CASCADE` |
 | `organizations` → `evaluations` | 1:N | (sin acción) |

@@ -35,7 +35,7 @@ lista — tienen que matchear carácter por carácter, incluido el puerto.
 
 ### Un ambiente ya desplegado no adopta un cambio de `.env`/`realm-prisma.json` — hay que empujarlo a mano
 
-**Síntoma:** un fix ya mergeado a `main` (nueva variable en `.env.example`, `redirectUris`/roles
+**Síntoma:** un fix ya mergeado (nueva variable en `.env.example`, `redirectUris`/roles
 nuevos en `infra/keycloak/realm-prisma.json`, una password rotada en `.env`) se despliega
 (`git pull` + rebuild) pero el síntoma que ese fix debía resolver sigue ahí -- login que redirige
 mal, 400 al loguearse desde un host nuevo, 401/403 en llamadas que antes andaban, `backend-core`
@@ -105,7 +105,9 @@ DNS interno de Docker) — ese host no significa nada fuera de la red `prisma-ne
 **Cómo se resolvió:** `EvidenceService` usa ahora un `S3Client` más dos `S3Presigner` distintos —
 `internalPresigner` (`S3_ENDPOINT`, para que backend-ai baje el archivo a indexar) y
 `publicPresigner` (`S3_PUBLIC_ENDPOINT`, `http://localhost:9001` en dev local) sólo para firmar la
-URL que ve el navegador. Ver `ObjectStorageConfig`.
+URL que ve el navegador. Ver `ObjectStorageConfig`. **Hoy la descarga ya no usa una URL firmada:**
+la sirve `backend-core` por streaming (`GET /api/evidence/{id}/download`), así que el navegador
+nunca habla con RustFS; el `publicPresigner` quedó definido pero sin uso.
 
 **Nota sobre la región:** el `S3Presigner` firma 100% offline, pero con el SDK anterior (MinIO) el
 cliente público necesitaba *conectarse él mismo* al endpoint para resolver la región del bucket
@@ -189,8 +191,8 @@ Si persiste, reiniciar Docker Desktop antes de reintentar.
      -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
      -d '{"type":"password","value":"...","temporary":false}'
    ```
-2. **`KEYCLOAK_ADMIN_CLIENT_SECRET` desincronizado** (ver el punto de "Onboarding" en
-   [`SECURITY.md`](SECURITY.md)): en ese caso el usuario ni siquiera se creó de verdad en Keycloak
+2. **`KEYCLOAK_ADMIN_CLIENT_SECRET` desincronizado** (ver «Secreto de Keycloak desincronizado por defecto» en
+   [`SECURITY.md`](../SECURITY.md#endurecimientos-recientes-para-que-no-se-repitan)): en ese caso el usuario ni siquiera se creó de verdad en Keycloak
    (`canLogin` en la respuesta de la API igual puede mostrar `true` porque sólo refleja si hay un
    `keycloak_id` guardado, no si la creación remota tuvo éxito la última vez) — confirmar buscando
    el usuario directo en la consola de Keycloak.
@@ -204,7 +206,7 @@ del id de quien hizo el borrado.
 
 **Causa raíz — no es un bug de la bitácora, es la firma de un self-delete:** `AuditLogService`
 resuelve "quién hizo esto" buscando al usuario actual por email **después** de que la operación ya
-corrió, dentro de la misma transacción (ver [`Arquitectura.md`](Arquitectura.md)). Si la operación
+corrió, dentro de la misma transacción (ver [`Arquitectura.md`](../arquitectura/Arquitectura.md)). Si la operación
 fue un usuario borrándose **a sí mismo**, esa búsqueda ya no encuentra la fila (se acaba de borrar,
 en la misma transacción) y el actor queda en blanco. Este patrón fue exactamente cómo se detectó
 en la práctica el bug real de "un usuario podía borrarse a sí mismo o borrar al administrador
@@ -214,8 +216,8 @@ self-delete, no de un problema de logging.
 
 **Recuperación si ya pasó** (el admin semilla quedó borrado antes del fix):
 ```sql
-INSERT INTO prisma.users (id, email, first_name, last_name, tenant_id, enabled) VALUES
-('b0000000-0000-0000-0000-000000000001', 'admin@prisma.local', 'Admin', 'PRISMA', NULL, true)
+INSERT INTO prisma.users (id, email, first_name, last_name, enabled) VALUES
+('b0000000-0000-0000-0000-000000000001', 'admin@prisma.local', 'Admin', 'PRISMA', true)
 ON CONFLICT (id) DO NOTHING;
 INSERT INTO prisma.user_roles (user_id, role) VALUES
 ('b0000000-0000-0000-0000-000000000001', 'PRISMA_ADMIN')
@@ -275,7 +277,7 @@ ERROR: Unexpected character ('"' (code 34)): was expecting comma to separate Arr
 **Causa raíz:** `infra/keycloak/realm-prisma.json` tiene JSON inválido — en este caso puntual,
 faltaba una coma entre dos entradas de un array (`redirectUris`), introducida al editar el archivo
 a mano para agregar la IP del servidor a la lista de hosts permitidos (antes de que
-`redirectUris`/`webOrigins` pasaran a `"*"`, ver [`SECURITY.md`](SECURITY.md#endurecimientos-recientes-para-que-no-se-repitan)
+`redirectUris`/`webOrigins` pasaran a `"*"`, ver [`SECURITY.md`](../SECURITY.md#endurecimientos-recientes-para-que-no-se-repitan)
 ítem 10 — ese cambio, además de evitar la edición manual, elimina esta clase entera de error).
 `--import-realm` no valida el archivo antes de intentar aplicarlo: si el JSON no parsea, Keycloak
 directamente no completa el arranque, en loop, en cada reintento del `restart: unless-stopped`.
@@ -460,10 +462,6 @@ al final de cada corrida. `make restore` toma siempre el dump de Postgres y el e
 evidencias más recientes; para restaurar un punto en el tiempo específico, correr
 `scripts/backup/restore.sh` a mano dentro del contenedor apuntando al timestamp deseado.
 
-> Antes de esto, `make backup` solo respaldaba Postgres (sin ningún mecanismo diario, solo a
-> mano) y el bucket de evidencias no tenía backup en absoluto — ver el historial de este archivo
-> si hace falta el contexto completo de esa brecha.
-
 ## Retención de la bitácora (RF-TRZ-04)
 
 Los registros de `audit.audit_logs` se retienen **al menos 365 días**. Lo garantiza el motor, no
@@ -520,7 +518,7 @@ de `infra/keycloak/themes/`.
 ## Rotación de secretos (JWT/DB)
 
 1. Actualizar el valor en Keycloak y en `.env` — **excepción:** `KEYCLOAK_ADMIN_CLIENT_SECRET` no
-   se puede rotar sólo en `.env` (ver [`SECURITY.md`](SECURITY.md) y
+   se puede rotar sólo en `.env` (ver [`SECURITY.md`](../SECURITY.md) y
    [`Certificados-TLS.md`](Certificados-TLS.md)); hay que cambiarlo también en Keycloak (Admin
    Console → Clients → `prisma-backend` → Credentials → Regenerate) o en tu copia de
    `realm-prisma.json` antes del primer `--import-realm`.
@@ -532,12 +530,6 @@ de `infra/keycloak/themes/`.
 - Disponibilidad: 99.5%
 - Latencia p95 API: < 500 ms
 - Backup Postgres + evidencias (RustFS): diario, retención 30 días (ver arriba)
-
-## Referencias
-
-- Setup completo del entorno: [`Dev-Config.md`](Dev-Config.md)
-- Modelo de seguridad y endurecimientos recientes: [`SECURITY.md`](SECURITY.md)
-- Testing (automatizado + metodología manual que encontró varios de estos incidentes): [`Testing.md`](Testing.md)
 
 ## Alertas y monitoreo
 
@@ -588,7 +580,7 @@ Cada reincidencia duplica el tiempo de bloqueo, hasta un máximo de 24 h. Los bl
 
 Notas:
 - Para que no se bloquee a los administradores, poner sus IPs en `F2B_IGNORE_IPS` (`.env`).
-- Si NGINX queda detrás de otro proxy o balanceador, todas las peticiones llegan con la IP de ese proxy: agregarla a `F2B_IGNORE_IPS` o configurar `real_ip` en NGINX antes de usar fail2ban.
+- Si NGINX queda detrás de otro proxy o balanceador, todas las peticiones llegan con la IP de ese proxy: agregarla a `F2B_IGNORE_IPS` o configurar `real_ip` en NGINX antes de usar fail2ban (con Cloudflare Tunnel, desplegar con `docker-compose.cloudflare.yml`, que ya lo hace).
 - El contenedor usa el socket de Docker solo para enviar la señal de recarga a `prisma-nginx`. El log compartido se vacía solo cuando supera los 50 MB.
 - Protege contra el abuso de una IP o de pocas IPs. No reemplaza una protección de red contra un DDoS volumétrico (CDN o proveedor).
 
@@ -648,3 +640,9 @@ make swarm-down          # quita el stack (los volúmenes se conservan)
 - Keycloak ancla JGroups a la interfaz de la red overlay (`-Djgroups.bind.address=match-interface:eth0`). Sin eso, los nodos se anuncian con la IP de `docker_gwbridge` y no se ven entre sí.
 - nginx reintenta sin límite al arrancar: Swarm solo resuelve el nombre de un servicio cuando ya tiene tareas en marcha, y nginx falla si algún upstream no resuelve.
 - Para probar en paralelo a un entorno existente: `STACK`, `VOLUME_PREFIX`, `NETWORK_NAME`, `NGINX_HTTP_PORT`, `NGINX_HTTPS_PORT` y `RESOLVE_IMAGE=never` (imágenes locales) se pueden pasar por entorno a `scripts/swarm/deploy.sh`, y pisan lo que diga el `.env`.
+
+## Referencias
+
+- Setup completo del entorno: [`Dev-Config.md`](../desarrollo/Dev-Config.md)
+- Modelo de seguridad y endurecimientos recientes: [`SECURITY.md`](../SECURITY.md)
+- Testing (automatizado + metodología manual que encontró varios de estos incidentes): [`Testing.md`](../desarrollo/Testing.md)

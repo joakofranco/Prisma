@@ -21,7 +21,8 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml -f docker-compos
 ```
 
 - **NGINX:** publica `127.0.0.1:${TUNNEL_ORIGIN_PORT:-8443}` (por donde entra el túnel) y `${INTERNAL_BIND_IP}:443` (por donde entran los administradores por VPN). No queda ningún puerto de NGINX abierto a internet.
-- **IP real del visitante:** NGINX monta `infra/nginx/cloudflare/real-ip.conf`. `cloudflared` entra por el puerto publicado, así que NGINX ve la conexión desde la puerta de enlace de `prisma-net` (`172.28.0.1`). Solo desde ahí confía en la cabecera `CF-Connecting-IP`. Desde cualquier otro origen (un contenedor, la VPN) la cabecera se ignora, por lo que no se puede falsificar.
+- **IP real del visitante:** NGINX monta `infra/nginx/cloudflare/real-ip.conf`. `cloudflared` entra por el puerto publicado, así que NGINX ve la conexión desde la puerta de enlace de `prisma-net` (`172.28.0.1`). Solo desde ahí, o desde la IP de la VPN del propio servidor (`10.8.0.1`) si el túnel entra por esa IP, confía en la cabecera `CF-Connecting-IP`. Desde cualquier otro origen (un contenedor, otro cliente de la VPN) la cabecera se ignora, por lo que no se puede falsificar.
+  - El servidor de desarrollo también debe desplegarse con este overlay: sin él NGINX ve todo el tráfico público desde una misma IP (la del túnel), el límite de tasa del login se comparte entre todos los visitantes y fail2ban no banea a nadie porque esa IP está en `F2B_IGNORE_IPS`.
   - Con esto el access log, el límite de tasa, fail2ban, el `X-Forwarded-For` hacia el backend y el control de VPN de Servicios trabajan con la IP real de cada visitante.
 - **Puertos:** Grafana, Prometheus, Loki, Kibana, Elasticsearch, cAdvisor, Portainer, RustFS, pgAdmin, SonarQube, Ollama, Alertmanager y Mailpit se publican solo en `INTERNAL_BIND_IP`. PostgreSQL, Redis, backend-ai, frontend y los exporters no se publican en el host.
 
@@ -34,8 +35,7 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml -f docker-compos
 | `CORS_ALLOWED_ORIGINS` | Agregar `https://prisma.tudominio.com`. |
 | `KEYCLOAK_TRUSTED_ISSUERS` | Agregar `https://prisma.tudominio.com/auth/realms/prisma` y `https://<INTERNAL_BIND_IP>/auth/realms/prisma` (acceso de administración por VPN). |
 | `KEYCLOAK_ISSUER_URL` | `https://prisma.tudominio.com/auth`. |
-| `S3_PUBLIC_ENDPOINT` | `https://s3.tudominio.com` (ver más abajo). |
-| `SERVICES_ALLOWED_CIDRS` | Solo la red de la VPN, por ejemplo `10.8.0.0/24,127.0.0.0/8`. No dejar las redes privadas genéricas. |
+| `SERVICES_ALLOWED_CIDRS` | Redes desde las que se pueden editar las URL de Servicios: solo la red de la VPN, por ejemplo `10.8.0.0/24,127.0.0.0/8`. No dejar las redes privadas genéricas. El listado de Servicios se muestra desde cualquier red. |
 | `F2B_IGNORE_IPS` | IPs de administración que nunca se bloquean (por ejemplo la red de la VPN). |
 
 ## Pasos en el VPS
@@ -53,7 +53,6 @@ Zero Trust → Networks → Tunnels → tu túnel → Published application rout
 | Subdominio | Servicio | Configuración adicional |
 |---|---|---|
 | `prisma.tudominio.com` | `HTTPS` → `localhost:8443` | TLS → **No TLS Verify** activado (el certificado de NGINX es de una CA interna y el tráfico no sale del servidor) |
-| `s3.tudominio.com` | `HTTPS` → `<INTERNAL_BIND_IP>:9001` | TLS → **No TLS Verify** activado |
 
 Si el túnel está gestionado por archivo (`config.yml`), el equivalente es:
 
@@ -62,13 +61,10 @@ ingress:
   - hostname: prisma.tudominio.com
     service: https://localhost:8443
     originRequest: { noTLSVerify: true }
-  - hostname: s3.tudominio.com
-    service: https://<INTERNAL_BIND_IP>:9001
-    originRequest: { noTLSVerify: true }
   - service: http_status:404
 ```
 
-- El subdominio `s3` es necesario: los enlaces prefirmados de las evidencias los usa el navegador directamente contra RustFS. Las URLs llevan firma, pero no publiques la consola (`9002`).
+- RustFS no se publica: las evidencias se suben y se descargan a través de `backend-core`, por el mismo dominio de la aplicación. No hace falta un subdominio para el almacenamiento ni exponer su API (`9001`) o su consola (`9002`).
 - Cloudflare crea los registros DNS con el proxy activado (nube naranja). No dejes ningún registro `A` que apunte a la IP del VPS.
 
 ### 2. SSL/TLS
@@ -110,8 +106,8 @@ En la consola de Keycloak (acceso por VPN), realm `prisma` → Clients → `pris
 2. **La aplicación carga** en `https://prisma.tudominio.com` y el login funciona.
 3. **IP real:** `docker logs prisma-nginx --tail 5` debe mostrar tu IP pública en la primera columna, no `172.28.0.1`.
 4. **Control de VPN de Servicios:**
-   - Desde internet, `https://prisma.tudominio.com/services` debe responder 403 (`VPN_REQUIRED`) o bloquearlo Cloudflare.
-   - Conectado a la VPN, `https://<INTERNAL_BIND_IP>/services` debe abrir el lanzador.
+   - Desde internet, `https://prisma.tudominio.com/services` muestra el listado a un administrador, pero los enlaces no abren (apuntan a la VPN) y editar una URL debe responder 403 (`VPN_REQUIRED`).
+   - Conectado a la VPN, los enlaces abren; para editar las URL hay que entrar por `https://<INTERNAL_BIND_IP>/services`.
 5. **fail2ban:** hacer una ráfaga desde una IP que puedas desbloquear (`docker exec prisma-fail2ban fail2ban-client unban <IP>`) y comprobar el 429 y luego el 403.
 6. **Evidencias:** subir y descargar un archivo de unos 90 MB.
 7. **Alertas:** comprobar que llegan los correos de Alertmanager y las notificaciones de Cloudflare.

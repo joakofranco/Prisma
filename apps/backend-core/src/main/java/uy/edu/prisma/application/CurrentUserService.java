@@ -128,7 +128,7 @@ public class CurrentUserService {
    * el evaluador general siempre pasan; el resto solo si esa organizacion esta entre las suyas.
    * Lanza 403 en caso contrario, para no filtrar evaluaciones, evidencias, observaciones de
    * auditoria, planes de mejora ni reportes entre organizaciones distintas (aislamiento
-   * multi-tenant, ver docs/Proyecto.md).
+   * multi-tenant, ver docs/proyecto/Proyecto.md).
    */
   public void assertOrganizationAccess(UUID organizationId) {
     if (hasAllOrganizationsAccess()) {

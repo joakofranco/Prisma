@@ -4,7 +4,7 @@ Relevamiento completo de historias de usuario de PRISMA, escrito **a partir del 
 efectivamente construido** (no es un backlog aspiracional: cada historia listada abajo está
 implementada y verificada contra el stack real; donde hay una limitación conocida se aclara en
 "Notas"). Sirve como referencia funcional complementaria a
-[`docs/diagramas/casos-de-uso.md`](diagramas/casos-de-uso.md) (que describe actores y flujos a
+[`docs/arquitectura/diagramas/casos-de-uso.md`](../arquitectura/diagramas/casos-de-uso.md) (que describe actores y flujos a
 nivel de caso de uso/UML) — acá el mismo sistema se lee desde la perspectiva ágil de "quién
 necesita qué, y para qué", con criterios de aceptación verificables.
 
@@ -18,7 +18,7 @@ necesita qué, y para qué", con criterios de aceptación verificables.
 | `AUDITOR` | Acotado explícitamente a las organizaciones que se le asignaron (`auditedOrganizationIds`) -- no es un rol global. Revisa evaluaciones en auditoría y registra observaciones. |
 | `VIEWER` | Sólo lectura dentro de su organización. |
 
-Ver [`docs/Arquitectura.md`](Arquitectura.md) para el detalle de cómo se aplica el aislamiento
+Ver [`docs/arquitectura/Arquitectura.md`](../arquitectura/Arquitectura.md) para el detalle de cómo se aplica el aislamiento
 multi-tenant en cada capa.
 
 ## Índice
@@ -87,7 +87,7 @@ multi-tenant en cada capa.
   nuevo en su próximo login (a diferencia del alta inicial, donde sí tiene sentido forzarlo).
 - **Implementado en:** `PUT /api/users/{id}`, `UserService.update` (usa
   `KeycloakAdminClient.setPermanentPassword`, no `resetPassword`). Ver "Endurecimientos
-  recientes" en [`SECURITY.md`](SECURITY.md).
+  recientes" en [`SECURITY.md`](../SECURITY.md).
 
 ---
 
@@ -181,7 +181,7 @@ multi-tenant en cada capa.
 - Ambas protecciones son independientes entre sí y se verifican explícitamente en
   `UserService.delete`.
 - **Implementado en:** `UserService.delete`. Incidente real documentado en
-  [`RUNBOOK.md`](RUNBOOK.md).
+  [`RUNBOOK.md`](../operacion/RUNBOOK.md).
 
 ### HU-USR-05 — Un auditor necesita al menos una organización asignada
 > Como sistema, no debo permitir que se cree o edite un usuario con rol `AUDITOR` sin al menos
@@ -254,7 +254,7 @@ multi-tenant en cada capa.
 - **Implementado en:** `NewEvaluationView.vue`, `CreateEvaluationDto.communityProfileId`.
 - **Decisión de diseño:** el perfil pertenece a la **evaluación**, no a la organización. La
   organización no tiene un perfil propio (ver `Evaluation.communityProfile` en
-  [`mapeo-jpa.md`](mapeo-jpa.md)). Esto cubre lo que RF-ORG-02 llama «perfil de organización», con
+  [`mapeo-jpa.md`](../arquitectura/mapeo-jpa.md)). Esto cubre lo que RF-ORG-02 llama «perfil de organización», con
   la diferencia de que la clasificación se decide en cada evaluación.
 
 ---
@@ -263,7 +263,7 @@ multi-tenant en cada capa.
 
 Ciclo de vida completo: `DRAFT → IN_PROGRESS → READY_FOR_AUDIT → IN_AUDIT → APPROVED|RETURNED`,
 `APPROVED → ARCHIVED` (`RETURNED` vuelve a `IN_PROGRESS` para corregir). Detalle de transiciones
-y roles habilitados en [`docs/API.md`](API.md).
+y roles habilitados en [`docs/arquitectura/API.md`](../arquitectura/API.md).
 
 ### HU-EVAL-01 — Crear una evaluación
 > Como `ORG_RESPONSIBLE`, quiero crear una evaluación nueva para mi organización, eligiendo
@@ -630,7 +630,7 @@ y roles habilitados en [`docs/API.md`](API.md).
 - Keycloak enmascara el password guardado (`**********`) al leerlo: hay que volver a ingresarlo
   en cada actualización, no se puede "conservar" el anterior.
 - **Implementado en:** `PUT /api/admin/email-settings`, `EmailSettingsPanel.vue`. Ver
-  [`docs/Notificaciones-Email.md`](Notificaciones-Email.md).
+  [`docs/operacion/Notificaciones-Email.md`](../operacion/Notificaciones-Email.md).
 
 ### HU-CFG-02 — Administrar el catálogo desde Configuración
 > Como `PRISMA_ADMIN`, quiero llegar a la importación/edición del catálogo desde la sección de
@@ -650,7 +650,7 @@ y roles habilitados en [`docs/API.md`](API.md).
 - Escritura síncrona, dentro de la misma transacción de la operación que audita.
 - **Nota conocida:** al resolver "quién" lo hizo *después* de la operación en la misma
   transacción, una auto-eliminación deja el actor en blanco en la bitácora (ver
-  [`RUNBOOK.md`](RUNBOOK.md)).
+  [`RUNBOOK.md`](../operacion/RUNBOOK.md)).
 - **Implementado en:** `AuditLogService`, tabla `audit.audit_logs`.
 
 ### HU-OBS-02b — Consultar la bitácora desde la UI ("Actividad del Sistema")
@@ -683,7 +683,7 @@ y roles habilitados en [`docs/API.md`](API.md).
   Settings → Security Defenses → Brute Force Detection, sin redeploy). Esto sólo le da
   visibilidad al equipo desde la app.
 - **Implementado en:** `LoginFailureAuditSyncService`, `KeycloakAdminClient.fetchLoginFailures`,
-  `AuditLogService.recordLoginFailure`. Ver [`SECURITY.md`](SECURITY.md).
+  `AuditLogService.recordLoginFailure`. Ver [`SECURITY.md`](../SECURITY.md).
 
 ### HU-OBS-02 — Logs centralizados y métricas de los contenedores
 > Como equipo de operación, quiero ver los logs de todos los contenedores centralizados y
@@ -693,7 +693,7 @@ y roles habilitados en [`docs/API.md`](API.md).
 - Dos vías paralelas: Grafana + Loki + Prometheus (principal) y, opcionalmente, Elasticsearch +
   Kibana + Filebeat (perfil `elastic`, búsqueda libre).
 - **Implementado en:** perfiles `observability`/`elastic` de `docker-compose.yml`. Ver
-  [`docs/CI-CD-Infra.md`](CI-CD-Infra.md).
+  [`docs/operacion/CI-CD-Infra.md`](../operacion/CI-CD-Infra.md).
 
 ### HU-OBS-03 — Sesiones de frontend grabadas (LogRocket)
 > Como equipo de desarrollo, quiero poder reproducir la sesión de un usuario que reportó un
@@ -711,7 +711,7 @@ y roles habilitados en [`docs/API.md`](API.md).
 > cada dependencia a mano.
 
 - **Implementado en:** `docker-compose.yml` (perfiles `app`, `security`, `full`, etc.). Ver
-  [`README.md`](../README.md) (Quickstart) y [`docs/Dev-Config.md`](Dev-Config.md).
+  [`README.md`](../../README.md) (Quickstart) y [`docs/desarrollo/Dev-Config.md`](../desarrollo/Dev-Config.md).
 
 ### HU-INFRA-03 — CI/CD automático
 > Como equipo de desarrollo, quiero que cada push corra lint + tests + build automáticamente, y
@@ -719,7 +719,7 @@ y roles habilitados en [`docs/API.md`](API.md).
 > de correrlo a mano.
 
 - **Implementado en:** `.github/workflows/ci.yml`, `build-and-push.yml`, `deploy.yml`,
-  `security.yml`, `sonarqube.yml`. Ver [`docs/CI-CD-Infra.md`](CI-CD-Infra.md).
+  `security.yml`, `sonarqube.yml`. Ver [`docs/operacion/CI-CD-Infra.md`](../operacion/CI-CD-Infra.md).
 
 ---
 
@@ -731,4 +731,4 @@ y roles habilitados en [`docs/API.md`](API.md).
 - Las historias no incluyen estimaciones de esfuerzo ni sprint: este documento es un relevamiento
   funcional retrospectivo, no un backlog de planificación.
 - Para el detalle de qué rol puede disparar cada transición de estado y qué HTTP status devuelve
-  cada rechazo, ver [`docs/API.md`](API.md) en vez de duplicarlo acá.
+  cada rechazo, ver [`docs/arquitectura/API.md`](../arquitectura/API.md) en vez de duplicarlo acá.

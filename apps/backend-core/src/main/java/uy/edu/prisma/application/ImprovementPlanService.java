@@ -353,12 +353,12 @@ public class ImprovementPlanService {
 
   /**
    * RF-PLN-01 — Generacion automatica de plan por brechas. Motor de reglas (no LLM, ver
-   * docs/Proyecto.md): recorre los controles del catalogo de la evaluacion y, para cada uno cuya
-   * respuesta este por debajo del nivel objetivo, arma una sugerencia con accion, prioridad (segun
-   * el tamano de la brecha) y fecha limite sugerida. No persiste nada — el frontend muestra las
-   * sugerencias para que el usuario las revise/edite y recien ahi las cree via POST
-   * /api/improvement. Los controles que ya tienen un plan de mejora asociado se excluyen para no
-   * repetir sugerencias en llamadas sucesivas.
+   * docs/proyecto/Proyecto.md): recorre los controles del catalogo de la evaluacion y, para cada
+   * uno cuya respuesta este por debajo del nivel objetivo, arma una sugerencia con accion,
+   * prioridad (segun el tamano de la brecha) y fecha limite sugerida. No persiste nada — el
+   * frontend muestra las sugerencias para que el usuario las revise/edite y recien ahi las cree via
+   * POST /api/improvement. Los controles que ya tienen un plan de mejora asociado se excluyen para
+   * no repetir sugerencias en llamadas sucesivas.
    *
    * <p>Precondicion (RF-PLN-01): la madurez de la evaluacion tiene que estar calculada
    * (globalMaturity != null; «Calculada» no existe como estado) y la evaluacion no puede estar en

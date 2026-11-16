@@ -9,9 +9,9 @@ Generado por `scripts/bugasura/build_import.py` (`make bugasura-build`).
 
 | Tipo | Cant. | Origen | Estado |
 |---|---|---|---|
-| **Epic** | 15 | las 15 áreas de `docs/HistoriasDeUsuario.md` | `Completed` |
-| **Story** | 68 | cada `HU-XXX-NN` de `docs/HistoriasDeUsuario.md` (sistema construido) | `Completed` |
-| **Task** | 16 | el refactor pendiente de `docs/PLAN-CAMBIOS-EQUIPO.md` (pkg0–pkg3) + 1 mejora de seguridad | `New` |
+| **Epic** | 15 | las 15 áreas de `docs/proyecto/HistoriasDeUsuario.md` | `Completed` |
+| **Story** | 68 | cada `HU-XXX-NN` de `docs/proyecto/HistoriasDeUsuario.md` (sistema construido) | `Completed` |
+| **Task** | 16 | el refactor pendiente de `docs/proyecto/PLAN-CAMBIOS-EQUIPO.md` (pkg0–pkg3) + 1 mejora de seguridad | `New` |
 | **Bug** | 4 | deuda técnica documentada en `docs/{Testing,API,RUNBOOK,SECURITY}.md` | `New` |
 
 ## Columnas
@@ -41,7 +41,7 @@ Generado por `scripts/bugasura/build_import.py` (`make bugasura-build`).
 make bugasura-build          # python scripts/bugasura/build_import.py
 ```
 
-El script re-parsea `docs/HistoriasDeUsuario.md` (Epics + Stories) y toma las listas
+El script re-parsea `docs/proyecto/HistoriasDeUsuario.md` (Epics + Stories) y toma las listas
 `PENDING` / `BUGS` hardcodeadas en el propio script (editarlas ahí cuando cambie el estado
 del refactor o aparezca/se cierre deuda técnica). Valida los conteos (15 / 68) y que ninguna
 celda tenga saltos de línea antes de escribir.

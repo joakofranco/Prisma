@@ -99,15 +99,12 @@ RustFS sirve HTTPS (API en el 9000 y consola en el 9001) con `RUSTFS_TLS_PATH`; 
 backend-core (`S3_ENDPOINT=https://rustfs:9000`, truststore de la JVM), backend-ai (descarga
 evidencias con URLs firmadas contra ese endpoint; `SSL_CERT_FILE`) y backup-runner (`AWS_CA_BUNDLE`).
 
-**`S3_PUBLIC_ENDPOINT`:** es el host con el que backend-core firma las URLs de descarga que abre el
-navegador (`window.open`, directo contra RustFS). En producción vale por defecto
-`https://prisma.local:${S3_PORT_API:-9001}` y se puede cambiar con la variable de entorno
-`S3_PUBLIC_ENDPOINT`. El certificado de RustFS lo firma la CA interna, así que el navegador muestra la
-advertencia de certificado autofirmado: se acepta una vez por navegador, igual que con nginx y Kibana,
-y la descarga sigue. Los certificados incluyen como SAN `prisma.local`, `localhost` y `127.0.0.1`; para
-otro host se agrega al generarlos, por ejemplo
-`CERT_EXTRA_SAN=DNS:s3.midominio.com scripts/generate-internal-ca.sh --only rustfs`, y se usa ese host en
-`S3_PUBLIC_ENDPOINT`.
+**El navegador no accede a RustFS:** las evidencias se suben y se descargan a través de backend-core,
+por el mismo origen de la aplicación. La variable `S3_PUBLIC_ENDPOINT` sigue existiendo en la
+configuración, pero hoy ningún flujo entrega al navegador una URL firmada con ese host. Los
+certificados incluyen como SAN `prisma.local`, `localhost` y `127.0.0.1`; para sumar otro host se usa
+`CERT_EXTRA_SAN` al generarlos, por ejemplo
+`CERT_EXTRA_SAN=DNS:otro-host scripts/generate-internal-ca.sh --only rustfs`.
 
 ### Elasticsearch con TLS (PRI-369, solo producción)
 
@@ -293,7 +290,7 @@ funciona igual de principio a fin (login incluido) siempre que su `iss` correspo
 |---|---|---|
 | `KEYCLOAK_ISSUER_URL` | backend-core — sólo habilita el `JwtDecoder` de Keycloak (`SecurityConfig.MissingIssuerCondition`); su valor concreto ya no valida nada por sí solo | `https://prisma.local/auth` |
 | `KEYCLOAK_TRUSTED_ISSUERS` | backend-core (`prisma.keycloak.trusted-issuers`) — lista de `iss` válidos para un token, uno por cada host+protocolo desde el que se permite loguearse | `https://prisma.local/auth/realms/prisma,http://prisma.local/auth/realms/prisma,https://localhost/auth/realms/prisma,http://localhost/auth/realms/prisma` |
-| `KEYCLOAK_AUTH_SERVER_URL` | backend-core, para resolver las JWKS y la Admin REST API — dirección **interna** de Docker, no cruza el navegador (con el prefijo `/auth` agregado en `application.yml`, ya que Keycloak corre con `KC_HTTP_RELATIVE_PATH=/auth`) | `http://keycloak:8080` |
+| `KEYCLOAK_AUTH_SERVER_URL` | backend-core, para resolver las JWKS y la Admin REST API — dirección **interna** de Docker, no cruza el navegador (con el prefijo `/auth` agregado en `application.yml`, ya que Keycloak corre con `KC_HTTP_RELATIVE_PATH=/auth`) | `https://keycloak:8443` |
 | `VITE_API_BASE_URL` / `VITE_KEYCLOAK_URL` | Frontend (build-time) — rutas relativas, mismo origen que sirvió la SPA | `/api` / `/auth` |
 | `CORS_ALLOWED_ORIGINS` | backend-core — ya no lo necesita la SPA (mismo origen), pero sigue permitiendo llamadas directas desde herramientas de prueba (Swagger UI en `:8081`, Postman, etc.) | incluye `https://prisma.local` y `https://localhost` |
 
@@ -301,5 +298,5 @@ funciona igual de principio a fin (login incluido) siempre que su `iss` correspo
 
 - Certificado y config de nginx: `infra/nginx/certs/`, `infra/nginx/conf.d/prisma.conf`
 - Script de generación: `scripts/generate-nginx-cert.sh`
-- Modelo de amenazas / postura de seguridad general: [`SECURITY.md`](SECURITY.md)
-- Setup completo por sistema operativo: [`Dev-Config.md`](Dev-Config.md)
+- Modelo de amenazas / postura de seguridad general: [`SECURITY.md`](../SECURITY.md)
+- Setup completo por sistema operativo: [`Dev-Config.md`](../desarrollo/Dev-Config.md)

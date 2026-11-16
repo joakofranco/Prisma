@@ -4,9 +4,9 @@ Genera docs/mcu-5.0/bugasura-import.csv: el backlog completo de PRISMA en el for
 importación de Bugasura (mismas columnas que docs/mcu-5.0/PlanillaBugasura.csv).
 
 Fuentes:
-  - docs/HistoriasDeUsuario.md  -> 15 áreas (Epic, Completed) + 68 historias (Story, Completed)
+  - docs/proyecto/HistoriasDeUsuario.md  -> 15 áreas (Epic, Completed) + 68 historias (Story, Completed)
   - listas PENDING / BUGS de abajo -> el refactor MCU/JDK y la deuda técnica documentada
-    (docs/PLAN-CAMBIOS-EQUIPO.md, docs/{SECURITY,Testing,API,RUNBOOK}.md) como Task / Bug (New)
+    (docs/proyecto/PLAN-CAMBIOS-EQUIPO.md, docs/{SECURITY,Testing,API,RUNBOOK}.md) como Task / Bug (New)
 
 Columnas: Title,Details,Overview,Priority,Type,Status,Assignees,Tags,Estimation
   - Assignees y Estimation quedan vacías (las completa el equipo en Bugasura).
@@ -22,7 +22,7 @@ from pathlib import Path
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 REPO = Path(__file__).resolve().parents[2]
-HU_MD = REPO / "docs" / "HistoriasDeUsuario.md"
+HU_MD = REPO / "docs" / "proyecto" / "HistoriasDeUsuario.md"
 OUT = REPO / "docs" / "mcu-5.0" / "bugasura-import.csv"
 HEADER = ["Title", "Details", "Overview", "Priority", "Type", "Status", "Assignees", "Tags", "Estimation"]
 
@@ -124,7 +124,7 @@ PENDING = [
      "Como equipo, quiero que la suite de integración siga verde después de alinear el seed, para poder mergear con confianza.",
      "P3", "Testing"),
     ("pkg3 — Actualizar la documentación con el modelo nuevo",
-     "docs/PLAN-CAMBIOS-EQUIPO.md (sin 'MCU 5.2', redivisión pkg0-3), docs/HistoriasDeUsuario.md y docs/diagramas/casos-de-uso.md: el promedio global ahora es sobre las 103 subcategorías (0 en las no cubiertas) y la madurez de subcategoría es sobre el marco completo, no sólo el perfil.",
+     "docs/proyecto/PLAN-CAMBIOS-EQUIPO.md (sin 'MCU 5.2', redivisión pkg0-3), docs/proyecto/HistoriasDeUsuario.md y docs/arquitectura/diagramas/casos-de-uso.md: el promedio global ahora es sobre las 103 subcategorías (0 en las no cubiertas) y la madurez de subcategoría es sobre el marco completo, no sólo el perfil.",
      "Como integrante del equipo, quiero que la documentación refleje el modelo de cálculo vigente, para no implementar contra una descripción vieja.",
      "P3", "Documentación"),
     ("Mejora — Hacer MFA/TOTP obligatorio para PRISMA_ADMIN",
@@ -139,15 +139,15 @@ BUGS = [
      "Como equipo, quiero que `npm run lint` pase en limpio, para que el gate de CI y el pre-commit sean confiables.",
      "P2", "Frontend"),
     ("Accesibilidad WCAG 2.1 AA incompleta",
-     "Los tests de accesibilidad (Playwright + axe) no pasan del todo: falta aria-label en el botón de colapsar el sidebar y hay contraste insuficiente en algunos textos (ver docs/Testing.md).",
+     "Los tests de accesibilidad (Playwright + axe) no pasan del todo: falta aria-label en el botón de colapsar el sidebar y hay contraste insuficiente en algunos textos (ver docs/desarrollo/Testing.md).",
      "Como usuario con lector de pantalla o baja visión, quiero que la interfaz cumpla WCAG 2.1 AA, para poder operar PRISMA sin barreras.",
      "P3", "UX"),
     ("@PreAuthorize + @Valid: devuelve 400 (validación) en vez de 403 (permiso)",
-     "En un endpoint con @PreAuthorize + @Valid (p.ej. POST /api/catalog/import), Spring resuelve la validación del body antes de evaluar el rol: un request sin permiso con body inválido recibe 400 con el detalle de validación en vez del 403 esperado. No es un bypass (con body válido el mismo rol sin permiso sí recibe 403) pero filtra el shape del DTO. Ver docs/API.md.",
+     "En un endpoint con @PreAuthorize + @Valid (p.ej. POST /api/catalog/import), Spring resuelve la validación del body antes de evaluar el rol: un request sin permiso con body inválido recibe 400 con el detalle de validación en vez del 403 esperado. No es un bypass (con body válido el mismo rol sin permiso sí recibe 403) pero filtra el shape del DTO. Ver docs/arquitectura/API.md.",
      "Como sistema, no quiero revelar la forma del body a quien no tiene permiso para llamar el endpoint, para no dar información útil a un atacante.",
      "P4", "Backend"),
     ("Bitácora: el actor queda en blanco al auto-eliminarse un usuario",
-     "AuditLogService resuelve 'quién' hizo la acción después de la operación, dentro de la misma transacción; si la operación fue que un usuario se borró a sí mismo, para cuando se resuelve el actor la fila ya no existe y queda en blanco. Ver docs/RUNBOOK.md y HU-OBS-01.",
+     "AuditLogService resuelve 'quién' hizo la acción después de la operación, dentro de la misma transacción; si la operación fue que un usuario se borró a sí mismo, para cuando se resuelve el actor la fila ya no existe y queda en blanco. Ver docs/operacion/RUNBOOK.md y HU-OBS-01.",
      "Como PRISMA_ADMIN investigando un incidente, quiero que toda entrada de la bitácora tenga el actor, incluso cuando la acción fue una auto-eliminación.",
      "P4", "Observabilidad"),
 ]

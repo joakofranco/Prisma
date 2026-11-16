@@ -10,14 +10,15 @@
 | **Administrador PRISMA** | `PRISMA_ADMIN` | Rol global (no atado a una organización). Administra el catálogo, organizaciones, usuarios y perfiles comunitarios; puede todo lo que puede cualquier otro rol. |
 | **Responsable de Organización** | `ORG_RESPONSIBLE` | Dueño de la evaluación dentro de su organización (tenant): la crea, carga evidencia, arma el plan de mejora. |
 | **Evaluador Interno** | `INTERNAL_EVALUATOR` | Responde el checklist de controles y calcula la madurez; puede cargar y reindexar evidencia. |
-| **Auditor** | `AUDITOR` | **No es un rol global** (`CurrentUserService.isGlobalRole()` sólo devuelve `true` para `PRISMA_ADMIN`) — está acotado explícitamente a las organizaciones que un `PRISMA_ADMIN` le asignó (`auditedOrganizationIds`), no ve ni audita el resto. Revisa evaluaciones en estado `IN_AUDIT`, registra observaciones/no conformidades. |
+| **Auditor** | `AUDITOR` | **No es un rol global** (`CurrentUserService.isGlobalRole()` sólo devuelve `true` para `PRISMA_ADMIN`) — está acotado explícitamente a las organizaciones que un `PRISMA_ADMIN` le asignó (`organizationIds`), no ve ni audita el resto. Revisa evaluaciones en estado `IN_AUDIT`, registra observaciones/no conformidades, dictamina cada control y consulta las citas de evidencia de la IA. |
 | **Visualizador** | `VIEWER` | Acceso de solo lectura a los recursos de su organización (todos los `GET` sin `@PreAuthorize` explícito solo requieren estar autenticado). |
 | **Sistema RAG (backend-ai)** | — | Actor no humano: indexa evidencia en ChromaDB y responde consultas sobre el marco MCU 5.0 vía Ollama. Invocado por `backend-core` (`AiEvidenceClient`), no directamente por el usuario. |
 
 Los roles no son excluyentes: un `User` tiene un `Set<UserRole>` (tabla `prisma.user_roles`), puede
 combinar varios. El aislamiento multi-tenant (`CurrentUserService.assertOrganizationAccess`) aplica
 a todos los roles salvo `PRISMA_ADMIN` (único rol verdaderamente global): `AUDITOR` está acotado a
-sus organizaciones auditadas, el resto a su propio `tenant_id`.
+sus organizaciones auditadas y el resto a las organizaciones a las que pertenece (tabla
+`user_organizations`).
 
 ## Diagrama general
 
@@ -66,29 +67,33 @@ graph LR
   Admin --> UC6
   Admin --> UC7
   Admin --> UC8
+  Admin --> UC9
   Admin --> UC10
   Admin --> UC11
   Admin --> UC12
   Admin --> UC13
+  Admin --> UC16
 
   Resp --> UC5
   Resp --> UC6
   Resp --> UC8
-  Resp --> UC9
   Resp --> UC10
   Resp --> UC13
   Resp --> UC14
+  Resp --> UC16
 
   Eval --> UC6
   Eval --> UC7
   Eval --> UC8
-  Eval --> UC9
+  Eval --> UC10
 
+  Audit --> UC9
+  Audit --> UC10
   Audit --> UC11
   Audit --> UC12
+  Audit --> UC16
 
   Viewer --> UC15
-  Viewer --> UC16
 
   UC1 --> UC15
   UC5 --> UC15
@@ -105,24 +110,26 @@ graph LR
 
 ### UC1 — Administrar organizaciones
 - **Actor:** `PRISMA_ADMIN`.
-- **Endpoints:** `GET/POST/PUT/DELETE /api/organizations` (`OrganizationController`).
+- **Endpoints:** `GET/POST/PUT/DELETE /api/organizations` y `PUT /api/organizations/{id}/enable` para
+  reactivar una dada de baja (`OrganizationController`).
 - **Flujo principal:** alta con nombre/identificador/sector/tamaño → queda `enabled=true`.
-- **Baja lógica:** `DELETE` no borra la fila (violaría las FK de `users.tenant_id` y
-  `evaluations.organization_id`, que no tienen `ON DELETE CASCADE`); marca `enabled=false` y
+- **Baja lógica:** `DELETE` no borra la fila (violaría la FK de
+  `evaluations.organization_id`, que no tiene `ON DELETE CASCADE`); marca `enabled=false` y
   preserva todo el histórico (evaluaciones, evidencia, plan de mejora, auditoría) — ver
   `OrganizationService.delete()`.
 
 ### UC2 — Administrar usuarios
 - **Actores:** `PRISMA_ADMIN` (sin restricción, cualquier organización o ninguna); `ORG_RESPONSIBLE`
   como "administrador" de SU PROPIA organización.
-- **Endpoints:** `GET/POST/PUT/DELETE /api/users` (`UserController`).
+- **Endpoints:** `GET/POST/PUT/DELETE /api/users`, alta por invitación (`POST /api/users/invitations`)
+  y desbloqueo de cuenta (`POST /api/users/{id}/unlock`, solo `PRISMA_ADMIN`) (`UserController`).
 - **Flujo principal:** alta local (`prisma.users`) + provisioning automático en Keycloak
   (`KeycloakAdminClient.createUser`) para que el usuario pueda loguearse — ver `UserService.create()`.
 - **Acotamiento para `ORG_RESPONSIBLE`** (`UserService.create/update/delete`, no solo a nivel de UI):
-  el `tenantId` que venga en el DTO se ignora y se fuerza siempre el propio (no puede crear/mover
-  usuarios a otra organización); no puede otorgarle a nadie el rol global `PRISMA_ADMIN`; si asigna
-  `AUDITOR`, las `auditedOrganizationIds` deben ser exclusivamente la propia organización. Ver
-  "Endurecimientos recientes" en [`SECURITY.md`](../SECURITY.md).
+  solo puede asignar su propia organización (`organizationIds`; pedir otra responde 403, no puede
+  crear ni mover usuarios a otra organización) y no puede otorgarle a nadie el rol global
+  `PRISMA_ADMIN`. Ver
+  "Endurecimientos recientes" en [`SECURITY.md`](../../SECURITY.md).
 
 ### UC3 — Administrar perfiles comunitarios
 - **Actor:** `PRISMA_ADMIN` (alta/baja/edición); cualquier usuario autenticado puede listarlos.
@@ -133,7 +140,7 @@ graph LR
 ### UC4 — Administrar catálogo MCU
 - **Actor:** `PRISMA_ADMIN`.
 - **Endpoints:** `GET /api/catalog/versions`, `GET /api/catalog/{version}` (lectura, cualquier
-  autenticado); administración vía `CatalogAdminService`/`CatalogAdminController`.
+  autenticado); alta de versiones con `POST /api/catalog/import` (`CatalogService`/`CatalogController`).
 - **Descripción:** estructura jerárquica Función → Categoría → Subcategoría → Requisito → Control,
   versionada (`catalog_versions`).
 
@@ -163,7 +170,7 @@ graph LR
   (`POST /api/v1/evidence/ingest`) para poder consultarla luego por RAG.
 
 ### UC9 — Consultar evidencia por RAG
-- **Actores:** `PRISMA_ADMIN`, `INTERNAL_EVALUATOR`, `ORG_RESPONSIBLE`.
+- **Actores:** `PRISMA_ADMIN`, `AUDITOR` (solo con la evaluación en `IN_AUDIT`).
 - **Endpoint:** `GET /api/evidence/evaluation/{evaluationId}/control/{controlId}/citations` →
   `backend-ai` `POST /api/v1/evidence/citations`.
 - **Descripción:** recupera los fragmentos de evidencia más relevantes para un control puntual,
@@ -175,13 +182,17 @@ graph LR
   transición puntual en [`API.md`](../API.md#ciclo-de-vida--transiciones-válidas).
 - **Endpoint:** `PATCH /api/evaluations/{id}/status`.
 - **Máquina de estados:** `DRAFT/RETURNED → IN_PROGRESS → READY_FOR_AUDIT → IN_AUDIT → APPROVED |
-  RETURNED`, `APPROVED → ARCHIVED` (`Evaluation.Status` + `EvaluationService.ALLOWED_TRANSITIONS`).
+  RETURNED`; se puede archivar (`ARCHIVED`) desde `DRAFT`, `IN_PROGRESS`, `RETURNED` o `APPROVED`
+  (`Evaluation.Status` + `EvaluationService.ALLOWED_TRANSITIONS`).
   El backend valida tanto la transición (rechaza saltos/retrocesos no listados) como el rol
   específico que puede dispararla — no sólo que el rol pueda llamar al endpoint.
 
 ### UC11 — Revisar evaluación en auditoría
 - **Actores:** `PRISMA_ADMIN`, `AUDITOR`.
-- **Endpoint:** `GET /api/audit/observations/{evaluationId}`.
+- **Endpoints:** `GET /api/audit/observations/{evaluationId}` y el dictamen por control
+  (`GET /api/audit/verdicts/{evaluationId}`, `PUT /api/audit/verdicts/{evaluationId}/controls/{controlId}`).
+  La organización ve las observaciones recién cuando la evaluación vuelve (`RETURNED`, `APPROVED` o
+  `ARCHIVED`).
 
 ### UC12 — Registrar observación / no conformidad
 - **Actores:** `PRISMA_ADMIN`, `AUDITOR`.
@@ -208,9 +219,13 @@ graph LR
   promedio, mejoras pendientes, distribución por estado y por función.
 
 ### UC16 — Exportar reporte PDF / Excel
-- **Actor:** cualquier usuario autenticado con acceso a la evaluación.
-- **Endpoints:** `GET /api/reports/{id}/pdf`, `GET /api/reports/{id}/excel`.
-- **Descripción:** `ReportService` genera el informe de madurez con OpenPDF / Apache POI.
+- **Actores:** `PRISMA_ADMIN` y `ORG_RESPONSIBLE` (reporte final, ejecutivo y técnico, con la
+  evaluación aprobada); `PRISMA_ADMIN` y `AUDITOR` (informe preliminar, con la evaluación en
+  `IN_AUDIT`); los tres para la exportación del plan de mejora.
+- **Endpoints:** `GET /api/reports/{id}/pdf`, `/excel`, `/executive/pdf`, `/technical/pdf`,
+  `/preliminary/pdf`, `/preliminary/excel`, `/improvement-plan/pdf` e `/improvement-plan/excel`.
+- **Descripción:** `ReportService` y `TechnicalReportService` generan los informes con OpenPDF /
+  Apache POI (los PDF cumplen PDF/A-1b).
 
 ## Relación con otros documentos
 

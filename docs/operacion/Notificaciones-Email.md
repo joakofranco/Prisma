@@ -1,13 +1,14 @@
 # 📧 Notificaciones por email (SMTP) — PRISMA
 
-> Cómo PRISMA envía el email de "¿Olvidaste tu contraseña?" (y demás notificaciones de cuenta),
-> cómo configurarlo desde la aplicación, y por qué no existe un `EmailService` propio en
-> backend-core.
+> Cómo PRISMA envía el email de "¿Olvidaste tu contraseña?" (y demás notificaciones de cuenta,
+> como las invitaciones), cómo configurarlo desde la aplicación, y por qué no existe un
+> `EmailService` propio en backend-core. El correo de las **alertas del sistema** es otra
+> configuración (Alertmanager): ver [`RUNBOOK.md`](RUNBOOK.md#configuración-de-alertas-desde-la-plataforma).
 
 ## 1. Por qué delega en Keycloak en vez de tener su propio envío de emails
 
 PRISMA usa Keycloak como **única fuente de verdad para autenticación** (ver
-[`Certificados-TLS.md`](Certificados-TLS.md) y [`SECURITY.md`](SECURITY.md)) — el login, el
+[`Certificados-TLS.md`](Certificados-TLS.md) y [`SECURITY.md`](../SECURITY.md)) — el login, el
 cambio de contraseña y la recuperación de cuenta ya viven ahí, no en backend-core. Keycloak trae
 de fábrica el flujo completo de "¿Olvidaste tu contraseña?" (el realm de PRISMA ya lo tiene
 habilitado vía `resetPasswordAllowed: true` en `infra/keycloak/realm-prisma.json`); lo único que
@@ -33,13 +34,19 @@ Usuario final ──"¿Olvidaste tu contraseña?"──────────�
 ## 2. Configurar el correo
 
 1. Iniciar sesión con un usuario `PRISMA_ADMIN`.
-2. Ir a **Configuración** en el menú lateral (`/settings`).
+2. Ir a **Configuración** en el menú lateral (`/settings`), pestaña **Correo electrónico**.
 3. Completar el servidor SMTP, puerto, email remitente y, si el servidor lo requiere,
    autenticación (usuario/contraseña) y STARTTLS/SSL.
 4. Guardar.
+5. Probar con **Enviar correo de prueba**: se indica un email de destino y Keycloak envía un correo
+   con la configuración ya guardada (`POST /api/admin/email-settings/test`).
 
-Para probarlo sin usar un usuario real: cerrar sesión y hacer clic en "¿Olvidaste tu contraseña?"
-en la pantalla de login con el email de cualquier usuario existente — si el SMTP está bien
+También se puede cargar por `.env` (`SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM`, `SMTP_USER`,
+`SMTP_PASSWORD`, `SMTP_STARTTLS`, `SMTP_SSL`) y aplicarla con `make auth-policy`; el ejemplo con
+Gmail está en [`Gmail-SMTP.md`](Gmail-SMTP.md).
+
+Otra forma de comprobarlo de punta a punta: cerrar sesión y hacer clic en "¿Olvidaste tu
+contraseña?" en la pantalla de login con el email de un usuario existente — si el SMTP está bien
 configurado, el correo con el link de reseteo llega a esa bandeja.
 
 ### Un detalle importante: la contraseña SMTP siempre hay que reingresarla
@@ -75,19 +82,15 @@ alcanza con dejar "Requiere autenticación" sin marcar.
 
 ## 4. Qué NO hace esta pantalla
 
-- No envía un "email de prueba" con un botón dedicado: el endpoint de Keycloak para eso
-  (`POST /admin/realms/{realm}/testSMTPConnection`) sólo funciona en el contexto de un admin
-  humano logueado interactivamente en la consola de Keycloak (necesita poder resolver el email del
-  admin actual) — no funciona llamado por un client de servicio como `prisma-backend`, que es
-  como backend-core habla con Keycloak. La forma de probar la configuración es la del punto 2:
-  pedir "¿Olvidaste tu contraseña?" con un usuario real.
-- No guarda ni ve la contraseña SMTP en ningún lado del lado de PRISMA (ni en Postgres ni en
-  ninguna otra parte) — vive únicamente en la base de datos de Keycloak.
+- No configura el correo de las alertas del sistema: eso se hace en la pestaña **Alertas del
+  sistema** y lo usa Alertmanager, no Keycloak.
+- No guarda ni ve la contraseña SMTP del lado de PRISMA (ni en Postgres ni en backend-core): vive
+  en la base de datos de Keycloak (y en el `.env` del servidor, si se cargó por ese camino).
 
 ## Referencias
 
 - Backend: `EmailSettingsController`, `EmailSettingsService`,
-  `KeycloakAdminClient.getSmtpConfig`/`updateSmtpConfig`.
+  `KeycloakAdminClient.getSmtpConfig`/`updateSmtpConfig`/`testSmtpConnection`.
 - Frontend: `SettingsView.vue` (`/settings`, sólo `PRISMA_ADMIN`).
 - Arquitectura de autenticación: [`Certificados-TLS.md`](Certificados-TLS.md).
-- Modelo de seguridad general: [`SECURITY.md`](SECURITY.md).
+- Modelo de seguridad general: [`SECURITY.md`](../SECURITY.md).
