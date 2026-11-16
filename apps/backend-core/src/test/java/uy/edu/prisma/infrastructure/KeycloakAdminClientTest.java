@@ -199,6 +199,67 @@ class KeycloakAdminClientTest {
     server.verify();
   }
 
+  // ---- PRI-379: el enlace del correo tiene que salir con el host PÚBLICO, no con keycloak:8443
+  // ----
+
+  private void sendInvitationTo(String publicUrl, java.util.function.Consumer<String> check) {
+    UUID keycloakId = UUID.randomUUID();
+    expectAdminToken();
+    server
+        .expect(
+            requestTo(
+                org.hamcrest.Matchers.startsWith(
+                    BASE_URL
+                        + "/admin/realms/prisma/users/"
+                        + keycloakId
+                        + "/execute-actions-email")))
+        .andExpect(request -> check.accept(request.getHeaders().getFirst("X-Forwarded-Host")))
+        .andExpect(
+            request -> {
+              String proto = request.getHeaders().getFirst("X-Forwarded-Proto");
+              assertEquals(publicUrl.substring(0, publicUrl.indexOf("://")), proto);
+            })
+        .andRespond(withNoContent());
+
+    client.sendExecuteActionsEmail(
+        keycloakId, List.of("VERIFY_EMAIL"), 259200, "prisma-frontend", publicUrl);
+
+    server.verify();
+  }
+
+  @Test
+  void invitationLinkUsesThePublicHostWithoutTheDefaultPort() {
+    sendInvitationTo(
+        "https://prisma.home-uy.site", host -> assertEquals("prisma.home-uy.site", host));
+  }
+
+  @Test
+  void invitationLinkKeepsANonStandardPublicPort() {
+    sendInvitationTo("http://localhost:8080", host -> assertEquals("localhost:8080", host));
+  }
+
+  @Test
+  void invitationWithAnInvalidPublicUrlSendsNoForwardedHeaders() {
+    UUID keycloakId = UUID.randomUUID();
+    expectAdminToken();
+    server
+        .expect(
+            requestTo(
+                org.hamcrest.Matchers.startsWith(
+                    BASE_URL
+                        + "/admin/realms/prisma/users/"
+                        + keycloakId
+                        + "/execute-actions-email")))
+        .andExpect(request -> assertNull(request.getHeaders().getFirst("X-Forwarded-Host")))
+        .andExpect(request -> assertNull(request.getHeaders().getFirst("X-Forwarded-Proto")))
+        .andRespond(withNoContent());
+
+    client.sendExecuteActionsEmail(
+        keycloakId, List.of("VERIFY_EMAIL"), 259200, "prisma-frontend", "no es una url");
+
+    server.verify();
+  }
+
   @Test
   void sendExecuteActionsEmailFailureIsReportedAsEmailDelivery() {
     UUID keycloakId = UUID.randomUUID();

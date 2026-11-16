@@ -97,6 +97,7 @@ public class KeycloakAdminClient {
               clientId,
               redirectUri)
           .header("Authorization", "Bearer " + adminToken())
+          .headers(headers -> addPublicHostHeaders(headers, redirectUri))
           .contentType(MediaType.APPLICATION_JSON)
           .body(actions)
           .retrieve()
@@ -105,6 +106,34 @@ public class KeycloakAdminClient {
       log.warn(
           "Keycloak no pudo enviar el correo de acciones a {}: {}", keycloakId, e.getMessage());
       throw new EmailDeliveryException(e);
+    }
+  }
+
+  /**
+   * PRI-379: Keycloak corre con hostname dinámico (arma cada URL con el host de la llamada que
+   * recibe, ver docker-compose.yml) y backend-core lo llama por la red interna, así que sin esto el
+   * enlace del correo salía con {@code https://keycloak:8443/...}, que ningún destinatario puede
+   * abrir. Se le indica el host público con los mismos {@code X-Forwarded-*} que le manda nginx
+   * (KC_PROXY_HEADERS=xforwarded), tomado de la URL pública de la app ({@code PRISMA_APP_URL}): es
+   * configuración, no input del usuario, así que no hay forma de inyectar otro host en el correo.
+   * Si la URL no es válida no se agrega nada y queda el comportamiento anterior.
+   */
+  private static void addPublicHostHeaders(
+      org.springframework.http.HttpHeaders headers, String publicUrl) {
+    try {
+      java.net.URI uri = java.net.URI.create(publicUrl);
+      if (uri.getScheme() == null || uri.getHost() == null) {
+        return;
+      }
+      boolean defaultPort =
+          uri.getPort() == -1
+              || ("https".equals(uri.getScheme()) && uri.getPort() == 443)
+              || ("http".equals(uri.getScheme()) && uri.getPort() == 80);
+      String host = defaultPort ? uri.getHost() : uri.getHost() + ":" + uri.getPort();
+      headers.set("X-Forwarded-Proto", uri.getScheme());
+      headers.set("X-Forwarded-Host", host);
+    } catch (IllegalArgumentException e) {
+      log.warn("PRISMA_APP_URL no es una URL válida; el correo saldrá con el host interno");
     }
   }
 

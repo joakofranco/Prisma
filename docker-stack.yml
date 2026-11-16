@@ -132,6 +132,8 @@ services:
       SERVER_SSL_CERTIFICATE: /etc/prisma/tls/backend-core.crt
       SERVER_SSL_CERTIFICATE_PRIVATE_KEY: /etc/prisma/tls/backend-core.key
       KEYCLOAK_AUTH_SERVER_URL: https://keycloak:8443
+      # URL pública de la app para las invitaciones por correo (PRI-379), ver .env.example.
+      PRISMA_APP_URL: ${PRISMA_APP_URL:-https://prisma.local}
       KEYCLOAK_ISSUER_URL: ${KEYCLOAK_ISSUER_URL:-https://prisma.local/auth}
       KEYCLOAK_TRUSTED_ISSUERS: ${KEYCLOAK_TRUSTED_ISSUERS:-https://prisma.local/auth/realms/prisma,https://localhost/auth/realms/prisma}
       KEYCLOAK_REALM: prisma
