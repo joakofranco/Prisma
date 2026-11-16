@@ -24,250 +24,312 @@ endif
 endif
 
 # Colores
-CYAN := \033[36m
-GREEN := \033[32m
-YELLOW := \033[33m
-RESET := \033[0m
+ESC := $(shell printf '\033')
+CYAN := $(ESC)[36m
+GREEN := $(ESC)[32m
+YELLOW := $(ESC)[33m
+RESET := $(ESC)[0m
 
 # Detección del comando docker compose
 DC := docker compose
 
 .DEFAULT_GOAL := help
-.PHONY: help up down restart logs ps build rebuild pull clean nuke \
-        test test-frontend test-core test-ai lint format \
-        migrate backup restore health pull-llm shell-core shell-ai \
-        sonar security-scan sync-knowledge-base \
-        certs certs-force internal-ca restart-nginx \
+.PHONY: help up up-app up-core down restart logs logs-core logs-ai logs-front logs-elastic \
+        ps build rebuild pull health clean nuke \
         mvp-up mvp-down mvp-logs mvp-ps \
-        mcu50-build mcu50-validate bugasura-build \
-        mfa-enable mfa-status mfa-disable mfa-reset-requires-otp auth-policy auth-policy-status \n        swarm-deploy swarm-ps swarm-down
+        test test-frontend test-core test-ai test-e2e lint format \
+        migrate backup restore pull-llm sonar security-scan sync-knowledge-base \
+        mfa-enable mfa-status mfa-disable mfa-reset-requires-otp auth-policy auth-policy-status \
+        certs certs-force internal-ca restart-nginx \
+        shell-core shell-ai shell-db shell-front \
+        prod-secrets prod-up swarm-deploy swarm-ps swarm-down \
+        perf-build perf-setup perf perf-all perf-clean \
+        mcu50-build mcu50-validate bugasura-build
 
 # Archivos de compose para el stack MVP (mínimo, sin LLM ni servicios extra)
 MVP := -f docker-compose.yml -f docker-compose.mvp.yml
 
 # ---------------------------------------------------------------------
-help: ## Mostrar esta ayuda
+#! Los puertos, usuarios y contraseñas de los servicios se toman de .env (ver .env.example).
+help: ## Mostrar esta ayuda: cada comando con lo que hace y, debajo, sus parámetros opcionales
 	@echo ""
-	@echo "$(CYAN)╔═══════════════════════════════════════════════════════════╗$(RESET)"
-	@echo "$(CYAN)║           PRISMA — Comandos disponibles                    ║$(RESET)"
-	@echo "$(CYAN)╚═══════════════════════════════════════════════════════════╝$(RESET)"
-	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  $(GREEN)%-20s$(RESET) %s\n", $$1, $$2}' $(MAKEFILE_LIST)
-	@echo ""
+	@echo "$(CYAN)PRISMA - Comandos disponibles$(RESET)"
+	@echo "Uso: make <comando> [PARAMETRO=valor ...]"
+	@awk 'BEGIN {FS = ":.*## "} /^# ---------- .* ----------$$/ {t = $$0; gsub(/^# -+ | -+$$/, "", t); printf "\n$(CYAN)%s$(RESET)\n", t; next} /^[a-zA-Z0-9_-]+:.*## / {printf "  $(GREEN)%-24s$(RESET) %s\n", $$1, $$2; next} /^#> / {sub(/^#> /, ""); printf "  %-24s   $(YELLOW)%s$(RESET)\n", "", $$0; next} /^#! / {pie = substr($$0, 4)} END {printf "\n%s\n\n", pie}' $(MAKEFILE_LIST)
 
 # ---------- CICLO DE VIDA DE LA STACK ----------
-up: ## Levantar toda la stack (perfil full)
-	@echo "$(CYAN)🚀 Levantando toda la stack...$(RESET)"
+up: ## Levantar toda la stack (perfil full): aplicación, Keycloak, almacenamiento, monitoreo y alertas, Elasticsearch, SonarQube y gestión. Construye las imágenes locales
+	@echo "$(CYAN)Levantando toda la stack...$(RESET)"
+	@mkdir -p .secrets && { [ -s .secrets/portainer_admin_password ] || printf '%s' 'Admin1234!!!' > .secrets/portainer_admin_password; }
 	$(DC) --profile full up -d --build --remove-orphans
 
-up-app: ## Levantar sólo la aplicación (rápido: front, back, DB, redis, ollama)
+up-app: ## Levantar solo la aplicación (perfil app): frontend, backend-core, backend-ai, PostgreSQL, Redis, Ollama y ClamAV
 	$(DC) --profile app up -d --build
 
-up-core: ## Sólo aplicación + IAM + almacenamiento
+up-core: ## Levantar la aplicación con Keycloak, RustFS, nginx y fail2ban (perfiles app y security), sin monitoreo ni SonarQube
 	$(DC) --profile app --profile security up -d --build
 
-# ---------- STACK MÍNIMO (MVP) ----------
-mvp-up: ## MVP: sólo front, back, keycloak, postgres (+redis, nginx) — SIN LLM ni extras
-	@echo "$(CYAN)🚀 Levantando stack MVP (sin Ollama/LLM, sin observabilidad)...$(RESET)"
-	$(DC) $(MVP) --profile mvp up -d --build --remove-orphans
-
-mvp-down: ## MVP: detener el stack mínimo (preserva volúmenes)
-	$(DC) $(MVP) --profile mvp down --remove-orphans
-
-mvp-logs: ## MVP: seguir logs del stack mínimo
-	$(DC) $(MVP) --profile mvp logs -f --tail=100
-
-mvp-ps: ## MVP: listar contenedores del stack mínimo
-	$(DC) $(MVP) --profile mvp ps
-
-# ---------- MCU 5.0 alineado a las planillas Agesic 2025 ----------
-mcu50-build: ## Regenerar V19__mcu50_align_agesic_2025.sql + expected_basico.json desde docs/mcu-5.0/Planilla MCU 5.0 *.xlsx
-	python scripts/mcu50/build.py
-	cp scripts/mcu50/expected_basico.json apps/backend-core/src/test/resources/mcu50/expected_basico.json
-
-mcu50-validate: ## Cotejar el cálculo de madurez de PRISMA contra la planilla oficial de Agesic (seed 5.0)
-	cd apps/backend-core && mvn -q test -Dtest=MaturityValidationIT
-
-bugasura-build: ## Regenerar docs/mcu-5.0/bugasura-import.csv (backlog completo) desde docs/HistoriasDeUsuario.md
-	python scripts/bugasura/build_import.py
-
-down: ## Detener toda la stack (preserva volúmenes)
-	@echo "$(YELLOW)⏹  Deteniendo stack...$(RESET)"
+down: ## Detener y quitar los contenedores de toda la stack. Conserva los volúmenes (datos)
+	@echo "$(YELLOW)Deteniendo la stack...$(RESET)"
 	$(DC) --profile full down --remove-orphans
 
-restart: ## Reiniciar toda la stack
+restart: ## Reiniciar toda la stack: equivale a make down y luego make up
 	$(MAKE) down
 	$(MAKE) up
 
-logs: ## Seguir logs de todos los servicios
+logs: ## Seguir en vivo los logs de todos los servicios (últimas 100 líneas; Ctrl+C para salir)
 	$(DC) --profile full logs -f --tail=100
 
-logs-core: ## Sólo logs del backend-core
+logs-core: ## Seguir en vivo los logs de backend-core
 	$(DC) logs -f backend-core
 
-logs-ai: ## Sólo logs del backend-ai
+logs-ai: ## Seguir en vivo los logs de backend-ai
 	$(DC) logs -f backend-ai
 
-logs-front: ## Sólo logs del frontend
+logs-front: ## Seguir en vivo los logs del frontend
 	$(DC) logs -f frontend
 
-logs-elastic: ## Sólo logs de Elasticsearch/Kibana/Filebeat
+logs-elastic: ## Seguir en vivo los logs de Elasticsearch, Kibana y Filebeat (perfil elastic)
 	$(DC) logs -f elasticsearch kibana filebeat
 
-ps: ## Listar contenedores activos
+ps: ## Listar los contenedores de la stack con su estado y salud
 	$(DC) --profile full ps
 
-build: ## Reconstruir las imágenes locales
+build: ## Construir en paralelo las imágenes locales (frontend, backend-core, backend-ai y auxiliares), usando la caché
 	$(DC) --profile full build --parallel
 
-rebuild: ## Reconstruir SIN caché
+rebuild: ## Construir las imágenes locales desde cero, sin caché (más lento; usar si la caché quedó inconsistente)
 	$(DC) --profile full build --no-cache --parallel
 
-pull: ## Descargar imágenes upstream
+pull: ## Descargar las imágenes de terceros que usa la stack (PostgreSQL, Keycloak, Grafana, etc.)
 	$(DC) --profile full pull
 
-health: ## Chequear salud de los servicios
-	@echo "$(CYAN)🩺 Health check...$(RESET)"
+health: ## Comprobar que backend-core, backend-ai, frontend, Keycloak y RustFS responden (prueba HTTP y, si falla, HTTPS)
+	@echo "$(CYAN)Comprobando la salud de los servicios...$(RESET)"
 	@bash scripts/health-check.sh
 
+# ---------- STACK MÍNIMO (MVP) ----------
+mvp-up: ## MVP: levantar el stack mínimo (frontend, backend-core, backend-ai ocioso, Keycloak, PostgreSQL, Redis y nginx), sin LLM, RustFS ni monitoreo
+	@echo "$(CYAN)Levantando el stack MVP (sin Ollama/LLM, sin observabilidad)...$(RESET)"
+	$(DC) $(MVP) --profile mvp up -d --build --remove-orphans
+
+mvp-down: ## MVP: detener el stack mínimo. Conserva los volúmenes
+	$(DC) $(MVP) --profile mvp down --remove-orphans
+
+mvp-logs: ## MVP: seguir en vivo los logs del stack mínimo
+	$(DC) $(MVP) --profile mvp logs -f --tail=100
+
+mvp-ps: ## MVP: listar los contenedores del stack mínimo
+	$(DC) $(MVP) --profile mvp ps
+
 # ---------- LIMPIEZA ----------
-clean: ## Detener y eliminar contenedores + redes (preserva volúmenes)
+clean: ## Igual que make down: detiene y quita contenedores y redes. Conserva los volúmenes
 	$(DC) --profile full down --remove-orphans
 
-nuke: ## ⚠️  ELIMINA volúmenes y datos persistentes (DESTRUCTIVO)
-	@echo "$(YELLOW)⚠️  Esto destruirá TODOS los datos locales. Ctrl+C para cancelar.$(RESET)"
+nuke: ## DESTRUCTIVO: borra los contenedores y TODOS los volúmenes de PRISMA (bases, evidencias, Keycloak) y además cualquier volumen de Docker sin uso en la máquina. Espera 5 s para poder cancelar con Ctrl+C
+	@echo "$(YELLOW)CUIDADO: se borran TODOS los datos locales. Ctrl+C para cancelar.$(RESET)"
 	@sleep 5
 	$(DC) --profile full down -v --remove-orphans
 	docker volume prune -f
 
 # ---------- TESTS ----------
-test: test-frontend test-core test-ai ## Ejecutar TODAS las suites de tests
+test: test-frontend test-core test-ai ## Ejecutar las tres suites: frontend, backend-core y backend-ai (no incluye E2E)
 
-test-frontend: ## Tests del frontend (Vitest)
-	@echo "$(CYAN)🧪 Tests frontend...$(RESET)"
+test-frontend: ## Tests unitarios del frontend (npm ci + Vitest con cobertura). Necesita Node.js 24
+	@echo "$(CYAN)Tests del frontend...$(RESET)"
 	cd apps/frontend && npm ci && npm run test:unit -- --coverage
 
-test-core: ## Tests del backend-core (JUnit + Testcontainers)
-	@echo "$(CYAN)🧪 Tests backend-core...$(RESET)"
+test-core: ## Tests unitarios y de integración de backend-core (mvn verify, con el gate de cobertura). Necesita JDK 25, Maven y Docker corriendo para Testcontainers
+	@echo "$(CYAN)Tests de backend-core...$(RESET)"
 	cd apps/backend-core && mvn -B verify
 
-test-ai: ## Tests del backend-ai (pytest)
-	@echo "$(CYAN)🧪 Tests backend-ai...$(RESET)"
+test-ai: ## Tests de backend-ai (pytest con cobertura). Necesita el entorno Python con requirements-dev.txt instalado
+	@echo "$(CYAN)Tests de backend-ai...$(RESET)"
 	cd apps/backend-ai && pytest --cov=app --cov-report=term-missing
 
-test-e2e: ## E2E con Playwright (necesita stack levantada)
+test-e2e: ## Pruebas E2E y de accesibilidad con Playwright. Necesita Keycloak y backend-core levantados
+#> E2E_BASE_URL=https://localhost  probar contra un frontend ya levantado (por defecto Playwright arma uno en el puerto 5173)
+#> E2E_ADMIN_EMAIL=... E2E_ADMIN_PASSWORD=...  usuario administrador a usar (por defecto, el usuario inicial)
 	cd apps/frontend && npm run test:e2e
 
+# ---------- PERFORMANCE (JMeter) ----------
+perf-build: ## Construir la imagen Docker con JMeter que usan las pruebas de performance (se hace sola la primera vez)
+	@bash perf/scripts/perf.sh build
+
+perf-setup: ## Crear los datos de prueba PERF- (organización, usuarios y evaluaciones). Idempotente; necesita perf/data/admin.env
+#> PERF_USUARIOS=20  cantidad de usuarios de prueba a crear
+#> BASE_URL=... PERF_PERMITIR_REMOTO=1  crear los datos en otro entorno en lugar del stack local
+	@bash perf/scripts/perf.sh setup
+
+perf: ## Correr un caso de performance y generar su informe (PDF, HTML y resumen) en perf/results. Termina con error si el caso no cumple sus umbrales
+#> CASO=CP-RND-02  caso a correr (obligatorio): uno de los archivos de perf/casos
+#> USERS=50  DURATION=600  RAMP=60  ITERACIONES=10  PAUSA_MS=500  cambian la carga definida en el caso
+#> ENDPOINTS=dashboard,evaluaciones  peticiones a medir    MODO=app|borde  directo a backend-core o por nginx
+#> ESCALONES=10,20,40  usuarios de cada escalón en la prueba de estrés
+#> BASE_URL=https://host PERF_PERMITIR_REMOTO=1  correr contra otro entorno (por defecto, el stack local)
+#> PERF_PERMITIR_DISRUPTIVO=1  necesario para CP-RND-06 (estrés) y CP-OBS-08 (inundación)
+	@bash perf/scripts/perf.sh run $(CASO)
+
+perf-all: ## Correr todos los casos de medición y generar el informe consolidado en PDF. Termina con error si alguno no cumple
+#> INCLUIR_DISRUPTIVOS=1 PERF_PERMITIR_DISRUPTIVO=1  sumar el estrés y la inundación
+#> Acepta además los parámetros de carga y de destino de make perf
+	@bash perf/scripts/perf.sh all
+
+perf-clean: ## Limpiar los datos PERF-: borra lo que se puede y deshabilita los usuarios con historial. Conserva los resultados
+#> BORRAR_RESULTADOS=1  borrar también todo perf/results
+	@bash perf/scripts/perf.sh clean
+
 # ---------- LINT & FORMAT ----------
-lint: ## Correr todos los linters
-	@echo "$(CYAN)🔍 Linting...$(RESET)"
+lint: ## Correr los linters: ESLint en el frontend (con --fix: corrige lo que puede), Spotless y Checkstyle en backend-core, Ruff y Black en backend-ai
+	@echo "$(CYAN)Corriendo los linters...$(RESET)"
 	cd apps/frontend     && npm run lint
 	cd apps/backend-core && mvn -B spotless:check checkstyle:check
 	cd apps/backend-ai   && ruff check app tests && black --check app tests
 
-format: ## Auto-formatear todo el código
-	@echo "$(CYAN)✨ Formateando...$(RESET)"
+format: ## Formatear todo el código: Prettier (frontend), Spotless (backend-core), Ruff y Black (backend-ai). Modifica archivos
+	@echo "$(CYAN)Formateando...$(RESET)"
 	cd apps/frontend     && npm run format
 	cd apps/backend-core && mvn -B spotless:apply
 	cd apps/backend-ai   && ruff check --fix app tests && black app tests
 
 # ---------- BASE DE DATOS ----------
-migrate: ## Ejecutar migraciones Flyway
-	$(DC) exec backend-core mvn flyway:migrate
+migrate: ## Aplicar las migraciones Flyway pendientes reiniciando backend-core (Flyway las ejecuta al arrancar; no hace falta en el uso normal)
+	$(DC) restart backend-core
 
 # RNF-13: respaldo diario (Postgres + bucket de evidencias de RustFS) y restauración. "make
 # backup"/"make restore" corren el MISMO script (scripts/backup/backup.sh y restore.sh, dentro del
 # contenedor backup-runner) que Ofelia dispara automáticamente una vez al día -- ver el servicio
 # backup-runner/backup-scheduler en docker-compose.yml (perfil management o full). Antes esto solo
 # respaldaba Postgres, a mano, sin ningún mecanismo diario ni cobertura del bucket de evidencias.
-backup: ## Backup manual inmediato (Postgres + evidencias) -- normalmente corre solo, a diario
+backup: ## Respaldo manual inmediato de PostgreSQL y de las evidencias en ./backups (el mismo que corre solo una vez al día). Necesita el perfil management o full
+#> En .env: BACKUP_RETENTION_DAYS=30 (días que se conservan) y BACKUP_ALERT_WEBHOOK_URL=... (aviso si el respaldo falla)
 	@mkdir -p backups
 	$(DC) exec -T backup-runner /usr/local/bin/backup.sh
 
-restore: ## Restaurar Postgres + evidencias desde el backup más reciente en backups/
+restore: ## Restaurar PostgreSQL y las evidencias desde el respaldo MÁS RECIENTE de ./backups. Sobrescribe los datos actuales
 	$(DC) exec -T backup-runner /usr/local/bin/restore.sh
 
 # ---------- IA / OLLAMA ----------
-pull-llm: ## Descargar Llama 3 en Ollama (~4.7 GB, primera vez)
-	@echo "$(CYAN)📥 Descargando modelo Llama 3...$(RESET)"
+pull-llm: ## Descargar en Ollama los modelos llama3:8b (~4.7 GB) y nomic-embed-text. Solo la primera vez; necesita el contenedor ollama levantado
+	@echo "$(CYAN)Descargando los modelos de Ollama...$(RESET)"
 	$(DC) exec ollama ollama pull llama3:8b
 	$(DC) exec ollama ollama pull nomic-embed-text
-	@echo "$(GREEN)✅ Modelos descargados$(RESET)"
+	@echo "$(GREEN)Modelos descargados$(RESET)"
 
 # ---------- CALIDAD & SEGURIDAD ----------
-sonar: ## Análisis SonarQube local
-	@echo "$(CYAN)📊 Ejecutando SonarQube Scanner...$(RESET)"
+sonar: ## Analizar el código con SonarQube contra el contenedor local (perfil quality o full)
+#> SONAR_TOKEN=<token>  token generado en SonarQube (My Account > Security). Obligatorio
+	@echo "$(CYAN)Ejecutando SonarQube Scanner...$(RESET)"
 	docker run --rm --network prisma-net \
 	  -e SONAR_HOST_URL=http://prisma-sonarqube:9000 \
 	  -e SONAR_TOKEN=$${SONAR_TOKEN} \
 	  -v $(PWD):/usr/src \
 	  sonarsource/sonar-scanner-cli
 
-security-scan: ## Trivy scan local
-	@echo "$(CYAN)🛡  Ejecutando Trivy...$(RESET)"
+security-scan: ## Escanear el repositorio con Trivy (vulnerabilidades CRITICAL y HIGH en dependencias y archivos)
+	@echo "$(CYAN)Ejecutando Trivy...$(RESET)"
 	docker run --rm -v $(PWD):/src aquasec/trivy:latest fs /src --severity CRITICAL,HIGH
 
 # ---------- RAG: BASE DE CONOCIMIENTO ----------
-sync-knowledge-base: ## Copia docs/mcu-5.0 al build context de backend-ai (la empaqueta la imagen)
-	@echo "$(CYAN)🔄 Sincronizando la knowledge base del RAG para la imagen de backend-ai...$(RESET)"
+sync-knowledge-base: ## Copiar docs/mcu-5.0 a apps/backend-ai/knowledge-base para empaquetarla en la imagen de backend-ai (base de conocimiento del RAG)
+	@echo "$(CYAN)Sincronizando la base de conocimiento del RAG para la imagen de backend-ai...$(RESET)"
 	rm -rf apps/backend-ai/knowledge-base;
 	mkdir -p apps/backend-ai/knowledge-base;
 	cp -r docs/mcu-5.0/. apps/backend-ai/knowledge-base/;
 
 # ---------- KEYCLOAK: MFA (TOTP) POR ROL ----------
-mfa-enable: ## Activar MFA obligatoria en Keycloak para PRISMA_ADMIN y ORG_RESPONSIBLE (idempotente)
+mfa-enable: ## Activar en Keycloak la MFA (TOTP) obligatoria por rol. Idempotente; hay que correrlo en cada ambiente
+#> MFA_ROLES="PRISMA_ADMIN AUDITOR"  roles obligados (por defecto PRISMA_ADMIN y ORG_RESPONSIBLE)
+#> REALM=prisma  KEYCLOAK_CONTAINER=prisma-keycloak  realm y contenedor de Keycloak, si no son los habituales
 	./scripts/keycloak/enable-mfa.sh
 
-mfa-status: ## Ver el estado de la MFA y qué usuarios con rol obligado ya registraron OTP
+mfa-status: ## Mostrar el flujo de login activo en Keycloak y qué usuarios con rol obligado ya registraron su OTP
+#> Acepta los mismos parámetros que mfa-enable
 	./scripts/keycloak/enable-mfa.sh --status
 
-mfa-disable: ## Volver al flujo de login original de Keycloak (MFA solo voluntaria)
+mfa-disable: ## Volver al flujo de login original de Keycloak: la MFA pasa a ser voluntaria. Los OTP ya registrados se conservan
 	./scripts/keycloak/enable-mfa.sh --disable
 
-mfa-reset-requires-otp: ## "¿Olvidaste tu contraseña?" pide el OTP actual y no lo regenera (idempotente)
+mfa-reset-requires-otp: ## Hacer que «¿Olvidaste tu contraseña?» pida el OTP actual y no lo regenere. Idempotente
 	./scripts/keycloak/enable-mfa.sh --require-otp-on-reset
 
 # ---------- KEYCLOAK: POLÍTICA DE AUTENTICACIÓN (recuperación y bloqueo) ----------
-auth-policy: ## Enlace de recuperar contraseña de 30 min y bloqueo tras 10 intentos fallidos (idempotente)
+auth-policy: ## Aplicar en Keycloak la política de autenticación: enlace de recuperación de 30 min, bloqueo de 15 min tras 10 intentos fallidos, tema de login y SMTP si está en .env. Idempotente
+#> RESET_LINK_LIFESPAN_SECONDS=1800  vigencia del enlace de recuperación
+#> LOCKOUT_FAILURES=10  LOCKOUT_WINDOW_SECONDS=900  LOCKOUT_DURATION_SECONDS=900  intentos, ventana y duración del bloqueo
+#> En .env: SMTP_HOST, SMTP_PORT, SMTP_FROM, SMTP_USER, SMTP_PASSWORD, SMTP_STARTTLS, SMTP_SSL (sin SMTP_HOST no toca el correo)
 	./scripts/keycloak/apply-auth-policy.sh
 
-auth-policy-status: ## Ver la vigencia del enlace de recuperación y los parámetros de bloqueo vigentes
+auth-policy-status: ## Mostrar la vigencia del enlace de recuperación y los parámetros de bloqueo vigentes en Keycloak, comparados con los esperados
 	./scripts/keycloak/apply-auth-policy.sh --status
 
 # ---------- TLS / CERTIFICADOS ----------
-certs: ## Generar el certificado autofirmado de nginx (pide confirmación si ya existe) + la CA interna y sus certificados (si faltan)
+certs: ## Generar el certificado autofirmado de nginx (pide confirmación si ya existe) y, si falta, la CA interna con los certificados de cada servicio
+#> CERT_DAYS=1825  validez en días    CERT_CN=prisma.local  nombre principal
+#> CERT_SAN=prisma.local,localhost,127.0.0.1  nombres e IP que cubre el certificado de nginx
 	./scripts/generate-nginx-cert.sh
 	@[ -f infra/tls/ca.crt ] || ./scripts/generate-internal-ca.sh --force
 
-certs-force: ## Regenerar el certificado de nginx y la CA interna sin preguntar (sobreescribe)
+certs-force: ## Regenerar el certificado de nginx y la CA interna sin preguntar. Sobrescribe los existentes; después hay que recrear los contenedores
+#> Acepta los mismos parámetros que certs e internal-ca
 	./scripts/generate-nginx-cert.sh --force
 	./scripts/generate-internal-ca.sh --force
 
-internal-ca: ## Generar la CA interna y los certificados TLS por servicio (PRI-369; pide confirmación si ya existen)
+internal-ca: ## Generar la CA interna y los certificados TLS de cada servicio (pide confirmación si ya existen)
+#> CERT_EXTRA_SAN=DNS:otro.host,IP:10.0.0.5  nombres o IP adicionales en los certificados
+#> CERT_DAYS=...  validez en días    CERT_SERVICES="keycloak postgres ..."  servicios para los que se emite
 	./scripts/generate-internal-ca.sh
 
-restart-nginx: ## Reiniciar solo nginx (para que tome un certificado nuevo)
+restart-nginx: ## Reiniciar solo nginx, para que tome un certificado o una configuración nuevos
 	$(DC) restart nginx
 
 # ---------- ACCESO A CONTENEDORES ----------
-shell-core: ## Shell dentro del backend-core
+shell-core: ## Abrir una terminal (sh) dentro del contenedor de backend-core
 	$(DC) exec backend-core sh
 
-shell-ai: ## Shell dentro del backend-ai
+shell-ai: ## Abrir una terminal (bash) dentro del contenedor de backend-ai
 	$(DC) exec backend-ai bash
 
-shell-db: ## Consola psql
-	$(DC) exec postgres psql -U $(POSTGRES_USER) $(POSTGRES_DB)
+shell-db: ## Abrir la consola psql de PostgreSQL con el usuario y la base de la aplicación
+	$(DC) exec postgres sh -c 'psql -U "$$POSTGRES_USER" "$$POSTGRES_DB"'
 
-shell-front: ## Shell dentro del frontend
+shell-front: ## Abrir una terminal (sh) dentro del contenedor del frontend
 	$(DC) exec frontend sh
 
+# ---------- PRODUCCIÓN ----------
+prod-secrets: ## Producción: generar al azar las contraseñas que sigan en su valor inicial, escribirlas en .env y mostrarlas una sola vez. No toca las ya cambiadas
+#> PROD_SECRETS_FORCE=1  generar también las que quedan fijadas en los datos, aunque ya existan volúmenes (solo en una instalación nueva)
+#> ENV_FILE=/ruta/.env  archivo de variables a usar    PROD_SECRETS_QUIET=1  no mostrar los valores en pantalla
+	@./scripts/generate-prod-secrets.sh
+
+prod-up: ## Producción: generar las contraseñas que falten (como prod-secrets), mostrarlas y levantar el stack con docker-compose.prod.yml
+#> Acepta los mismos parámetros que prod-secrets
+	@./scripts/generate-prod-secrets.sh
+	$(DC) -f docker-compose.yml -f docker-compose.prod.yml --profile full up -d --remove-orphans
+	@echo "Stack de produccion levantado. Si se generaron claves, se mostraron arriba y quedaron en .env"
+
 # ---------- DOCKER SWARM (un solo servidor, 2 réplicas) ----------
-swarm-deploy: ## Desplegar/actualizar el stack en Swarm (usa .env; TAG por defecto = commit actual)
+swarm-deploy: ## Desplegar o actualizar el stack en Docker Swarm (docker-stack.yml) con las imágenes ya publicadas en GHCR. Inicializa Swarm si hace falta; no construye imágenes. Con ENV=production genera antes las contraseñas que falten
+#> TAG=v1.2.0  etiqueta de las imágenes (por defecto, el commit actual)
+#> STACK=prisma  nombre del stack    ENV_FILE=.env  archivo de variables    RESOLVE_IMAGE=never  usar imágenes locales
+#> En .env: GHCR_ORG (obligatorio), BACKEND_CORE_REPLICAS, FRONTEND_REPLICAS, KEYCLOAK_REPLICAS (2 por defecto)
+	@./scripts/generate-prod-secrets.sh --if-production
 	./scripts/swarm/deploy.sh
 
-swarm-ps: ## Estado de los servicios y tareas del stack en Swarm
+swarm-ps: ## Mostrar los servicios del stack prisma en Swarm y sus tareas en ejecución
 	docker stack services prisma
 	docker stack ps prisma --no-trunc --filter desired-state=running
 
-swarm-down: ## Quitar el stack de Swarm (preserva volúmenes)
+swarm-down: ## Quitar el stack prisma de Swarm. Conserva los volúmenes
 	docker stack rm prisma
+
+# ---------- CATÁLOGO MCU 5.0 Y BACKLOG ----------
+mcu50-build: ## Regenerar la migración V19 del catálogo MCU 5.0 y expected_basico.json a partir de las planillas de docs/mcu-5.0. Necesita Python
+	python scripts/mcu50/build.py
+	cp scripts/mcu50/expected_basico.json apps/backend-core/src/test/resources/mcu50/expected_basico.json
+
+mcu50-validate: ## Cotejar el cálculo de madurez de PRISMA contra la planilla oficial de Agesic (test MaturityValidationIT). Necesita Maven y Docker
+	cd apps/backend-core && mvn -q test -Dtest=MaturityValidationIT
+
+bugasura-build: ## Regenerar docs/mcu-5.0/bugasura-import.csv (backlog para importar en Bugasura) desde docs/proyecto/HistoriasDeUsuario.md. Necesita Python
+	python scripts/bugasura/build_import.py
