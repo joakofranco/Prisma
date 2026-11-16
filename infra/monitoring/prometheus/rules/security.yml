@@ -101,4 +101,4 @@ groups:
         annotations:
           title: "fail2ban bloqueó una o más IPs"
           summary: "fail2ban bloqueó una o más IPs"
-          description: "fail2ban bloqueó {{ $value | printf \"%.0f\" }} IP(s) en los últimos 5 minutos por abuso (límite de tasa, fuerza bruta o escaneo). Ver las IPs con: docker exec prisma-fail2ban fail2ban-client banned"
+          description: "fail2ban bloqueó {{ $value | printf \"%.0f\" }} IP(s) en los últimos 5 minutos por abuso (límite de tasa, fuerza bruta o escaneo). Ver la IP de origen, el país y el motivo en el tablero «PRISMA · Seguridad: DoS y fuerza bruta» de Grafana (sección IPs bloqueadas por fail2ban) o con: docker exec prisma-fail2ban fail2ban-client banned"

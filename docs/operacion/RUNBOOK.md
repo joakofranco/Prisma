@@ -568,7 +568,7 @@ El contenedor `prisma-fail2ban` lee el `access.log` de NGINX y bloquea las IPs q
 |---|---|---|---|
 | `prisma-nginx-ratelimit` | Respuestas 429 (límite de tasa de NGINX) | 30 en 1 min | 10 min |
 | `prisma-nginx-login` | 429 en `login-actions/authenticate` (fuerza bruta contra el formulario) | 5 en 5 min | 30 min |
-| `prisma-nginx-scan` | 401, 403 o 404 (escaneo o credenciales robadas), sin contar `/assets/` | 60 en 1 min | 10 min |
+| `prisma-nginx-scan` | 401, 403 o 404 (escaneo o credenciales robadas), sin contar `/assets/` | 120 en 1 min | 10 min |
 
 Cada reincidencia duplica el tiempo de bloqueo, hasta un máximo de 24 h. Los bloqueos se guardan en el volumen `prisma-fail2ban-data` y se restauran al reiniciar el contenedor.
 

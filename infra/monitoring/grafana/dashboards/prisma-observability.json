@@ -609,7 +609,7 @@
     {
       "id": 12,
       "type": "timeseries",
-      "title": "Notificaciones enviadas por tipo",
+      "title": "Notificaciones por correo",
       "datasource": "Prometheus",
       "gridPos": {
         "w": 12,
@@ -621,14 +621,14 @@
         {
           "refId": "A",
           "datasource": "Prometheus",
-          "expr": "sum by (integration) (rate(alertmanager_notifications_total[10m]))",
-          "legendFormat": "{{integration}} ok"
+          "expr": "sum(rate(alertmanager_notifications_total{integration=\"email\"}[10m]))",
+          "legendFormat": "correo enviadas"
         },
         {
           "refId": "B",
           "datasource": "Prometheus",
-          "expr": "sum by (integration) (rate(alertmanager_notifications_failed_total[10m]))",
-          "legendFormat": "{{integration}} fallidas"
+          "expr": "sum(rate(alertmanager_notifications_failed_total{integration=\"email\"}[10m]))",
+          "legendFormat": "correo fallidas"
         }
       ],
       "fieldConfig": {
