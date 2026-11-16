@@ -41,6 +41,18 @@ class KeycloakAdminClientTest {
     client = new KeycloakAdminClient(builder.build(), PROPERTIES);
   }
 
+  private void expectAdminTokenForPublicHost(String token, String proto, String host) {
+    server
+        .expect(requestTo(BASE_URL + "/realms/prisma/protocol/openid-connect/token"))
+        .andExpect(method(HttpMethod.POST))
+        .andExpect(header("X-Forwarded-Proto", proto))
+        .andExpect(header("X-Forwarded-Host", host))
+        .andRespond(
+            withSuccess(
+                "{\"access_token\":\"" + token + "\",\"expires_in\":300}",
+                MediaType.APPLICATION_JSON));
+  }
+
   private void expectAdminToken() {
     server
         .expect(requestTo(BASE_URL + "/realms/prisma/protocol/openid-connect/token"))
@@ -172,7 +184,7 @@ class KeycloakAdminClientTest {
   @Test
   void sendExecuteActionsEmailAsksForTheActionsWithLifespanAndRedirect() {
     UUID keycloakId = UUID.randomUUID();
-    expectAdminToken();
+    expectAdminTokenForPublicHost("tok-publico", "https", "prisma.test");
     server
         .expect(
             requestTo(
@@ -182,6 +194,9 @@ class KeycloakAdminClientTest {
                         + keycloakId
                         + "/execute-actions-email")))
         .andExpect(method(HttpMethod.PUT))
+        .andExpect(header("Authorization", "Bearer tok-publico"))
+        .andExpect(header("X-Forwarded-Proto", "https"))
+        .andExpect(header("X-Forwarded-Host", "prisma.test"))
         .andExpect(queryParam("lifespan", "259200"))
         .andExpect(queryParam("client_id", "prisma-frontend"))
         // La URL viaja codificada como valor de query (Keycloak la decodifica).
@@ -241,7 +256,15 @@ class KeycloakAdminClientTest {
   @Test
   void invitationWithAnInvalidPublicUrlSendsNoForwardedHeaders() {
     UUID keycloakId = UUID.randomUUID();
-    expectAdminToken();
+    server
+        .expect(requestTo(BASE_URL + "/realms/prisma/protocol/openid-connect/token"))
+        .andExpect(method(HttpMethod.POST))
+        .andExpect(request -> assertNull(request.getHeaders().getFirst("X-Forwarded-Host")))
+        .andExpect(request -> assertNull(request.getHeaders().getFirst("X-Forwarded-Proto")))
+        .andRespond(
+            withSuccess(
+                "{\"access_token\":\"tok-normal\",\"expires_in\":300}",
+                MediaType.APPLICATION_JSON));
     server
         .expect(
             requestTo(
@@ -250,12 +273,36 @@ class KeycloakAdminClientTest {
                         + "/admin/realms/prisma/users/"
                         + keycloakId
                         + "/execute-actions-email")))
+        .andExpect(header("Authorization", "Bearer tok-normal"))
         .andExpect(request -> assertNull(request.getHeaders().getFirst("X-Forwarded-Host")))
         .andExpect(request -> assertNull(request.getHeaders().getFirst("X-Forwarded-Proto")))
         .andRespond(withNoContent());
 
     client.sendExecuteActionsEmail(
         keycloakId, List.of("VERIFY_EMAIL"), 259200, "prisma-frontend", "no es una url");
+
+    server.verify();
+  }
+
+  @Test
+  void consecutiveInvitationsAskForThePublicHostTokenOnlyOnce() {
+    UUID first = UUID.randomUUID();
+    UUID second = UUID.randomUUID();
+    expectAdminTokenForPublicHost("tok-publico", "https", "prisma.home-uy.site");
+    for (UUID id : List.of(first, second)) {
+      server
+          .expect(
+              requestTo(
+                  org.hamcrest.Matchers.startsWith(
+                      BASE_URL + "/admin/realms/prisma/users/" + id + "/execute-actions-email")))
+          .andExpect(header("Authorization", "Bearer tok-publico"))
+          .andRespond(withNoContent());
+    }
+
+    client.sendExecuteActionsEmail(
+        first, List.of("VERIFY_EMAIL"), 259200, "prisma-frontend", "https://prisma.home-uy.site");
+    client.sendExecuteActionsEmail(
+        second, List.of("VERIFY_EMAIL"), 259200, "prisma-frontend", "https://prisma.home-uy.site");
 
     server.verify();
   }
