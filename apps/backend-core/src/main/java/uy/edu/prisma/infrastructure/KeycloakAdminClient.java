@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -44,6 +45,8 @@ public class KeycloakAdminClient {
 
   private volatile String cachedToken;
   private volatile Instant tokenExpiresAt = Instant.EPOCH;
+
+  private final Map<String, CachedToken> publicHostTokens = new ConcurrentHashMap<>();
 
   public KeycloakAdminClient(
       @Qualifier("keycloakAdminRestClient") RestClient keycloakAdminRestClient,
@@ -96,7 +99,7 @@ public class KeycloakAdminClient {
               lifespanSeconds,
               clientId,
               redirectUri)
-          .header("Authorization", "Bearer " + adminToken())
+          .header("Authorization", "Bearer " + adminTokenForPublicHost(redirectUri))
           .headers(headers -> addPublicHostHeaders(headers, redirectUri))
           .contentType(MediaType.APPLICATION_JSON)
           .body(actions)
@@ -660,6 +663,43 @@ public class KeycloakAdminClient {
     tokenExpiresAt = Instant.now().plusSeconds(Math.max(response.expiresIn() - 10, 5));
     return cachedToken;
   }
+
+  private synchronized String adminTokenForPublicHost(String publicUrl) {
+    org.springframework.http.HttpHeaders forwarded = new org.springframework.http.HttpHeaders();
+    addPublicHostHeaders(forwarded, publicUrl);
+    if (forwarded.isEmpty()) {
+      return adminToken();
+    }
+    CachedToken cached = publicHostTokens.get(publicUrl);
+    if (cached != null && Instant.now().isBefore(cached.expiresAt())) {
+      return cached.value();
+    }
+    MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
+    form.add("grant_type", "client_credentials");
+    form.add("client_id", properties.clientId());
+    form.add("client_secret", properties.clientSecret());
+
+    TokenResponse response =
+        restClient
+            .post()
+            .uri("/realms/{realm}/protocol/openid-connect/token", properties.realm())
+            .headers(headers -> headers.addAll(forwarded))
+            .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+            .body(form)
+            .retrieve()
+            .body(TokenResponse.class);
+    if (response == null) {
+      throw new IllegalStateException("No se pudo obtener un token de administración de Keycloak");
+    }
+    CachedToken fresh =
+        new CachedToken(
+            response.accessToken(),
+            Instant.now().plusSeconds(Math.max(response.expiresIn() - 10, 5)));
+    publicHostTokens.put(publicUrl, fresh);
+    return fresh.value();
+  }
+
+  private record CachedToken(String value, Instant expiresAt) {}
 
   private record TokenResponse(
       @JsonProperty("access_token") String accessToken,
