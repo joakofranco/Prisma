@@ -224,7 +224,7 @@ def historia_caso(directorio, titulo_nivel=H1):
     h.append(tabla(srv) if srv else p(escape(aviso or "Sin datos del servidor.")))
     h.append(p("Parámetros de la corrida", H2))
     claves = ["caso", "plan", "modo", "objetivo", "usuarios", "rampa_s", "duracion_s", "iteraciones", "pausa_ms", "endpoints",
-              "commit", "fecha"] + sorted(k for k in props if k.startswith("umbral.") and props[k] != "")
+              "umbrales_de_la_corrida", "commit", "fecha"] + sorted(k for k in props if k.startswith("umbral.") and props[k] != "")
     h.append(tabla([["Parámetro", "Valor"]] + [[k, p(escape(props[k]), CELDA)] for k in claves if props.get(k) not in (None, "")],
                    [5 * cm, 20 * cm]))
     return h
@@ -265,12 +265,22 @@ def historia_estres(directorio):
                    f'(p95 {quiebre["p95"]} ms, error {quiebre["error_pct"]} %).', TXT))
     else:
         h.append(p(f'<font color="{VERDE}"><b>No se alcanzó el punto de quiebre hasta {pasos[-1]["usuarios"]} usuarios.</b></font>', TXT))
+    resultado_estres = {}
+    ruta_resultado = os.path.join(directorio, "resultado.json")
+    if os.path.isfile(ruta_resultado):
+        with open(ruta_resultado, encoding="utf-8") as f:
+            resultado_estres = json.load(f)
+    rec = resultado_estres.get("recuperacion")
+    if rec:
+        color = VERDE if rec["recuperado"] else (ROJO if rec["recuperado"] is False else GRIS)
+        h.append(p(f'<font color="{color}"><b>Recuperación: {escape(rec["etiqueta"])}.</b></font> '
+                   + escape(rec["detalle"].replace("**", "").replace("`", "")), TXT))
     h += [Spacer(1, 6), grafico_estres(pasos), Spacer(1, 6),
           tabla([["Usuarios", "Muestras", "Media (ms)", "p95", "p99", "Error %", "Peticiones/s", "Dentro de umbrales"]] +
                 [[x["usuarios"], x["muestras"], x["media"], x["p95"], x["p99"], x["error_pct"], x["throughput"],
                   "sí" if x["cumple"] else "no"] for x in pasos]),
           p("Parámetros de la corrida", H2)]
-    claves = ["caso", "plan", "modo", "objetivo", "escalones", "rampa_s", "duracion_s", "pausa_ms", "commit", "fecha"] + \
+    claves = ["caso", "plan", "modo", "objetivo", "escalones", "rampa_s", "duracion_s", "pausa_ms", "umbrales_de_la_corrida", "commit", "fecha"] + \
         sorted(k for k in props if k.startswith("umbral.") and props[k] != "")
     h.append(tabla([["Parámetro", "Valor"]] + [[k, p(escape(props[k]), CELDA)] for k in claves if props.get(k) not in (None, "")],
                    [5 * cm, 20 * cm]))
@@ -278,6 +288,9 @@ def historia_estres(directorio):
         sub = os.path.join(directorio, f"paso-{int(x['usuarios']):04d}")
         if os.path.isfile(os.path.join(sub, "resultados.jtl")):
             h += [PageBreak(), p(f"Escalón de {x['usuarios']} usuarios", H2)] + historia_caso(sub, H2)
+    sub = os.path.join(directorio, "recuperacion")
+    if os.path.isfile(os.path.join(sub, "resultados.jtl")):
+        h += [PageBreak(), p("Recuperación tras el estrés", H2)] + historia_caso(sub, H2)
     return h
 
 

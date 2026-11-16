@@ -23,14 +23,32 @@ Permite medir tiempos de respuesta, concurrencia, cálculo de madurez, generaci�
 | Caso | Plan | Qué mide |
 |---|---|---|
 | CP-RND-01 | navegacion | Línea base con 1 usuario |
-| CP-RND-02 | navegacion | Carga normal, 20 usuarios |
+| CP-RND-02 | navegacion | Carga normal, 20 usuarios durante 15 minutos, con lecturas y guardado de respuestas |
 | CP-RND-03 | cuestionario | Carga del cuestionario completo con 20 usuarios |
 | CP-RND-04 | madurez | Cálculo de madurez con 10 usuarios en paralelo |
-| CP-RND-05 | reporte-pdf | Generación del PDF con 10 usuarios |
+| CP-RND-05 | reporte-pdf | Generación del PDF con 5 usuarios; valida que sea application/pdf y pese más de 10 KB |
 | CP-RND-06 | navegacion | Estrés por escalones hasta el punto de quiebre (disruptivo) |
 | CP-TRV-06 | navegacion | p95 por endpoint crítico bajo carga |
 | CP-TRV-07 | madurez | Cálculo de madurez con el catálogo completo |
-| CP-OBS-08 | borde-dos | Ráfaga por NGINX: 429 y alerta de DoS (disruptivo) |
+| CP-OBS-08 | borde-dos | Ráfaga por NGINX: 429 y alerta DosRateLimitTriggered o RequestFloodSpike en 5 minutos como máximo (disruptivo) |
+
+### Fases con 1 usuario y recuperación tras el estrés
+
+- **CP-RND-03, CP-RND-04 y CP-RND-05** corren primero con 1 usuario y después con la carga completa (`fases_usuarios=1,20`, `1,10` y `1,5` en su `.properties`). Cada fase deja su propia carpeta (`...-CP-RND-03-1u`, `...-CP-RND-03-20u`), su informe y su fila en el consolidado, y el caso cumple solo si cumplen todas. Con `USERS=n` se corre una única fase con esa cantidad.
+- **CP-RND-06** termina, después del último escalón, con una corrida de recuperación de 5 minutos con 1 usuario (`recuperacion_s`, `recuperacion_usuarios`), sin reiniciar nada. Se considera recuperado si su p95 queda dentro de un 20 % (`recuperacion_tolerancia_pct`) del p95 del último CP-RND-01 que haya en `perf/results`; si no hay ninguno, el informe lo indica y la recuperación no se evalúa. Un caso no recuperado figura como no cumple.
+
+### Umbrales de aceptación vigentes (RNF-PERF)
+
+| Medición | Umbral | Requisito |
+|---|---|---|
+| Lecturas (dashboard, evaluaciones, detalle, resumen, respuestas, resultados, catálogo en carga normal) | p95 ≤ 500 ms | RNF-PERF-01 |
+| Guardar respuesta (`guardar-respuesta`) | p95 ≤ 1500 ms | RNF-PERF-02 |
+| Cuestionario completo (`catalogo` en CP-RND-03) | p95 ≤ 3000 ms | RNF-PERF-03 |
+| Cálculo de madurez (`calcular-madurez`) | p95 ≤ 200 ms | RNF-PERF-04 |
+| Reporte PDF (`reporte`) | p95 ≤ 10000 ms | RNF-PERF-06 |
+| Errores | ≤ 1 % (0 % en CP-RND-01 y CP-TRV-07) | SLO de monitoreo |
+
+Están en `perf/casos/*.properties`. En el estrés (CP-RND-06) el punto de quiebre es el primer escalón con p95 mayor a 500 ms o más de 1 % de errores.
 
 ## Comandos
 
@@ -64,6 +82,37 @@ Sin editar archivos, se pueden pisar por variables de entorno: `USERS`, `RAMP`, 
 ```
 make perf CASO=CP-RND-02 USERS=50 DURATION=600
 ```
+
+### Definir el p95 aceptable de cada caso antes de ejecutar
+
+`make perf-setup` termina preguntando, caso por caso (CP-RND-01 a 06, CP-TRV-06 y 07), el p95 aceptable en milisegundos. Enter conserva el valor que se muestra entre corchetes (el último guardado o el del caso). Las respuestas quedan en `perf/data/umbrales.properties` y las usan `make perf` y `make perf-all`: el informe marca cada caso como cumple o no cumple contra ese p95. Para cambiarlos más tarde sin recrear los datos:
+
+```
+make perf-umbrales
+```
+
+Sin terminal interactiva, o con `PERF_SIN_PREGUNTAS=1`, no pregunta y conserva los valores vigentes. Solo se guarda lo que difiere del caso. Un p95 distinto del propio del caso vale para todas sus peticiones, también las que tenían un umbral propio (por ejemplo `calcular-madurez`); si se deja el valor que muestra, esos umbrales propios se mantienen.
+
+### Fijar los umbrales de aceptación (RNF) al ejecutar
+
+Los criterios con los que el informe decide si la prueba pasa se pueden definir en cada ejecución, sin editar los `.properties`:
+
+| Variable | Criterio |
+|---|---|
+| `UMBRAL_P95_MS`, `UMBRAL_P99_MS`, `UMBRAL_MEDIA_MS` | Tiempos de respuesta máximos aceptados, en milisegundos |
+| `UMBRAL_ERROR_PCT` | Porcentaje máximo de peticiones con error |
+| `UMBRAL_THROUGHPUT_MIN` | Peticiones por segundo mínimas |
+| `UMBRAL_MIN_429` | Solo CP-OBS-08: mínimo de respuestas 429 esperadas |
+
+```
+make perf CASO=CP-RND-02 UMBRAL_P95_MS=1500 UMBRAL_ERROR_PCT=0.5
+make perf-all UMBRAL_P95_MS=2000 UMBRAL_ERROR_PCT=1
+```
+
+- El valor indicado reemplaza al guardado con `make perf-setup` y al del caso y se aplica a todas las peticiones, incluso a las que tenían un umbral propio (`umbral.p95_ms.<petición>`).
+- Con `make perf-all` rige para todos los casos de la corrida. En el estrés (CP-RND-06) también define dónde se corta la escalada y qué se considera punto de quiebre.
+- Un valor que no es un número se rechaza antes de empezar.
+- El informe (`resumen.md` y `informe.pdf`) lista los umbrales usados y, en `umbrales_de_la_corrida`, cuáles se definieron en la ejecución.
 
 Para agregar una petición nueva se abre el `.jmx` con la GUI de JMeter, se agrega el *sampler* dentro del bloque `API` con su condición de `endpoints` y se lista en el `.properties`.
 

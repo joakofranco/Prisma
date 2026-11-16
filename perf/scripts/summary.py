@@ -78,7 +78,7 @@ def estadisticas(filas):
 
 
 def umbral(props, nombre, label=None):
-    if label:
+    if label and props.get(f"forzar_umbral.{nombre}") in (None, ""):
         especifico = props.get(f"umbral.{nombre}.{label}")
         if especifico not in (None, ""):
             return float(especifico)
@@ -150,10 +150,12 @@ def metricas_servidor(props, inicio_ms, fin_ms):
     return "\n".join(lineas) + "\n"
 
 
-def alerta_activa(props, nombre):
+def alerta_activa(props, nombres):
     base = props.get("alertmanager_url", "").rstrip("/")
     if not base:
         return None, "Alertmanager no configurado (`alertmanager_url` vacío)"
+    nombres = [n.strip() for n in nombres.split(",") if n.strip()]
+    etiqueta = " o ".join(f"`{n}`" for n in nombres)
     espera = int(float(props.get("dos_espera_alerta_s", "0") or 0))
     limite = time.time() + espera
     while True:
@@ -162,14 +164,14 @@ def alerta_activa(props, nombre):
             activas = [
                 a
                 for a in alertas
-                if a.get("labels", {}).get("alertname") == nombre and a.get("status", {}).get("state") == "active"
+                if a.get("labels", {}).get("alertname") in nombres and a.get("status", {}).get("state") == "active"
             ]
             if activas:
-                return True, f"`{nombre}` activa en Alertmanager"
+                return True, f"{etiqueta} activa en Alertmanager (`{activas[0]['labels']['alertname']}`)"
         except Exception as e:
             return None, f"Alertmanager no disponible en `{base}` ({type(e).__name__})"
         if time.time() >= limite:
-            return False, f"`{nombre}` no apareció en Alertmanager tras esperar {espera} s"
+            return False, f"{etiqueta} no apareció en Alertmanager tras esperar {espera} s"
         time.sleep(10)
 
 
@@ -211,7 +213,7 @@ def hashes(directorio):
 def parametros_md(props):
     claves = [
         "caso", "titulo", "plan", "modo", "objetivo", "usuarios", "rampa_s", "duracion_s", "iteraciones",
-        "pausa_ms", "endpoints", "commit", "fecha",
+        "pausa_ms", "endpoints", "umbrales_de_la_corrida", "commit", "fecha",
     ]
     lineas = ["| Parámetro | Valor |", "|---|---|"]
     for clave in claves:
@@ -313,6 +315,41 @@ def resumir(directorio):
     return 0 if cumple else 1
 
 
+def linea_base(directorio):
+    carpeta = os.path.dirname(os.path.abspath(directorio))
+    candidatos = sorted(n for n in os.listdir(carpeta) if n.endswith("-CP-RND-01"))
+    for nombre in reversed(candidatos):
+        ruta = os.path.join(carpeta, nombre, "resultado.json")
+        if os.path.isfile(ruta):
+            with open(ruta, encoding="utf-8") as f:
+                return nombre, json.load(f)
+    return None, None
+
+
+def evaluar_recuperacion(directorio, props):
+    ruta = os.path.join(directorio, "recuperacion", "resultado.json")
+    if not os.path.isfile(ruta):
+        return None
+    with open(ruta, encoding="utf-8") as f:
+        rec = json.load(f)
+    tolerancia = float(props.get("recuperacion_tolerancia_pct") or 20)
+    nombre, base = linea_base(directorio)
+    duracion = leer_props(os.path.join(directorio, "recuperacion", "efectivo.properties")).get("duracion_s", "")
+    cabecera = (f"Tras el estrés se corrieron {duracion} s con {rec['usuarios']} usuario(s), "
+                f"sin reiniciar nada: p95 {rec['p95']} ms, error {rec['error_pct']} %.")
+    if not base:
+        detalle = (cabecera + " No hay una corrida de CP-RND-01 en perf/results para usar de línea base, "
+                   "por lo que la recuperación no se pudo evaluar.")
+        return {"p95": rec["p95"], "base_p95": None, "limite": None, "recuperado": None,
+                "etiqueta": "recuperación sin línea base", "detalle": detalle}
+    limite = round(base["p95"] * (1 + tolerancia / 100), 1)
+    recuperado = rec["p95"] <= limite
+    detalle = (cabecera + f" Línea base (CP-RND-01, `{nombre}`): p95 {base['p95']} ms; el límite es {limite} ms "
+               f"(línea base + {tolerancia:g} %). **{'Recuperado' if recuperado else 'No recuperado'}**.")
+    return {"p95": rec["p95"], "base_p95": base["p95"], "limite": limite, "recuperado": recuperado,
+            "etiqueta": "recuperado" if recuperado else "no recuperado", "detalle": detalle}
+
+
 def resumir_estres(directorio):
     props = leer_props(os.path.join(directorio, "efectivo.properties"))
     pasos = []
@@ -332,6 +369,7 @@ def resumir_estres(directorio):
             ultimo_ok = p
         else:
             break
+    recuperacion = evaluar_recuperacion(directorio, props)
     md = [f"# {props.get('caso', 'Estrés')} — {props.get('titulo', '')}".rstrip(" —"), ""]
     if quiebre:
         md.append(f"**Punto de quiebre: {quiebre['usuarios']} usuarios concurrentes** "
@@ -347,6 +385,8 @@ def resumir_estres(directorio):
     for p in pasos:
         md.append(f"| {p['usuarios']} | {p['muestras']} | {p['media']} | {p['p95']} | {p['p99']} | {p['error_pct']} "
                   f"| {p['throughput']} | {'sí' if p['cumple'] else 'no'} |")
+    if recuperacion:
+        md += ["", "## Recuperación", "", recuperacion["detalle"]]
     md += ["", "## Parámetros de la corrida", "", parametros_md(props), "",
            "Cada escalón tiene su carpeta `paso-NNNN` con el detalle y el reporte HTML.", ""]
     with open(os.path.join(directorio, "resumen.md"), "w", encoding="utf-8", newline="\n") as f:
@@ -354,7 +394,8 @@ def resumir_estres(directorio):
     resultado = {
         "caso": props.get("caso", ""),
         "titulo": props.get("titulo", ""),
-        "cumple": True,
+        "cumple": recuperacion["recuperado"] is not False if recuperacion else True,
+        "recuperacion": recuperacion,
         "usuarios": quiebre["usuarios"] if quiebre else pasos[-1]["usuarios"],
         "muestras": sum(p["muestras"] for p in pasos),
         "p95": (ultimo_ok or pasos[0])["p95"],
@@ -363,7 +404,8 @@ def resumir_estres(directorio):
         "error_pct": (ultimo_ok or pasos[0])["error_pct"],
         "throughput": (ultimo_ok or pasos[0])["throughput"],
         "directorio": os.path.basename(os.path.normpath(directorio)),
-        "nota": f"quiebre en {quiebre['usuarios']} usuarios" if quiebre else "sin quiebre",
+        "nota": (f"quiebre en {quiebre['usuarios']} usuarios" if quiebre else "sin quiebre")
+        + (f"; {recuperacion['etiqueta']}" if recuperacion else ""),
     }
     with open(os.path.join(directorio, "resultado.json"), "w", encoding="utf-8", newline="\n") as f:
         json.dump(resultado, f, ensure_ascii=False, indent=2)

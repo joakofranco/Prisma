@@ -4,6 +4,8 @@ set -euo pipefail
 RAIZ="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PERF="$RAIZ/perf"
 IMAGEN="${PERF_IMAGEN:-prisma-perf:local}"
+UMBRALES_GUARDADOS="$PERF/data/umbrales.properties"
+CASOS_P95="CP-RND-01 CP-RND-02 CP-RND-03 CP-RND-04 CP-RND-05 CP-RND-06 CP-TRV-06 CP-TRV-07"
 MEDICION="CP-RND-01 CP-RND-02 CP-RND-03 CP-RND-04 CP-RND-05 CP-TRV-06 CP-TRV-07"
 DISRUPTIVOS="CP-RND-06 CP-OBS-08"
 
@@ -118,9 +120,66 @@ validar_permisos() {
   fi
 }
 
+UMBRALES_CORRIDA="P95_MS:p95_ms P99_MS:p99_ms MEDIA_MS:media_ms ERROR_PCT:error_pct THROUGHPUT_MIN:throughput_min MIN_429:min_429"
+
+p95_actual() {
+  local caso="$1" guardado
+  guardado="$(prop "$caso.p95_ms" "$UMBRALES_GUARDADOS")"
+  if [ -n "$guardado" ]; then printf '%s' "$guardado"
+  else prop umbral.p95_ms "$PERF/casos/_defaults.properties" "$PERF/casos/$caso.properties"; fi
+}
+
+pedir_umbrales() {
+  local interactivo=0 caso titulo actual nuevo base especiales
+  if [ -t 0 ] && [ "${PERF_SIN_PREGUNTAS:-0}" != 1 ]; then interactivo=1; fi
+  mkdir -p "$PERF/data"
+  echo
+  if [ "$interactivo" = 1 ]; then
+    echo "p95 aceptable (en ms) para cada caso. Enter conserva el valor entre corchetes."
+    echo "Es el tiempo bajo el cual debe quedar el 95 % de las peticiones para que el caso cumpla el RNF."
+  else
+    echo "p95 aceptable (en ms) por caso, sin preguntar (no hay terminal interactiva o PERF_SIN_PREGUNTAS=1):"
+  fi
+  local salida="$PERF/data/umbrales.properties.tmp"
+  : > "$salida"
+  for caso in $CASOS_P95; do
+    titulo="$(prop titulo "$PERF/casos/$caso.properties")"
+    actual="$(p95_actual "$caso")"
+    base="$(prop umbral.p95_ms "$PERF/casos/_defaults.properties" "$PERF/casos/$caso.properties")"
+    especiales="$(sed -n -E 's/^umbral\.p95_ms\.([^=]+)=([0-9.]+).*/\1 \2 ms/p' "$PERF/casos/$caso.properties" | tr -d '\r' | paste -sd, - | sed 's/,/, /g')"
+    nuevo="$actual"
+    if [ "$interactivo" = 1 ]; then
+      [ -n "$especiales" ] && echo "  ($caso tiene umbrales propios que se mantienen si no cambiás el valor: $especiales)"
+      while true; do
+        read -r -p "  $caso - $titulo [$actual]: " nuevo || nuevo=""
+        nuevo="${nuevo:-$actual}"
+        if [[ "$nuevo" =~ ^[0-9]+([.][0-9]+)?$ ]]; then break; fi
+        echo "    Debe ser un número en milisegundos."
+      done
+    else
+      echo "  $caso: $actual ms"
+    fi
+    if [ "$nuevo" != "$base" ]; then echo "$caso.p95_ms=$nuevo" >> "$salida"; fi
+  done
+  mv "$salida" "$UMBRALES_GUARDADOS"
+  echo "Guardado en perf/data/umbrales.properties (solo lo que difiere de cada caso). Se usa en make perf y make perf-all; UMBRAL_P95_MS=... los pisa en una ejecución."
+}
+
+validar_umbrales() {
+  local par var val
+  for par in $UMBRALES_CORRIDA; do
+    var="UMBRAL_${par%%:*}"
+    val="${!var:-}"
+    if [ -n "$val" ] && ! [[ "$val" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+      morir "$var debe ser un número (recibí '$val')."
+    fi
+  done
+}
+
 escribir_efectivo() {
   local destino="$1" caso="$2" usuarios="$3"
   shift 3
+  validar_umbrales
   {
     cat "$PERF/casos/_defaults.properties"
     echo
@@ -136,6 +195,23 @@ escribir_efectivo() {
     [ -n "${ITERACIONES:-}" ] && echo "iteraciones=$ITERACIONES"
     [ -n "${PAUSA_MS:-}" ] && echo "pausa_ms=$PAUSA_MS"
     [ -n "${ENDPOINTS:-}" ] && echo "endpoints=$ENDPOINTS"
+    local par var val forzados="" guardado
+    guardado="$(prop "$caso.p95_ms" "$UMBRALES_GUARDADOS")"
+    if [ -n "$guardado" ]; then
+      echo "umbral.p95_ms=$guardado"
+      echo "forzar_umbral.p95_ms=1"
+      forzados=" p95_ms"
+    fi
+    for par in $UMBRALES_CORRIDA; do
+      var="UMBRAL_${par%%:*}"
+      val="${!var:-}"
+      if [ -n "$val" ]; then
+        echo "umbral.${par##*:}=$val"
+        echo "forzar_umbral.${par##*:}=1"
+        case " $forzados " in *" ${par##*:} "*) ;; *) forzados="$forzados ${par##*:}" ;; esac
+      fi
+    done
+    [ -n "$forzados" ] && echo "umbrales_de_la_corrida=${forzados# }"
     local extra
     for extra in "$@"; do echo "$extra"; done
   } | tr -d '\r' > "$destino/efectivo.properties.tmp"
@@ -185,7 +261,24 @@ generar_pdf() {
 }
 
 correr_caso() {
-  local caso="$1"
+  local caso="$1" fases n rc=0
+  local archivo="$PERF/casos/$caso.properties"
+  [ -f "$archivo" ] || morir "No existe el caso $caso (perf/casos/$caso.properties). Disponibles: $(cd "$PERF/casos" && ls CP-*.properties | sed 's/.properties//' | tr '\n' ' ')"
+  fases="$(prop fases_usuarios "$PERF/casos/_defaults.properties" "$archivo")"
+  ULTIMAS_SALIDAS=()
+  if [ -n "$fases" ] && [ -z "${USERS:-}" ] && [ -z "${ESCALONES:-}" ]; then
+    for n in ${fases//,/ }; do
+      correr_una "$caso" "$n" || rc=1
+    done
+  else
+    correr_una "$caso" "" || rc=$?
+  fi
+  return $rc
+}
+
+correr_una() {
+  local caso="$1" fase="$2"
+  local usuarios_corrida="${2:-${USERS:-}}"
   local archivo="$PERF/casos/$caso.properties"
   [ -f "$archivo" ] || morir "No existe el caso $caso (perf/casos/$caso.properties). Disponibles: $(cd "$PERF/casos" && ls CP-*.properties | sed 's/.properties//' | tr '\n' ' ')"
   local defs="$PERF/casos/_defaults.properties"
@@ -203,8 +296,13 @@ correr_caso() {
   local sello salida_rel
   sello="$(date -u +%Y%m%d-%H%M%S)"
   salida_rel="results/$sello-$caso"
+  local fase_extra=()
+  if [ -n "$fase" ]; then
+    salida_rel="$salida_rel-${fase}u"
+    fase_extra=("titulo=$(prop titulo "$archivo") (fase de $fase usuario(s))")
+  fi
   mkdir -p "$PERF/$salida_rel"
-  echo "== $caso | plan $plan | destino: $DEST_DESC"
+  echo "== $caso${fase:+ ($fase usuario(s))} | plan $plan | destino: $DEST_DESC"
 
   local rc=0
   if [ -n "$escalones" ]; then
@@ -220,17 +318,28 @@ correr_caso() {
         break
       fi
     done
+    local rec_s rec_dir
+    rec_s="${RECUPERACION_S:-$(prop recuperacion_s "$defs" "$archivo")}"
+    if [ -n "$rec_s" ] && [ "$rec_s" != 0 ]; then
+      rec_dir="$salida_rel/recuperacion"
+      mkdir -p "$PERF/$rec_dir"
+      escribir_efectivo "$PERF/$rec_dir" "$caso" "$(prop recuperacion_usuarios "$defs" "$archivo")" "modo=$modo" \
+        "duracion_s=$rec_s" "rampa_s=1" "iteraciones=-1" "pausa_ms=$(prop recuperacion_pausa_ms "$defs" "$archivo")" "escalones="
+      echo "-- recuperación: $rec_s s con $(prop recuperacion_usuarios "$defs" "$archivo") usuario(s), sin reiniciar nada"
+      lanzar_jmeter "$rec_dir" "$plan"
+      resumir --dir "/perf/$rec_dir" || true
+    fi
     escribir_efectivo "$PERF/$salida_rel" "$caso" "" "modo=$modo" "escalones=$escalones"
     resumir --dir "/perf/$salida_rel" --estres || rc=$?
   else
-    escribir_efectivo "$PERF/$salida_rel" "$caso" "${USERS:-}" "modo=$modo"
+    escribir_efectivo "$PERF/$salida_rel" "$caso" "$usuarios_corrida" "modo=$modo" ${fase_extra[@]+"${fase_extra[@]}"}
     lanzar_jmeter "$salida_rel" "$plan"
     resumir --dir "/perf/$salida_rel" || rc=$?
   fi
   generar_pdf --dir "/perf/$salida_rel"
   echo "   Reporte PDF: perf/$salida_rel/informe.pdf"
   echo "   Detalle: perf/$salida_rel/resumen.md y perf/$salida_rel/html/index.html"
-  ULTIMA_SALIDA="$salida_rel"
+  ULTIMAS_SALIDAS+=("$salida_rel")
   return $rc
 }
 
@@ -240,12 +349,11 @@ cmd_run() {
 }
 
 cmd_all() {
-  local casos="$MEDICION" caso fallo=0 dirs=() incumplidos=""
+  local casos="$MEDICION" caso salida fallo=0 dirs=() incumplidos=""
   [ "${INCLUIR_DISRUPTIVOS:-0}" = 1 ] && casos="$casos $DISRUPTIVOS"
   for caso in $casos; do
     if correr_caso "$caso"; then :; else fallo=1; incumplidos="$incumplidos $caso"; fi
-    [ -n "${ULTIMA_SALIDA:-}" ] && dirs+=("/perf/$ULTIMA_SALIDA")
-    ULTIMA_SALIDA=""
+    for salida in ${ULTIMAS_SALIDAS[@]+"${ULTIMAS_SALIDAS[@]}"}; do dirs+=("/perf/$salida"); done
   done
   local informe="results/$(date -u +%Y%m%d-%H%M%S)-informe-consolidado.md"
   resumir --consolidar ${dirs[@]+"${dirs[@]}"} --salida "/perf/$informe" >/dev/null || true
@@ -296,9 +404,10 @@ cmd_clean() {
 
 case "${1:-}" in
   build) docker build -t "$IMAGEN" "$PERF" ;;
-  setup) cmd_datos setup_data.py ;;
+  setup) cmd_datos setup_data.py; pedir_umbrales ;;
+  umbrales) pedir_umbrales ;;
   run) cmd_run "${2:-}" ;;
   all) cmd_all ;;
   clean) cmd_clean ;;
-  *) echo "Uso: perf.sh build | setup | run <CASO> | all | clean"; exit 2 ;;
+  *) echo "Uso: perf.sh build | setup | umbrales | run <CASO> | all | clean"; exit 2 ;;
 esac

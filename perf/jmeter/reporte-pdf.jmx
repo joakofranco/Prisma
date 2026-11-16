@@ -182,7 +182,24 @@ SampleResult.setIgnore()</stringProp>
               <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
               <boolProp name="HTTPSampler.DO_MULTIPART_POST">false</boolProp>
             </HTTPSamplerProxy>
-            <hashTree/>
+            <hashTree>
+              <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="Tipo de contenido application/pdf" enabled="true">
+                <collectionProp name="Asserion.test_strings">
+                  <stringProp name="1">application/pdf</stringProp>
+                </collectionProp>
+                <stringProp name="Assertion.custom_message">El reporte no devolvio application/pdf</stringProp>
+                <stringProp name="Assertion.test_field">Assertion.response_headers</stringProp>
+                <boolProp name="Assertion.assume_success">false</boolProp>
+                <intProp name="Assertion.test_type">2</intProp>
+              </ResponseAssertion>
+              <hashTree/>
+              <SizeAssertion guiclass="SizeAssertionGui" testclass="SizeAssertion" testname="Tamano mayor a 10 KB" enabled="true">
+                <stringProp name="Assertion.test_field">SizeAssertion.response_network_size</stringProp>
+                <stringProp name="SizeAssertion.size">10240</stringProp>
+                <intProp name="SizeAssertion.operator">3</intProp>
+              </SizeAssertion>
+              <hashTree/>
+            </hashTree>
           </hashTree>
         </hashTree>
       </hashTree>

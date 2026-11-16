@@ -43,7 +43,7 @@ DC := docker compose
         certs certs-force internal-ca restart-nginx \
         shell-core shell-ai shell-db shell-front \
         prod-secrets prod-up swarm-deploy swarm-ps swarm-down \
-        perf-build perf-setup perf perf-all perf-clean \
+        perf-build perf-setup perf-umbrales perf perf-all perf-clean \
         mcu50-build mcu50-validate bugasura-build
 
 # Archivos de compose para el stack MVP (mínimo, sin LLM ni servicios extra)
@@ -156,10 +156,15 @@ test-e2e: ## Pruebas E2E y de accesibilidad con Playwright. Necesita Keycloak y 
 perf-build: ## Construir la imagen Docker con JMeter que usan las pruebas de performance (se hace sola la primera vez)
 	@bash perf/scripts/perf.sh build
 
-perf-setup: ## Crear los datos de prueba PERF- (organización, usuarios y evaluaciones). Idempotente; necesita perf/data/admin.env
+perf-setup: ## Crear los datos de prueba PERF- (organización, usuarios y evaluaciones) y pedir el p95 aceptable de cada caso. Idempotente; necesita perf/data/admin.env
 #> PERF_USUARIOS=20  cantidad de usuarios de prueba a crear
 #> BASE_URL=... PERF_PERMITIR_REMOTO=1  crear los datos en otro entorno en lugar del stack local
+#> PERF_SIN_PREGUNTAS=1  no pedir los p95: conserva los guardados o los de cada caso
 	@bash perf/scripts/perf.sh setup
+
+perf-umbrales: ## Cambiar el p95 aceptable (ms) de cada caso CP sin recrear los datos. Se guarda en perf/data/umbrales.properties
+#> PERF_SIN_PREGUNTAS=1  solo mostrar los valores vigentes
+	@bash perf/scripts/perf.sh umbrales
 
 perf: ## Correr un caso de performance y generar su informe (PDF, HTML y resumen) en perf/results. Termina con error si el caso no cumple sus umbrales
 #> CASO=CP-RND-02  caso a correr (obligatorio): uno de los archivos de perf/casos
@@ -168,11 +173,16 @@ perf: ## Correr un caso de performance y generar su informe (PDF, HTML y resumen
 #> ESCALONES=10,20,40  usuarios de cada escalón en la prueba de estrés
 #> BASE_URL=https://host PERF_PERMITIR_REMOTO=1  correr contra otro entorno (por defecto, el stack local)
 #> PERF_PERMITIR_DISRUPTIVO=1  necesario para CP-RND-06 (estrés) y CP-OBS-08 (inundación)
+#> UMBRAL_P95_MS=2000  UMBRAL_P99_MS=4000  UMBRAL_MEDIA_MS=800  tiempos máximos aceptados (RNF); reemplazan los del caso, también los de cada petición
+#> UMBRAL_ERROR_PCT=1  porcentaje máximo de errores    UMBRAL_THROUGHPUT_MIN=20  peticiones por segundo mínimas
+#> UMBRAL_MIN_429=100  mínimo de respuestas 429 esperadas (solo CP-OBS-08)
+#> CP-RND-03, 04 y 05 corren primero con 1 usuario y después con la carga completa (dos informes); USERS=n corre una sola fase
+#> CP-RND-06 termina con una corrida de recuperación de 5 minutos con 1 usuario, comparada con el último CP-RND-01 (RECUPERACION_S=0 la omite)
 	@bash perf/scripts/perf.sh run $(CASO)
 
 perf-all: ## Correr todos los casos de medición y generar el informe consolidado en PDF. Termina con error si alguno no cumple
 #> INCLUIR_DISRUPTIVOS=1 PERF_PERMITIR_DISRUPTIVO=1  sumar el estrés y la inundación
-#> Acepta además los parámetros de carga y de destino de make perf
+#> Acepta además los parámetros de carga, de destino y de umbrales (UMBRAL_*) de make perf; los umbrales se aplican a todos los casos
 	@bash perf/scripts/perf.sh all
 
 perf-clean: ## Limpiar los datos PERF-: borra lo que se puede y deshabilita los usuarios con historial. Conserva los resultados

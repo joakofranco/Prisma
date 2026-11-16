@@ -1,6 +1,7 @@
 FROM eclipse-temurin:21-jre-alpine
 
 ARG JMETER_VERSION=5.6.3
+SHELL ["/bin/ash", "-o", "pipefail", "-c"]
 
 RUN apk add --no-cache bash python3 py3-matplotlib py3-reportlab font-dejavu \
  && cd /tmp \
