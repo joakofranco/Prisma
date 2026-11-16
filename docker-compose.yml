@@ -171,7 +171,7 @@ services:
       # (ver el servicio "keycloak" más arriba) el claim "iss" varía según el host que usó el
       # navegador para loguearse, así que acá va la lista completa de hosts soportados en vez de
       # uno solo. Agregar un dominio nuevo (ej. producción) es sumarlo a esta lista, sin tocar
-      # código -- ver docs/Certificados-TLS.md.
+      # código -- ver docs/operacion/Certificados-TLS.md.
       #
       # http://localhost:8080 (sin TLS) tiene que estar STA en la lista, no solo los https://: es
       # la URL que el propio README (tabla del Quickstart) documenta como acceso directo al
@@ -207,6 +207,7 @@ services:
       AI_READ_TIMEOUT: ${AI_READ_TIMEOUT:-60s}
       AI_GUIDE_READ_TIMEOUT: ${AI_GUIDE_READ_TIMEOUT:-120s}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:8080,http://localhost:5173,https://localhost,https://prisma.local}
+      SERVICES_ALLOWED_CIDRS: ${SERVICES_ALLOWED_CIDRS:-127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}
       JAVA_TOOL_OPTIONS: ${BACKEND_CORE_JVM_OPTS:--Xms512m -Xmx1024m}
       TZ: ${TZ}
     ports:
@@ -394,7 +395,7 @@ services:
       # que nginx tenga configurado, sin que el navegador necesite resolver un nombre fijo (antes,
       # con KC_HOSTNAME fijo en https://prisma.local, el formulario de login quedaba siempre
       # apuntando a esa URL aunque se hubiese entrado por https://localhost, y el navegador no
-      # podía resolverla sin una entrada manual en /etc/hosts -- ver docs/Certificados-TLS.md).
+      # podía resolverla sin una entrada manual en /etc/hosts -- ver docs/operacion/Certificados-TLS.md).
       # backend-core valida el claim "iss" contra una LISTA de orígenes confiables en vez de uno
       # solo (KEYCLOAK_TRUSTED_ISSUERS en application.yml), ya que ahora el issuer varía según el
       # host usado para loguearse.
@@ -411,7 +412,7 @@ services:
       # al host) para el healthcheck de abajo. Sin esto "nginx" queda con depends_on satisfecho
       # apenas el contenedor arranca, no cuando Keycloak termina el import y realmente escucha
       # (el arranque completo tarda ~30-60s) -- esa ventana es la que daba 502 en /auth/* al
-      # levantar el stack o reiniciar este servicio (ver docs/RUNBOOK.md).
+      # levantar el stack o reiniciar este servicio (ver docs/operacion/RUNBOOK.md).
       KC_HEALTH_ENABLED: "true"
       # /auth/metrics en el management interface (9000, interno) y contador de eventos de usuario
       # (keycloak_user_events_total: login_error, etc.) para las alertas de fuerza bruta.
@@ -853,7 +854,7 @@ services:
 
   # Job one-shot: importa los dashboards versionados en infra/monitoring/kibana/dashboards.ndjson
   # (overview + seguridad + base de datos + aplicaciones, exportados desde una corrida real -- ver
-  # docs/CI-CD-Infra.md) para que levantar el perfil "elastic" desde cero ya traiga la
+  # docs/operacion/CI-CD-Infra.md) para que levantar el perfil "elastic" desde cero ya traiga la
   # observabilidad armada, sin tener que rehacerlos a mano en la UI cada vez.
   kibana-dashboards-init:
     image: curlimages/curl:8.11.0
@@ -1021,7 +1022,7 @@ services:
       # nombre del contenedor, así que si Keycloak todavía no arrancó, nginx igual arranca sin
       # error (el DNS interno de Docker resuelve al contenedor ya creado aunque su proceso no
       # esté escuchando) y devuelve 502 en /auth/* hasta que Keycloak termine el import (~30-60s)
-      # -- ver el healthcheck agregado al servicio "keycloak" y docs/RUNBOOK.md.
+      # -- ver el healthcheck agregado al servicio "keycloak" y docs/operacion/RUNBOOK.md.
       keycloak: { condition: service_healthy }
     ports:
       - "${NGINX_HTTP_PORT:-80}:80"
@@ -1039,7 +1040,7 @@ services:
   # FAIL2BAN: bloquea las IPs que abusan de la plataforma. Lee el access.log de NGINX (volumen
   # nginx-f2b-logs), y al banear una IP la agrega como "deny" a la lista que NGINX incluye
   # (volumen nginx-banlist) y le manda HUP al contenedor de NGINX para recargarla. Las IPs
-  # baneadas reciben 403. Usa el socket de Docker solo para esa señal. Ver docs/RUNBOOK.md.
+  # baneadas reciben 403. Usa el socket de Docker solo para esa señal. Ver docs/operacion/RUNBOOK.md.
   # -------------------------------------------------------------------
   fail2ban:
     build: { context: ./infra/fail2ban }
