@@ -5,7 +5,7 @@
         <h1 class="text-2xl font-bold text-slate-900 dark:text-white">Servicios</h1>
         <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">
           Acceso a los servicios de la infraestructura de PRISMA. Solo disponible para el
-          Administrador de Plataforma y desde la VPN.
+          Administrador de Plataforma; los enlaces abren únicamente con la VPN conectada.
         </p>
       </div>
       <BaseButton

@@ -2,7 +2,7 @@
 
 Backend-ai corre con una sola réplica, así que alcanza un `PersistentClient` (SQLite + archivos
 locales bajo ``chroma_persist_dir``). Escalar a más de una réplica requeriría un servidor ChromaDB
-aparte (ver docs/mcu-5.0/Kubernetes-Analisis-Viabilidad.md).
+aparte (ver docs/proyecto/Kubernetes-Analisis-Viabilidad.md).
 """
 
 from __future__ import annotations

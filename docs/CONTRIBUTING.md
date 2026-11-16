@@ -1,33 +1,31 @@
 # 🤝 Guía de Contribución
 
-## Flujo de trabajo (trunk-based, ramas cortas por PR)
+## Flujo de trabajo (ramas cortas por PR sobre `dev`)
 
-> El plan original (`docs/Proyecto.md`) era GitFlow con una rama `dev` de integración y ramas
-> personales `dev/<nombre>` por integrante. **En la práctica el repo no usa ese modelo** — ver
-> [`README.md` → Estrategia de branching](../README.md#estrategia-de-branching), que lo documenta
-> explícitamente. El flujo real, más simple, es:
+> El plan original (`docs/proyecto/Proyecto.md`) preveía además ramas personales `dev/<nombre>` por
+> integrante. **En la práctica no se usan** — ver
+> [`README.md` → Estrategia de branching](../README.md#estrategia-de-branching). El flujo real es:
 
-1. **Toda rama parte desde `main`** (no existe una rama `dev` de integración en el día a día; la
-   `dev` que ves en `git branch -r` sólo la usa `deploy.yml` para el entorno remoto, no el
-   desarrollo).
+1. **Toda rama parte desde `dev`**, la rama de integración. Cada merge a `dev` despliega el
+   entorno de desarrollo remoto (`deploy.yml`); `dev` se promueve a `main` para las versiones.
 2. **Preferir feature branches efímeras** (< 1 semana de vida).
 3. **PRs pequeños** (< 500 líneas) son más fáciles de revisar — `pr-checks.yml` marca con una
    advertencia (no bloqueante) los que superan 1000 líneas.
 4. **Un PR = una responsabilidad**. Si añadís una feature y refactorizás por el camino, hacé dos PRs.
-5. **El PR se mergea contra `main`**, nunca contra `dev`.
+5. **El PR se mergea contra `dev`**.
 
 ## Ciclo típico
 
 ```
-main ── (checkout -b) ──► fix/PRISMA-123-descripcion
+dev ── (checkout -b) ──► fix/descripcion-corta
                                 │
                        (commits, Conventional Commits desde el primero)
                                 │
-                       (push + PR contra main)
+                       (push + PR contra dev)
                                 │
                        (CI verde + CODEOWNERS si aplica)
                                 │
-                       (merge a main)
+                       (merge a dev)
 ```
 
 ## Convenciones de commits
@@ -49,7 +47,7 @@ Scopes: `frontend`, `backend-core`, `backend-ai`, `infra`, `docs`, `ci`, `deps`.
 Ejemplos:
 
 ```
-feat(backend-core): agrega endpoint POST /api/v1/evaluations
+feat(backend-core): agrega endpoint POST /api/evaluations
 fix(frontend): corrige validación de nivel de madurez
 test(backend-ai): añade tests del retriever RAG
 chore(deps): bumpea spring-boot 3.3.5 → 3.5.16
@@ -82,7 +80,7 @@ Como reviewer, chequeá:
 - ✅ ¿La funcionalidad hace lo que dice hacer? — probado no sólo con tests unitarios: para cambios
   en flujos completos (login, ciclo de vida de una evaluación, RBAC/multi-tenant), levantar el
   stack real (`make up-core`) y probarlo a mano por lo menos una vez sigue encontrando bugs que el
-  mock no ve — ver [`Testing.md`](../docs/Testing.md#qa-manual-contra-el-stack-real) para varios
+  mock no ve — ver [`Testing.md`](desarrollo/Testing.md#qa-manual-contra-el-stack-real) para varios
   ejemplos reales de esto en este mismo repo.
 - ✅ ¿Hay tests suficientes? El gate de JaCoCo en `backend-core/pom.xml` exige ≥80% de líneas por
   paquete; hay una segunda regla al 100% pensada para el motor de cálculo de madurez, pero
@@ -105,14 +103,14 @@ Como reviewer, chequeá:
 - Un componente = un archivo `.vue`.
 - Props tipadas con TypeScript.
 - Store por dominio (no un mega-store).
-- Tests con Vitest + Vue Testing Library.
+- Tests con Vitest + Vue Test Utils.
 
 ### Backend Core (Spring Boot)
 
-- Arquitectura hexagonal — separar `domain`, `application`, `infrastructure`.
+- Arquitectura por capas — separar `domain`, `application`, `infrastructure` y `web`.
 - Nunca inyectar `EntityManager` en controllers.
 - DTOs SIEMPRE (no exponer entidades JPA).
-- Excepciones de negocio custom → mapeadas por `@ControllerAdvice` a RFC 7807.
+- Excepciones de negocio custom → mapeadas por `GlobalExceptionHandler` a `ApiErrorDto` (`message`, `code`, `details`).
 - Tests unitarios con JUnit 5 + Mockito. Integración con Testcontainers.
 
 ### Backend AI (FastAPI)

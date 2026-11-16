@@ -8,10 +8,10 @@
 | **XSS** | Vue escapa interpolaciones por default (no se usa `v-html` con datos de usuario); CSP restrictiva servida por nginx (`default-src 'self'`, ver `apps/frontend/nginx.conf`). |
 | **CSRF** | No aplica en el sentido clásico: la API es 100% stateless (JWT en header `Authorization: Bearer`, sin cookies de sesión que un request cross-site pueda reenviar solo). |
 | **BOLA / IDOR** | **No es un middleware global** — cada `Service` llama explícitamente a `CurrentUserService.assertOrganizationAccess(organizationId)` (o filtra por tenant en la query) antes de devolver/mutar un recurso. Es responsabilidad de quien escribe un `Service` nuevo acordarse de llamarlo; nada a nivel de framework lo fuerza. **Esto no siempre se cumplió**: `OrganizationService`/`UserService` no tuvieron ningún chequeo de este tipo hasta que se detectó en una pasada de QA exhaustiva y se corrigió (cualquier usuario autenticado podía enumerar todas las organizaciones y usuarios de la plataforma, sin importar su propio tenant) — ver "Endurecimientos recientes" más abajo. Al agregar un `Service` nuevo que exponga datos por organización, agregar el chequeo explícitamente y no asumir que "ya está cubierto en otro lado". |
-| **Broken auth** | Keycloak (SSO, JWT firmado RS256, **MFA TOTP obligatoria para `PRISMA_ADMIN` y `ORG_RESPONSIBLE`** — ver "MFA (TOTP) obligatoria por rol" abajo, brute-force protection — `failureFactor: 10` intentos en una ventana de 15 min y bloqueo fijo de 15 min (ver [`RUNBOOK.md`](RUNBOOK.md#bloqueo-de-cuenta-por-intentos-fallidos-rf-auth-08)); además NGINX limita los intentos de login por IP y responde 429 al excederlo, configurable en vivo desde la consola de Keycloak sin redeploy) + Argon2id para contraseñas locales. Los intentos fallidos además quedan en la bitácora propia (`LOGIN_FAILED`, ver "Registro de intentos de login fallidos" abajo) para verlos sin entrar a Keycloak. **MFA/TOTP está configurado pero no es obligatorio** para ningún rol (ver [`Arquitectura.md`](Arquitectura.md)) — queda como mejora pendiente, no como control ya activo. |
-| **Sensitive Data Exposure** | HTTPS forzado desde el navegador vía nginx (certificado propio, ver [`Certificados-TLS.md`](Certificados-TLS.md)); evidencias en RustFS con URLs firmadas de corta duración (900s) en vez de un bucket público. **Cifrado en tránsito hacia Keycloak (BUG-12 / PRI-369, MCU SC.14-2):** los tramos internos nginx → Keycloak y backend-core → Keycloak (JWKS y Admin API) van por TLS (`keycloak:8443`) con verificación del certificado contra una CA interna (`scripts/generate-internal-ca.sh`); en producción el puerto HTTP de Keycloak está deshabilitado. Los demás tramos internos (backend-core/backend-ai/frontend, Postgres, Elasticsearch, RustFS) siguen en HTTP dentro de `prisma-net` — ver [`Certificados-TLS.md`](Certificados-TLS.md). |
+| **Broken auth** | Keycloak (SSO, JWT firmado RS256, **MFA TOTP obligatoria para `PRISMA_ADMIN` y `ORG_RESPONSIBLE`** — ver "MFA (TOTP) obligatoria por rol" abajo, brute-force protection — `failureFactor: 10` intentos en una ventana de 15 min y bloqueo fijo de 15 min, configurable en vivo desde la consola de Keycloak sin redeploy (ver [`RUNBOOK.md`](operacion/RUNBOOK.md#bloqueo-de-cuenta-por-intentos-fallidos-rf-auth-08)); además NGINX limita los intentos de login por IP y responde 429 al excederlo, y fail2ban bloquea temporalmente las IPs que insisten) + Argon2id para contraseñas locales. Los intentos fallidos además quedan en la bitácora propia (`LOGIN_FAILED`, ver "Registro de intentos de login fallidos" abajo) para verlos sin entrar a Keycloak. La MFA se activa en cada ambiente con `make mfa-enable`: mientras no se ejecute, no se exige. |
+| **Sensitive Data Exposure** | HTTPS forzado desde el navegador vía nginx (certificado propio, ver [`Certificados-TLS.md`](operacion/Certificados-TLS.md)); evidencias en un bucket privado de RustFS: la descarga la sirve `backend-core` validando JWT, organización y rol, y las URLs firmadas de corta duración (900 s) se usan solo dentro de la red de contenedores, para que `backend-ai` lea el archivo. **Cifrado en tránsito hacia Keycloak (BUG-12 / PRI-369, MCU SC.14-2):** los tramos internos nginx → Keycloak y backend-core → Keycloak (JWKS y Admin API) van por TLS (`keycloak:8443`) con verificación del certificado contra una CA interna (`scripts/generate-internal-ca.sh`); en producción el puerto HTTP de Keycloak está deshabilitado. En producción (`docker-compose.prod.yml`) los demás tramos internos (backend-core, backend-ai, frontend, Postgres, Elasticsearch, RustFS) también van por TLS verificado contra esa CA; en desarrollo siguen en HTTP dentro de `prisma-net` — ver [`Certificados-TLS.md`](operacion/Certificados-TLS.md). |
 | **Components with known vulnerabilities** | Trivy (FS + imágenes) + OWASP Dependency-Check + Gitleaks + CodeQL, semanal y en cada push a `main`/`dev` (`security.yml`). |
-| **Insufficient Logging** | Bitácora de auditoría de acciones sensibles (`audit.audit_logs`, escritura síncrona — ver [`Arquitectura.md`](Arquitectura.md)), consultable desde la app ("Actividad del Sistema", `GET /api/audit-logs`) e incluye **login/logout y login fallido** (ver "Registro de intentos de login fallidos" abajo); logs de todos los contenedores centralizados en Loki/Grafana y, opcionalmente, Elasticsearch/Kibana (perfil `elastic`). |
+| **Insufficient Logging** | Bitácora de auditoría de acciones sensibles (`audit.audit_logs`, escritura síncrona — ver [`Arquitectura.md`](arquitectura/Arquitectura.md)), consultable desde la app ("Actividad del Sistema", `GET /api/audit-logs`) e incluye **login/logout y login fallido** (ver "Registro de intentos de login fallidos" abajo); logs de todos los contenedores centralizados en Loki/Grafana y, opcionalmente, Elasticsearch/Kibana (perfil `elastic`). |
 | **Broken access control (nivel de negocio)** | Ver "Endurecimientos recientes" — el ciclo de vida de una evaluación y la evidencia asociada ahora se bloquean explícitamente por estado, no sólo por rol. |
 
 ## Endurecimientos recientes (para que no se repitan)
@@ -37,7 +37,7 @@ código) — se documentan con su causa para que un patrón similar se evite en 
 4. **Sin protección contra auto-eliminación ni contra borrar al administrador global** —
    `UserService.delete` no impedía que un `PRISMA_ADMIN` se borrara a sí mismo, ni que borrara al
    usuario semilla (`admin@prisma.local`). Este bug se manifestó de verdad durante las propias
-   pruebas (ver el incidente documentado en [`RUNBOOK.md`](RUNBOOK.md)). Corregido con dos
+   pruebas (ver el incidente documentado en [`RUNBOOK.md`](operacion/RUNBOOK.md)). Corregido con dos
    chequeos explícitos al inicio de `delete()`.
 5. **Secreto de Keycloak desincronizado por defecto** — `.env.example` traía un
    `KEYCLOAK_ADMIN_CLIENT_SECRET` que nunca coincidía con el hardcodeado en
@@ -58,7 +58,7 @@ código) — se documentan con su causa para que un patrón similar se evite en 
    visualizadores sin pedirle a un PRISMA_ADMIN que lo hiciera por él. Se relajó el
    `@PreAuthorize` a `PRISMA_ADMIN`/`ORG_RESPONSIBLE`, pero **cada operación queda acotada en
    `UserService`** (no sólo en la UI): un `ORG_RESPONSIBLE` nunca puede tocar un usuario fuera de
-   su propio tenant, el `tenantId` que mande en el body se ignora y se fuerza el propio, no puede
+   su propia organización, se rechaza (403) cualquier otra organización que mande en el body, no puede
    otorgarle a nadie el rol global `PRISMA_ADMIN`, y si asigna `AUDITOR` sólo puede auditar su
    propia organización. `PRISMA_ADMIN` sigue siendo el único rol sin esa restricción.
 8. **IP spoofeable en la bitácora** — nginx (el reverse-proxy principal y el del contenedor
@@ -70,7 +70,7 @@ código) — se documentan con su causa para que un patrón similar se evite en 
    además se simplificó para leer `getRemoteAddr()` (ya resuelto por
    `server.forward-headers-strategy: framework`) en vez de releer el header a mano.
 9. **`CreateUserDto.enabled` sin protección propia** — al agregar la opción de deshabilitar un
-   usuario sin borrarlo (ver [`HistoriasDeUsuario.md`](HistoriasDeUsuario.md#hu-usr-06--deshabilitar-un-usuario-sin-borrarlo)),
+   usuario sin borrarlo (ver [`HistoriasDeUsuario.md`](proyecto/HistoriasDeUsuario.md#hu-usr-06--deshabilitar-un-usuario-sin-borrarlo)),
    se replicaron desde el vamos las mismas dos protecciones que ya tenía `delete()` (ítem 4): no
    se puede deshabilitar la propia cuenta ni al administrador global sembrado — deshabilitarse a
    uno mismo es un lockout tan definitivo como borrarse.
@@ -83,7 +83,7 @@ código) — se documentan con su causa para que un patrón similar se evite en 
     mano — antes de poder loguearse ahí, algo fácil de saltear al copiar el `.env` de un lado a
     otro (en el servidor real donde se detectó esto, además, el JSON había quedado con una coma
     faltante al intentar agregar el host a mano directo en el archivo, lo que rompía el
-    `--import-realm` por completo — ver el incidente en [`RUNBOOK.md`](RUNBOOK.md)). Se cambió a
+    `--import-realm` por completo — ver el incidente en [`RUNBOOK.md`](operacion/RUNBOOK.md)). Se cambió a
     `redirectUris: ["*"]` / `webOrigins: ["*"]` — un valor especial que Keycloak reconoce como
     "cualquier URI/origen" — para que el mismo realm funcione sin edición manual sin importar la
     IP o el dominio del servidor. **Trade-off aceptado conscientemente, no ideal para un ambiente
@@ -137,7 +137,7 @@ Se pone `otpPolicyLookAheadWindow=1` (tolera ±30 s de desfase del reloj del tel
 SHA1 y 6 dígitos porque las apps autenticadoras más usadas no soportan otros parámetros.
 
 **Recuperación** (el usuario perdió o cambió el teléfono): ver
-[`RUNBOOK.md`](RUNBOOK.md#un-usuario-con-mfa-perdió-el-dispositivo-del-otp).
+[`RUNBOOK.md`](operacion/RUNBOOK.md#un-usuario-con-mfa-perdió-el-dispositivo-del-otp).
 
 ## Registro de intentos de login fallidos
 
@@ -182,11 +182,14 @@ está tachado.
 **Abiertos — requieren una decisión explícita del equipo, no se tocaron automáticamente porque
 implican rotar secretos/credenciales compartidas o tocar la topología de red del `docker-compose`:**
 - Postgres, RustFS, Grafana, SonarQube y Keycloak (realm `master`) aceptan las credenciales
-  placeholder que trae `.env` (`change_me_in_production`, `admin`/`admin`) — acceso total en cada
-  caso. **Rotar antes de exponer el stack más allá de `localhost`.**
-- Los 23 servicios de `docker-compose.yml` publican en `0.0.0.0` (toda la red), no `127.0.0.1` —
-  amplifica el alcance de cada credencial débil a cualquiera en la misma LAN, no sólo la propia
-  máquina.
+  iniciales que trae `.env` (`Admin1234!`, la misma en todos los ambientes que no son producción) —
+  acceso total en cada caso. **No exponer esos ambientes más allá de una red de confianza.** En
+  producción se generan al azar con `make prod-up` (ver [`Ambientes-Despliegue.md`](operacion/Ambientes-Despliegue.md#contraseñas-de-producción)).
+- La mayoría de los servicios de `docker-compose.yml` publican en `0.0.0.0` (toda la red), no en
+  `127.0.0.1` — amplifica el alcance de cada credencial débil a cualquiera en la misma LAN, no sólo
+  la propia máquina. Ya publican solo en `127.0.0.1` backend-core y el puerto HTTP de Keycloak, y
+  `docker-compose.cloudflare.yml` restringe el resto a la IP de la VPN (ver
+  [`PUBLICACION-CLOUDFLARE.md`](operacion/PUBLICACION-CLOUDFLARE.md)).
 - Métricas sin autenticar: Prometheus, cAdvisor, node/postgres/redis-exporter, y
   `/actuator/prometheus` de `backend-core` — exponen topología interna y patrones de tráfico.
 - Ollama (puerto 11434) sin auth — cualquiera en red puede listar/descargar modelos o consumir
@@ -207,7 +210,9 @@ cifradas de forma reversible -- se guardan como hash Argon2id (`PasswordHasher`,
 es preferible a un cifrado reversible, incluso si la clave de cifrado se filtrara). Revisamos el
 resto de las entidades de `backend-core` y no encontramos ninguna otra columna con datos sensibles
 en texto plano: la configuración SMTP (incluida su contraseña) no se persiste en la base de PRISMA,
-se guarda directamente en Keycloak (`EmailSettingsService` delega en `KeycloakAdminClient`); las
+se guarda directamente en Keycloak (`EmailSettingsService` delega en `KeycloakAdminClient`); la
+contraseña SMTP de las alertas tampoco va a la base (`alert_settings` solo guarda `password_set`):
+queda en un archivo de permisos restringidos dentro del volumen de configuración de Alertmanager; las
 credenciales reales de los usuarios tampoco viven en esta base, Keycloak es el único *identity
 provider*. Por eso no se agregó cifrado de columnas vía `pgcrypto` u otro mecanismo: no hay ningún
 dato en texto plano en Postgres que lo necesite hoy. Si en el futuro se agrega una columna
@@ -220,7 +225,7 @@ alguien roba el disco físico o una copia del volumen) no se puede activar desde
 contenedor Docker: Postgres y RustFS escriben a los volúmenes `prisma-postgres-data` y
 `prisma-rustfs-data`, que son carpetas del sistema de archivos del host. Cifrarlos es una decisión
 de infraestructura, no de la aplicación. Para el target de producción real de este proyecto
-(servidor Linux con Docker Engine, ver [`Ambientes-Despliegue.md`](Ambientes-Despliegue.md)), la
+(servidor Linux con Docker Engine, ver [`Ambientes-Despliegue.md`](operacion/Ambientes-Despliegue.md)), la
 recomendación es:
 
 1. Cifrar la partición/disco donde vive el `docker volume` de Postgres y RustFS con LUKS
@@ -270,12 +275,12 @@ informa estos tres como fallos aunque el CI los dé por aceptados.
 PRISMA implementa los controles necesarios para ser AUDITADA por sí misma:
 - Registro de accesos y acciones sensibles (`audit.audit_logs`).
 - Segregación de entornos (local / dev / staging / prod, ver `README.md` → Ambientes).
-- Backup y restore documentados (`make backup` / `make restore`, ver [`RUNBOOK.md`](RUNBOOK.md)).
+- Backup y restore documentados (`make backup` / `make restore`, ver [`RUNBOOK.md`](operacion/RUNBOOK.md)).
 - Análisis periódico de vulnerabilidades (`security.yml`, semanal).
 
 ## Reportar una vulnerabilidad
 
-Este es un proyecto académico (ver `docs/Proyecto.md`), sin un programa de bug bounty ni un canal
+Este es un proyecto académico (ver `docs/proyecto/Proyecto.md`), sin un programa de bug bounty ni un canal
 de disclosure formal. Si encontrás algo, abrí un issue privado o contactá directamente a los
 integrantes listados en el `README.md` — evitá publicar detalles de una vulnerabilidad explotable
 en un issue público del repo.

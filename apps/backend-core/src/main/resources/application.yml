@@ -173,7 +173,7 @@ prisma:
     # dinámico, Keycloak emite el claim "iss" con el mismo host que usó el navegador para
     # loguearse (https://prisma.local, https://localhost, etc.), así que acá va la lista completa
     # de hosts soportados en vez de uno solo -- ver SecurityConfig.keycloakJwtDecoder y
-    # docs/Certificados-TLS.md.
+    # docs/operacion/Certificados-TLS.md.
     trusted-issuers: ${KEYCLOAK_TRUSTED_ISSUERS:https://prisma.local/auth/realms/prisma,https://localhost/auth/realms/prisma}
     admin:
       # Cliente "prisma-backend" con Service Accounts habilitado (no es un usuario admin humano):

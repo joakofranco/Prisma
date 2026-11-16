@@ -1,0 +1,40 @@
+# Alertas de vulnerabilidades. Las métricas prisma_vuln_* las publica make vuln-scan (Trivy) en el
+# Pushgateway; ver scripts/vuln-scan.sh y docs/operacion/Vulnerabilidades.md.
+groups:
+  - name: prisma-vulnerabilidades
+    rules:
+      - alert: VulnerabilidadCriticaConParche
+        expr: sum by (objetivo) (prisma_vuln_total{severidad="CRITICAL",parche="si"}) > 0
+        for: 0m
+        labels: { severity: critical, category: security }
+        annotations:
+          title: "Vulnerabilidad crítica con parche disponible"
+          summary: "{{ $labels.objetivo }} tiene vulnerabilidades críticas con parche"
+          description: "{{ $labels.objetivo }} tiene {{ $value | printf \"%.0f\" }} vulnerabilidad(es) crítica(s) que ya tienen versión corregida. Ver el detalle en el tablero «PRISMA · Vulnerabilidades» de Grafana y actualizar el componente."
+
+      - alert: VulnerabilidadesAltasConParche
+        expr: sum by (objetivo) (prisma_vuln_total{severidad="HIGH",parche="si"}) > 0
+        for: 1h
+        labels: { severity: warning, category: security }
+        annotations:
+          title: "Vulnerabilidades altas con parche disponible"
+          summary: "{{ $labels.objetivo }} tiene vulnerabilidades altas con parche"
+          description: "{{ $labels.objetivo }} tiene {{ $value | printf \"%.0f\" }} vulnerabilidad(es) alta(s) con versión corregida disponible."
+
+      - alert: EscaneoDeVulnerabilidadesDesactualizado
+        expr: time() - max(prisma_vuln_scan_timestamp_seconds) > 8 * 86400
+        for: 0m
+        labels: { severity: warning, category: security }
+        annotations:
+          title: "El escaneo de vulnerabilidades está desactualizado"
+          summary: "Hace más de 8 días que no se corre make vuln-scan"
+          description: "El último escaneo de vulnerabilidades fue hace {{ $value | humanizeDuration }}. Correr make vuln-scan."
+
+      - alert: EscaneoDeVulnerabilidadesFallido
+        expr: prisma_vuln_scan_success == 0
+        for: 0m
+        labels: { severity: warning, category: security }
+        annotations:
+          title: "Falló el escaneo de un componente"
+          summary: "No se pudo escanear {{ $labels.objetivo }}"
+          description: "El último make vuln-scan no pudo escanear {{ $labels.objetivo }} ({{ $labels.tipo }}). Revisar vuln-reports/ en el equipo que lo corrió."

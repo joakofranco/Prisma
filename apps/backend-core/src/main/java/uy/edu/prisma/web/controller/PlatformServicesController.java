@@ -13,8 +13,9 @@ import uy.edu.prisma.web.dto.Dto.ReplaceServicesHostDto;
 import uy.edu.prisma.web.dto.Dto.UpdatePlatformServiceUrlDto;
 
 /**
- * Lanzador de servicios de la infraestructura. Solo PRISMA_ADMIN, y además solo desde la VPN: cada
- * operación verifica la red de origen (403 con código VPN_REQUIRED si no).
+ * Lanzador de servicios de la infraestructura. Solo PRISMA_ADMIN. El listado se sirve desde
+ * cualquier red (los enlaces apuntan a la VPN y solo abren conectado a ella); las operaciones que
+ * modifican las URL verifican la red de origen (403 con código VPN_REQUIRED si no).
  */
 @RestController
 @RequestMapping("/api/admin/services")
@@ -30,8 +31,7 @@ public class PlatformServicesController {
   }
 
   @GetMapping
-  public ResponseEntity<List<PlatformServiceDto>> list(HttpServletRequest request) {
-    vpnGuard.require(request);
+  public ResponseEntity<List<PlatformServiceDto>> list() {
     return ResponseEntity.ok(service.list());
   }
 

@@ -1111,6 +1111,99 @@
           "sort": "desc"
         }
       }
+    },
+    {
+      "id": 19,
+      "type": "row",
+      "title": "IPs bloqueadas por fail2ban",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 43
+      }
+    },
+    {
+      "id": 20,
+      "type": "table",
+      "title": "IPs bloqueadas: origen, país y motivo",
+      "description": "Cada fila es un bloqueo de fail2ban. El país sale de la base DB-IP Lite que lleva la imagen de fail2ban; las IPs privadas figuran como «red privada».",
+      "datasource": "Loki",
+      "gridPos": {
+        "w": 24,
+        "h": 10,
+        "x": 0,
+        "y": 44
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": "Loki",
+          "queryType": "range",
+          "expr": "{container=\"/prisma-fail2ban\"} |= \"BANEO ip=\"",
+          "maxLines": 500
+        }
+      ],
+      "transformations": [
+        {
+          "id": "extractFields",
+          "options": {
+            "source": "Line",
+            "format": "kvp",
+            "replace": false,
+            "keepTime": true
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Line": true,
+              "labels": true,
+              "id": true,
+              "tsNs": true,
+              "labelTypes": true,
+              "container": true,
+              "stream": true
+            },
+            "indexByName": {
+              "Time": 0,
+              "ip": 1,
+              "pais": 2,
+              "motivo": 3,
+              "jail": 4
+            },
+            "renameByName": {
+              "Time": "Hora",
+              "ip": "IP de origen",
+              "pais": "País",
+              "motivo": "Motivo",
+              "jail": "Regla (jail)"
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "filterable": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "Hora",
+            "desc": true
+          }
+        ],
+        "cellHeight": "sm"
+      }
     }
   ]
 }

@@ -1,0 +1,166 @@
+# 🏛️ Arquitectura de PRISMA
+
+## Vista general
+
+PRISMA sigue una **arquitectura en capas** (aplicación, dominio, infraestructura y web) distribuida en servicios contenerizados, con estricto aislamiento multitenant y una capa de IA opcional basada en RAG.
+
+## Componentes clave
+
+### 1. Frontend (Vue 3)
+
+- **Framework:** Vue 3 + Composition API
+- **State management:** Pinia
+- **Routing:** Vue Router 4 (guards por rol)
+- **Estilos:** Tailwind CSS 4 + Headless UI + Heroicons — tema claro/oscuro (modo `class`,
+  `stores/theme.ts`), toggle en el menú del usuario
+- **Auth:** Keycloak-JS (OIDC/PKCE)
+- **HTTP:** Axios con interceptors para JWT y refresh
+- **Visualización:** Chart.js (radar/spider para madurez, KPIs)
+
+### 2. Backend Core (Spring Boot)
+
+Estructura por capas:
+
+```
+uy.edu.prisma
+ ├── application      # Casos de uso, orquestación
+ ├── domain           # Entidades JPA, repositorios y excepciones de dominio
+ ├── infrastructure   # Adaptadores hacia sistemas externos: Keycloak Admin API, backend-ai (RAG)
+ └── web              # Controllers REST, DTOs y manejo de errores
+```
+
+Responsabilidades:
+- Gestión de organizaciones, usuarios, roles (RBAC)
+- CRUD del catálogo MCU 5.0 (versionado)
+- Motor de evaluación y cálculo de madurez
+- Máquina de estados del workflow de auditoría
+- Almacenamiento seguro de evidencias (RustFS), con análisis antivirus previo
+- Bitácora inmutable de auditoría (append-only)
+- Generación de reportes PDF/Excel (los PDF cumplen PDF/A-1b, RNF-12; ver [`Codigo.md`](Codigo.md#pdfa-1b-rnf-12))
+
+### 3. Backend AI (FastAPI + RAG)
+
+Pipeline RAG:
+
+```
+Documento → Loader → Splitter → Embeddings → ChromaDB
+                                                 ↓
+Pregunta → Embedding → Retriever (top-k) → LLM (Llama 3 vía Ollama) → Respuesta + citas
+```
+
+Endpoints:
+- `POST /api/v1/rag/query` — Pregunta sobre un requisito MCU
+- `POST /api/v1/rag/ingest` — Ingesta un nuevo documento
+- `POST /api/v1/evaluate/evidence` — Evalúa si una evidencia satisface un control
+
+### 4. Base de datos (PostgreSQL 17)
+
+- **Completamente relacional**, catálogo incluido: el catálogo MCU 5.0 es un árbol de tablas
+  normalizadas (`catalog_versions → catalog_functions → catalog_categories →
+  catalog_subcategories → catalog_requirements → catalog_controls`), con
+  `catalog_requirement_subcategories` como tabla N:M explícita desde V15 (un Requisito puede
+  pertenecer a más de una Subcategoría) — no hay ningún campo JSONB en el modelo del catálogo. Ver
+  el detalle completo en [`diagramas/modelo-entidad-relacion.md`](diagramas/modelo-entidad-relacion.md)
+  y [`mapeo-jpa.md`](mapeo-jpa.md).
+- **Sin Row-Level Security**: el aislamiento multi-tenant se hace en la capa de aplicación
+  (`CurrentUserService.assertOrganizationAccess()` llamado explícitamente por cada `Service`), no
+  con políticas RLS de Postgres. Esto es deliberado pero tiene un costo real: es responsabilidad de
+  cada `Service` nuevo llamarlo — nada a nivel de base de datos lo hace por vos. Ver
+  [`SECURITY.md`](../SECURITY.md) para un caso real donde este chequeo faltaba en dos servicios
+  enteros (`OrganizationService`/`UserService`) hasta que se detectó y corrigió.
+- Migrations con Flyway (`src/main/resources/db/migration/V*__*.sql`).
+
+### 5. Caché (Redis)
+
+Declarado en el stack (`docker-compose.yml`, perfil `app`) pero **sin ningún uso activo en el
+código todavía** — no hay sesiones, rate-limiting ni blacklist de tokens implementados sobre él a
+la fecha (la autenticación es 100% stateless vía JWT de Keycloak). Queda reservado para si en el
+futuro hace falta cachear resultados costosos (p.ej. el árbol completo del catálogo) o
+implementar rate-limiting real.
+
+### 6. Almacenamiento (RustFS)
+
+- Servidor de objetos S3-compatible (RustFS); `backend-core` lo consume con el AWS SDK v2 (path-style).
+- Bucket `prisma-evidences` — evidencias privadas; lo crea `backend-core` en la primera subida.
+- Las descargas las sirve `backend-core` por streaming, validando JWT, organización y rol en cada una.
+  Las URLs firmadas (SigV4) con TTL se usan solo dentro de la red de contenedores, para que
+  `backend-ai` lea el archivo al indexarlo.
+
+### 6b. Antivirus (ClamAV, RNF-09)
+
+- Contenedor `clamav` (imagen `clamav/clamav`); `backend-core` le manda cada evidencia por el
+  protocolo `INSTREAM` de `clamd` (puerto 3310) después de validar tamaño y firma, y antes de guardarla
+  en RustFS. Toda evidencia se analiza.
+- Archivo infectado: se rechaza con 422 (`MALWARE_DETECTED`) y no se guarda.
+- Antivirus caído o sin responder: la evidencia **se guarda en cuarentena** (`scan_status = QUARANTINED`).
+  Mientras está en cuarentena no se puede descargar, ver ni indexar en el asistente de IA; sí se puede
+  eliminar. Una tarea programada (`EvidenceRescanScheduler`, cada `CLAMAV_RESCAN_INTERVAL_MS`, 60 s por
+  defecto) la reanaliza apenas ClamAV responde: si está limpia pasa a `CLEAN` y se indexa; si tiene
+  malware pasa a `INFECTED` y se borra el archivo del almacenamiento.
+- Cada resultado queda en la bitácora de auditoría: `EVIDENCE_SCAN_CLEAN`, `EVIDENCE_SCAN_INFECTED`,
+  `EVIDENCE_QUARANTINED`, `EVIDENCE_QUARANTINE_RELEASED` y `EVIDENCE_QUARANTINE_INFECTED`, con nombre,
+  tamaño, SHA-256 y, si corresponde, la firma detectada. Se registran en una transacción aparte para que un
+  rechazo no los borre. Las evidencias anteriores a RNF-09 quedan como `CLEAN` y no se reanalizan.
+
+### 7. IAM (Keycloak)
+
+- Realm `prisma` con roles: `PRISMA_ADMIN`, `ORG_RESPONSIBLE`, `INTERNAL_EVALUATOR`, `AUDITOR`, `VIEWER`.
+- **MFA (TOTP) obligatoria para `PRISMA_ADMIN` y `ORG_RESPONSIBLE`**: el flujo de login
+  `browser-mfa-por-rol` (se instala con `make mfa-enable`, ver
+  [`SECURITY.md`](../SECURITY.md#mfa-totp-obligatoria-por-rol)) obliga a registrar una app
+  autenticadora en el primer login y a pedir el código en los siguientes. Está funcional y sus
+  flujos están validados; el flujo no viene en `realm-prisma.json`, por eso hay que ejecutar el
+  script (`scripts/keycloak/enable-mfa.sh`) en cada ambiente. El resto de los roles
+  puede activarla voluntariamente desde su cuenta de Keycloak. La política OTP (TOTP, SHA1,
+  6 dígitos, 30 s) está en `infra/keycloak/realm-prisma.json`.
+- Política de password: longitud mínima 8 (`passwordPolicy: length(8)`).
+- Brute-force protection habilitado (`bruteForceProtected: true`, 10 intentos en 15 min y bloqueo de 15 min, configurable en vivo
+  desde la consola de Keycloak sin redeploy).
+- `eventsEnabled: true` — Keycloak audita sus propios eventos de login (éxito/error); el rol
+  `view-events` de `realm-management`, concedido al *service account* `prisma-backend`, es lo que
+  le permite a `backend-core` leerlos (`LoginFailureAuditSyncService`) y reflejar los intentos
+  fallidos en la bitácora propia — ver [`SECURITY.md`](../SECURITY.md).
+
+## Seguridad transversal
+
+- HTTPS en todos los entornos (certificado autofirmado propio o `mkcert` en local — ver
+  [`Certificados-TLS.md`](../operacion/Certificados-TLS.md) —, Let's Encrypt o el certificado del balanceador en producción).
+- Argon2id para el hash de contraseñas locales (`PasswordHasher`, ver [`Codigo.md`](Codigo.md));
+  Keycloak gestiona el suyo propio para las credenciales con las que se loguea.
+- JWT firmado por Keycloak (RS256), validado por `backend-core` contra las JWKS del realm; sin
+  estado de sesión del lado de la API (no hay refresh-token store ni blacklist — ver la nota sobre
+  Redis más arriba).
+- Aislamiento multi-tenant verificado **explícitamente en cada `Service`**
+  (`CurrentUserService.assertOrganizationAccess()`), no por un middleware/filtro transversal — ver
+  la advertencia en la sección de PostgreSQL y el detalle en [`SECURITY.md`](../SECURITY.md).
+- Rate limiting a nivel de nginx (zonas `limit_req`/`limit_conn` en `infra/nginx/nginx.conf`,
+  aplicadas en `infra/nginx/conf.d/prisma-locations.inc`); no hay un rate limiter adicional del
+  lado de Spring. fail2ban bloquea temporalmente las IPs que abusan (límite de tasa, fuerza bruta
+  en el login o escaneo) — ver [`RUNBOOK.md`](../operacion/RUNBOOK.md).
+- Escaneo continuo: Trivy, OWASP Dependency-Check, Snyk (opcional), CodeQL, Gitleaks — ver
+  `security.yml` en [`CI-CD-Infra.md`](../operacion/CI-CD-Infra.md).
+
+## Trazabilidad (Audit Logs)
+
+Cada operación crítica se persiste en `audit.audit_logs` (schema separado del resto de la app, ver
+[`diagramas/normalizacion-bd.md`](diagramas/normalizacion-bd.md)) vía `AuditLogService.record(...)`,
+con:
+- `user_id`, `tenant_id`, `action`, `resource`, `payload` (JSON), `ip_address`, `user_agent`, `created_at`.
+- Escritura **síncrona**, dentro de la misma transacción que la operación que audita (no hay cola
+  de eventos ni proceso async) — si la escritura del audit log falla, la transacción completa hace
+  rollback. Un efecto colateral real de esto: al auditar un `DELETE` sobre el propio usuario
+  autenticado, `AuditLogService` intenta resolver "quién hizo esto" *después* de que la fila ya se
+  borró en esa misma transacción, y la resuelve vacía (ver el caso real documentado en
+  [`RUNBOOK.md`](../operacion/RUNBOOK.md)).
+- **Login/logout/login fallido:** Keycloak maneja el login directamente (Authorization Code +
+  PKCE) — `backend-core` nunca ve ese request, así que estas tres acciones no siguen el camino
+  normal de arriba. `LOGIN`/`LOGOUT` los reporta el frontend explícitamente
+  (`POST /account/session-event`, una vez por sesión de pestaña) justo después de autenticarse y
+  justo antes de desloguear. `LOGIN_FAILED` lo trae un job programado
+  (`LoginFailureAuditSyncService`, cada 15s) desde los eventos que Keycloak ya audita solo — ver
+  [`SECURITY.md`](../SECURITY.md#registro-de-intentos-de-login-fallidos).
+- **Consultable desde la UI:** "Actividad del Sistema" (`GET /api/audit-logs`,
+  `ActivityLogView.vue`), acotado por tenant como el resto de la app (`PRISMA_ADMIN` ve todos,
+  `ORG_RESPONSIBLE` sólo el propio). `AuditLogService.list()` resuelve en batch el nombre real de
+  la entidad detrás de cada `resource` para que la columna diga, por ejemplo, "Usuario: Jane Doe"
+  en vez de un UUID crudo.

@@ -3,7 +3,7 @@
 # generate-nginx-cert.sh — genera (o renueva) el certificado autofirmado
 # del reverse-proxy nginx (infra/nginx/certs/prisma.crt + prisma.key).
 # ---------------------------------------------------------------------
-# Por qué un script y no `mkcert` (ver docs/Dev-Config.md): mkcert emite
+# Por qué un script y no `mkcert` (ver docs/desarrollo/Dev-Config.md): mkcert emite
 # certificados confiables para el navegador (los firma con una CA local
 # ya instalada en el sistema), pero limita la validez a ~825 días (regla
 # del CA/Browser Forum que mkcert respeta aunque sea una CA local). Este
@@ -16,7 +16,7 @@
 # nombres de archivo fijos (prisma.crt/prisma.key) -- este script es la
 # ÚNICA pieza que hay que tocar para renovar o cambiar de certificado;
 # la configuración de nginx no necesita ningún cambio. Ver el
-# procedimiento completo en docs/Certificados-TLS.md.
+# procedimiento completo en docs/operacion/Certificados-TLS.md.
 #
 # Uso:
 #   scripts/generate-nginx-cert.sh                     # defaults (5 años, prisma.local)
