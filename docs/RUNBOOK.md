@@ -587,7 +587,7 @@ Cada reincidencia duplica el tiempo de bloqueo, hasta un máximo de 24 h. Los bl
 
 Notas:
 - Para que no se bloquee a los administradores, poner sus IPs en `F2B_IGNORE_IPS` (`.env`).
-- Si NGINX queda detrás de otro proxy o balanceador, todas las peticiones llegan con la IP de ese proxy: agregarla a `F2B_IGNORE_IPS` o configurar `real_ip` en NGINX antes de usar fail2ban.
+- Si NGINX queda detrás de otro proxy o balanceador, todas las peticiones llegan con la IP de ese proxy: agregarla a `F2B_IGNORE_IPS` o configurar `real_ip` en NGINX antes de usar fail2ban (con Cloudflare Tunnel, desplegar con `docker-compose.cloudflare.yml`, que ya lo hace).
 - El contenedor usa el socket de Docker solo para enviar la señal de recarga a `prisma-nginx`. El log compartido se vacía solo cuando supera los 50 MB.
 - Protege contra el abuso de una IP o de pocas IPs. No reemplaza una protección de red contra un DDoS volumétrico (CDN o proveedor).
 

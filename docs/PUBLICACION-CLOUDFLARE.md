@@ -21,7 +21,8 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml -f docker-compos
 ```
 
 - **NGINX:** publica `127.0.0.1:${TUNNEL_ORIGIN_PORT:-8443}` (por donde entra el túnel) y `${INTERNAL_BIND_IP}:443` (por donde entran los administradores por VPN). No queda ningún puerto de NGINX abierto a internet.
-- **IP real del visitante:** NGINX monta `infra/nginx/cloudflare/real-ip.conf`. `cloudflared` entra por el puerto publicado, así que NGINX ve la conexión desde la puerta de enlace de `prisma-net` (`172.28.0.1`). Solo desde ahí confía en la cabecera `CF-Connecting-IP`. Desde cualquier otro origen (un contenedor, la VPN) la cabecera se ignora, por lo que no se puede falsificar.
+- **IP real del visitante:** NGINX monta `infra/nginx/cloudflare/real-ip.conf`. `cloudflared` entra por el puerto publicado, así que NGINX ve la conexión desde la puerta de enlace de `prisma-net` (`172.28.0.1`). Solo desde ahí, o desde la IP de la VPN del propio servidor (`10.8.0.1`) si el túnel entra por esa IP, confía en la cabecera `CF-Connecting-IP`. Desde cualquier otro origen (un contenedor, otro cliente de la VPN) la cabecera se ignora, por lo que no se puede falsificar.
+  - El servidor de desarrollo también debe desplegarse con este overlay: sin él NGINX ve todo el tráfico público desde una misma IP (la del túnel), el límite de tasa del login se comparte entre todos los visitantes y fail2ban no banea a nadie porque esa IP está en `F2B_IGNORE_IPS`.
   - Con esto el access log, el límite de tasa, fail2ban, el `X-Forwarded-For` hacia el backend y el control de VPN de Servicios trabajan con la IP real de cada visitante.
 - **Puertos:** Grafana, Prometheus, Loki, Kibana, Elasticsearch, cAdvisor, Portainer, RustFS, pgAdmin, SonarQube, Ollama, Alertmanager y Mailpit se publican solo en `INTERNAL_BIND_IP`. PostgreSQL, Redis, backend-ai, frontend y los exporters no se publican en el host.
 
