@@ -169,12 +169,15 @@ cp .env.example .env
       ```bash
       echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
       ```
-4. Si vas a entrar por un dominio real (no una IP pelada), completá estas dos variables del
+4. Si vas a entrar por un dominio real (no una IP pelada), completá estas tres variables del
    `.env` con ese dominio — ejemplo para `dev.prisma.example.uy`:
    ```bash
    KEYCLOAK_TRUSTED_ISSUERS=https://dev.prisma.example.uy/auth/realms/prisma
    CORS_ALLOWED_ORIGINS=https://dev.prisma.example.uy
+   PRISMA_APP_URL=https://dev.prisma.example.uy
    ```
+   `PRISMA_APP_URL` es la dirección con la que los usuarios entran a PRISMA: la usan los correos de
+   invitación para armar su enlace. Sin definirla, el enlace sale con `http://localhost:8080`.
    (ver el mismo paso explicado en detalle en [`Certificados-TLS.md`](Certificados-TLS.md)).
 
 ```bash
