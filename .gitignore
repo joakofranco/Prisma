@@ -166,3 +166,10 @@ CLAUDE.md
 postman/
 .postman/
 
+
+# Material de trabajo local (rondas de pruebas, evidencias): no se versiona.
+trabajo/
+
+# Pruebas de performance: resultados y datos generados (credenciales de usuarios PERF-).
+perf/results/
+perf/data/
