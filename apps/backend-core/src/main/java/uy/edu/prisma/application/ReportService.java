@@ -122,6 +122,8 @@ public class ReportService {
     Evaluation eval = loadApproved(evaluationId);
     List<MaturityResult> results = results(evaluationId);
     Summary summary = summarize(results);
+    List<AuditObservation> observations =
+        obsRepo.findByEvaluationIdOrderByCreatedAtDesc(evaluationId);
     List<String> auditors = auditorNames(evaluationId);
 
     try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
@@ -144,6 +146,9 @@ public class ReportService {
         addPdfTopGaps(document, summary.topGaps());
       }
       addCategoryMaturity(document, writer, results);
+      // PRI-378: el reporte final también lleva las observaciones del auditor (antes solo las
+      // incluían el informe preliminar y el reporte técnico).
+      addPdfObservations(document, observations);
       addPdfResultsTable(document, results);
 
       document.close();
@@ -584,6 +589,8 @@ public class ReportService {
     Evaluation eval = loadApproved(evaluationId);
     List<MaturityResult> results = results(evaluationId);
     Summary summary = summarize(results);
+    List<AuditObservation> observations =
+        obsRepo.findByEvaluationIdOrderByCreatedAtDesc(evaluationId);
     List<String> auditors = auditorNames(evaluationId);
 
     try (XSSFWorkbook workbook = new XSSFWorkbook();
@@ -593,8 +600,10 @@ public class ReportService {
       props.setCreator("PRISMA");
 
       addSummarySheet(workbook, eval, summary, auditors);
+      // PRI-378: hoja con las observaciones del auditor, igual que en el informe preliminar.
+      addObservationsSheet(workbook, observations);
       addDetailSheet(workbook, results);
-      // Encabezado de impresion: se repite en cada hoja impresa de ambas pestañas.
+      // Encabezado de impresion: se repite en cada hoja impresa de todas las pestañas.
       String printHeader = printHeader(eval, auditors);
       for (Sheet sheet : workbook) {
         sheet.getHeader().setLeft(printHeader);

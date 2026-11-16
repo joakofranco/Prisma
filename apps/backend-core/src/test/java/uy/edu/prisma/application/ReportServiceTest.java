@@ -111,6 +111,75 @@ class ReportServiceTest {
     assertEquals('K', xlsx[1]);
   }
 
+  // ---- PRI-378: el reporte final (PDF y Excel) lleva las observaciones del auditor ----
+
+  private static List<AuditObservation> twoObservations() {
+    return List.of(
+        AuditObservation.builder()
+            .type(AuditObservation.ObservationType.NON_CONFORMITY)
+            .description("Falta política documentada de respaldo")
+            .status(AuditObservation.ObservationStatus.OPEN)
+            .createdAt(OffsetDateTime.now())
+            .build(),
+        AuditObservation.builder()
+            .type(AuditObservation.ObservationType.RECOMMENDATION)
+            .description("Revisar el inventario de activos")
+            .status(AuditObservation.ObservationStatus.RESOLVED)
+            .createdAt(OffsetDateTime.now())
+            .build());
+  }
+
+  @Test
+  void finalPdfIncludesTheAuditObservations() throws Exception {
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(matRepo.findByEvaluationId(eval.getId())).thenReturn(results());
+    when(obsRepo.findByEvaluationIdOrderByCreatedAtDesc(eval.getId()))
+        .thenReturn(twoObservations());
+
+    String text = allText(service.generatePdf(eval.getId()));
+
+    assertTrue(text.contains("Observaciones de Auditoría"), "sección de observaciones");
+    assertTrue(text.contains("Falta política documentada de respaldo"), text);
+    assertTrue(text.contains("Revisar el inventario de activos"), text);
+    assertTrue(text.contains("Abierta") && text.contains("Resuelta"), "estados");
+  }
+
+  @Test
+  void finalPdfSaysSoWhenThereAreNoObservations() throws Exception {
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(matRepo.findByEvaluationId(eval.getId())).thenReturn(results());
+    when(obsRepo.findByEvaluationIdOrderByCreatedAtDesc(eval.getId())).thenReturn(List.of());
+
+    String text = allText(service.generatePdf(eval.getId()));
+
+    assertTrue(text.contains("Observaciones de Auditoría"), text);
+    assertTrue(text.contains("Sin observaciones registradas."), text);
+  }
+
+  @Test
+  void finalExcelHasAnObservationsSheetWithTheAuditObservations() throws Exception {
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(matRepo.findByEvaluationId(eval.getId())).thenReturn(results());
+    when(obsRepo.findByEvaluationIdOrderByCreatedAtDesc(eval.getId()))
+        .thenReturn(twoObservations());
+
+    try (org.apache.poi.xssf.usermodel.XSSFWorkbook workbook =
+        new org.apache.poi.xssf.usermodel.XSSFWorkbook(
+            new java.io.ByteArrayInputStream(service.generateExcel(eval.getId())))) {
+      org.apache.poi.ss.usermodel.Sheet sheet = workbook.getSheet("Observaciones");
+
+      assertNotNull(sheet, "falta la hoja Observaciones");
+      assertEquals("Descripción", sheet.getRow(0).getCell(1).getStringCellValue());
+      assertEquals(
+          "Falta política documentada de respaldo",
+          sheet.getRow(1).getCell(1).getStringCellValue());
+      assertEquals("Abierta", sheet.getRow(1).getCell(2).getStringCellValue());
+      assertEquals(
+          "Revisar el inventario de activos", sheet.getRow(2).getCell(1).getStringCellValue());
+      assertEquals("Resuelta", sheet.getRow(2).getCell(2).getStringCellValue());
+    }
+  }
+
   @Test
   void generatePdfThrowsWhenEvaluationMissing() {
     UUID id = UUID.randomUUID();
