@@ -24,6 +24,7 @@ export const useAuthStore = defineStore('auth', () => {
   const isAuthenticated = ref(false);
   const loading = ref(false);
   const keycloakReady = ref(false);
+  let loggingOut = false;
 
   const roles = computed<UserRole[]>(() => {
     if (!keycloakReady.value) return [];
@@ -79,6 +80,8 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   async function logout() {
+    if (loggingOut) return;
+    loggingOut = true;
     try {
       // Con await: si no se espera, el redirect de logoutKeycloak() (navegación de página
       // completa) puede cortar la request antes de que llegue al backend.
