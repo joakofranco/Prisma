@@ -4,6 +4,7 @@ import com.lowagie.text.Document;
 import com.lowagie.text.DocumentException;
 import com.lowagie.text.Element;
 import com.lowagie.text.Font;
+import com.lowagie.text.Image;
 import com.lowagie.text.PageSize;
 import com.lowagie.text.Paragraph;
 import com.lowagie.text.Phrase;
@@ -16,6 +17,7 @@ import com.lowagie.text.pdf.PdfPageEventHelper;
 import com.lowagie.text.pdf.PdfWriter;
 import java.awt.Color;
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
@@ -1140,7 +1142,7 @@ public class ReportService {
       addPlanInfoLine(document, eval);
       addPlanSummary(document, stats);
       addPlanTable(document, plans);
-      addBaselineSection(document, PlanBaseline.compare(plans, LocalDate.now()));
+      addBaselineSection(writer, document, PlanBaseline.compare(plans, LocalDate.now()));
 
       document.close();
       return out.toByteArray();
@@ -1377,8 +1379,8 @@ public class ReportService {
     document.add(table);
   }
 
-  private void addBaselineSection(Document document, PlanBaselineDto baseline)
-      throws DocumentException {
+  private void addBaselineSection(PdfWriter writer, Document document, PlanBaselineDto baseline)
+      throws DocumentException, IOException {
     PlanBaselineSummaryDto summary = baseline.summary();
     Paragraph title =
         new Paragraph("Comparativa con la línea base", PdfA.font(true, 12, SLATE_900));
@@ -1415,19 +1417,19 @@ public class ReportService {
 
     Paragraph counts =
         new Paragraph(
-            "En plazo "
-                + summary.onTime()
-                + "   ·   Tarde "
-                + summary.late()
-                + "   ·   Atrasadas "
-                + summary.delayed()
-                + "   ·   Prioridad cambiada "
+            "Prioridad cambiada "
                 + summary.priorityChanged()
                 + "   ·   Responsable cambiado "
                 + summary.responsibleChanged(),
             PdfA.font(false, 8, SLATE_500));
     counts.setSpacingAfter(8);
     document.add(counts);
+
+    if (BaselineChart.canRender(baseline)) {
+      Image chart = BaselineChart.render(writer, baseline, document.right() - document.left());
+      chart.setSpacingAfter(10);
+      document.add(chart);
+    }
 
     PdfPTable table = new PdfPTable(8);
     table.setWidthPercentage(100);

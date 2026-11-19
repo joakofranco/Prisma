@@ -1239,5 +1239,7 @@ class ReportServiceTest {
     assertTrue(text.contains("En plazo"));
     assertTrue(text.contains("Alta (antes: Media)"));
     assertTrue(text.contains("Ana (antes: Bruno)"));
+    assertTrue(text.contains("Cumplimiento contra la fecha original"));
+    assertTrue(text.contains("Corrimiento de la fecha límite (días)"));
   }
 }
