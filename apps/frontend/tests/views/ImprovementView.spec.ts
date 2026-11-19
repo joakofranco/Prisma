@@ -59,7 +59,9 @@ const plan = (
 async function mountView() {
   const wrapper = mount(ImprovementView, {
     attachTo: document.body,
-    global: { stubs: { RouterLink: true } },
+    global: {
+      stubs: { RouterLink: true, BaselineComplianceChart: true, BaselineShiftChart: true },
+    },
   });
   await flushPromises();
   return wrapper;
@@ -763,6 +765,108 @@ const gapResult = (extra: Record<string, unknown> = {}) => ({
 });
 
 describe('ImprovementView: brechas por subcategoría (RF-CALC-07)', () => {
+  it('las brechas arrancan colapsadas y cada una se expande y se contrae', async () => {
+    evaluationsService.getResults.mockResolvedValue({ data: [gapResult()] });
+    await mountView();
+
+    const toggle = document.body.querySelector('[data-test="gap-toggle"]') as HTMLElement;
+    const list = () => document.getElementById(toggle.getAttribute('aria-controls')!)!;
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(list().style.display).toBe('none');
+
+    toggle.click();
+    await flushPromises();
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(list().style.display).not.toBe('none');
+
+    toggle.click();
+    await flushPromises();
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(list().style.display).toBe('none');
+  });
+
+  it('agrupa las brechas por función, categoría y subcategoría, cada nivel colapsable', async () => {
+    evaluationsService.getResults.mockResolvedValue({
+      data: [
+        gapResult(),
+        gapResult({ subcategoryId: 's2', subcategoryName: 'PR.AA-06' }),
+        gapResult({
+          categoryId: 'c2',
+          categoryName: 'Seguridad de datos',
+          subcategoryId: 's3',
+          subcategoryName: 'PR.DS-01',
+        }),
+        gapResult({
+          functionId: 'f2',
+          functionName: 'Detectar',
+          categoryId: 'c3',
+          categoryName: 'Monitoreo',
+          subcategoryId: 's4',
+          subcategoryName: 'DE.CM-01',
+        }),
+      ],
+    });
+    await mountView();
+
+    const functions = document.body.querySelectorAll('[data-test="gap-function"]');
+    expect(functions).toHaveLength(2);
+    expect(functions[0].querySelectorAll('[data-test="gap-category"]')).toHaveLength(2);
+    expect(functions[0].querySelector('[data-test="gap-function-count"]')!.textContent).toContain(
+      '3 subcategorías',
+    );
+    expect(functions[0].querySelector('[data-test="gap-function-count"]')!.textContent).toContain(
+      '6 controles',
+    );
+
+    const fnToggle = functions[0].querySelector('[data-test="gap-function-toggle"]') as HTMLElement;
+    const catToggle = functions[0].querySelector(
+      '[data-test="gap-category-toggle"]',
+    ) as HTMLElement;
+    const panel = (toggle: HTMLElement) =>
+      document.getElementById(toggle.getAttribute('aria-controls')!)!;
+    expect(fnToggle.getAttribute('aria-expanded')).toBe('false');
+    expect(panel(fnToggle).style.display).toBe('none');
+
+    fnToggle.click();
+    await flushPromises();
+    expect(panel(fnToggle).style.display).not.toBe('none');
+    expect(panel(catToggle).style.display).toBe('none');
+
+    catToggle.click();
+    await flushPromises();
+    expect(catToggle.getAttribute('aria-expanded')).toBe('true');
+    expect(panel(catToggle).style.display).not.toBe('none');
+  });
+
+  it('«Expandir todas» abre todas las brechas y luego las contrae', async () => {
+    evaluationsService.getResults.mockResolvedValue({ data: [gapResult()] });
+    await mountView();
+
+    const all = document.body.querySelector('[data-test="gap-toggle-all"]') as HTMLElement;
+    expect(all.textContent).toContain('Expandir todas');
+    all.click();
+    await flushPromises();
+    expect(all.textContent).toContain('Contraer todas');
+    expect(
+      document.body.querySelector('[data-test="gap-toggle"]')!.getAttribute('aria-expanded'),
+    ).toBe('true');
+
+    all.click();
+    await flushPromises();
+    expect(
+      document.body.querySelector('[data-test="gap-toggle"]')!.getAttribute('aria-expanded'),
+    ).toBe('false');
+  });
+
+  it('la cabecera y las tarjetas de estado quedan fijas al desplazarse', async () => {
+    await mountView();
+
+    const sticky = document.body.querySelector('[data-test="plan-sticky"]')!;
+    expect(sticky.className).toContain('sm:sticky');
+    expect(sticky.querySelector('h1')!.textContent).toBe('Plan de Mejora');
+    expect(sticky.querySelector('[data-test="plan-stats"]')).not.toBeNull();
+  });
+
   it('lista nivel actual, próximo nivel y controles faltantes', async () => {
     evaluationsService.getResults.mockResolvedValue({ data: [gapResult()] });
     await mountView();

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   gapRows,
+  gapTree,
   levelPriority,
   missingLabel,
   statusLabel,
@@ -62,5 +63,32 @@ describe('maturityGaps', () => {
     expect(suggestedAction('PR.AA-05', 2, 'Hacer algo')).toBe(
       'Implementar (PR.AA-05, nivel 2): Hacer algo',
     );
+  });
+  it('gapTree agrupa por función y categoría conservando el orden y contando los controles', () => {
+    const row = (fn: string, cat: string, sub: string, missing: number) =>
+      ({
+        functionId: fn,
+        functionName: `F-${fn}`,
+        categoryId: cat,
+        categoryName: `C-${cat}`,
+        subcategoryId: sub,
+        nextLevel: 2,
+        missingControls: Array.from({ length: missing }, (_, i) => ({ id: `${sub}-${i}` })),
+      }) as unknown as MaturityResult;
+
+    const tree = gapTree([
+      row('f1', 'c1', 's1', 2),
+      row('f2', 'c2', 's2', 1),
+      row('f1', 'c1', 's3', 3),
+      row('f1', 'c4', 's4', 1),
+    ]);
+
+    expect(tree.map((f) => f.id)).toEqual(['f1', 'f2']);
+    expect(tree[0].subcategoryCount).toBe(3);
+    expect(tree[0].controlCount).toBe(6);
+    expect(tree[0].categories.map((c) => c.name)).toEqual(['C-c1', 'C-c4']);
+    expect(tree[0].categories[0].rows.map((r) => r.subcategoryId)).toEqual(['s1', 's3']);
+    expect(tree[0].categories[0].controlCount).toBe(5);
+    expect(tree[1].categories).toHaveLength(1);
   });
 });
