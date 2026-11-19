@@ -45,6 +45,9 @@
       />
     </div>
 
+    <!-- RF-VIZ-07 (PRI-321): actores del RF = Responsable de Organización y Administrador. -->
+    <MaturityTrendPanel v-if="showTrend" :is-platform-admin="authStore.isAdmin" />
+
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
       <div
         class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-5"
@@ -114,6 +117,8 @@
   import BaseButton from '@/components/common/BaseButton.vue';
   import StatusDoughnutChart from '@/components/charts/StatusDoughnutChart.vue';
   import MaturityBarChart from '@/components/charts/MaturityBarChart.vue';
+  import MaturityTrendPanel from '@/components/dashboard/MaturityTrendPanel.vue';
+  import { useAuthStore } from '@/stores/auth';
   import {
     PlusIcon,
     ClipboardDocumentCheckIcon,
@@ -125,6 +130,8 @@
   const router = useRouter();
   const dashboardStore = useDashboardStore();
   const evaluationsStore = useEvaluationsStore();
+  const authStore = useAuthStore();
+  const showTrend = computed(() => authStore.isAdmin || authStore.hasRole('ORG_RESPONSIBLE'));
 
   const loading = computed(() => dashboardStore.loading || evaluationsStore.loading);
   const stats = computed(() => dashboardStore.stats);

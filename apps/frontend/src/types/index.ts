@@ -486,6 +486,86 @@ export interface AiSuggestionFeedback {
   editedText?: string;
 }
 
+/** RF-VIZ-07 (PRI-321): una evaluación aprobada (o archivada tras aprobarse) en la tendencia. */
+export interface MaturityTrendPoint {
+  evaluationId: string;
+  evaluationName: string;
+  /** Estado de la evaluación (EVALUATION_STATUS_CONFIG). */
+  status: string;
+  /** true = en curso o en auditoría: valor de hoy, todavía no validado por el auditor. */
+  provisional: boolean;
+  /** Fecha del punto: la de aprobación, o «ahora» para una provisoria. */
+  date: string;
+  approvedAt: string | null;
+  /** null = sin perfil comunitario («Catálogo completo»). */
+  profileId: string | null;
+  profileName: string;
+  compliantControls: number;
+  totalControls: number;
+  /** Controles cumplidos sobre los del alcance, con un decimal (0–100). */
+  compliancePercent: number;
+  /** Madurez global sin redondear, con dos decimales (0–4). */
+  maturityAverage: number;
+  /** Nivel global oficial (entero). */
+  globalMaturity: number | null;
+}
+
+/** Tendencia de UNA organización (multitenant: nunca mezcla organizaciones). */
+export interface MaturityTrend {
+  organizationId: string;
+  organizationName: string;
+  points: MaturityTrendPoint[];
+}
+
+/** Un control que pasó a «Cumple» (gained) o dejó de cumplirse (lost) en una semana. */
+export interface ControlChange {
+  controlId: string;
+  code: string;
+  description: string;
+  functionName: string;
+  changedAt: string;
+  changedBy: string | null;
+}
+
+/** Escala del avance: día, semana o mes. */
+export type ProgressGranularity = 'DAY' | 'WEEK' | 'MONTH';
+
+/** Un período (día, semana o mes) del avance de una evaluación. */
+export interface ProgressPeriod {
+  periodStart: string;
+  periodEnd: string;
+  compliantControls: number;
+  answeredControls: number;
+  totalControls: number;
+  /** Respuestas guardadas en el período (aunque repitan el valor). */
+  responseActivity: number;
+  /** Evidencias subidas en el período. */
+  evidenceActivity: number;
+  gained: ControlChange[];
+  lost: ControlChange[];
+}
+
+/** RF-VIZ-07 (PRI-321): avance semana a semana, reconstruido con la bitácora de respuestas. */
+export interface EvaluationProgress {
+  evaluationId: string;
+  evaluationName: string;
+  status: string;
+  statusLabel: string;
+  profileName: string;
+  startedAt: string | null;
+  compliantControls: number;
+  answeredControls: number;
+  totalControls: number;
+  last30DaysDelta: number;
+  /** Controles respondidos ganados en los últimos 30 días (el trabajo, aunque no cambie «Cumple»). */
+  last30DaysAnsweredDelta: number;
+  /** Escala usada (con «automática», la elige el backend según lo que dura la historia). */
+  granularity: ProgressGranularity;
+  /** El primero es un período vacío anterior al inicio: la curva arranca en 0. */
+  periods: ProgressPeriod[];
+  statusEvents: { status: string; label: string; occurredAt: string }[];
+}
+
 export interface DashboardStats {
   totalEvaluations: number;
   activeOrganizations: number;

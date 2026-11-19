@@ -6,6 +6,8 @@ import {
   Chart as ChartJS,
   ArcElement,
   BarElement,
+  BarController,
+  LineController,
   CategoryScale,
   LinearScale,
   RadialLinearScale,
@@ -15,9 +17,13 @@ import {
   Legend,
 } from 'chart.js';
 
+// BarController y LineController: el gráfico de avance (PRI-321) mezcla barras y líneas en un mismo
+// lienzo, y un dataset de otro tipo que el del componente necesita su controlador registrado.
 ChartJS.register(
   ArcElement,
   BarElement,
+  BarController,
+  LineController,
   CategoryScale,
   LinearScale,
   RadialLinearScale,

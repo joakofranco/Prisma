@@ -39,6 +39,9 @@ import type {
   ControlGuideImportResult,
   OrganizationReactivation,
   InviteUserPayload,
+  MaturityTrend,
+  EvaluationProgress,
+  ProgressGranularity,
 } from '@/types';
 
 export const usersService = {
@@ -385,6 +388,18 @@ export const reportsService = {
 export const dashboardService = {
   getStats(tenantId?: string) {
     return apiClient.get<DashboardStats>('/dashboard/stats', { params: { tenantId } });
+  },
+  /** RF-VIZ-07: tendencia de una organización. El responsable no la elige (es la suya). */
+  getMaturityTrend(organizationId?: string) {
+    return apiClient.get<MaturityTrend>('/dashboard/maturity-trend', {
+      params: organizationId ? { organizationId } : {},
+    });
+  },
+  /** Avance de una evaluación por día, semana o mes (sin escala: la elige el backend). */
+  getEvaluationProgress(evaluationId: string, granularity?: ProgressGranularity) {
+    return apiClient.get<EvaluationProgress>(`/dashboard/evaluations/${evaluationId}/progress`, {
+      params: granularity ? { granularity } : {},
+    });
   },
 };
 

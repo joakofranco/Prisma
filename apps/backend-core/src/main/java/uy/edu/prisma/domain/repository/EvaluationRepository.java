@@ -43,6 +43,11 @@ public interface EvaluationRepository extends JpaRepository<Evaluation, UUID> {
           + "EXISTS (SELECT 1 FROM MaturityResult m WHERE m.evaluation.id = e.id))")
   List<UUID> findIdsWithData(@Param("ids") Collection<UUID> ids);
 
+  // RF-VIZ-07 (PRI-321): evaluaciones de UNA organizacion en ciertos estados (la tendencia usa
+  // las aprobadas y archivadas; MaturityTrendService descarta las archivadas sin aprobar).
+  List<Evaluation> findByOrganizationIdAndStatusIn(
+      UUID organizationId, Collection<Evaluation.Status> statuses);
+
   long countByStatus(Evaluation.Status status);
 
   long countByOrganizationId(UUID organizationId);
