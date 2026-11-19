@@ -42,7 +42,18 @@ const summary = (extra: Partial<PlanBaselineSummary> = {}): PlanBaselineSummary 
 });
 
 const mountWith = (comparison: PlanBaselineComparison | null) =>
-  mount(BaselineComparisonSection, { props: { comparison } });
+  mount(BaselineComparisonSection, {
+    props: { comparison },
+    global: {
+      stubs: {
+        BaselineComplianceChart: { template: '<div data-test="stub-compliance" />' },
+        BaselineShiftChart: {
+          props: ['bars'],
+          template: '<div data-test="stub-shift">{{ bars.map((b) => b.label).join(",") }}</div>',
+        },
+      },
+    },
+  });
 
 describe('BaselineComparisonSection (RF-PLN-07)', () => {
   it('sin comparativa cargada muestra el estado vacío', () => {
@@ -181,5 +192,36 @@ describe('BaselineComparisonSection (RF-PLN-07)', () => {
     const shifts = wrapper.findAll('[data-test="baseline-shift"]').map((cell) => cell.text());
     expect(shifts).toEqual(['Sin cambios', 'Sin cambios', '-1 día', 'Replanificada']);
     expect(wrapper.findAll('[data-test="baseline-row"]')[3].text()).toContain('—');
+  });
+  it('el gráfico de corrimiento muestra solo las acciones que cambiaron de fecha', () => {
+    const wrapper = mountWith({
+      summary: summary({ replanned: 2 }),
+      items: [
+        item({ id: 'a', controlCode: 'A-1', replanned: true, dueDateShiftDays: 5 }),
+        item({ id: 'b', controlCode: 'B-1', replanned: true, dueDateShiftDays: -20 }),
+        item({ id: 'c', controlCode: 'C-1' }),
+      ],
+    });
+
+    expect(wrapper.find('[data-test="baseline-compliance-chart"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="stub-shift"]').text()).toBe('B-1,A-1');
+    expect(wrapper.find('[data-test="baseline-shift-hidden"]').exists()).toBe(false);
+  });
+
+  it('sin replanificaciones explica que ninguna acción cambió de fecha', () => {
+    const wrapper = mountWith({ summary: summary(), items: [item()] });
+
+    expect(wrapper.find('[data-test="stub-shift"]').exists()).toBe(false);
+    expect(wrapper.find('[data-test="baseline-shift-empty"]').exists()).toBe(true);
+  });
+
+  it('con muchas replanificaciones limita el gráfico y avisa cuántas quedan en la tabla', () => {
+    const items = Array.from({ length: 11 }, (_, i) =>
+      item({ id: String(i), controlCode: `X-${i}`, replanned: true, dueDateShiftDays: i + 1 }),
+    );
+    const wrapper = mountWith({ summary: summary({ replanned: 11 }), items });
+
+    expect(wrapper.find('[data-test="stub-shift"]').text().split(',')).toHaveLength(8);
+    expect(wrapper.find('[data-test="baseline-shift-hidden"]').text()).toContain('3');
   });
 });

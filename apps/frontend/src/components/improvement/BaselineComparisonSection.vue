@@ -54,6 +54,45 @@
         />
       </div>
 
+      <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4" data-test="baseline-charts">
+        <figure
+          class="rounded-lg bg-slate-50 dark:bg-slate-900 p-3"
+          data-test="baseline-compliance-chart"
+        >
+          <figcaption class="text-xs font-medium text-slate-600 dark:text-slate-300 mb-2">
+            Cumplimiento contra la fecha original
+          </figcaption>
+          <BaselineComplianceChart :slices="slices" />
+        </figure>
+        <figure
+          class="rounded-lg bg-slate-50 dark:bg-slate-900 p-3"
+          data-test="baseline-shift-chart"
+        >
+          <figcaption class="text-xs font-medium text-slate-600 dark:text-slate-300 mb-2">
+            Corrimiento de fechas (días)
+          </figcaption>
+          <BaselineShiftChart v-if="shifts.bars.length > 0" :bars="shifts.bars" />
+          <p
+            v-else
+            class="text-sm text-slate-500 dark:text-slate-400 py-6 text-center"
+            data-test="baseline-shift-empty"
+          >
+            Ninguna acción cambió su fecha límite.
+          </p>
+          <p
+            v-if="shifts.hidden > 0"
+            class="mt-2 text-xs text-slate-500 dark:text-slate-400"
+            data-test="baseline-shift-hidden"
+          >
+            Se muestran las {{ shifts.bars.length }} con mayor corrimiento; {{ shifts.hidden }}
+            más figuran en la tabla.
+          </p>
+          <p v-if="shifts.bars.length > 0" class="mt-2 text-xs text-slate-500 dark:text-slate-400">
+            Rojo: se atrasó. Verde: se adelantó.
+          </p>
+        </figure>
+      </div>
+
       <dl class="mt-4 grid grid-cols-2 md:grid-cols-6 gap-3" data-test="baseline-stats">
         <div
           v-for="stat in stats"
@@ -154,12 +193,16 @@
 
 <script setup lang="ts">
   import { computed } from 'vue';
+  import BaselineComplianceChart from '@/components/charts/BaselineComplianceChart.vue';
+  import BaselineShiftChart from '@/components/charts/BaselineShiftChart.vue';
   import ProgressBar from '@/components/common/ProgressBar.vue';
   import type { PlanBaselineComparison } from '@/types';
   import { formatDate, getPriorityLabel } from '@/utils/helpers';
   import {
     complianceClass,
     complianceLabel,
+    complianceSlices,
+    shiftBars,
     shiftLabel,
     signedDays,
     signedPoints,
@@ -168,6 +211,9 @@
   const props = defineProps<{ comparison: PlanBaselineComparison | null }>();
 
   const summary = computed(() => props.comparison?.summary ?? null);
+
+  const slices = computed(() => complianceSlices(props.comparison?.items ?? []));
+  const shifts = computed(() => shiftBars(props.comparison?.items ?? []));
 
   const stats = computed(() => {
     const s = summary.value;
