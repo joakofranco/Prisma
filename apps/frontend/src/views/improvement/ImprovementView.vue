@@ -127,6 +127,8 @@
         </div>
       </section>
 
+      <BaselineComparisonSection :comparison="baseline" />
+
       <MaturityGapSection
         :results="results"
         :planned-control-ids="plannedControlIds"
@@ -542,6 +544,7 @@
   import ProgressBar from '@/components/common/ProgressBar.vue';
   import { planProgress, type Progress } from '@/utils/planProgress';
   import BaseButton from '@/components/common/BaseButton.vue';
+  import BaselineComparisonSection from '@/components/improvement/BaselineComparisonSection.vue';
   import MaturityGapSection, {
     type GapActionDraft,
   } from '@/components/improvement/MaturityGapSection.vue';
@@ -563,6 +566,7 @@
   } from '@heroicons/vue/24/outline';
   import type {
     ImprovementPlan,
+    PlanBaselineComparison,
     PlanDeadlines,
     MaturityResult,
     SuggestedImprovement,
@@ -859,10 +863,23 @@
     try {
       const { data } = await improvementService.getByEvaluation(evaluationId);
       plans.value = data;
+      fetchBaseline();
     } catch (err) {
       console.error(err);
     } finally {
       loading.value = false;
+    }
+  }
+
+  const baseline = ref<PlanBaselineComparison | null>(null);
+
+  async function fetchBaseline() {
+    try {
+      const { data } = await improvementService.getBaseline(evaluationId);
+      baseline.value = data;
+    } catch (err) {
+      console.error(err);
+      baseline.value = null;
     }
   }
 

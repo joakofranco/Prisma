@@ -17,6 +17,7 @@ import type {
   AuditObservation,
   AuditLog,
   ImprovementPlan,
+  PlanBaselineComparison,
   SuggestedImprovement,
   RemediationTips,
   AiSuggestionFeedback,
@@ -319,6 +320,9 @@ export const auditLogsService = {
 export const improvementService = {
   getByEvaluation(evaluationId: string) {
     return apiClient.get<ImprovementPlan[]>(`/improvement/${evaluationId}`);
+  },
+  getBaseline(evaluationId: string) {
+    return apiClient.get<PlanBaselineComparison>(`/improvement/${evaluationId}/baseline`);
   },
   getSuggestions(evaluationId: string) {
     return apiClient.get<SuggestedImprovement[]>(`/improvement/${evaluationId}/suggestions`);

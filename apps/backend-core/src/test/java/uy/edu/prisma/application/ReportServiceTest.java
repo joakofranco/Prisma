@@ -1198,4 +1198,46 @@ class ReportServiceTest {
 
     assertFalse(allText(service.generateExecutivePdf(eval.getId())).contains("por Categoría"));
   }
+
+  @Test
+  void improvementPlanPdfIncludesTheBaselineComparison() throws Exception {
+    java.time.LocalDate today = java.time.LocalDate.now();
+    ImprovementPlan postponed =
+        plan(
+            "Revisar privilegios",
+            ImprovementPlan.Priority.HIGH,
+            today.plusDays(20),
+            ImprovementPlan.PlanStatus.PENDING,
+            1);
+    postponed.setBaselineDueDate(today.minusDays(4));
+    postponed.setBaselinePriority(ImprovementPlan.Priority.MEDIUM);
+    postponed.setBaselineResponsible("Bruno");
+    ImprovementPlan done =
+        plan(
+            "Capacitar al personal",
+            ImprovementPlan.Priority.LOW,
+            today.minusDays(2),
+            ImprovementPlan.PlanStatus.COMPLETED,
+            2);
+    done.setBaselineDueDate(today.minusDays(2));
+    done.setBaselinePriority(ImprovementPlan.Priority.LOW);
+    done.setBaselineResponsible("Ana");
+    done.setCompletedAt(OffsetDateTime.now().minusDays(3));
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(planRepo.findByEvaluationIdOrderByCreatedAtDesc(eval.getId()))
+        .thenReturn(List.of(postponed, done));
+
+    String text = allText(service.generateImprovementPlanPdf(eval.getId())).replaceAll("\\s+", " ");
+
+    assertTrue(text.contains("Comparativa con la línea base"));
+    assertTrue(text.contains("AVANCE PLANIFICADO"));
+    assertTrue(text.contains("100 %"));
+    assertTrue(text.contains("50 %"));
+    assertTrue(text.contains("-50 pts"));
+    assertTrue(text.contains("+24 días"));
+    assertTrue(text.contains("Atrasada (4 días)"));
+    assertTrue(text.contains("En plazo"));
+    assertTrue(text.contains("Alta (antes: Media)"));
+    assertTrue(text.contains("Ana (antes: Bruno)"));
+  }
 }

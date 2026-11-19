@@ -952,6 +952,51 @@ public class Dto {
       String comments,
       OffsetDateTime createdAt) {}
 
+  public record PlanBaselineItemDto(
+      UUID id,
+      String controlCode,
+      String action,
+      String status,
+      String baselineDueDate,
+      String dueDate,
+      Integer dueDateShiftDays,
+      boolean replanned,
+      String baselinePriority,
+      String priority,
+      boolean priorityChanged,
+      String baselineResponsible,
+      String responsible,
+      boolean responsibleChanged,
+      String completedAt,
+      String compliance,
+      Integer delayDays) {}
+
+  public record PlanBaselineSummaryDto(
+      int total,
+      int replanned,
+      Integer averageShiftDays,
+      int priorityChanged,
+      int responsibleChanged,
+      int onTime,
+      int late,
+      int delayed,
+      int plannedDue,
+      int completed,
+      Integer plannedPercent,
+      Integer actualPercent,
+      Integer deviationPoints) {}
+
+  public record PlanBaselineDto(PlanBaselineSummaryDto summary, List<PlanBaselineItemDto> items) {
+    public PlanBaselineDto {
+      items = items == null ? List.of() : List.copyOf(items);
+    }
+
+    @Override
+    public List<PlanBaselineItemDto> items() {
+      return Collections.unmodifiableList(items);
+    }
+  }
+
   public record CreateImprovementPlanDto(
       UUID evaluationId,
       UUID controlId,

@@ -3,6 +3,7 @@ import { mount, flushPromises, type VueWrapper } from '@vue/test-utils';
 
 const improvementService = vi.hoisted(() => ({
   getByEvaluation: vi.fn(),
+  getBaseline: vi.fn(),
   getSuggestions: vi.fn(),
   getRemediationTips: vi.fn(),
   sendSuggestionFeedback: vi.fn(),
@@ -81,6 +82,26 @@ beforeEach(() => {
     data: { highMonths: 3, mediumMonths: 6, lowMonths: 12 },
   });
   improvementService.getByEvaluation.mockResolvedValue({ data: [] });
+  improvementService.getBaseline.mockResolvedValue({
+    data: {
+      summary: {
+        total: 0,
+        replanned: 0,
+        averageShiftDays: null,
+        priorityChanged: 0,
+        responsibleChanged: 0,
+        onTime: 0,
+        late: 0,
+        delayed: 0,
+        plannedDue: 0,
+        completed: 0,
+        plannedPercent: null,
+        actualPercent: null,
+        deviationPoints: null,
+      },
+      items: [],
+    },
+  });
   evaluationsService.getResults.mockResolvedValue({ data: [] });
   improvementService.update.mockResolvedValue({ data: {} });
   improvementService.create.mockResolvedValue({ data: {} });
@@ -1070,5 +1091,92 @@ describe('ImprovementView: guías de IA en las sugerencias (PRI-370)', () => {
       'Calculá la madurez de la evaluación antes de generar sugerencias de mejora',
     );
     expect(document.body.textContent).not.toContain('Crear seleccionadas');
+  });
+});
+
+describe('ImprovementView — comparativa con la línea base (RF-PLN-07)', () => {
+  const comparison = (deviationPoints: number) => ({
+    summary: {
+      total: 1,
+      replanned: 1,
+      averageShiftDays: 15,
+      priorityChanged: 0,
+      responsibleChanged: 0,
+      onTime: 0,
+      late: 0,
+      delayed: 1,
+      plannedDue: 1,
+      completed: 0,
+      plannedPercent: 100,
+      actualPercent: 0,
+      deviationPoints,
+    },
+    items: [
+      {
+        id: '1',
+        controlCode: 'PS.1-1',
+        action: 'Acción 1',
+        status: 'PENDING',
+        baselineDueDate: '2026-11-01',
+        dueDate: '2026-11-16',
+        dueDateShiftDays: 15,
+        replanned: true,
+        baselinePriority: 'HIGH',
+        priority: 'HIGH',
+        priorityChanged: false,
+        baselineResponsible: 'Ana',
+        responsible: 'Ana',
+        responsibleChanged: false,
+        completedAt: null,
+        compliance: 'DELAYED',
+        delayDays: 8,
+      },
+    ],
+  });
+
+  it('carga la comparativa de la evaluación y la muestra', async () => {
+    improvementService.getByEvaluation.mockResolvedValue({ data: [plan('1', 'HIGH', 'PENDING')] });
+    improvementService.getBaseline.mockResolvedValue({ data: comparison(-100) });
+
+    await mountView();
+
+    expect(improvementService.getBaseline).toHaveBeenCalledWith('eval-1');
+    const section = document.body.querySelector('[data-test="baseline-section"]')!;
+    expect(section.textContent).toContain('Desvío -100 pts');
+    expect(section.textContent).toContain('+15 días');
+    expect(section.textContent).toContain('Atrasada (8 días)');
+  });
+
+  it('sin acciones muestra el estado vacío', async () => {
+    await mountView();
+
+    expect(document.body.querySelector('[data-test="baseline-empty"]')).not.toBeNull();
+  });
+
+  it('si la comparativa falla, el resto de la pantalla sigue funcionando', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    improvementService.getByEvaluation.mockResolvedValue({ data: [plan('1', 'HIGH', 'PENDING')] });
+    improvementService.getBaseline.mockRejectedValue(new Error('500'));
+
+    await mountView();
+
+    expect(document.body.querySelector('[data-test="baseline-empty"]')).not.toBeNull();
+    expect(document.body.querySelector('[data-test="plan-count"]')!.textContent).toContain('1');
+    error.mockRestore();
+  });
+
+  it('vuelve a pedir la comparativa después de cambiar una acción', async () => {
+    const pending = [plan('1', 'HIGH', 'PENDING')];
+    improvementService.getByEvaluation.mockResolvedValue({ data: pending });
+
+    await mountView();
+    expect(improvementService.getBaseline).toHaveBeenCalledTimes(1);
+    await openEditorFor(0);
+    setValue(editCommentsBox(), 'nuevo comentario');
+    buttonWithText('Guardar cambios')!.click();
+    await flushPromises();
+
+    expect(improvementService.update).toHaveBeenCalled();
+    expect(improvementService.getBaseline).toHaveBeenCalledTimes(2);
   });
 });

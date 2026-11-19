@@ -1143,6 +1143,50 @@ class ControllersMockMvcTest {
   }
 
   @Test
+  void improvementBaselineReturnsTheComparison() throws Exception {
+    UUID evalId = UUID.randomUUID();
+    when(improvementPlanService.baseline(evalId))
+        .thenReturn(
+            new uy.edu.prisma.web.dto.Dto.PlanBaselineDto(
+                new uy.edu.prisma.web.dto.Dto.PlanBaselineSummaryDto(
+                    1, 1, 15, 0, 0, 0, 0, 1, 1, 0, 100, 0, -100),
+                List.of(
+                    new uy.edu.prisma.web.dto.Dto.PlanBaselineItemDto(
+                        UUID.randomUUID(),
+                        "PS.1-1",
+                        "Acción",
+                        "PENDING",
+                        "2026-11-01",
+                        "2026-11-16",
+                        15,
+                        true,
+                        "HIGH",
+                        "HIGH",
+                        false,
+                        "Ana",
+                        "Ana",
+                        false,
+                        null,
+                        "DELAYED",
+                        4))));
+
+    improvement
+        .perform(get("/api/improvement/{evaluationId}/baseline", evalId))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.summary.deviationPoints").value(-100))
+        .andExpect(jsonPath("$.items[0].dueDateShiftDays").value(15))
+        .andExpect(jsonPath("$.items[0].compliance").value("DELAYED"));
+  }
+
+  @Test
+  void improvementBaselineIsOpenToEveryRoleWithAccessToTheOrganization() throws Exception {
+    assertNull(
+        ImprovementPlanController.class
+            .getMethod("baseline", UUID.class)
+            .getAnnotation(org.springframework.security.access.prepost.PreAuthorize.class));
+  }
+
+  @Test
   void improvementSuggestionTips() throws Exception {
     when(improvementPlanService.tips(any()))
         .thenReturn(new RemediationTipsDto("Resumen", List.of("Paso 1", "Paso 2")));
