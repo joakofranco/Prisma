@@ -18,6 +18,7 @@ import type {
   AuditLog,
   ImprovementPlan,
   PlanBaselineComparison,
+  ReportVerification,
   SuggestedImprovement,
   RemediationTips,
   AiSuggestionFeedback,
@@ -353,6 +354,13 @@ export const improvementService = {
 };
 
 export const reportsService = {
+  verify(file: File) {
+    const data = new FormData();
+    data.append('file', file);
+    return apiClient.post<ReportVerification>('/reports/verify', data, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
   generatePDF(evaluationId: string) {
     return apiClient.get(`/reports/${evaluationId}/pdf`, { responseType: 'blob' });
   },

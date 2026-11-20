@@ -706,3 +706,30 @@ export interface CatalogImportPayload {
     }[];
   }[];
 }
+
+export interface ReportSignature {
+  role: 'PRISMA' | 'USER' | 'UNKNOWN';
+  signerName: string;
+  signerEmail: string | null;
+  signerUserId: string | null;
+  signedAt: string | null;
+  integrityValid: boolean;
+  trusted: boolean;
+  coversWholeDocument: boolean;
+}
+
+export interface ReportVerification {
+  sealingAvailable: boolean;
+  signed: boolean;
+  sealedByPrisma: boolean;
+  signedByUser: boolean;
+  intact: boolean;
+  registered: boolean;
+  registeredAt: string | null;
+  registeredUserId: string | null;
+  userMatchesRegistry: boolean;
+  valid: boolean;
+  sha256: string;
+  message: string;
+  signatures: ReportSignature[];
+}
