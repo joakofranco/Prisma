@@ -6,6 +6,7 @@ import static org.mockito.Mockito.*;
 
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -25,6 +26,7 @@ import uy.edu.prisma.domain.entity.AiJob;
 import uy.edu.prisma.domain.entity.AiJob.Status;
 import uy.edu.prisma.domain.entity.CatalogControl;
 import uy.edu.prisma.domain.exception.ConflictException;
+import uy.edu.prisma.domain.exception.InvalidRequestException;
 import uy.edu.prisma.domain.exception.ResourceNotFoundException;
 import uy.edu.prisma.domain.exception.TooManyRequestsException;
 import uy.edu.prisma.domain.repository.AiGeneratedGuideRepository;
@@ -158,7 +160,9 @@ class AiJobServiceTest {
 
   @Test
   void enqueueIsRejectedWhenTheOrganizationHasTooManyActiveJobs() {
-    when(repo.countByOrganizationIdAndStatusIn(eq(orgId), any())).thenReturn(20L);
+    when(repo.countByOrganizationIdAndTypeAndBatchIdIsNullAndStatusIn(
+            eq(orgId), eq(AiJob.Type.GUIDE), any()))
+        .thenReturn(20L);
 
     assertThrows(TooManyRequestsException.class, () -> service.enqueueGuide(request(2)));
     verify(repo, never()).saveAndFlush(any());
@@ -167,7 +171,8 @@ class AiJobServiceTest {
   @Test
   void withoutOrganizationTheLimitAppliesPerUser() {
     when(currentUser.currentTenantId()).thenReturn(null);
-    when(repo.countByOrganizationIdIsNullAndRequestedByAndStatusIn(eq(userId), any()))
+    when(repo.countByOrganizationIdIsNullAndRequestedByAndTypeAndBatchIdIsNullAndStatusIn(
+            eq(userId), eq(AiJob.Type.GUIDE), any()))
         .thenReturn(20L);
 
     assertThrows(TooManyRequestsException.class, () -> service.enqueueGuide(request(2)));
@@ -348,5 +353,156 @@ class AiJobServiceTest {
         Set.of(Status.values()).stream()
             .filter(Status::isActive)
             .collect(java.util.stream.Collectors.toSet()));
+  }
+
+  // ---- Lote de guías (F3, hito 4) ----
+
+  private uy.edu.prisma.web.dto.Dto.GuideBatchRequestDto batchOf(int n) {
+    java.util.List<GuideJobRequestDto> items = new java.util.ArrayList<>();
+    for (int i = 0; i < n; i++) {
+      UUID controlId = UUID.randomUUID();
+      CatalogControl c =
+          CatalogControl.builder().id(controlId).code("PR.AA-0" + i).description("d" + i).build();
+      when(controlRepo.findById(controlId)).thenReturn(Optional.of(c));
+      items.add(new GuideJobRequestDto(controlId, null, "F", "C", "S", 0, 2));
+    }
+    return new uy.edu.prisma.web.dto.Dto.GuideBatchRequestDto(items);
+  }
+
+  @Test
+  void aBatchCreatesOneBatchPriorityJobPerControlSharingTheBatchId() {
+    var accepted = service.enqueueGuideBatch(batchOf(3));
+
+    assertEquals(3, accepted.jobs().size());
+    assertNotNull(accepted.batchId());
+    ArgumentCaptor<AiJob> saved = ArgumentCaptor.forClass(AiJob.class);
+    verify(repo, org.mockito.Mockito.times(3)).saveAndFlush(saved.capture());
+    for (AiJob job : saved.getAllValues()) {
+      assertEquals(AiJob.PRIORITY_BATCH, job.getPriority(), "un pedido interactivo pasa antes");
+      assertEquals(accepted.batchId(), job.getBatchId());
+      assertEquals(AiJob.Type.GUIDE, job.getType());
+    }
+    assertEquals("QUEUED", accepted.jobs().get(0).status());
+  }
+
+  @Test
+  void aControlThatAlreadyHasAnActiveJobReusesItInsteadOfDuplicatingIt() {
+    var request = batchOf(2);
+    AiJob running = activeJob(Status.RUNNING);
+    // Solo el primer control tiene ya un trabajo activo.
+    when(repo.findFirstByDedupKeyAndStatusIn(
+            eq(
+                AiJobService.dedupKey(
+                    AiJob.Type.GUIDE, orgId, userId, request.items().get(0).controlId(), 0, 2)),
+            any()))
+        .thenReturn(Optional.of(running));
+
+    var accepted = service.enqueueGuideBatch(request);
+
+    assertEquals(running.getId(), accepted.jobs().get(0).jobId());
+    assertEquals("RUNNING", accepted.jobs().get(0).status());
+    verify(repo, org.mockito.Mockito.times(1)).saveAndFlush(any(AiJob.class));
+  }
+
+  @Test
+  void aBatchBiggerThanTheLimitIsRejected() {
+    assertThrows(InvalidRequestException.class, () -> service.enqueueGuideBatch(batchOf(21)));
+    verify(repo, never()).saveAndFlush(any());
+  }
+
+  @Test
+  void aBatchThatWouldExceedThePendingBatchLimitOfTheOrganizationIsRejectedWhole() {
+    when(repo.countByOrganizationIdAndBatchIdIsNotNullAndStatusIn(eq(orgId), any()))
+        .thenReturn(55L);
+
+    assertThrows(TooManyRequestsException.class, () -> service.enqueueGuideBatch(batchOf(10)));
+    verify(repo, never()).saveAndFlush(any());
+  }
+
+  @Test
+  void batchJobsDoNotCountAgainstTheLimitOfSingleRequests() {
+    // Lo suelto usa su propio conteo (guías sin lote): un lote lleno no lo agota.
+    when(repo.countByOrganizationIdAndBatchIdIsNotNullAndStatusIn(eq(orgId), any()))
+        .thenReturn(60L);
+
+    var accepted = service.enqueueGuide(request(2));
+
+    assertNotNull(accepted.jobId());
+  }
+
+  @Test
+  void theBatchLimitsOfAnOrganizationWithoutContextAreCountedPerUser() {
+    when(currentUser.currentTenantId()).thenReturn(null);
+    when(repo.countByOrganizationIdIsNullAndRequestedByAndBatchIdIsNotNullAndStatusIn(
+            eq(userId), any()))
+        .thenReturn(60L);
+
+    assertThrows(TooManyRequestsException.class, () -> service.enqueueGuideBatch(batchOf(1)));
+  }
+
+  @Test
+  void getManyReturnsTheJobsAndSkipsTheOnesThatNoLongerExist() {
+    AiJob a = activeJob(Status.QUEUED);
+    when(repo.findById(a.getId())).thenReturn(Optional.of(a));
+    UUID gone = UUID.randomUUID();
+    when(repo.findById(gone)).thenReturn(Optional.empty());
+    when(repo.countAhead(anyInt(), any())).thenReturn(0L);
+
+    List<AiJobDto> result = service.getMany(List.of(a.getId(), gone, a.getId()));
+
+    assertEquals(1, result.size(), "sin duplicados ni los que ya no existen");
+    assertEquals(a.getId(), result.get(0).id());
+  }
+
+  @Test
+  void getManyStillVerifiesTheOrganizationOfEachJob() {
+    AiJob a = activeJob(Status.QUEUED);
+    when(repo.findById(a.getId())).thenReturn(Optional.of(a));
+    doThrow(new AccessDeniedException("no")).when(currentUser).assertOrganizationAccess(orgId);
+
+    assertThrows(AccessDeniedException.class, () -> service.getMany(List.of(a.getId())));
+  }
+
+  @Test
+  void theJobDtoCarriesTheControlAndTheBatchSoTheScreenCanLocateIt() {
+    UUID controlId = UUID.randomUUID();
+    UUID batchId = UUID.randomUUID();
+    AiJob a = activeJob(Status.RUNNING);
+    a.setBatchId(batchId);
+    a.setParams(Map.of("controlId", controlId.toString()));
+    when(repo.findById(a.getId())).thenReturn(Optional.of(a));
+
+    AiJobDto dto = service.get(a.getId());
+
+    assertEquals(controlId, dto.controlId());
+    assertEquals(batchId, dto.batchId());
+  }
+
+  @Test
+  void cancellingABatchCancelsWhatIsStillQueued() {
+    UUID batchId = UUID.randomUUID();
+    AiJob a = activeJob(Status.QUEUED);
+    when(repo.findByBatchId(batchId)).thenReturn(List.of(a));
+    when(repo.cancelQueuedOfBatch(eq(batchId), any(OffsetDateTime.class))).thenReturn(7);
+
+    assertEquals(7, service.cancelBatch(batchId));
+  }
+
+  @Test
+  void cancellingAnUnknownBatchIsNotFound() {
+    UUID batchId = UUID.randomUUID();
+    when(repo.findByBatchId(batchId)).thenReturn(List.of());
+
+    assertThrows(ResourceNotFoundException.class, () -> service.cancelBatch(batchId));
+  }
+
+  @Test
+  void cancellingABatchOfAnotherOrganizationIsDenied() {
+    UUID batchId = UUID.randomUUID();
+    when(repo.findByBatchId(batchId)).thenReturn(List.of(activeJob(Status.QUEUED)));
+    doThrow(new AccessDeniedException("no")).when(currentUser).assertOrganizationAccess(orgId);
+
+    assertThrows(AccessDeniedException.class, () -> service.cancelBatch(batchId));
+    verify(repo, never()).cancelQueuedOfBatch(any(), any());
   }
 }

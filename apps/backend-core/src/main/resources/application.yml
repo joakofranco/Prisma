@@ -164,6 +164,9 @@ prisma:
       # Tope GLOBAL (suma de réplicas) de trabajos corriendo contra Ollama.
       concurrency: ${AI_JOBS_CONCURRENCY:2}
       max-pending-per-org: ${AI_JOBS_MAX_PENDING_PER_ORG:20}
+      # Lote de guías: controles por lote y trabajos de lote activos por organización.
+      max-batch-size: ${AI_JOBS_MAX_BATCH_SIZE:20}
+      max-pending-batch-per-org: ${AI_JOBS_MAX_PENDING_BATCH_PER_ORG:60}
       result-ttl-days: ${AI_JOBS_RESULT_TTL_DAYS:30}
       max-attempts: ${AI_JOBS_MAX_ATTEMPTS:2}
       retry-backoff-seconds: ${AI_JOBS_RETRY_BACKOFF_SECONDS:30}

@@ -13,6 +13,8 @@ const evidenceService = vi.hoisted(() => ({
   getByEvaluation: vi.fn(),
   getCitations: vi.fn(),
   getSavedCitations: vi.fn(),
+  getSuggestions: vi.fn(),
+  decideSuggestion: vi.fn(),
   refreshCitations: vi.fn(),
   sendCitationFeedback: vi.fn(),
   download: vi.fn(),
@@ -1250,5 +1252,207 @@ describe('AuditView: citas guardadas, revertir y deshacer (C2 / hito 3)', () => 
     const wrapper = await mountView('RETURNED');
 
     expect(wrapper.find('[data-testid="undo-verdict"]').exists()).toBe(false);
+  });
+});
+
+describe('AuditView: evidencia sin control asignado y sugerencias (F4, hito 4)', () => {
+  const globalEvidence = (id: string, extra: Record<string, unknown> = {}) => ({
+    id,
+    controlId: null,
+    fileName: `politica-${id}.pdf`,
+    scanStatus: 'CLEAN',
+    indexStatus: 'INDEXED',
+    aiIndexed: true,
+    ...extra,
+  });
+  const suggestion = (id: string, evidenceId: string, controlCode: string, extra = {}) => ({
+    id,
+    evidenceId,
+    fileName: `politica-${evidenceId}.pdf`,
+    controlId: `ctl-${controlCode}`,
+    controlCode,
+    controlDescription: `desc ${controlCode}`,
+    score: 0.81,
+    rank: 1,
+    status: 'PENDING',
+    ...extra,
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    document.body.innerHTML = '';
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    auditService.getObservations.mockResolvedValue({ data: [] });
+    auditService.getVerdicts.mockResolvedValue({ data: [] });
+    evaluationsService.getFlags.mockResolvedValue({ data: [] });
+    evidenceService.getByEvaluation.mockResolvedValue({ data: [globalEvidence('g1')] });
+    evidenceService.getSavedCitations.mockResolvedValue({ data: [] });
+    evidenceService.getSuggestions.mockResolvedValue({ data: [] });
+    evidenceService.decideSuggestion.mockResolvedValue({ data: {} });
+    evidenceService.getCitations.mockResolvedValue({ data: [] });
+    catalogService.getByVersion.mockResolvedValue({ data: catalog });
+  });
+
+  const q = (wrapper: Awaited<ReturnType<typeof mountView>>, testid: string) =>
+    wrapper.find(`[data-testid="${testid}"]`);
+
+  it('lista la evidencia sin control (hoy no aparecía en ningún lado) y lo explica', async () => {
+    const wrapper = await mountView('IN_AUDIT');
+
+    expect(q(wrapper, 'global-evidence').exists()).toBe(true);
+    expect(wrapper.findAll('[data-testid="global-evidence-item"]')).toHaveLength(1);
+    expect(q(wrapper, 'global-evidence-item').text()).toContain('politica-g1.pdf');
+    expect(q(wrapper, 'global-evidence-item').text()).toContain('indexada');
+    expect(q(wrapper, 'global-evidence').text()).toContain('no asigna');
+    // Con solo evidencia global ya no dice que no hay evidencia.
+    expect(wrapper.text()).not.toContain('Aún no hay evidencia cargada para esta evaluación.');
+  });
+
+  it('sin evidencia global no muestra la sección', async () => {
+    evidenceService.getByEvaluation.mockResolvedValue({
+      data: [{ id: 'ev-1', controlId: 'ctl-1', fileName: 'a.pdf' }],
+    });
+    const wrapper = await mountView('IN_AUDIT');
+
+    expect(q(wrapper, 'global-evidence').exists()).toBe(false);
+  });
+
+  it('una evidencia en cuarentena o infectada no se ofrece como global', async () => {
+    evidenceService.getByEvaluation.mockResolvedValue({
+      data: [
+        globalEvidence('g1', { scanStatus: 'QUARANTINED' }),
+        globalEvidence('g2', { scanStatus: 'INFECTED' }),
+      ],
+    });
+    const wrapper = await mountView('IN_AUDIT');
+
+    expect(q(wrapper, 'global-evidence').exists()).toBe(false);
+  });
+
+  it('muestra las sugerencias con su confianza: «podría pertenecer a CA.1-2 (confianza 0,81)»', async () => {
+    evidenceService.getSuggestions.mockResolvedValue({
+      data: [
+        suggestion('s2', 'g1', 'CA.1-3', { rank: 2, score: 0.55 }),
+        suggestion('s1', 'g1', 'CA.1-2'),
+      ],
+    });
+    const wrapper = await mountView('IN_AUDIT');
+
+    const items = wrapper.findAll('[data-testid="suggestion"]').map((n) => n.text());
+    expect(items).toHaveLength(2);
+    // Ordenadas por posición.
+    expect(items[0]).toContain('Podría pertenecer a CA.1-2 (confianza 0,81)');
+    expect(items[1]).toContain('CA.1-3 (confianza 0,55)');
+  });
+
+  it('aceptar una sugerencia la registra y suma el control a la lista de citas', async () => {
+    evidenceService.getSuggestions.mockResolvedValue({
+      data: [suggestion('s1', 'g1', 'CA.1-2')],
+    });
+    const wrapper = await mountView('IN_AUDIT');
+    expect(wrapper.find('[data-testid="search-citations"]').exists()).toBe(false);
+
+    await wrapper.find('[data-testid="accept-suggestion"]').trigger('click');
+    await flushPromises();
+
+    expect(evidenceService.decideSuggestion).toHaveBeenCalledWith('s1', 'ACCEPTED');
+    expect(q(wrapper, 'suggestion-accepted').exists()).toBe(true);
+    // El control aparece con su botón «Buscar citas» (las citas incluyen la evidencia global).
+    expect(wrapper.text()).toContain('CA.1-2');
+    expect(wrapper.find('[data-testid="search-citations"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="accept-suggestion"]').exists()).toBe(false);
+  });
+
+  it('rechazar una sugerencia la oculta', async () => {
+    evidenceService.getSuggestions.mockResolvedValue({
+      data: [suggestion('s1', 'g1', 'CA.1-2')],
+    });
+    const wrapper = await mountView('IN_AUDIT');
+
+    await wrapper.find('[data-testid="reject-suggestion"]').trigger('click');
+    await flushPromises();
+
+    expect(evidenceService.decideSuggestion).toHaveBeenCalledWith('s1', 'REJECTED');
+    expect(wrapper.findAll('[data-testid="suggestion"]')).toHaveLength(0);
+    expect(wrapper.find('[data-testid="search-citations"]').exists()).toBe(false);
+  });
+
+  it('una sugerencia ya aceptada llega marcada y su control ya está en la lista', async () => {
+    evidenceService.getSuggestions.mockResolvedValue({
+      data: [suggestion('s1', 'g1', 'CA.1-2', { status: 'ACCEPTED' })],
+    });
+    const wrapper = await mountView('IN_AUDIT');
+
+    expect(q(wrapper, 'suggestion-accepted').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="search-citations"]').exists()).toBe(true);
+  });
+
+  it('si no se puede registrar la decisión avisa y no cambia nada', async () => {
+    evidenceService.getSuggestions.mockResolvedValue({ data: [suggestion('s1', 'g1', 'CA.1-2')] });
+    evidenceService.decideSuggestion.mockRejectedValue({
+      response: { data: { message: 'Las sugerencias solo están disponibles en auditoría' } },
+    });
+    const wrapper = await mountView('IN_AUDIT');
+
+    await wrapper.find('[data-testid="accept-suggestion"]').trigger('click');
+    await flushPromises();
+
+    expect(notification.error).toHaveBeenCalledWith(
+      'Las sugerencias solo están disponibles en auditoría',
+    );
+    expect(wrapper.find('[data-testid="accept-suggestion"]').exists()).toBe(true);
+  });
+
+  it('fuera de auditoría no consulta sugerencias ni ofrece decidirlas', async () => {
+    const wrapper = await mountView('RETURNED');
+
+    expect(evidenceService.getSuggestions).not.toHaveBeenCalled();
+    expect(wrapper.find('[data-testid="accept-suggestion"]').exists()).toBe(false);
+  });
+
+  it('si todavía no hay sugerencias (la IA las calcula) no es un error', async () => {
+    evidenceService.getSuggestions.mockRejectedValue(new Error('boom'));
+    const wrapper = await mountView('IN_AUDIT');
+
+    expect(notification.error).not.toHaveBeenCalled();
+    expect(q(wrapper, 'global-evidence').exists()).toBe(true);
+  });
+
+  it('las citas que salen de evidencia global se marcan «Sin control asignado»', async () => {
+    evidenceService.getSuggestions.mockResolvedValue({
+      data: [suggestion('s1', 'g1', 'CA.1-2', { status: 'ACCEPTED' })],
+    });
+    evidenceService.getCitations.mockResolvedValue({
+      data: [
+        {
+          citationId: 'c1',
+          status: 'PENDING',
+          evidenceId: 'g1',
+          fileName: 'politica-g1.pdf',
+          location: 'Página 1',
+          snippet: 'texto global',
+          score: 0.7,
+          unassigned: true,
+        },
+        {
+          citationId: 'c2',
+          status: 'PENDING',
+          evidenceId: 'ev-1',
+          fileName: 'del-control.pdf',
+          location: 'Página 2',
+          snippet: 'texto propio',
+          score: 0.6,
+          unassigned: false,
+        },
+      ],
+    });
+    const wrapper = await mountView('IN_AUDIT');
+
+    await wrapper.find('[data-testid="search-citations"]').trigger('click');
+    await flushPromises();
+
+    const badges = wrapper.findAll('[data-testid="citation-unassigned"]');
+    expect(badges).toHaveLength(1);
+    expect(badges[0].text()).toBe('Sin control asignado');
   });
 });

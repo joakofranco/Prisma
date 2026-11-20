@@ -1041,11 +1041,53 @@ public class Dto {
       String status,
       Integer position,
       UUID controlId,
-      boolean stale) {
+      boolean stale,
+      // true = el fragmento sale de evidencia SIN control asignado (global): «sin control
+      // asignado».
+      boolean unassigned) {
 
     public EvidenceCitationDto(
         UUID evidenceId, String fileName, String location, String snippet, double score) {
-      this(evidenceId, fileName, location, snippet, score, null, null, null, null, null, false);
+      this(
+          evidenceId,
+          fileName,
+          location,
+          snippet,
+          score,
+          null,
+          null,
+          null,
+          null,
+          null,
+          false,
+          false);
+    }
+
+    public EvidenceCitationDto(
+        UUID evidenceId,
+        String fileName,
+        String location,
+        String snippet,
+        double score,
+        String fragmentId,
+        UUID citationId,
+        String status,
+        Integer position,
+        UUID controlId,
+        boolean stale) {
+      this(
+          evidenceId,
+          fileName,
+          location,
+          snippet,
+          score,
+          fragmentId,
+          citationId,
+          status,
+          position,
+          controlId,
+          stale,
+          false);
     }
   }
 
@@ -1313,7 +1355,76 @@ public class Dto {
       OffsetDateTime createdAt,
       OffsetDateTime startedAt,
       OffsetDateTime finishedAt,
-      GeneratedGuideDto guide) {}
+      GeneratedGuideDto guide,
+      // Control de la guía (para ubicar el trabajo en una pantalla con varios) y lote al que
+      // pertenece, si fue pedido como lote.
+      UUID controlId,
+      UUID batchId) {
+
+    public AiJobDto(
+        UUID id,
+        String type,
+        String status,
+        Integer queuePosition,
+        int attempts,
+        int maxAttempts,
+        String errorCode,
+        String errorMessage,
+        OffsetDateTime createdAt,
+        OffsetDateTime startedAt,
+        OffsetDateTime finishedAt,
+        GeneratedGuideDto guide) {
+      this(
+          id,
+          type,
+          status,
+          queuePosition,
+          attempts,
+          maxAttempts,
+          errorCode,
+          errorMessage,
+          createdAt,
+          startedAt,
+          finishedAt,
+          guide,
+          null,
+          null);
+    }
+  }
+
+  // Lote de guías (F3): un GUIDE por control, con prioridad de lote. Los controles que ya tenían un
+  // trabajo activo reutilizan ese trabajo (no se duplica).
+  public record GuideBatchRequestDto(
+      @NotEmpty(message = "Elegí al menos un control")
+          @Size(max = 100, message = "Demasiados controles")
+          List<@Valid GuideJobRequestDto> items) {
+    public GuideBatchRequestDto {
+      items = items == null ? List.of() : List.copyOf(items);
+    }
+  }
+
+  public record BatchItemDto(UUID controlId, UUID jobId, String status) {}
+
+  public record GuideBatchAcceptedDto(UUID batchId, List<BatchItemDto> jobs) {}
+
+  public record BatchCancelDto(int cancelled) {}
+
+  // Sugerencia de control para una evidencia sin control asignado (C1 / D7). Solo sugerencia.
+  public record EvidenceSuggestionDto(
+      UUID id,
+      UUID evidenceId,
+      String fileName,
+      UUID controlId,
+      String controlCode,
+      String controlDescription,
+      double score,
+      int rank,
+      String status) {}
+
+  public record SuggestionDecisionDto(
+      @NotNull(message = "La decisión es obligatoria")
+          @Pattern(regexp = "ACCEPTED|REJECTED", message = "Decisión inválida")
+          String decision) {}
 
   // generated=false es el texto de reemplazo cuando la IA falla: el frontend no lo ofrece para
   // usar en la acción ni lo registra como retroalimentación (PRI-370).

@@ -55,6 +55,8 @@
 | [`AiCitationFeedback`](#aicitationfeedback) | `ai_citation_feedback` | `prisma` |
 | `AiCitationValidationFeedback` | `ai_citation_validation_feedback` | `prisma` |
 | `EvidenceCitationResult` | `evidence_citation_result` | `prisma` |
+| `EvidenceControlSuggestion` | `evidence_control_suggestion` | `prisma` |
+| `AiEvidenceClassificationFeedback` | `ai_evidence_classification_feedback` | `prisma` |
 | [`AuditObservation`](#auditobservation) | `audit_observations` | `prisma` |
 | [`AuditLog`](#auditlog) | `audit_logs` | `audit` |
 | `AuditControlVerdict` | `audit_control_verdicts` | `prisma` |

@@ -17,6 +17,8 @@ import org.springframework.boot.context.properties.bind.ConstructorBinding;
  *   <li>{@code pollIntervalMs}: cada cuánto mira la cola cada réplica.
  *   <li>{@code guideFeedbackDays}: a los cuántos días una guía mostrada y no usada cuenta como
  *       rechazada (D11).
+ *   <li>{@code maxBatchSize}: controles por lote de guías. {@code maxPendingBatchPerOrg}: trabajos
+ *       de lote activos por organización (aparte del tope de los pedidos sueltos).
  * </ul>
  */
 @ConfigurationProperties(prefix = "prisma.ai.jobs")
@@ -28,7 +30,9 @@ public record AiJobProperties(
     Integer maxAttempts,
     Integer retryBackoffSeconds,
     Long pollIntervalMs,
-    Integer guideFeedbackDays) {
+    Integer guideFeedbackDays,
+    Integer maxBatchSize,
+    Integer maxPendingBatchPerOrg) {
 
   // Con más de un constructor Spring Boot necesita saber cuál usar (ver AiConfig.AiProperties).
   @ConstructorBinding
@@ -42,9 +46,35 @@ public record AiJobProperties(
         retryBackoffSeconds != null && retryBackoffSeconds >= 0 ? retryBackoffSeconds : 30;
     pollIntervalMs = pollIntervalMs != null && pollIntervalMs > 0 ? pollIntervalMs : 2000L;
     guideFeedbackDays = guideFeedbackDays != null && guideFeedbackDays > 0 ? guideFeedbackDays : 30;
+    maxBatchSize = maxBatchSize != null && maxBatchSize > 0 ? maxBatchSize : 20;
+    maxPendingBatchPerOrg =
+        maxPendingBatchPerOrg != null && maxPendingBatchPerOrg > 0 ? maxPendingBatchPerOrg : 60;
+  }
+
+  /** Sin los topes de lote (se aplican los valores por defecto). */
+  public AiJobProperties(
+      Boolean enabled,
+      Integer concurrency,
+      Integer maxPendingPerOrg,
+      Integer resultTtlDays,
+      Integer maxAttempts,
+      Integer retryBackoffSeconds,
+      Long pollIntervalMs,
+      Integer guideFeedbackDays) {
+    this(
+        enabled,
+        concurrency,
+        maxPendingPerOrg,
+        resultTtlDays,
+        maxAttempts,
+        retryBackoffSeconds,
+        pollIntervalMs,
+        guideFeedbackDays,
+        null,
+        null);
   }
 
   public AiJobProperties() {
-    this(null, null, null, null, null, null, null, null);
+    this(null, null, null, null, null, null, null, null, null, null);
   }
 }

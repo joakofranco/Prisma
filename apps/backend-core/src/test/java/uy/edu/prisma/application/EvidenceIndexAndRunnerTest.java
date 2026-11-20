@@ -40,6 +40,7 @@ class EvidenceIndexAndRunnerTest {
   @Mock private AiEvidenceClient aiClient;
   @Mock private AiJobQueue queue;
   @Mock private CitationPrecomputeService precompute;
+  @Mock private EvidenceClassificationService classification;
 
   private EvidenceIndexService index;
   private AiJobRunner runner;
@@ -52,8 +53,13 @@ class EvidenceIndexAndRunnerTest {
   void setUp() {
     index =
         new EvidenceIndexService(
-            evidenceRepo, jobRepo, new AiJobProperties(), citationStore, evidenceService);
-    runner = new AiJobRunner(aiClient, queue, jobRepo, index, precompute);
+            evidenceRepo,
+            jobRepo,
+            new AiJobProperties(),
+            citationStore,
+            evidenceService,
+            classification);
+    runner = new AiJobRunner(aiClient, queue, jobRepo, index, precompute, classification);
     eval =
         Evaluation.builder()
             .id(UUID.randomUUID())
@@ -182,6 +188,71 @@ class EvidenceIndexAndRunnerTest {
     index.markIndexed(evidence.getId());
 
     verifyNoInteractions(citationStore);
+  }
+
+  @Test
+  void anIndexedGlobalEvidenceQueuesItsClassification() {
+    evidence.setControl(null);
+
+    index.markIndexed(evidence.getId());
+
+    verify(classification).enqueue(evidence);
+    verifyNoInteractions(citationStore);
+  }
+
+  @Test
+  void anIndexedEvidenceWithAControlIsNotClassified() {
+    index.markIndexed(evidence.getId());
+
+    verifyNoInteractions(classification);
+  }
+
+  @Test
+  void theRunnerDispatchesTheClassificationJob() {
+    UUID evidenceId = UUID.randomUUID();
+    AiJob job =
+        AiJob.builder()
+            .id(UUID.randomUUID())
+            .type(AiJob.Type.EVIDENCE_CLASSIFY)
+            .params(Map.of("evidenceId", evidenceId.toString()))
+            .build();
+
+    runner.run(job);
+
+    verify(classification).run(evidenceId);
+    verify(queue).completeWithoutResult(eq(job.getId()), anyLong());
+  }
+
+  @Test
+  void ifTheAssistantIsDownTheClassificationRetries() {
+    UUID evidenceId = UUID.randomUUID();
+    AiJob job =
+        AiJob.builder()
+            .id(UUID.randomUUID())
+            .type(AiJob.Type.EVIDENCE_CLASSIFY)
+            .params(Map.of("evidenceId", evidenceId.toString()))
+            .build();
+    when(classification.run(evidenceId)).thenThrow(new AiUnavailableException("caída", null));
+
+    runner.run(job);
+
+    verify(queue).fail(eq(job.getId()), eq("AI_UNAVAILABLE"), anyString(), eq(true), anyLong());
+  }
+
+  @Test
+  void anUnexpectedClassificationErrorIsNotRetried() {
+    UUID evidenceId = UUID.randomUUID();
+    AiJob job =
+        AiJob.builder()
+            .id(UUID.randomUUID())
+            .type(AiJob.Type.EVIDENCE_CLASSIFY)
+            .params(Map.of("evidenceId", evidenceId.toString()))
+            .build();
+    when(classification.run(evidenceId)).thenThrow(new IllegalStateException("boom"));
+
+    runner.run(job);
+
+    verify(queue).fail(eq(job.getId()), eq("INTERNAL_ERROR"), anyString(), eq(false), anyLong());
   }
 
   @Test

@@ -1,5 +1,6 @@
 package uy.edu.prisma.web.controller;
 
+import jakarta.validation.Valid;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.UUID;
@@ -11,10 +12,13 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+import uy.edu.prisma.application.EvidenceClassificationService;
 import uy.edu.prisma.application.EvidenceService;
 import uy.edu.prisma.web.dto.Dto.EvidenceCitationDto;
 import uy.edu.prisma.web.dto.Dto.EvidenceDto;
 import uy.edu.prisma.web.dto.Dto.EvidenceRulesDto;
+import uy.edu.prisma.web.dto.Dto.EvidenceSuggestionDto;
+import uy.edu.prisma.web.dto.Dto.SuggestionDecisionDto;
 import uy.edu.prisma.web.dto.Dto.UploadEvidenceResponseDto;
 
 @RestController
@@ -23,8 +27,11 @@ public class EvidenceController {
 
   private final EvidenceService service;
 
-  public EvidenceController(EvidenceService service) {
+  private final EvidenceClassificationService classification;
+
+  public EvidenceController(EvidenceService service, EvidenceClassificationService classification) {
     this.service = service;
+    this.classification = classification;
   }
 
   /**
@@ -107,6 +114,24 @@ public class EvidenceController {
   public ResponseEntity<List<EvidenceCitationDto>> refreshCitations(
       @PathVariable UUID evaluationId, @PathVariable UUID controlId) {
     return ResponseEntity.ok(service.refreshCitations(evaluationId, controlId));
+  }
+
+  /**
+   * Sugerencias de la IA de a qué controles podría pertenecer cada evidencia sin control asignado
+   * (D7): solo sugerencias, no asignan nada. Solo con la evaluación en auditoría.
+   */
+  @PreAuthorize("hasAnyRole('PRISMA_ADMIN','AUDITOR')")
+  @GetMapping("/evaluation/{evaluationId}/suggestions")
+  public ResponseEntity<List<EvidenceSuggestionDto>> suggestions(@PathVariable UUID evaluationId) {
+    return ResponseEntity.ok(classification.list(evaluationId));
+  }
+
+  /** Acepta o rechaza una sugerencia (no asigna la evidencia; deja feedback anónimo). */
+  @PreAuthorize("hasAnyRole('PRISMA_ADMIN','AUDITOR')")
+  @PostMapping("/suggestions/{suggestionId}/decision")
+  public ResponseEntity<EvidenceSuggestionDto> decideSuggestion(
+      @PathVariable UUID suggestionId, @Valid @RequestBody SuggestionDecisionDto dto) {
+    return ResponseEntity.ok(classification.decide(suggestionId, dto.decision()));
   }
 
   /** Todas las citas ya guardadas de la evaluación (no busca): la pantalla las muestra al abrir. */

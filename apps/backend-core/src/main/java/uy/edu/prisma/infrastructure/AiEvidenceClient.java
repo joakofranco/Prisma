@@ -294,6 +294,52 @@ public class AiEvidenceClient {
         AiGuideException.AI_REJECTED, "El asistente de IA rechazó el pedido", false, e);
   }
 
+  /** Control candidato para preclasificar una evidencia: id y la consulta «código: descripción». */
+  public record ClassifyCandidate(UUID controlId, String query) {}
+
+  /** Control sugerido para una evidencia, con el puntaje del fragmento que más se le parece. */
+  public record ControlSuggestion(UUID controlId, double score) {}
+
+  /**
+   * Preclasifica una evidencia sin control asignado: los {@code topN} controles candidatos cuya
+   * consulta más se parece a algún fragmento de esa evidencia (solo sugerencia, D7). Lanza {@link
+   * AiUnavailableException} si backend-ai no responde, para que el trabajo reintente.
+   */
+  public List<ControlSuggestion> classify(
+      UUID organizationId,
+      UUID evaluationId,
+      UUID evidenceId,
+      List<ClassifyCandidate> candidates,
+      int topN) {
+    try {
+      ClassifyResponse response =
+          restClient
+              .post()
+              .uri("/api/v1/evidence/classify")
+              .contentType(MediaType.APPLICATION_JSON)
+              .body(
+                  new ClassifyRequest(
+                      organizationId.toString(),
+                      evaluationId.toString(),
+                      evidenceId.toString(),
+                      candidates.stream()
+                          .map(c -> new ClassifyCandidateJson(c.controlId().toString(), c.query()))
+                          .toList(),
+                      topN))
+              .retrieve()
+              .body(ClassifyResponse.class);
+      if (response == null || response.suggestions() == null) {
+        return List.of();
+      }
+      return response.suggestions().stream()
+          .map(s -> new ControlSuggestion(UUID.fromString(s.controlId()), s.score()))
+          .toList();
+    } catch (Exception e) {
+      log.warn("No se pudo preclasificar la evidencia {}: {}", evidenceId, e.getMessage());
+      throw new AiUnavailableException("El asistente de IA no está disponible en este momento", e);
+    }
+  }
+
   /** Borra los fragmentos indexados de una evidencia (best-effort, p.ej. al eliminarla). */
   public void deleteEvidence(UUID organizationId, UUID evidenceId) {
     try {
@@ -326,7 +372,8 @@ public class AiEvidenceClient {
         null,
         null,
         null,
-        false);
+        false,
+        c.unassigned());
   }
 
   // El JSON de estos records tiene que matchear los BaseModel de Pydantic en backend-ai
@@ -350,6 +397,21 @@ public class AiEvidenceClient {
 
   private record CitationsResponse(List<Citation> citations) {}
 
+  private record ClassifyCandidateJson(
+      @JsonProperty("control_id") String controlId, String query) {}
+
+  private record ClassifyRequest(
+      @JsonProperty("organization_id") String organizationId,
+      @JsonProperty("evaluation_id") String evaluationId,
+      @JsonProperty("evidence_id") String evidenceId,
+      List<ClassifyCandidateJson> candidates,
+      @JsonProperty("top_n") int topN) {}
+
+  private record ClassifySuggestionJson(
+      @JsonProperty("control_id") String controlId, double score) {}
+
+  private record ClassifyResponse(List<ClassifySuggestionJson> suggestions) {}
+
   // Igual que arriba: JSON en snake_case para matchear el BaseModel de Pydantic
   // (app/api/v1/rag.py RemediationTipsRequest/Response).
   private record RemediationTipsRequest(
@@ -372,6 +434,7 @@ public class AiEvidenceClient {
 
   private record Citation(
       @JsonProperty("fragment_id") String fragmentId,
+      boolean unassigned,
       @JsonProperty("evidence_id") String evidenceId,
       @JsonProperty("file_name") String fileName,
       String location,

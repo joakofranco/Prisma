@@ -49,18 +49,21 @@ public class EvidenceIndexService {
   private final AiJobProperties props;
   private final EvidenceCitationStore citationStore;
   private final EvidenceService evidenceService;
+  private final EvidenceClassificationService classificationService;
 
   public EvidenceIndexService(
       EvidenceRepository evidenceRepo,
       AiJobRepository jobRepo,
       AiJobProperties props,
       EvidenceCitationStore citationStore,
-      @Lazy EvidenceService evidenceService) {
+      @Lazy EvidenceService evidenceService,
+      EvidenceClassificationService classificationService) {
     this.evidenceRepo = evidenceRepo;
     this.jobRepo = jobRepo;
     this.props = props;
     this.citationStore = citationStore;
     this.evidenceService = evidenceService;
+    this.classificationService = classificationService;
   }
 
   /**
@@ -153,6 +156,9 @@ public class EvidenceIndexService {
               // La evidencia del control cambió: las citas guardadas ya no reflejan todo (C2).
               if (e.getControl() != null) {
                 citationStore.invalidateControl(e.getEvaluation().getId(), e.getControl().getId());
+              } else {
+                // Evidencia global ya indexada (C1 / D7): se sugieren controles en segundo plano.
+                classificationService.enqueue(e);
               }
             });
   }

@@ -28,18 +28,21 @@ public class AiJobRunner {
   private final AiJobRepository jobRepo;
   private final EvidenceIndexService indexService;
   private final CitationPrecomputeService precomputeService;
+  private final EvidenceClassificationService classificationService;
 
   public AiJobRunner(
       AiEvidenceClient aiClient,
       AiJobQueue queue,
       AiJobRepository jobRepo,
       EvidenceIndexService indexService,
-      CitationPrecomputeService precomputeService) {
+      CitationPrecomputeService precomputeService,
+      EvidenceClassificationService classificationService) {
     this.aiClient = aiClient;
     this.queue = queue;
     this.jobRepo = jobRepo;
     this.indexService = indexService;
     this.precomputeService = precomputeService;
+    this.classificationService = classificationService;
   }
 
   public void run(AiJob job) {
@@ -47,6 +50,7 @@ public class AiJobRunner {
       case GUIDE -> runGuide(job);
       case EVIDENCE_INDEX -> runIndex(job);
       case CITATIONS_PRECOMPUTE -> runPrecompute(job);
+      case EVIDENCE_CLASSIFY -> runClassify(job);
     }
   }
 
@@ -92,6 +96,31 @@ public class AiJobRunner {
       indexService.markQueued(evidenceId);
     } else {
       indexService.markError(evidenceId, reason);
+    }
+  }
+
+  /** Sugiere controles para una evidencia global ya indexada; si falla la IA, la cola reintenta. */
+  private void runClassify(AiJob job) {
+    long started = System.nanoTime();
+    try {
+      UUID evidenceId = UUID.fromString(String.valueOf(job.getParams().get("evidenceId")));
+      classificationService.run(evidenceId);
+      queue.completeWithoutResult(job.getId(), elapsedMs(started));
+    } catch (AiUnavailableException e) {
+      queue.fail(
+          job.getId(),
+          AiGuideException.AI_UNAVAILABLE,
+          "El asistente de IA no está disponible en este momento",
+          true,
+          elapsedMs(started));
+    } catch (RuntimeException e) {
+      log.error("Preclasificación {} falló de forma inesperada", job.getId(), e);
+      queue.fail(
+          job.getId(),
+          "INTERNAL_ERROR",
+          "Error interno al preclasificar la evidencia",
+          false,
+          elapsedMs(started));
     }
   }
 

@@ -22,6 +22,8 @@ import type {
   RemediationTips,
   AiJob,
   AiJobAccepted,
+  GuideBatchAccepted,
+  EvidenceSuggestion,
   CitationSource,
   AiSuggestionFeedback,
   MaturityResult,
@@ -286,6 +288,16 @@ export const evidenceService = {
       `/evidence/evaluation/${evaluationId}/control/${controlId}/citations`,
     );
   },
+  /** Sugerencias de a qué controles podría pertenecer cada evidencia sin control (solo sugerencias). */
+  getSuggestions(evaluationId: string) {
+    return apiClient.get<EvidenceSuggestion[]>(`/evidence/evaluation/${evaluationId}/suggestions`);
+  },
+  /** Acepta o rechaza una sugerencia: NO asigna la evidencia; deja feedback anónimo. */
+  decideSuggestion(suggestionId: string, decision: 'ACCEPTED' | 'REJECTED') {
+    return apiClient.post<EvidenceSuggestion>(`/evidence/suggestions/${suggestionId}/decision`, {
+      decision,
+    });
+  },
   /** Todas las citas ya guardadas de la evaluación (no busca): la pantalla las muestra al abrir. */
   getSavedCitations(evaluationId: string) {
     return apiClient.get<EvidenceCitation[]>(`/evidence/evaluation/${evaluationId}/citations`);
@@ -386,6 +398,23 @@ export const improvementService = {
     targetLevel: number;
   }) {
     return apiClient.post<AiJobAccepted>('/improvement/suggestions/tips/async', data);
+  },
+  /**
+   * Lote de guías (F3): una por control, en segundo plano y con prioridad de lote. Responde con el
+   * lote y el trabajo de cada control; el avance se consulta con `aiJobsService.getMany`.
+   */
+  requestTipsBatch(
+    items: {
+      controlId: string;
+      evaluationId?: string;
+      functionName?: string;
+      categoryName?: string;
+      subcategoryName?: string;
+      currentLevel: number;
+      targetLevel: number;
+    }[],
+  ) {
+    return apiClient.post<GuideBatchAccepted>('/improvement/suggestions/tips/batch', { items });
   },
   /** Registra qué se hizo con las guías de IA (usada, editada o descartada). */
   sendSuggestionFeedback(items: AiSuggestionFeedback[]) {
@@ -531,5 +560,13 @@ export const aiJobsService = {
   /** Solo cancela si sigue en cola. */
   cancel(id: string) {
     return apiClient.delete<AiJob>(`/ai/jobs/${id}`);
+  },
+  /** Estado de varios trabajos de una vez (avance de un lote), con la guía de los que terminaron. */
+  getMany(ids: string[]) {
+    return apiClient.get<AiJob[]>(`/ai/jobs?ids=${ids.join(',')}`);
+  },
+  /** Cancela de un lote lo que sigue en cola; lo que ya corre termina. */
+  cancelBatch(batchId: string) {
+    return apiClient.delete<{ cancelled: number }>(`/ai/jobs/batches/${batchId}`);
   },
 };

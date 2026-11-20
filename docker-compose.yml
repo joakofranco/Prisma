@@ -216,6 +216,8 @@ services:
       AI_JOBS_ENABLED: ${AI_JOBS_ENABLED:-true}
       AI_JOBS_CONCURRENCY: ${AI_JOBS_CONCURRENCY:-2}
       AI_JOBS_MAX_PENDING_PER_ORG: ${AI_JOBS_MAX_PENDING_PER_ORG:-20}
+      AI_JOBS_MAX_BATCH_SIZE: ${AI_JOBS_MAX_BATCH_SIZE:-20}
+      AI_JOBS_MAX_PENDING_BATCH_PER_ORG: ${AI_JOBS_MAX_PENDING_BATCH_PER_ORG:-60}
       AI_JOBS_RESULT_TTL_DAYS: ${AI_JOBS_RESULT_TTL_DAYS:-30}
       AI_JOBS_MAX_ATTEMPTS: ${AI_JOBS_MAX_ATTEMPTS:-2}
       AI_JOBS_RETRY_BACKOFF_SECONDS: ${AI_JOBS_RETRY_BACKOFF_SECONDS:-30}
@@ -296,6 +298,8 @@ services:
       AI_PROMPT_MAX_TOKENS: ${AI_PROMPT_MAX_TOKENS:-}
       # Puntaje mínimo de una cita; vacío = sin umbral (se calibra con el feedback real).
       AI_CITATION_MIN_SCORE: ${AI_CITATION_MIN_SCORE:-}
+      # Puntaje mínimo para sugerir un control al preclasificar evidencia global; vacío = los 3 mejores.
+      AI_CLASSIFY_MIN_SCORE: ${AI_CLASSIFY_MIN_SCORE:-}
       CHROMA_PERSIST_DIR: /data/chroma
       RAG_CHUNK_SIZE: ${RAG_CHUNK_SIZE:-1000}
       RAG_CHUNK_OVERLAP: ${RAG_CHUNK_OVERLAP:-200}

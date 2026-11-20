@@ -34,6 +34,10 @@ class ControllersMockMvcTest {
   @Mock private OrganizationService organizationService;
   @Mock private UserService userService;
   @Mock private EvidenceService evidenceService;
+
+  @Mock
+  private uy.edu.prisma.application.EvidenceClassificationService evidenceClassificationService;
+
   @Mock private AuditObservationService auditObservationService;
   @Mock private AuditVerdictService auditVerdictService;
   @Mock private EvaluationFlagService evaluationFlagService;
@@ -83,7 +87,10 @@ class ControllersMockMvcTest {
     organizations =
         MockMvcBuilders.standaloneSetup(new OrganizationController(organizationService)).build();
     users = MockMvcBuilders.standaloneSetup(new UserController(userService)).build();
-    evidence = MockMvcBuilders.standaloneSetup(new EvidenceController(evidenceService)).build();
+    evidence =
+        MockMvcBuilders.standaloneSetup(
+                new EvidenceController(evidenceService, evidenceClassificationService))
+            .build();
     citationFeedback =
         MockMvcBuilders.standaloneSetup(new CitationFeedbackController(aiCitationFeedbackService))
             .build();
@@ -920,7 +927,9 @@ class ControllersMockMvcTest {
     // La guía de IA y su retroalimentación se usan al crear acciones del plan: mismos roles que
     // POST /api/improvement.
     String expected = "hasAnyRole('PRISMA_ADMIN','ORG_RESPONSIBLE')";
-    for (var name : List.of("suggestionTips", "suggestionTipsAsync", "suggestionFeedback")) {
+    for (var name :
+        List.of(
+            "suggestionTips", "suggestionTipsAsync", "suggestionTipsBatch", "suggestionFeedback")) {
       var method =
           java.util.Arrays.stream(ImprovementPlanController.class.getMethods())
               .filter(m -> m.getName().equals(name))
@@ -1075,7 +1084,11 @@ class ControllersMockMvcTest {
     var saved = EvidenceController.class.getMethod("savedCitations", UUID.class);
     var undo =
         AuditVerdictController.class.getMethod("undoCitationVerdict", UUID.class, UUID.class);
-    for (var method : List.of(search, feedback, refresh, saved, undo)) {
+    var suggestions = EvidenceController.class.getMethod("suggestions", UUID.class);
+    var decide =
+        EvidenceController.class.getMethod(
+            "decideSuggestion", UUID.class, uy.edu.prisma.web.dto.Dto.SuggestionDecisionDto.class);
+    for (var method : List.of(search, feedback, refresh, saved, undo, suggestions, decide)) {
       var annotation =
           method.getAnnotation(org.springframework.security.access.prepost.PreAuthorize.class);
       assertNotNull(annotation, method.getName());
@@ -1112,6 +1125,62 @@ class ControllersMockMvcTest {
         .andExpect(jsonPath("$[0].fragmentId").value("ev::2"))
         .andExpect(jsonPath("$[0].status").value("ACCEPTED"))
         .andExpect(jsonPath("$[0].position").value(0));
+  }
+
+  @Test
+  void suggestionsOfAnEvaluationAreListed() throws Exception {
+    UUID evalId = UUID.randomUUID();
+    when(evidenceClassificationService.list(evalId))
+        .thenReturn(
+            List.of(
+                new uy.edu.prisma.web.dto.Dto.EvidenceSuggestionDto(
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    "politica.pdf",
+                    UUID.randomUUID(),
+                    "CA.1-2",
+                    "desc",
+                    0.81,
+                    1,
+                    "PENDING")));
+
+    evidence
+        .perform(get("/api/evidence/evaluation/{e}/suggestions", evalId))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$[0].controlCode").value("CA.1-2"))
+        .andExpect(jsonPath("$[0].score").value(0.81))
+        .andExpect(jsonPath("$[0].status").value("PENDING"));
+  }
+
+  @Test
+  void decidingASuggestionDelegatesAndRejectsAnInvalidDecision() throws Exception {
+    UUID id = UUID.randomUUID();
+    when(evidenceClassificationService.decide(id, "ACCEPTED"))
+        .thenReturn(
+            new uy.edu.prisma.web.dto.Dto.EvidenceSuggestionDto(
+                id,
+                UUID.randomUUID(),
+                "p.pdf",
+                UUID.randomUUID(),
+                "CA.1-2",
+                "d",
+                0.8,
+                1,
+                "ACCEPTED"));
+
+    evidence
+        .perform(
+            post("/api/evidence/suggestions/{id}/decision", id)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"decision\":\"ACCEPTED\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("ACCEPTED"));
+    evidence
+        .perform(
+            post("/api/evidence/suggestions/{id}/decision", id)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"decision\":\"MAYBE\"}"))
+        .andExpect(status().isBadRequest());
   }
 
   @Test
@@ -1285,6 +1354,41 @@ class ControllersMockMvcTest {
             post("/api/improvement/suggestions/tips/async")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"currentLevel\":0,\"targetLevel\":1}"))
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
+  void improvementTipsBatchReturnsAcceptedWithTheBatchAndItsJobs() throws Exception {
+    UUID batchId = UUID.randomUUID();
+    UUID controlId = UUID.randomUUID();
+    UUID jobId = UUID.randomUUID();
+    when(aiJobService.enqueueGuideBatch(any()))
+        .thenReturn(
+            new uy.edu.prisma.web.dto.Dto.GuideBatchAcceptedDto(
+                batchId,
+                List.of(new uy.edu.prisma.web.dto.Dto.BatchItemDto(controlId, jobId, "QUEUED"))));
+
+    improvement
+        .perform(
+            post("/api/improvement/suggestions/tips/batch")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"items\":[{\"controlId\":\""
+                        + controlId
+                        + "\",\"currentLevel\":0,\"targetLevel\":2}]}"))
+        .andExpect(status().isAccepted())
+        .andExpect(jsonPath("$.batchId").value(batchId.toString()))
+        .andExpect(jsonPath("$.jobs[0].jobId").value(jobId.toString()))
+        .andExpect(jsonPath("$.jobs[0].status").value("QUEUED"));
+  }
+
+  @Test
+  void improvementTipsBatchRequiresAtLeastOneControl() throws Exception {
+    improvement
+        .perform(
+            post("/api/improvement/suggestions/tips/batch")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"items\":[]}"))
         .andExpect(status().isBadRequest());
   }
 

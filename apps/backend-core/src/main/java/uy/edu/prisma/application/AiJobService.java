@@ -21,6 +21,7 @@ import uy.edu.prisma.domain.entity.AiJob.Status;
 import uy.edu.prisma.domain.entity.AiJob.Type;
 import uy.edu.prisma.domain.entity.CatalogControl;
 import uy.edu.prisma.domain.exception.ConflictException;
+import uy.edu.prisma.domain.exception.InvalidRequestException;
 import uy.edu.prisma.domain.exception.ResourceNotFoundException;
 import uy.edu.prisma.domain.exception.TooManyRequestsException;
 import uy.edu.prisma.domain.repository.AiGeneratedGuideRepository;
@@ -29,7 +30,10 @@ import uy.edu.prisma.domain.repository.CatalogControlRepository;
 import uy.edu.prisma.domain.repository.EvaluationRepository;
 import uy.edu.prisma.web.dto.Dto.AiJobAcceptedDto;
 import uy.edu.prisma.web.dto.Dto.AiJobDto;
+import uy.edu.prisma.web.dto.Dto.BatchItemDto;
 import uy.edu.prisma.web.dto.Dto.GeneratedGuideDto;
+import uy.edu.prisma.web.dto.Dto.GuideBatchAcceptedDto;
+import uy.edu.prisma.web.dto.Dto.GuideBatchRequestDto;
 import uy.edu.prisma.web.dto.Dto.GuideJobRequestDto;
 
 /**
@@ -76,6 +80,76 @@ public class AiJobService {
    * dejaría el pedido sin poder devolver el trabajo que ganó la carrera.
    */
   public AiJobAcceptedDto enqueueGuide(GuideJobRequestDto dto) {
+    return accepted(createGuideJob(dto, AiJob.PRIORITY_INTERACTIVE, null, true));
+  }
+
+  /**
+   * Lote de guías (F3): un trabajo {@code GUIDE} por control, con prioridad de lote (un pedido
+   * interactivo pasa antes) y un {@code batchId} común para ver el avance y cancelar lo que siga en
+   * cola. Un control que ya tiene un trabajo activo reutiliza ese trabajo (no se duplica). Topes:
+   * {@code maxBatchSize} controles por lote y {@code maxPendingBatchPerOrg} trabajos de lote
+   * activos por organización (aparte del tope de los pedidos sueltos).
+   */
+  public GuideBatchAcceptedDto enqueueGuideBatch(GuideBatchRequestDto dto) {
+    List<GuideJobRequestDto> items = dto.items();
+    if (items.size() > props.maxBatchSize()) {
+      throw new InvalidRequestException(
+          "Un lote admite hasta %d controles".formatted(props.maxBatchSize()));
+    }
+    UUID organizationId = resolveOrganization(items.get(0).evaluationId());
+    UUID userId = currentUser.currentUserId();
+    long pending =
+        organizationId != null
+            ? repo.countByOrganizationIdAndBatchIdIsNotNullAndStatusIn(organizationId, ACTIVE)
+            : repo.countByOrganizationIdIsNullAndRequestedByAndBatchIdIsNotNullAndStatusIn(
+                userId, ACTIVE);
+    if (pending + items.size() > props.maxPendingBatchPerOrg()) {
+      throw new TooManyRequestsException(
+          "Hay demasiadas guías de lote en proceso (%d). Esperá a que terminen o cancelá el lote."
+              .formatted(pending));
+    }
+    UUID batchId = UUID.randomUUID();
+    List<BatchItemDto> jobs = new java.util.ArrayList<>();
+    for (GuideJobRequestDto item : items) {
+      AiJob job = createGuideJob(item, AiJob.PRIORITY_BATCH, batchId, false);
+      jobs.add(new BatchItemDto(item.controlId(), job.getId(), job.getStatus().name()));
+    }
+    return new GuideBatchAcceptedDto(batchId, jobs);
+  }
+
+  /** Estado de varios trabajos de una vez (avance de un lote); los que ya no existen se omiten. */
+  @Transactional
+  public List<AiJobDto> getMany(List<UUID> ids) {
+    List<AiJobDto> result = new java.util.ArrayList<>();
+    for (UUID id : ids.stream().distinct().limit(100).toList()) {
+      try {
+        result.add(get(id));
+      } catch (ResourceNotFoundException gone) {
+        // venció o se borró: no rompe el seguimiento del resto
+      }
+    }
+    return result;
+  }
+
+  /** Cancela de un lote lo que sigue en cola; lo que ya corre termina. Devuelve cuántos. */
+  @Transactional
+  public int cancelBatch(UUID batchId) {
+    List<AiJob> jobs = repo.findByBatchId(batchId);
+    if (jobs.isEmpty()) {
+      throw new ResourceNotFoundException("Lote de IA", batchId);
+    }
+    assertAccess(jobs.get(0));
+    return repo.cancelQueuedOfBatch(batchId, OffsetDateTime.now());
+  }
+
+  /**
+   * Crea (o reutiliza, si ya hay uno activo para lo mismo) el trabajo de una guía. Sin
+   * {@code @Transactional} a propósito: la restricción única de trabajos activos puede saltar si
+   * dos pedidos iguales llegan a la vez, y esa excepción dentro de una transacción dejaría el
+   * pedido sin poder devolver el trabajo que ganó la carrera.
+   */
+  private AiJob createGuideJob(
+      GuideJobRequestDto dto, int priority, UUID batchId, boolean enforceSingleLimit) {
     CatalogControl control =
         controlRepo
             .findById(dto.controlId())
@@ -93,9 +167,11 @@ public class AiJobService {
             dto.targetLevel());
     AiJob existing = findActive(dedupKey);
     if (existing != null) {
-      return accepted(existing);
+      return existing;
     }
-    assertBelowPendingLimit(organizationId, userId);
+    if (enforceSingleLimit) {
+      assertBelowPendingLimit(organizationId, userId);
+    }
 
     Map<String, Object> params = new LinkedHashMap<>();
     params.put("controlId", control.getId().toString());
@@ -107,22 +183,21 @@ public class AiJobService {
     params.put("currentLevel", dto.currentLevel());
     params.put("targetLevel", dto.targetLevel());
     try {
-      AiJob saved =
-          repo.saveAndFlush(
-              AiJob.builder()
-                  .type(Type.GUIDE)
-                  .organizationId(organizationId)
-                  .requestedBy(userId)
-                  .priority(AiJob.PRIORITY_INTERACTIVE)
-                  .params(params)
-                  .dedupKey(dedupKey)
-                  .maxAttempts(props.maxAttempts())
-                  .build());
-      return accepted(saved);
+      return repo.saveAndFlush(
+          AiJob.builder()
+              .type(Type.GUIDE)
+              .organizationId(organizationId)
+              .requestedBy(userId)
+              .priority(priority)
+              .batchId(batchId)
+              .params(params)
+              .dedupKey(dedupKey)
+              .maxAttempts(props.maxAttempts())
+              .build());
     } catch (DataIntegrityViolationException race) {
       AiJob winner = findActive(dedupKey);
       if (winner != null) {
-        return accepted(winner);
+        return winner;
       }
       throw race;
     }
@@ -199,8 +274,10 @@ public class AiJobService {
   private void assertBelowPendingLimit(UUID organizationId, UUID userId) {
     long pending =
         organizationId != null
-            ? repo.countByOrganizationIdAndStatusIn(organizationId, ACTIVE)
-            : repo.countByOrganizationIdIsNullAndRequestedByAndStatusIn(userId, ACTIVE);
+            ? repo.countByOrganizationIdAndTypeAndBatchIdIsNullAndStatusIn(
+                organizationId, Type.GUIDE, ACTIVE)
+            : repo.countByOrganizationIdIsNullAndRequestedByAndTypeAndBatchIdIsNullAndStatusIn(
+                userId, Type.GUIDE, ACTIVE);
     if (pending >= props.maxPendingPerOrg()) {
       throw new TooManyRequestsException(
           "Hay demasiadas guías de IA en proceso (%d). Esperá a que terminen o cancelá alguna."
@@ -255,7 +332,18 @@ public class AiJobService {
         job.getCreatedAt(),
         job.getStartedAt(),
         job.getFinishedAt(),
-        guide);
+        guide,
+        controlIdOf(job),
+        job.getBatchId());
+  }
+
+  private static UUID controlIdOf(AiJob job) {
+    Object raw = job.getParams() != null ? job.getParams().get("controlId") : null;
+    try {
+      return raw != null ? UUID.fromString(raw.toString()) : null;
+    } catch (IllegalArgumentException e) {
+      return null;
+    }
   }
 
   private static GeneratedGuideDto toDto(AiGeneratedGuide g) {

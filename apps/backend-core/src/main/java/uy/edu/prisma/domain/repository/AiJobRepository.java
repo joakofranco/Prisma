@@ -19,13 +19,34 @@ public interface AiJobRepository extends JpaRepository<AiJob, UUID> {
 
   long countByStatus(Status status);
 
-  long countByOrganizationIdAndStatusIn(UUID organizationId, Collection<Status> statuses);
+  /**
+   * Guías sueltas activas de la organización. Los trabajos del sistema (indexar, precalcular) y los
+   * de lote no cuentan: el tope de «pedidos sueltos» no debe agotarse porque se subieron archivos.
+   */
+  long countByOrganizationIdAndTypeAndBatchIdIsNullAndStatusIn(
+      UUID organizationId, AiJob.Type type, Collection<Status> statuses);
+
+  long countByOrganizationIdAndBatchIdIsNotNullAndStatusIn(
+      UUID organizationId, Collection<Status> statuses);
+
+  long countByOrganizationIdIsNullAndRequestedByAndBatchIdIsNotNullAndStatusIn(
+      UUID requestedBy, Collection<Status> statuses);
+
+  List<AiJob> findByBatchId(UUID batchId);
+
+  /** Cancela de un lote solo lo que sigue en cola (lo que ya corre no se corta). */
+  @Modifying
+  @Query(
+      "UPDATE AiJob j SET j.status = uy.edu.prisma.domain.entity.AiJob.Status.CANCELLED,"
+          + " j.finishedAt = :now WHERE j.batchId = :batchId AND j.status ="
+          + " uy.edu.prisma.domain.entity.AiJob.Status.QUEUED")
+  int cancelQueuedOfBatch(@Param("batchId") UUID batchId, @Param("now") OffsetDateTime now);
 
   /**
    * Trabajos sin organización (p. ej. PRISMA_ADMIN sin contexto): el tope se aplica por usuario.
    */
-  long countByOrganizationIdIsNullAndRequestedByAndStatusIn(
-      UUID requestedBy, Collection<Status> statuses);
+  long countByOrganizationIdIsNullAndRequestedByAndTypeAndBatchIdIsNullAndStatusIn(
+      UUID requestedBy, AiJob.Type type, Collection<Status> statuses);
 
   List<AiJob> findByRequestedByOrderByCreatedAtDesc(UUID requestedBy, Pageable pageable);
 

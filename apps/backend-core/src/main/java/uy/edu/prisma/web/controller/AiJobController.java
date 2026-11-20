@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import uy.edu.prisma.application.AiJobService;
 import uy.edu.prisma.web.dto.Dto.AiJobDto;
+import uy.edu.prisma.web.dto.Dto.BatchCancelDto;
 
 /**
  * Trabajos de IA asíncronos. Se encolan desde la función que los origina (hoy la guía de mejora:
@@ -37,8 +38,19 @@ public class AiJobController {
   /** Los trabajos de quien consulta (para el indicador de «Tareas de IA»). */
   @GetMapping
   public ResponseEntity<List<AiJobDto>> list(
-      @RequestParam(name = "mine", defaultValue = "true") boolean mine) {
+      @RequestParam(name = "mine", defaultValue = "true") boolean mine,
+      @RequestParam(name = "ids", required = false) List<UUID> ids) {
+    // Con ids: estado de esos trabajos (avance de un lote), con la guía cuando ya terminó.
+    if (ids != null && !ids.isEmpty()) {
+      return ResponseEntity.ok(service.getMany(ids));
+    }
     return ResponseEntity.ok(service.listMine());
+  }
+
+  /** Cancela de un lote lo que sigue en cola; lo que ya corre termina. */
+  @DeleteMapping("/batches/{batchId}")
+  public ResponseEntity<BatchCancelDto> cancelBatch(@PathVariable UUID batchId) {
+    return ResponseEntity.ok(new BatchCancelDto(service.cancelBatch(batchId)));
   }
 
   @DeleteMapping("/{id}")

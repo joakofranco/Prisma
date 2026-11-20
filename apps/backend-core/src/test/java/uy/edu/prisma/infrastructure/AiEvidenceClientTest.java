@@ -366,4 +366,90 @@ class AiEvidenceClientTest {
     assertEquals(AiGuideException.AI_UNAVAILABLE, ex.getCode());
     assertTrue(ex.isRetryable());
   }
+
+  // ---- evidencia global y preclasificación (hito 4) ----
+
+  @Test
+  void aCitationFromGlobalEvidenceIsMarkedUnassigned() {
+    server
+        .expect(requestTo(BASE_URL + "/api/v1/evidence/citations"))
+        .andRespond(
+            withSuccess(
+                "{\"citations\":[{\"fragment_id\":\"e::1\",\"unassigned\":true,"
+                    + "\"evidence_id\":null,\"file_name\":\"politica.pdf\",\"location\":\"p1\","
+                    + "\"snippet\":\"t\",\"score\":0.7},{\"fragment_id\":\"e::2\","
+                    + "\"evidence_id\":null,\"file_name\":\"a.pdf\",\"location\":\"p2\","
+                    + "\"snippet\":\"u\",\"score\":0.6}]}",
+                MediaType.APPLICATION_JSON));
+
+    var result = client.citations(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), "q");
+
+    assertTrue(result.get(0).unassigned());
+    assertFalse(result.get(1).unassigned(), "un backend-ai viejo sin el campo no marca nada");
+  }
+
+  @Test
+  void classifySendsTheCandidatesAndMapsTheSuggestions() {
+    UUID c1 = UUID.randomUUID();
+    UUID c2 = UUID.randomUUID();
+    server
+        .expect(requestTo(BASE_URL + "/api/v1/evidence/classify"))
+        .andExpect(method(HttpMethod.POST))
+        .andExpect(jsonPath("$.evidence_id").exists())
+        .andExpect(jsonPath("$.top_n").value(3))
+        .andExpect(jsonPath("$.candidates[0].control_id").value(c1.toString()))
+        .andExpect(jsonPath("$.candidates[0].query").value("CA.1-1: uno"))
+        .andRespond(
+            withSuccess(
+                "{\"suggestions\":[{\"control_id\":\""
+                    + c2
+                    + "\",\"score\":0.81,"
+                    + "\"fragment_id\":\"e::3\"}]}",
+                MediaType.APPLICATION_JSON));
+
+    var result =
+        client.classify(
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            List.of(new AiEvidenceClient.ClassifyCandidate(c1, "CA.1-1: uno")),
+            3);
+
+    assertEquals(1, result.size());
+    assertEquals(c2, result.get(0).controlId());
+    assertEquals(0.81, result.get(0).score());
+    server.verify();
+  }
+
+  @Test
+  void classifyThrowsAiUnavailableWhenBackendAiFailsSoTheJobRetries() {
+    server.expect(requestTo(BASE_URL + "/api/v1/evidence/classify")).andRespond(withServerError());
+
+    assertThrows(
+        uy.edu.prisma.domain.exception.AiUnavailableException.class,
+        () ->
+            client.classify(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                List.of(new AiEvidenceClient.ClassifyCandidate(UUID.randomUUID(), "q")),
+                3));
+  }
+
+  @Test
+  void classifyWithAnEmptyAnswerReturnsNoSuggestions() {
+    server
+        .expect(requestTo(BASE_URL + "/api/v1/evidence/classify"))
+        .andRespond(withSuccess("{\"suggestions\":[]}", MediaType.APPLICATION_JSON));
+
+    assertTrue(
+        client
+            .classify(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                List.of(new AiEvidenceClient.ClassifyCandidate(UUID.randomUUID(), "q")),
+                3)
+            .isEmpty());
+  }
 }
