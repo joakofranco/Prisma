@@ -211,12 +211,19 @@ public class AiEvidenceClient {
     } catch (RestClientResponseException e) {
       throw classify(e);
     } catch (ResourceAccessException e) {
+      if (isReadTimeout(e)) {
+        throw readTimeout(e);
+      }
       throw new AiGuideException(
           AiGuideException.AI_UNAVAILABLE,
-          "El asistente de IA no respondió a tiempo o no está disponible",
+          "El asistente de IA no está disponible en este momento",
           true,
           e);
     } catch (RuntimeException e) {
+      // El timeout de lectura a veces llega envuelto en otra excepción de RestClient.
+      if (isReadTimeout(e)) {
+        throw readTimeout(e);
+      }
       throw new AiGuideException(
           AiGuideException.AI_ERROR, "Error inesperado al consultar el asistente de IA", true, e);
     }
@@ -232,6 +239,36 @@ public class AiEvidenceClient {
         response.tips() != null ? response.tips() : List.of(),
         response.model(),
         response.metrics() != null ? response.metrics() : Map.of());
+  }
+
+  private static AiGuideException readTimeout(Throwable cause) {
+    return new AiGuideException(
+        AiGuideException.AI_TIMEOUT,
+        "La generación tardó más de lo permitido y se cortó. Probá de nuevo; si se repite, redactá"
+            + " la acción a mano.",
+        false,
+        cause);
+  }
+
+  /**
+   * Timeout de LECTURA (el servicio aceptó la conexión pero no contestó a tiempo). Un timeout de
+   * conexión ({@code "connect timed out"}) no cuenta: ahí el servicio no está disponible.
+   */
+  static boolean isReadTimeout(Throwable error) {
+    for (Throwable t = error; t != null; t = t.getCause()) {
+      String message =
+          t.getMessage() == null ? "" : t.getMessage().toLowerCase(java.util.Locale.ROOT);
+      boolean timeoutType =
+          t instanceof java.net.SocketTimeoutException
+              || t instanceof java.net.http.HttpTimeoutException;
+      if (timeoutType && !message.contains("connect")) {
+        return true;
+      }
+      if (t.getCause() == t) {
+        break;
+      }
+    }
+    return false;
   }
 
   private static AiGuideException classify(RestClientResponseException e) {

@@ -32,6 +32,8 @@ export function jobProgressLabel(job: Pick<AiJob, 'status' | 'queuePosition'>): 
 const ERROR_MESSAGES: Record<string, string> = {
   AI_UNAVAILABLE:
     'El asistente de IA no está disponible en este momento. Probá de nuevo en unos minutos.',
+  AI_TIMEOUT:
+    'La generación tardó más de lo permitido y se cortó. Probá de nuevo; si se repite, redactá la acción a mano.',
   AI_ERROR: 'El asistente de IA tuvo un error al generar la sugerencia. Probá de nuevo.',
   AI_REJECTED: 'El asistente de IA no aceptó el pedido. Redactá la acción a mano.',
   PROMPT_TOO_LARGE:

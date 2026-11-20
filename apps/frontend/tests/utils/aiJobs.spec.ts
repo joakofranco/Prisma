@@ -57,6 +57,15 @@ describe('aiJobs: mensajes de error', () => {
     );
   });
 
+  it('un timeout de la generación tiene su propio mensaje, distinto del de IA no disponible', () => {
+    const timeout = jobErrorMessage({ errorCode: 'AI_TIMEOUT', errorMessage: 'x' });
+    const unavailable = jobErrorMessage({ errorCode: 'AI_UNAVAILABLE', errorMessage: 'x' });
+
+    expect(timeout).toMatch(/tardó más de lo permitido/);
+    expect(timeout).toMatch(/redactá la acción a mano/);
+    expect(timeout).not.toBe(unavailable);
+  });
+
   it('un código desconocido usa el mensaje del servidor', () => {
     expect(jobErrorMessage({ errorCode: 'OTRO', errorMessage: 'Algo puntual' })).toBe(
       'Algo puntual',

@@ -262,6 +262,20 @@ config:
 
 ---
 
+### Todo el sitio da 502 después de recrear contenedores (frontend, backend-core)
+
+**Síntoma:** después de un deploy o de `docker compose up -d` con imágenes nuevas, la web y la API
+responden `502 Bad Gateway`; los contenedores están `healthy` y responden bien directo.
+
+**Causa:** nginx resolvió los nombres de sus upstreams una sola vez, al arrancar, y los contenedores
+recreados tienen otra IP.
+
+**Solución:** `docker exec prisma-nginx nginx -t && docker exec prisma-nginx nginx -s reload`. Detalle en
+[`Ambientes-Despliegue.md`](Ambientes-Despliegue.md#después-de-recrear-contenedores-nginx-y-watchtower),
+junto con el aviso sobre Watchtower pisando imágenes compiladas en local.
+
+---
+
 ### Keycloak nunca termina de arrancar / login da 502, con `ERROR: Failed to run import` en el log
 
 **Síntoma:** `docker compose ps keycloak` muestra el contenedor reiniciando en loop (o "Up" por

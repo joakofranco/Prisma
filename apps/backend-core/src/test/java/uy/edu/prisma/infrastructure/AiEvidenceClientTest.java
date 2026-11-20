@@ -309,6 +309,50 @@ class AiEvidenceClientTest {
   }
 
   @Test
+  void generateGuideClassifiesAReadTimeoutAsAiTimeoutAndNotRetryable() {
+    server
+        .expect(requestTo(BASE_URL + "/api/v1/rag/remediation-tips"))
+        .andRespond(
+            request -> {
+              throw new java.net.SocketTimeoutException("Read timed out");
+            });
+
+    AiGuideException ex = guideFailure();
+
+    assertEquals(AiGuideException.AI_TIMEOUT, ex.getCode());
+    assertFalse(ex.isRetryable());
+    assertTrue(ex.getMessage().contains("tardó más de lo permitido"));
+    assertNotEquals(AiGuideException.AI_UNAVAILABLE, ex.getCode());
+  }
+
+  @Test
+  void aConnectTimeoutIsStillUnavailableNotATimeoutOfTheGeneration() {
+    server
+        .expect(requestTo(BASE_URL + "/api/v1/rag/remediation-tips"))
+        .andRespond(
+            request -> {
+              throw new java.net.SocketTimeoutException("Connect timed out");
+            });
+
+    AiGuideException ex = guideFailure();
+
+    assertEquals(AiGuideException.AI_UNAVAILABLE, ex.getCode());
+    assertTrue(ex.isRetryable());
+  }
+
+  @Test
+  void readTimeoutIsDetectedEvenWhenNestedInsideAnotherException() {
+    Throwable nested =
+        new IllegalStateException(
+            "envoltorio",
+            new java.io.IOException("x", new java.net.SocketTimeoutException("Read timed out")));
+
+    assertTrue(AiEvidenceClient.isReadTimeout(nested));
+    assertFalse(AiEvidenceClient.isReadTimeout(new java.io.IOException("connection refused")));
+    assertFalse(AiEvidenceClient.isReadTimeout(null));
+  }
+
+  @Test
   void generateGuideTreatsAConnectionFailureAsRetryable() {
     server
         .expect(requestTo(BASE_URL + "/api/v1/rag/remediation-tips"))

@@ -161,7 +161,8 @@ app/
   las citas a la evaluación/control puntual.
 - **`rag/ollama_runtime.py`** — opciones de Ollama por pedido (`num_ctx`, `keep_alive`, `num_predict`,
   `temperature`, `seed`, `num_thread`; `reasoning` solo si el modelo declara `thinking`), estimación de
-  tokens y `PromptTooLargeError` (el prompt que no entra no llega a Ollama), precalentamiento de LLM y
+  tokens y `PromptTooLargeError` (el prompt que no entra no llega a Ollama; el límite usa el contexto
+  **efectivo** del modelo según `/api/ps`, no solo `AI_NUM_CTX`), precalentamiento de LLM y
   embedding al arrancar (reintenta mientras Ollama no responda) e información de runtime para
   `GET /api/v1/runtime`.
 - **`rag/loaders.py`** — extracción de texto por tipo de archivo (`.pdf` vía `PyPDFLoader`,

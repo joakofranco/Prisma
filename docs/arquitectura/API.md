@@ -220,9 +220,10 @@ alcanza: otra organización recibe `403`).
 | GET | `/?mine=true` | los últimos 50 trabajos de quien consulta (sin el cuerpo de la guía): alimenta el indicador «Tareas de IA» |
 | DELETE | `/{id}` | cancela un trabajo **en cola**. `409` si ya se está ejecutando o ya terminó. Cancelar uno ya cancelado es idempotente |
 
-Códigos de error de un trabajo fallido (`errorCode`): `AI_UNAVAILABLE` (backend-ai caído, colgado o
-sin respuesta del modelo) y `AI_ERROR` (5xx) se reintentan hasta `AI_JOBS_MAX_ATTEMPTS` (2) con
-espera creciente (`AI_JOBS_RETRY_BACKOFF_SECONDS`, 30 s, el doble en cada reintento);
+Códigos de error de un trabajo fallido (`errorCode`): `AI_UNAVAILABLE` (no se pudo conectar con
+backend-ai, o respondió 502/503/504) y `AI_ERROR` (5xx) se reintentan hasta `AI_JOBS_MAX_ATTEMPTS` (2)
+con espera creciente (`AI_JOBS_RETRY_BACKOFF_SECONDS`, 30 s, el doble en cada reintento);
+`AI_TIMEOUT` (backend-ai aceptó el pedido pero no contestó dentro de `AI_GUIDE_READ_TIMEOUT`),
 `PROMPT_TOO_LARGE` (el prompt no entra en el contexto del modelo), `AI_REJECTED` (4xx) e
 `INTERNAL_ERROR` no se reintentan; `WORKER_LOST` (la réplica murió a mitad de camino) se reencola.
 
@@ -350,8 +351,8 @@ tipo nuevo, sumarlo en los dos lados.
 | GET | `/rag/status` | estado del índice del catálogo MCU 5.0 (`ready`, `collection`, `documents`) |
 | POST | `/rag/query` | `{question, k?}` — pregunta libre sobre el catálogo (Llama 3 vía Ollama) |
 | POST | `/rag/ingest` | agrega texto a la colección del catálogo |
-| POST | `/rag/remediation-tips` | guía de remediación: `{control_code, control_description, function_name?, category_name?, subcategory_name?, current_level, target_level}` → `{summary, tips[], generated, model, metrics}`. `generated=false` = el LLM no respondió y `tips` es un texto de reemplazo (la cola de backend-core lo trata como falla reintentable). `metrics` trae los tiempos (ns) y tokens que informa Ollama. Con un prompt que no entra en el contexto responde **`413`** `{code: "PROMPT_TOO_LARGE", detail, estimated_tokens, limit_tokens}` sin llamar a Ollama (Ollama lo recortaría en silencio) |
-| GET | `/runtime` | modelo (con `digest`), versión de Ollama, opciones realmente enviadas (`num_ctx`, `keep_alive`, `num_predict`, `temperature`, `seed`, `num_thread`, límite del prompt), estado de carga de LLM y embedding (`/api/ps`) y estado del precalentamiento. Nunca falla: con Ollama caído informa `ollama.reachable=false` |
+| POST | `/rag/remediation-tips` | guía de remediación: `{control_code, control_description, function_name?, category_name?, subcategory_name?, current_level, target_level}` → `{summary, tips[], generated, model, metrics}`. `generated=false` = el LLM no respondió y `tips` es un texto de reemplazo (la cola de backend-core lo trata como falla reintentable). `metrics` trae los tiempos (ns) y tokens que informa Ollama. Si el cliente corta la conexión mientras el LLM genera, se **aborta** la generación (log «Cliente desconectado…»). Con un prompt que no entra en el contexto **efectivo** del modelo (`min(AI_NUM_CTX, contexto de /api/ps)`) responde **`413`** `{code: "PROMPT_TOO_LARGE", detail, estimated_tokens, limit_tokens}` sin llamar a Ollama (Ollama lo recortaría en silencio) |
+| GET | `/runtime` | modelo (con `digest`), versión de Ollama, opciones realmente enviadas (`num_ctx`, `keep_alive`, `num_predict`, `temperature`, `seed`, `num_thread`, límite del prompt), estado de carga de LLM y embedding (`/api/ps`), estado del precalentamiento y `context`: contexto **pedido** vs **efectivo** de cada modelo (`requested_num_ctx`, `llm.effective`, `embedding.effective`, `prompt_max_tokens`, `mismatch`). Nunca falla: con Ollama caído informa `ollama.reachable=false` y no trae `models` |
 | POST | `/evaluate/evidence` | `{control_id?, control_description, evidence_text}` — juicio automático sobre si una evidencia satisface un control |
 | POST | `/evidence/ingest` | indexa una evidencia recién subida (llamado por `EvidenceService.upload`) |
 | POST | `/evidence/citations` | fragmentos relevantes de evidencia ya indexada, acotados a organización/evaluación/control |
