@@ -37,6 +37,7 @@ class AuditVerdictServiceTest {
   @Mock private CatalogControlRepository controlRepo;
   @Mock private CurrentUserService currentUser;
   @Mock private AuditLogService auditLog;
+  @Mock private EvidenceCitationStore citationStore;
 
   private AuditVerdictService service;
   private Evaluation eval;
@@ -44,7 +45,9 @@ class AuditVerdictServiceTest {
 
   @BeforeEach
   void setUp() {
-    service = new AuditVerdictService(repo, evaluationRepo, controlRepo, currentUser, auditLog);
+    service =
+        new AuditVerdictService(
+            repo, evaluationRepo, controlRepo, currentUser, auditLog, citationStore);
     eval =
         Evaluation.builder()
             .id(UUID.randomUUID())
@@ -308,5 +311,142 @@ class AuditVerdictServiceTest {
 
     assertEquals("CITATION", dto.source());
     assertEquals(ref, dto.sourceRef());
+  }
+
+  // ---- C4a completo (hito 3): revertir al rechazar y «Deshacer» ----
+
+  private uy.edu.prisma.domain.entity.EvidenceCitationResult acceptedCitation(String id) {
+    return uy.edu.prisma.domain.entity.EvidenceCitationResult.builder()
+        .id(UUID.randomUUID())
+        .evaluation(eval)
+        .control(control)
+        .fragmentId(id)
+        .fileName("otra.pdf")
+        .location("Página 5")
+        .snippet("texto")
+        .score(0.5)
+        .status(uy.edu.prisma.domain.entity.EvidenceCitationResult.Status.ACCEPTED)
+        .build();
+  }
+
+  private AuditControlVerdict fromCitation(UUID citationId) {
+    AuditControlVerdict v = existing(AuditControlVerdict.Verdict.VALIDATED);
+    v.setSource(AuditControlVerdict.Source.CITATION);
+    v.setSourceRef(new java.util.HashMap<>(java.util.Map.of("citationId", citationId.toString())));
+    return v;
+  }
+
+  @Test
+  void rejectingTheOnlyBackingCitationRevertsAVerdictThatCameFromACitation() {
+    UUID citationId = UUID.randomUUID();
+    var v = fromCitation(citationId);
+    when(citationStore.accepted(eval.getId(), control.getId())).thenReturn(java.util.List.of());
+
+    var change = service.onCitationRevoked(eval, control, citationId);
+
+    assertNull(change.verdict());
+    assertTrue(change.changed());
+    verify(repo).delete(v);
+    ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+    verify(auditLog)
+        .record(eq("SET_CONTROL_VERDICT"), eq("evaluation:" + eval.getId()), payload.capture());
+    assertTrue(payload.getValue().contains("\"reverted\":true"));
+    assertTrue(payload.getValue().contains("CITATION_REJECTED"));
+    assertTrue(payload.getValue().contains("\"previousVerdict\":\"VALIDATED\""));
+  }
+
+  @Test
+  void aVerdictConfirmedByHandIsKeptWhenTheCitationIsRejected() {
+    var manual = existing(AuditControlVerdict.Verdict.VALIDATED);
+
+    assertNull(service.onCitationRevoked(eval, control, UUID.randomUUID()));
+
+    verify(repo, never()).delete(any());
+    assertEquals(AuditControlVerdict.Source.MANUAL, manual.getSource());
+  }
+
+  @Test
+  void withoutAnyVerdictRejectingACitationDoesNothing() {
+    when(repo.findByEvaluationIdAndControlId(any(), any())).thenReturn(Optional.empty());
+
+    assertNull(service.onCitationRevoked(eval, control, UUID.randomUUID()));
+    verify(repo, never()).delete(any());
+  }
+
+  @Test
+  void otherAcceptedCitationsKeepTheVerdictAndTakeOverAsTheBackup() {
+    UUID rejected = UUID.randomUUID();
+    var v = fromCitation(rejected);
+    var other = acceptedCitation("e::7");
+    when(citationStore.accepted(eval.getId(), control.getId()))
+        .thenReturn(java.util.List.of(other));
+
+    assertNull(service.onCitationRevoked(eval, control, rejected));
+
+    verify(repo, never()).delete(any());
+    assertEquals(other.getId().toString(), v.getSourceRef().get("citationId"));
+    assertEquals("otra.pdf", v.getSourceRef().get("fileName"));
+    verify(repo).save(v);
+  }
+
+  @Test
+  void ifTheBackupWasAnotherCitationItIsLeftAlone() {
+    var v = fromCitation(UUID.randomUUID());
+    var remaining = acceptedCitation("e::7");
+    when(citationStore.accepted(eval.getId(), control.getId()))
+        .thenReturn(java.util.List.of(remaining));
+
+    assertNull(service.onCitationRevoked(eval, control, UUID.randomUUID()));
+
+    verify(repo, never()).save(any());
+    assertNotEquals(remaining.getId().toString(), v.getSourceRef().get("citationId"));
+  }
+
+  @Test
+  void undoRemovesAVerdictFromACitationAndLeavesItsCitationsUndecided() {
+    var v = fromCitation(UUID.randomUUID());
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(citationStore.resetAccepted(eval.getId(), control.getId())).thenReturn(2);
+
+    service.undoCitationVerdict(eval.getId(), control.getId());
+
+    verify(repo).delete(v);
+    verify(citationStore).resetAccepted(eval.getId(), control.getId());
+    ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+    verify(auditLog).record(eq("SET_CONTROL_VERDICT"), any(), payload.capture());
+    assertTrue(payload.getValue().contains("\"reason\":\"UNDO\""));
+    assertTrue(payload.getValue().contains("\"citationsReset\":2"));
+  }
+
+  @Test
+  void aManualVerdictCannotBeUndoneThroughTheCitationUndo() {
+    existing(AuditControlVerdict.Verdict.VALIDATED);
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+
+    assertThrows(
+        uy.edu.prisma.domain.exception.ConflictException.class,
+        () -> service.undoCitationVerdict(eval.getId(), control.getId()));
+    verify(repo, never()).delete(any());
+    verifyNoInteractions(citationStore);
+  }
+
+  @Test
+  void undoWithoutAVerdictIsNotFound() {
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(repo.findByEvaluationIdAndControlId(any(), any())).thenReturn(Optional.empty());
+
+    assertThrows(
+        uy.edu.prisma.domain.exception.ResourceNotFoundException.class,
+        () -> service.undoCitationVerdict(eval.getId(), control.getId()));
+  }
+
+  @Test
+  void undoOnlyWorksWhileTheEvaluationIsInAudit() {
+    eval.setStatus(Evaluation.Status.RETURNED);
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+
+    assertThrows(
+        uy.edu.prisma.domain.exception.InvalidRequestException.class,
+        () -> service.undoCitationVerdict(eval.getId(), control.getId()));
   }
 }

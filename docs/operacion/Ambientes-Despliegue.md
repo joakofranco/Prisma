@@ -478,6 +478,29 @@ SELECT status, count(*) FROM prisma.ai_job GROUP BY status;
 SELECT id, status, attempts, queue_wait_ms, run_ms, error_code FROM prisma.ai_job ORDER BY created_at DESC LIMIT 20;
 ```
 
+## Indexación de evidencia y citas guardadas (hito 3)
+
+La indexación de evidencia ya no ocurre dentro de la subida: es un trabajo `EVIDENCE_INDEX` de la cola de IA
+(la misma de las guías, con el mismo tope global de `AI_JOBS_CONCURRENCY`, prioridad 5). Estado visible por
+evidencia: `QUEUED`, `INDEXING`, `INDEXED`, `ERROR`, `NOT_INDEXABLE`. Si `backend-ai` falla, la cola reintenta
+(`AI_JOBS_MAX_ATTEMPTS`, `AI_JOBS_RETRY_BACKOFF_SECONDS`) y, agotados los intentos, la evidencia queda en `ERROR`
+con el motivo y se puede reintentar. Consulta de solo lectura:
+
+```sql
+SELECT index_status, count(*) FROM prisma.evidence GROUP BY 1;
+SELECT file_name, index_status, index_error FROM prisma.evidence WHERE index_status = 'ERROR';
+SELECT type, status, count(*) FROM prisma.ai_job GROUP BY 1, 2;
+```
+
+Si `backend-core` **se apaga con evidencia en cola**, los trabajos siguen en la base y se retoman al arrancar (los
+`RUNNING` sin latido se reencolan). Con `AI_JOBS_ENABLED=false` la evidencia nueva queda `QUEUED` y no se indexa
+hasta encender el trabajador. Para volver a indexar a mano una evidencia: `POST /api/evidence/{id}/index`.
+
+Las citas de la IA se guardan en `evidence_citation_result` (por evaluación y control). Al entrar a auditoría se
+encola un trabajo `CITATIONS_PRECOMPUTE`; al salir de auditoría se descartan las guardadas (el dictamen queda).
+`backend-ai` devuelve un id estable por fragmento (`<evidenceId>::<posición>`): **reindexar el mismo archivo da los
+mismos ids**, así las decisiones del auditor sobreviven a un reindexado.
+
 ## Después de recrear contenedores: nginx y Watchtower
 
 **nginx cachea la dirección de los contenedores.** nginx resuelve `frontend`, `backend-core` y los demás

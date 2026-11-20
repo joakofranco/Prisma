@@ -54,6 +54,7 @@
 | [`AiGeneratedGuide`](#aijob-y-aigeneratedguide) | `ai_generated_guide` | `prisma` |
 | [`AiCitationFeedback`](#aicitationfeedback) | `ai_citation_feedback` | `prisma` |
 | `AiCitationValidationFeedback` | `ai_citation_validation_feedback` | `prisma` |
+| `EvidenceCitationResult` | `evidence_citation_result` | `prisma` |
 | [`AuditObservation`](#auditobservation) | `audit_observations` | `prisma` |
 | [`AuditLog`](#auditlog) | `audit_logs` | `audit` |
 | `AuditControlVerdict` | `audit_control_verdicts` | `prisma` |

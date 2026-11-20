@@ -315,7 +315,18 @@ public class AiEvidenceClient {
     } catch (IllegalArgumentException e) {
       evidenceId = null;
     }
-    return new EvidenceCitationDto(evidenceId, c.fileName(), c.location(), c.snippet(), c.score());
+    return new EvidenceCitationDto(
+        evidenceId,
+        c.fileName(),
+        c.location(),
+        c.snippet(),
+        c.score(),
+        c.fragmentId(),
+        null,
+        null,
+        null,
+        null,
+        false);
   }
 
   // El JSON de estos records tiene que matchear los BaseModel de Pydantic en backend-ai
@@ -360,6 +371,7 @@ public class AiEvidenceClient {
       Map<String, Object> metrics) {}
 
   private record Citation(
+      @JsonProperty("fragment_id") String fragmentId,
       @JsonProperty("evidence_id") String evidenceId,
       @JsonProperty("file_name") String fileName,
       String location,

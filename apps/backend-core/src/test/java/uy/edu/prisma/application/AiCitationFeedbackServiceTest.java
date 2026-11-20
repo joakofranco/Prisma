@@ -36,6 +36,7 @@ class AiCitationFeedbackServiceTest {
   @Mock private AiCitationFeedbackRepository feedbackRepo;
   @Mock private CurrentUserService currentUser;
   @Mock private AuditVerdictService verdictService;
+  @Mock private EvidenceCitationStore citationStore;
 
   private AiCitationFeedbackService service;
   private Evaluation eval;
@@ -45,7 +46,7 @@ class AiCitationFeedbackServiceTest {
   void setUp() {
     service =
         new AiCitationFeedbackService(
-            evaluationRepo, controlRepo, feedbackRepo, currentUser, verdictService);
+            evaluationRepo, controlRepo, feedbackRepo, currentUser, verdictService, citationStore);
     eval =
         Evaluation.builder()
             .id(UUID.randomUUID())
@@ -236,5 +237,113 @@ class AiCitationFeedbackServiceTest {
         () ->
             service.record(new CitationFeedbackBatchDto(eval.getId(), List.of(item("ACCEPTED")))));
     verify(feedbackRepo, never()).saveAll(any());
+  }
+
+  // ---- C2: la decisión queda guardada en la cita (hito 3) ----
+
+  private CitationFeedbackItemDto itemFor(UUID citationId, String decision) {
+    return new CitationFeedbackItemDto(
+        control.getId(),
+        "politica.pdf",
+        "Página 2",
+        "texto citado",
+        0.71,
+        decision,
+        UUID.randomUUID(),
+        citationId);
+  }
+
+  private EvidenceCitationStore.Decided decided(
+      uy.edu.prisma.domain.entity.EvidenceCitationResult.Status previous) {
+    return new EvidenceCitationStore.Decided(
+        uy.edu.prisma.domain.entity.EvidenceCitationResult.builder().build(), previous);
+  }
+
+  @Test
+  void aDecisionOnASavedCitationIsStoredWithItsStatus() {
+    UUID citationId = UUID.randomUUID();
+    when(citationStore.decide(any(), any(), any(), any(), any()))
+        .thenReturn(decided(uy.edu.prisma.domain.entity.EvidenceCitationResult.Status.PENDING));
+
+    service.record(
+        new CitationFeedbackBatchDto(eval.getId(), List.of(itemFor(citationId, "ACCEPTED"))));
+
+    verify(citationStore)
+        .decide(
+            eq(citationId),
+            eq(eval.getId()),
+            eq(control.getId()),
+            eq(uy.edu.prisma.domain.entity.EvidenceCitationResult.Status.ACCEPTED),
+            any());
+  }
+
+  @Test
+  void theCitationIdTravelsInTheVerdictBackup() {
+    UUID citationId = UUID.randomUUID();
+    when(citationStore.decide(any(), any(), any(), any(), any()))
+        .thenReturn(decided(uy.edu.prisma.domain.entity.EvidenceCitationResult.Status.PENDING));
+
+    service.record(
+        new CitationFeedbackBatchDto(eval.getId(), List.of(itemFor(citationId, "ACCEPTED"))));
+
+    @SuppressWarnings("unchecked")
+    ArgumentCaptor<java.util.Map<String, Object>> ref =
+        ArgumentCaptor.forClass(java.util.Map.class);
+    verify(verdictService).applyCitation(any(), any(), ref.capture(), anyBoolean());
+    assertEquals(citationId.toString(), ref.getValue().get("citationId"));
+  }
+
+  @Test
+  void movingFromAcceptedToRejectedRevertsTheVerdictThatCameFromThatCitation() {
+    UUID citationId = UUID.randomUUID();
+    when(citationStore.decide(any(), any(), any(), any(), any()))
+        .thenReturn(decided(uy.edu.prisma.domain.entity.EvidenceCitationResult.Status.ACCEPTED));
+    when(verdictService.onCitationRevoked(eval, control, citationId))
+        .thenReturn(
+            new uy.edu.prisma.web.dto.Dto.VerdictChangeDto(control.getId(), null, null, true));
+
+    var result =
+        service.record(
+            new CitationFeedbackBatchDto(eval.getId(), List.of(itemFor(citationId, "REJECTED"))));
+
+    verify(verdictService).onCitationRevoked(eval, control, citationId);
+    assertNull(result.verdicts().get(0).verdict());
+    assertTrue(result.verdicts().get(0).changed());
+  }
+
+  @Test
+  void rejectingACitationThatWasNeverAcceptedDoesNotTouchTheVerdict() {
+    UUID citationId = UUID.randomUUID();
+    when(citationStore.decide(any(), any(), any(), any(), any()))
+        .thenReturn(decided(uy.edu.prisma.domain.entity.EvidenceCitationResult.Status.PENDING));
+
+    var result =
+        service.record(
+            new CitationFeedbackBatchDto(eval.getId(), List.of(itemFor(citationId, "REJECTED"))));
+
+    verifyNoInteractions(verdictService);
+    assertTrue(result.verdicts().isEmpty());
+  }
+
+  @Test
+  void aRevertThatKeepsTheVerdictReportsNoChange() {
+    UUID citationId = UUID.randomUUID();
+    when(citationStore.decide(any(), any(), any(), any(), any()))
+        .thenReturn(decided(uy.edu.prisma.domain.entity.EvidenceCitationResult.Status.ACCEPTED));
+    when(verdictService.onCitationRevoked(any(), any(), any())).thenReturn(null);
+
+    var result =
+        service.record(
+            new CitationFeedbackBatchDto(eval.getId(), List.of(itemFor(citationId, "REJECTED"))));
+
+    assertTrue(result.verdicts().isEmpty());
+  }
+
+  @Test
+  void feedbackWithoutACitationIdStillWorksAsBefore() {
+    service.record(new CitationFeedbackBatchDto(eval.getId(), List.of(item("ACCEPTED"))));
+
+    verifyNoInteractions(citationStore);
+    verify(verdictService).applyCitation(any(), any(), any(), anyBoolean());
   }
 }

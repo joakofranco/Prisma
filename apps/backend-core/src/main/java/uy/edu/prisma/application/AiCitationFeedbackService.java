@@ -10,6 +10,7 @@ import uy.edu.prisma.domain.entity.AiCitationFeedback;
 import uy.edu.prisma.domain.entity.AiCitationFeedback.Decision;
 import uy.edu.prisma.domain.entity.CatalogControl;
 import uy.edu.prisma.domain.entity.Evaluation;
+import uy.edu.prisma.domain.entity.EvidenceCitationResult;
 import uy.edu.prisma.domain.exception.ConflictException;
 import uy.edu.prisma.domain.exception.ResourceNotFoundException;
 import uy.edu.prisma.domain.repository.AiCitationFeedbackRepository;
@@ -40,18 +41,21 @@ public class AiCitationFeedbackService {
   private final AiCitationFeedbackRepository feedbackRepo;
   private final CurrentUserService currentUser;
   private final AuditVerdictService verdictService;
+  private final EvidenceCitationStore citationStore;
 
   public AiCitationFeedbackService(
       EvaluationRepository evaluationRepo,
       CatalogControlRepository controlRepo,
       AiCitationFeedbackRepository feedbackRepo,
       CurrentUserService currentUser,
-      AuditVerdictService verdictService) {
+      AuditVerdictService verdictService,
+      EvidenceCitationStore citationStore) {
     this.evaluationRepo = evaluationRepo;
     this.controlRepo = controlRepo;
     this.feedbackRepo = feedbackRepo;
     this.currentUser = currentUser;
     this.verdictService = verdictService;
+    this.citationStore = citationStore;
   }
 
   public CitationFeedbackResultDto record(CitationFeedbackBatchDto batch) {
@@ -80,13 +84,37 @@ public class AiCitationFeedbackService {
       if (control == null) {
         throw new ResourceNotFoundException("Control", item.controlId());
       }
+      Decision decision = Decision.valueOf(item.decision());
+      // C2: la decisión queda guardada en la cita (estado, quién y cuándo), en la misma operación.
+      EvidenceCitationStore.Decided decided = null;
+      if (item.citationId() != null) {
+        decided =
+            citationStore.decide(
+                item.citationId(),
+                eval.getId(),
+                control.getId(),
+                decision == Decision.ACCEPTED
+                    ? EvidenceCitationResult.Status.ACCEPTED
+                    : EvidenceCitationResult.Status.REJECTED,
+                currentUser.currentUser().orElse(null));
+      }
       // Aceptar = relevante y valida el control. Un control con varias citas aceptadas se dictamina
       // una sola vez (la primera cita queda como respaldo).
-      if (Decision.valueOf(item.decision()) == Decision.ACCEPTED
-          && !verdicts.containsKey(control.getId())) {
+      if (decision == Decision.ACCEPTED && !verdicts.containsKey(control.getId())) {
         verdicts.put(
             control.getId(),
             verdictService.applyCitation(eval, control, citationRef(item), confirm));
+      }
+      // D10: pasar de aceptada a rechazada la única cita de respaldo revierte un dictamen que
+      // vino de la cita (uno fijado a mano se mantiene).
+      if (decision == Decision.REJECTED
+          && decided != null
+          && decided.previous() == EvidenceCitationResult.Status.ACCEPTED) {
+        VerdictChangeDto reverted =
+            verdictService.onCitationRevoked(eval, control, item.citationId());
+        if (reverted != null) {
+          verdicts.put(control.getId(), reverted);
+        }
       }
       rows.add(
           AiCitationFeedback.builder()
@@ -107,6 +135,9 @@ public class AiCitationFeedbackService {
    */
   private static Map<String, Object> citationRef(CitationFeedbackItemDto item) {
     Map<String, Object> ref = new LinkedHashMap<>();
+    // citationId y fragmentId (id estable de backend-ai) identifican el respaldo aunque se vuelva a
+    // buscar: permiten saber si el dictamen sigue respaldado cuando se rechaza una cita.
+    ref.put("citationId", item.citationId() != null ? item.citationId().toString() : null);
     ref.put("evidenceId", item.evidenceId() != null ? item.evidenceId().toString() : null);
     ref.put("fileName", item.fileName());
     ref.put("location", item.location());

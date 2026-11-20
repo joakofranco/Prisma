@@ -175,7 +175,7 @@ importar el rol que normalmente le correspondería.
 | GET | `/{id}/download` | `PRISMA_ADMIN`, `ORG_RESPONSIBLE`, `AUDITOR` | sirve el archivo por streaming con el JWT, la organización y el rol validados en cada descarga |
 | POST | `/{id}/index` | `PRISMA_ADMIN`, `INTERNAL_EVALUATOR`, `ORG_RESPONSIBLE` | reintenta la indexación RAG; mismo bloqueo por estado; no hace nada con ZIP e imágenes |
 | GET | `/evaluation/{evaluationId}/control/{controlId}/citations` | `PRISMA_ADMIN`, `AUDITOR` | fragmentos relevantes de la evidencia YA cargada para ese control, vía `backend-ai` (RF-EVI-14). **Solo con la evaluación `IN_AUDIT`**: en otro estado responde `409` con el estado actual. Si `backend-ai` no responde (caído, colgado o con error) responde `503` con `code: AI_UNAVAILABLE`; una lista vacía significa «sin resultados» |
-| POST | `/citations/feedback` | `PRISMA_ADMIN`, `AUDITOR` | el auditor acepta o rechaza citas de la IA: `{evaluationId, items:[{controlId, fileName?, location?, snippet, score?, decision, evidenceId?}], confirmVerdictOverride?}` (hasta 100). `decision` ∈ `ACCEPTED`/`REJECTED`. **Aceptar una cita significa que el fragmento es relevante y respalda el control** (D5): en la **misma transacción** el control pasa a `VALIDATED` con origen `CITATION` y la cita como respaldo (`evidenceId`, archivo, ubicación, puntaje y el fragmento recortado). Reglas: sin dictamen → `VALIDATED`; ya `VALIDATED` → sin cambios (la cita es un respaldo adicional y se conserva el origen); `NOT_VALIDATED` o `NEEDS_MORE_EVIDENCE` puesto a mano → **`409` `VERDICT_OVERRIDE_REQUIRED`** (con `details.currentVerdict`, `controlCode` y `controlId`) salvo que se repita el pedido con `confirmVerdictOverride=true`; no se escribe nada si falta la confirmación. **Rechazar una cita (una o todas) nunca cambia el dictamen** (D1). Pasar de aceptada a rechazada no revierte el dictamen: eso llega con la persistencia de citas (hito 3). Cada cambio de dictamen queda en la bitácora como `SET_CONTROL_VERDICT` con `source` y la cita. Responde `200` `{verdicts:[{controlId, verdict, source, changed}]}` (vacío si solo hubo rechazos); `404` si un control no existe; `409` fuera de `IN_AUDIT`. La evaluación solo valida acceso y estado y **no se guarda** en el dataset (`ai_citation_feedback` sigue siendo anónimo): se registra el control y el fragmento, para medir la búsqueda y un futuro fine-tuning |
+| POST | `/citations/feedback` | `PRISMA_ADMIN`, `AUDITOR` | el auditor acepta o rechaza citas de la IA: `{evaluationId, items:[{controlId, fileName?, location?, snippet, score?, decision, evidenceId?, citationId?}], confirmVerdictOverride?}` (hasta 100). `decision` ∈ `ACCEPTED`/`REJECTED`. **Aceptar una cita significa que el fragmento es relevante y respalda el control** (D5): en la **misma transacción** el control pasa a `VALIDATED` con origen `CITATION` y la cita como respaldo (`evidenceId`, archivo, ubicación, puntaje y el fragmento recortado). Reglas: sin dictamen → `VALIDATED`; ya `VALIDATED` → sin cambios (la cita es un respaldo adicional y se conserva el origen); `NOT_VALIDATED` o `NEEDS_MORE_EVIDENCE` puesto a mano → **`409` `VERDICT_OVERRIDE_REQUIRED`** (con `details.currentVerdict`, `controlCode` y `controlId`) salvo que se repita el pedido con `confirmVerdictOverride=true`; no se escribe nada si falta la confirmación. **Rechazar una cita (una o todas) nunca cambia el dictamen** (D1). Pasar de aceptada a rechazada no revierte el dictamen: eso llega con la persistencia de citas (hito 3). Cada cambio de dictamen queda en la bitácora como `SET_CONTROL_VERDICT` con `source` y la cita. Responde `200` `{verdicts:[{controlId, verdict, source, changed}]}` (vacío si solo hubo rechazos); `404` si un control no existe; `409` fuera de `IN_AUDIT`. La evaluación solo valida acceso y estado y **no se guarda** en el dataset (`ai_citation_feedback` sigue siendo anónimo): se registra el control y el fragmento, para medir la búsqueda y un futuro fine-tuning |
 
 ## Auditoría — `/api/audit/observations`
 
@@ -240,6 +240,40 @@ Métricas (Prometheus, `/actuator/prometheus`): `prisma_ai_job_queue_wait_second
 `prisma_ai_job_retries_total`, `prisma_ai_jobs{status="queued|running"}`,
 `prisma_ai_ollama_tokens_total{kind="prompt|completion"}` y
 `prisma_ai_ollama_seconds_total{phase="prompt_eval|generation|load"}`.
+
+### Citas guardadas e indexación con estado (hito 3)
+
+**Citas guardadas (C2).** `GET /api/evidence/evaluation/{e}/control/{c}/citations` devuelve **primero lo guardado**
+(tabla `evidence_citation_result`, ligada a la evaluación) y solo busca en `backend-ai` si no hay nada guardado o
+si la evidencia del control cambió. Cada cita trae `citationId`, `fragmentId` (id estable de `backend-ai`:
+evidencia + posición del fragmento), `status` (`PENDING`, `ACCEPTED`, `REJECTED`; `VALIDATED` está reservado),
+`position`, `controlId` y `stale`. Con `backend-ai` caído y citas guardadas (viejas), devuelve las guardadas en
+vez de `503`. Se guardan los fragmentos que `backend-ai` devuelve; el puntaje mínimo (`AI_CITATION_MIN_SCORE`) se
+aplica antes.
+
+Ciclo de vida: la decisión de una cita (`POST /api/evidence/citations/feedback` con `citationId`) queda guardada
+(estado, quién y cuándo) en la misma transacción que el dictamen. Cuando **cambia la evidencia de un control**
+(una indexación termina) las citas sin decidir se descartan y las decididas se marcan `stale`: la próxima consulta
+busca de nuevo y conserva las decisiones de los fragmentos que siguen. Al **salir de auditoría** (devuelta o
+aprobada) se descartan todas las citas guardadas; el dictamen ya fijado **no se toca** (conserva su cita en
+`source_ref`). Al entrar a auditoría se encola `CITATIONS_PRECOMPUTE` (lote, prioridad 0): busca y guarda las
+citas de los controles con evidencia ya indexada, para que el auditor las encuentre listas.
+
+Completan C4a: **pasar una cita de aceptada a rechazada** revierte el dictamen a «Sin dictamen» si vino de la cita
+(`source = CITATION`) y no queda otra cita aceptada del control (si quedan, el dictamen se mantiene y el respaldo
+pasa a otra; uno fijado a mano no se toca). `DELETE /api/audit/verdicts/{evaluationId}/controls/{controlId}/citation-verdict`
+(`PRISMA_ADMIN`, `AUDITOR`, evaluación `IN_AUDIT`) es el **«Deshacer»**: quita un dictamen que salió de aceptar una
+cita y deja esas citas `PENDING` (`204`; `409` si el dictamen lo fijó el auditor a mano; `404` si no hay dictamen).
+La respuesta de `POST /citations/feedback` informa una reversión con `verdict = null` y `changed = true`. La
+bitácora recoge cada cambio como `SET_CONTROL_VERDICT` con `reverted`, `reason` (`CITATION_REJECTED` o `UNDO`) y la
+cita.
+
+**Indexación con estado (C7).** Cada `EvidenceDto` trae `indexStatus` y `indexError`: `QUEUED`, `INDEXING`,
+`INDEXED`, `ERROR` (se puede reintentar con `POST /api/evidence/{id}/index`) y `NOT_INDEXABLE` (ZIP, imágenes, en
+cuarentena —con el motivo— o infectada). La subida **ya no espera a `backend-ai`**: la evidencia indexable queda
+`QUEUED` y un trabajo `EVIDENCE_INDEX` de la misma cola que las guías la indexa (prioridad 5, trabajo del sistema:
+no aparece en «Tareas de IA»), con los reintentos y la espera creciente de la cola; si se agotan, queda `ERROR` con
+el motivo. `aiIndexed` es `true` solo con `INDEXED`. Al liberarse de cuarentena se encola sola.
 
 ## Reportes — `/api/reports`
 
