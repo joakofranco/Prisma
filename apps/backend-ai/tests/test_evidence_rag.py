@@ -385,3 +385,54 @@ def test_endpoints_accept_correct_internal_key(monkeypatch, client: TestClient) 
         headers={"X-Internal-Api-Key": "shh-secreto"},
     )
     assert response.status_code == 200
+
+
+# ----------------------------------------------------------------------------------
+# C3.1 — umbral de puntaje de las citas
+# ----------------------------------------------------------------------------------
+
+
+def _scored(*scores: float) -> FakeCitationStore:
+    return FakeCitationStore(
+        [
+            (Document(page_content=f"frag {i}", metadata={"evidence_id": "ev"}), s)
+            for i, s in enumerate(scores)
+        ]
+    )
+
+
+def _search(store: EvidenceStore) -> list[dict]:
+    return asyncio.run(
+        store.citations(organization_id="org-a", evaluation_id="e", control_id=None, query="q")
+    )
+
+
+def test_without_a_threshold_every_citation_is_returned(tmp_path: Path) -> None:
+    store = EvidenceStore(settings=_settings(tmp_path))
+    store._stores["org-a"] = _scored(0.9, 0.2, -0.4)
+
+    assert [c["score"] for c in _search(store)] == [0.9, 0.2, -0.4]
+
+
+def test_citations_below_the_threshold_are_dropped(tmp_path: Path) -> None:
+    store = EvidenceStore(settings=_settings(tmp_path, ai_citation_min_score=0.5))
+    store._stores["org-a"] = _scored(0.9, 0.5, 0.49, -0.4)
+
+    assert [c["score"] for c in _search(store)] == [0.9, 0.5]
+
+
+def test_a_threshold_above_every_score_returns_no_citations(tmp_path: Path) -> None:
+    store = EvidenceStore(settings=_settings(tmp_path, ai_citation_min_score=0.99))
+    store._stores["org-a"] = _scored(0.9, 0.8)
+
+    assert _search(store) == []
+
+
+def test_an_empty_threshold_in_the_environment_means_no_threshold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # docker-compose pasa "${AI_CITATION_MIN_SCORE:-}" como cadena vacía.
+    monkeypatch.setenv("AI_CITATION_MIN_SCORE", "")
+    assert Settings(_env_file=None).ai_citation_min_score is None  # type: ignore[call-arg]
+    monkeypatch.setenv("AI_CITATION_MIN_SCORE", "0.35")
+    assert Settings(_env_file=None).ai_citation_min_score == 0.35  # type: ignore[call-arg]
