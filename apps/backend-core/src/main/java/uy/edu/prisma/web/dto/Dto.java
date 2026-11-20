@@ -782,6 +782,164 @@ public class Dto {
       UUID id, String code, String description, int targetLevel, String status) {}
 
   // ---- Dashboard ----
+  /** RF-VIZ-07 (PRI-321): tendencia de UNA organización, un punto por evaluación finalizada. */
+  public record MaturityTrendDto(
+      UUID organizationId, String organizationName, List<MaturityTrendPointDto> points) {
+    public MaturityTrendDto {
+      points = points == null ? List.of() : List.copyOf(points);
+    }
+  }
+
+  /**
+   * Una evaluación aprobada (o archivada tras aprobarse). {@code profileId} null = sin perfil
+   * comunitario («Catálogo completo»). {@code compliancePercent}: controles cumplidos sobre los del
+   * alcance, con un decimal. {@code maturityAverage}: madurez global sin redondear, con dos
+   * decimales; {@code globalMaturity} es el nivel entero oficial.
+   */
+  public record MaturityTrendPointDto(
+      UUID evaluationId,
+      String evaluationName,
+      // Estado de la evaluación y si el valor es provisorio (en curso, en auditoría o devuelta:
+      // avance declarado, todavía no validado por el auditor).
+      String status,
+      boolean provisional,
+      // Fecha del punto: la de aprobación, o «ahora» para una provisoria.
+      OffsetDateTime date,
+      OffsetDateTime approvedAt,
+      UUID profileId,
+      String profileName,
+      int compliantControls,
+      int totalControls,
+      double compliancePercent,
+      double maturityAverage,
+      Integer globalMaturity) {}
+
+  /**
+   * RF-VIZ-07 (PRI-321): avance semana a semana de una evaluación, reconstruido con la bitácora de
+   * respuestas. {@code last30DaysDelta}: controles cumplidos ganados (o perdidos, negativo) en los
+   * últimos 30 días.
+   */
+  public record EvaluationProgressDto(
+      UUID evaluationId,
+      String evaluationName,
+      String status,
+      String statusLabel,
+      String profileName,
+      OffsetDateTime startedAt,
+      int compliantControls,
+      int answeredControls,
+      int totalControls,
+      int last30DaysDelta,
+      // Controles respondidos ganados en los últimos 30 días: el trabajo, aunque no cambie
+      // «Cumple».
+      int last30DaysAnsweredDelta,
+      // Escala usada: DAY, WEEK o MONTH (AUTO la elige según lo que dura la historia).
+      String granularity,
+      // El primero es un período vacío anterior al inicio: la curva arranca en 0.
+      List<ProgressPeriodDto> periods,
+      List<ProgressStatusEventDto> statusEvents) {
+    public EvaluationProgressDto {
+      periods = periods == null ? List.of() : List.copyOf(periods);
+      statusEvents = statusEvents == null ? List.of() : List.copyOf(statusEvents);
+    }
+  }
+
+  /**
+   * Un período (día, semana o mes): estado al cerrarlo, actividad (respuestas guardadas, aunque
+   * repitan el valor, y evidencias subidas) y qué controles cambiaron.
+   */
+  public record ProgressPeriodDto(
+      java.time.LocalDate periodStart,
+      java.time.LocalDate periodEnd,
+      int compliantControls,
+      int answeredControls,
+      int totalControls,
+      int responseActivity,
+      int evidenceActivity,
+      List<ControlChangeDto> gained,
+      List<ControlChangeDto> lost) {
+    public ProgressPeriodDto {
+      gained = gained == null ? List.of() : List.copyOf(gained);
+      lost = lost == null ? List.of() : List.copyOf(lost);
+    }
+  }
+
+  /** Un control que pasó a «Cumple» (gained) o dejó de cumplirse (lost) en esa semana. */
+  public record ControlChangeDto(
+      UUID controlId,
+      String code,
+      String description,
+      String functionName,
+      OffsetDateTime changedAt,
+      String changedBy) {}
+
+  /** Cambio de estado de la evaluación (marca vertical en el gráfico de avance). */
+  public record ProgressStatusEventDto(String status, String label, OffsetDateTime occurredAt) {}
+
+  /** RF-VIZ-06 (PRI-320): evaluación finalizada que se puede elegir para comparar. */
+  public record ComparisonCandidateDto(
+      UUID id,
+      String name,
+      String profileName,
+      OffsetDateTime approvedAt,
+      Integer globalMaturity) {}
+
+  /** Una de las dos evaluaciones comparadas, con su medición (la misma de la tendencia). */
+  public record ComparedEvaluationDto(
+      UUID id,
+      String name,
+      String profileName,
+      OffsetDateTime approvedAt,
+      Integer globalMaturity,
+      double maturityAverage,
+      int compliantControls,
+      int totalControls,
+      double compliancePercent) {}
+
+  /** Nivel promedio de una función en A y en B (0–4, dos decimales); null si no la tiene. */
+  public record FunctionDeltaDto(
+      UUID functionId, String functionName, Double levelA, Double levelB, Double delta) {}
+
+  /**
+   * Nivel de una subcategoría en A y en B. {@code levelA} o {@code levelB} null = está en una sola
+   * evaluación (perfiles distintos): sin delta.
+   */
+  public record SubcategoryDeltaDto(
+      UUID subcategoryId,
+      String code,
+      String name,
+      UUID functionId,
+      String functionName,
+      String categoryName,
+      Integer levelA,
+      Integer levelB,
+      Integer delta,
+      Integer targetLevel) {}
+
+  /**
+   * RF-VIZ-06 (PRI-320): comparativo entre dos evaluaciones de la MISMA organización. {@code
+   * reading}: una frase con lo principal (cambio global, mayor mejora y mayor baja).
+   */
+  public record EvaluationComparisonDto(
+      UUID organizationId,
+      String organizationName,
+      ComparedEvaluationDto evaluationA,
+      ComparedEvaluationDto evaluationB,
+      boolean sameProfile,
+      int subcategoriesUp,
+      int subcategoriesDown,
+      int subcategoriesSame,
+      int onlyInA,
+      int onlyInB,
+      String reading,
+      List<FunctionDeltaDto> functions,
+      List<SubcategoryDeltaDto> subcategories) {
+    public EvaluationComparisonDto {
+      functions = functions == null ? List.of() : List.copyOf(functions);
+      subcategories = subcategories == null ? List.of() : List.copyOf(subcategories);
+    }
+  }
+
   public record DashboardStatsDto(
       long totalEvaluations,
       long activeOrganizations,
