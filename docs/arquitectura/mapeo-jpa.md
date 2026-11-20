@@ -50,6 +50,8 @@
 | [`Evidence`](#evidence) | `evidence` | `prisma` |
 | [`ImprovementPlan`](#improvementplan) | `improvement_plans` | `prisma` |
 | [`AiSuggestionFeedback`](#aisuggestionfeedback) | `ai_suggestion_feedback` | `prisma` |
+| [`AiJob`](#aijob-y-aigeneratedguide) | `ai_job` | `prisma` |
+| [`AiGeneratedGuide`](#aijob-y-aigeneratedguide) | `ai_generated_guide` | `prisma` |
 | [`AiCitationFeedback`](#aicitationfeedback) | `ai_citation_feedback` | `prisma` |
 | [`AuditObservation`](#auditobservation) | `audit_observations` | `prisma` |
 | [`AuditLog`](#auditlog) | `audit_logs` | `audit` |
@@ -333,6 +335,22 @@ Enums anidados `Priority` (`LOW`/`MEDIUM`/`HIGH`) y `PlanStatus`
 libres del ítem (RF-PLN-02, migración `V27`); los ítems anteriores quedan con `null`.
 
 ---
+
+### `AiJob` y `AiGeneratedGuide`
+
+Migración V41. `AiJob` (`ai_job`) es un trabajo de la cola de IA: `type` (`GUIDE`), `status`
+(`QUEUED`, `RUNNING`, `SUCCEEDED`, `FAILED`, `CANCELLED`, `EXPIRED`), `organization_id` y
+`requested_by` (UUID planos, sin relación JPA), `priority` (10 interactivo, 0 lote), `params` y
+`metrics` (`jsonb` como `Map<String,Object>`), `dedup_key` (SHA-256), `result_ref` (id de la guía),
+`attempts`/`max_attempts`, `next_attempt_at`, `locked_until` (vence el reclamo si la réplica muere),
+`error_code`/`error_message` y la medición (`queue_wait_ms`, `run_ms`). Un **índice único parcial**
+sobre `dedup_key` para `QUEUED`/`RUNNING` impide duplicar un pedido activo bajo concurrencia; el
+reclamo es la consulta nativa `AiJobRepository.lockQueued` (`FOR UPDATE SKIP LOCKED`).
+
+`AiGeneratedGuide` (`ai_generated_guide`) guarda la guía devuelta por la IA: `control` (`@ManyToOne`
+LAZY), niveles, `model`, `prompt_version`, `summary`, `tips` (`jsonb`), `status` (`GENERATED`,
+`SHOWN`, `USED`, `DISCARDED` reservado, `EXPIRED`) y fechas. Lleva `organization_id` solo para
+autorizar el acceso: `AiSuggestionFeedback` sigue sin organización ni usuario.
 
 ### `AiSuggestionFeedback`
 

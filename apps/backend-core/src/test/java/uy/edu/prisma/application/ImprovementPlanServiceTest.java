@@ -52,6 +52,7 @@ class ImprovementPlanServiceTest {
   @Mock private AuditLogService auditLog;
   @Mock private PlanDeadlineSettingsService deadlines;
   @Mock private uy.edu.prisma.domain.repository.AiSuggestionFeedbackRepository feedbackRepo;
+  @Mock private AiGuideService guideService;
 
   private ImprovementPlanService service;
   private Evaluation eval;
@@ -82,7 +83,8 @@ class ImprovementPlanServiceTest {
             currentUser,
             auditLog,
             deadlines,
-            feedbackRepo);
+            feedbackRepo,
+            guideService);
     // IN_PROGRESS: el plan está activo (en DRAFT / ARCHIVED no se puede crear ni editar).
     eval =
         Evaluation.builder()
@@ -170,6 +172,32 @@ class ImprovementPlanServiceTest {
     assertEquals("PENDING", result.status());
     // RF-PLN-03: sin fecha, se estampa el plazo por defecto de la prioridad (Media = 6 meses).
     assertEquals(LocalDate.now().plusMonths(6).toString(), result.dueDate());
+  }
+
+  @Test
+  void createWithAnAiGuideMarksItUsedInTheSameOperation() {
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(repo.save(any(ImprovementPlan.class))).thenAnswer(inv -> inv.getArgument(0));
+    UUID guideId = UUID.randomUUID();
+    UUID controlId = UUID.randomUUID();
+    when(controlRepo.findById(controlId))
+        .thenReturn(Optional.of(CatalogControl.builder().id(controlId).code("CT-1").build()));
+
+    service.create(
+        new CreateImprovementPlanDto(
+            eval.getId(), controlId, "Texto final", "R", "HIGH", null, null, guideId, true));
+
+    verify(guideService).markUsed(guideId, controlId, true, "Texto final");
+  }
+
+  @Test
+  void createWithoutAnAiGuideDoesNotTouchTheGuideFeedback() {
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(repo.save(any(ImprovementPlan.class))).thenAnswer(inv -> inv.getArgument(0));
+
+    service.create(new CreateImprovementPlanDto(eval.getId(), null, "A", "R", "HIGH", null, null));
+
+    verifyNoInteractions(guideService);
   }
 
   @Test

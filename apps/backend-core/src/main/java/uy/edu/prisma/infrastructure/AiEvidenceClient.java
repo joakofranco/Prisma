@@ -2,6 +2,7 @@ package uy.edu.prisma.infrastructure;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -9,7 +10,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientResponseException;
+import uy.edu.prisma.domain.exception.AiGuideException;
 import uy.edu.prisma.domain.exception.AiUnavailableException;
 import uy.edu.prisma.web.dto.Dto.EvidenceCitationDto;
 import uy.edu.prisma.web.dto.Dto.RemediationTipsDto;
@@ -168,6 +172,91 @@ public class AiEvidenceClient {
     }
   }
 
+  /** Guía generada por el LLM, con lo que Ollama informó (tiempos en ns y tokens). */
+  public record GuideResult(
+      String summary, List<String> tips, String model, Map<String, Object> metrics) {}
+
+  /**
+   * Igual que {@link #suggestRemediation} pero para la cola de trabajos: NO devuelve un texto de
+   * reemplazo, lanza {@link AiGuideException} clasificada (reintentable o no) para que el trabajo
+   * termine en FAILED con un mensaje claro en vez de guardar un «no se pudo» como si fuera una
+   * guía.
+   */
+  public GuideResult generateGuide(
+      String controlCode,
+      String description,
+      String functionName,
+      String categoryName,
+      String subcategoryName,
+      int currentLevel,
+      int targetLevel) {
+    RemediationTipsResponse response;
+    try {
+      response =
+          guideRestClient
+              .post()
+              .uri("/api/v1/rag/remediation-tips")
+              .contentType(MediaType.APPLICATION_JSON)
+              .body(
+                  new RemediationTipsRequest(
+                      controlCode,
+                      description,
+                      functionName,
+                      categoryName,
+                      subcategoryName,
+                      currentLevel,
+                      targetLevel))
+              .retrieve()
+              .body(RemediationTipsResponse.class);
+    } catch (RestClientResponseException e) {
+      throw classify(e);
+    } catch (ResourceAccessException e) {
+      throw new AiGuideException(
+          AiGuideException.AI_UNAVAILABLE,
+          "El asistente de IA no respondió a tiempo o no está disponible",
+          true,
+          e);
+    } catch (RuntimeException e) {
+      throw new AiGuideException(
+          AiGuideException.AI_ERROR, "Error inesperado al consultar el asistente de IA", true, e);
+    }
+    if (response == null || Boolean.FALSE.equals(response.generated())) {
+      throw new AiGuideException(
+          AiGuideException.AI_UNAVAILABLE,
+          "El modelo de IA no pudo generar la guía en este momento",
+          true,
+          null);
+    }
+    return new GuideResult(
+        response.summary() != null ? response.summary() : "",
+        response.tips() != null ? response.tips() : List.of(),
+        response.model(),
+        response.metrics() != null ? response.metrics() : Map.of());
+  }
+
+  private static AiGuideException classify(RestClientResponseException e) {
+    int status = e.getStatusCode().value();
+    if (status == 413 && e.getResponseBodyAsString().contains(AiGuideException.PROMPT_TOO_LARGE)) {
+      return new AiGuideException(
+          AiGuideException.PROMPT_TOO_LARGE,
+          "El contenido de la guía es demasiado largo para el contexto del modelo de IA",
+          false,
+          e);
+    }
+    if (status >= 500) {
+      boolean unavailable = status == 502 || status == 503 || status == 504;
+      return new AiGuideException(
+          unavailable ? AiGuideException.AI_UNAVAILABLE : AiGuideException.AI_ERROR,
+          unavailable
+              ? "El asistente de IA no está disponible en este momento"
+              : "El asistente de IA respondió con un error",
+          true,
+          e);
+    }
+    return new AiGuideException(
+        AiGuideException.AI_REJECTED, "El asistente de IA rechazó el pedido", false, e);
+  }
+
   /** Borra los fragmentos indexados de una evidencia (best-effort, p.ej. al eliminarla). */
   public void deleteEvidence(UUID organizationId, UUID evidenceId) {
     try {
@@ -224,7 +313,14 @@ public class AiEvidenceClient {
       @JsonProperty("current_level") int currentLevel,
       @JsonProperty("target_level") int targetLevel) {}
 
-  private record RemediationTipsResponse(String summary, List<String> tips) {}
+  // generated/model/metrics los agrega backend-ai desde el hito 1 de la IA asíncrona; si falta
+  // alguno (backend-ai viejo) el record los deja en null y suggestRemediation sigue igual.
+  private record RemediationTipsResponse(
+      String summary,
+      List<String> tips,
+      Boolean generated,
+      String model,
+      Map<String, Object> metrics) {}
 
   private record Citation(
       @JsonProperty("evidence_id") String evidenceId,

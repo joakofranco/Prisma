@@ -10,7 +10,7 @@ import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 
 @Configuration
-@EnableConfigurationProperties(AiConfig.AiProperties.class)
+@EnableConfigurationProperties({AiConfig.AiProperties.class, AiJobProperties.class})
 public class AiConfig {
 
   /**

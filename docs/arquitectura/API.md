@@ -26,10 +26,12 @@ Los endpoints de `backend-ai` (`/api/v1/rag/*`, `/api/v1/evidence/*`) no los lla
 Llamarlos sin ese header da `401`.
 
 `backend-core` no espera para siempre a `backend-ai` (RF-EVI-13): conexión 3 s (`AI_CONNECT_TIMEOUT`),
-lectura 60 s para la ingesta y las citas (`AI_READ_TIMEOUT`) y 120 s para la guía de mejora, que
-genera con el LLM y tarda cerca de un minuto con Ollama local (`AI_GUIDE_READ_TIMEOUT`). Si se
-agotan o `backend-ai` está caído, la evidencia se guarda igual con `aiIndexed = false` y se puede
-reintentar con `POST /api/evidence/{id}/index` («Analizar con IA»), sin volver a subirla.
+lectura 60 s para la ingesta y las citas (`AI_READ_TIMEOUT`) y 300 s para la guía de mejora, que
+genera con el LLM y con documentos largos en CPU puede tardar minutos (`AI_GUIDE_READ_TIMEOUT`).
+La guía corre como **trabajo asíncrono** (ver [`/api/ai/jobs`](#trabajos-de-ia--apiaijobs)), así que
+ese timeout no depende del frontend, de nginx ni de Cloudflare. Si se agotan o `backend-ai` está
+caído, la evidencia se guarda igual con `aiIndexed = false` y se puede reintentar con
+`POST /api/evidence/{id}/index` («Analizar con IA»), sin volver a subirla.
 
 ## Convención de errores
 
@@ -201,9 +203,42 @@ Regla de estado: crear (`POST`) y modificar (`PUT`, incluido el cambio de `statu
 | GET | `/{evaluationId}` | cualquiera autenticado | acciones ya creadas |
 | GET | `/{evaluationId}/suggestions` | cualquiera autenticado | sugerencias generadas por reglas a partir de las brechas — no persistidas hasta que se confirman con POST. **Precondición (RF-PLN-01):** la madurez tiene que estar calculada (`globalMaturity` no nulo) y la evaluación no puede estar en `DRAFT`; si no, `409` «Calculá la madurez de la evaluación antes de generar sugerencias de mejora». Devuelve **una sugerencia por control** (no una por subcategoría): `subcategoryId`/`subcategoryName` son la subcategoría principal (la primera por nombre) y `subcategoryNames` lista todas las subcategorías donde el control cuenta |
 | POST | `/suggestions/tips` | `PRISMA_ADMIN`, `ORG_RESPONSIBLE` | guía práctica con IA para una brecha: `{controlCode, description, functionName?, categoryName?, subcategoryName?, currentLevel, targetLevel}` → `{summary, tips[], generated}`. Con la IA caída responde `200` con un texto de reemplazo y `generated=false` (la pantalla no lo ofrece para usar ni lo registra). Con Ollama local puede tardar ~1 min |
+| POST | `/suggestions/tips/async` | `PRISMA_ADMIN`, `ORG_RESPONSIBLE` | versión asíncrona de la guía: `{controlId, evaluationId?, functionName?, categoryName?, subcategoryName?, currentLevel, targetLevel}` → **`202`** `{jobId, status}` en menos de 1 s. El código y la descripción del control los resuelve el servidor. El resultado se consulta en `GET /api/ai/jobs/{jobId}`. Pedir lo mismo mientras hay un trabajo activo (misma organización, control y niveles) devuelve ese trabajo, no crea otro. `404` control o evaluación inexistente; `403` si la evaluación es de otra organización; `429` si la organización ya tiene demasiados trabajos activos (`AI_JOBS_MAX_PENDING_PER_ORG`, 20). Convive con el endpoint síncrono |
 | POST | `/suggestions/feedback` | `PRISMA_ADMIN`, `ORG_RESPONSIBLE` | registra qué se hizo con las guías de IA, para un futuro fine-tuning: `{items:[{controlId, currentLevel, targetLevel, originalSummary, originalTips[], outcome, editedText?}]}` (hasta 200). `outcome` ∈ `ACCEPTED_UNEDITED` (usada y creada sin cambios), `ACCEPTED_EDITED` (usada, creada y modificada; `editedText` obligatorio con el texto final) y `REJECTED` (generada pero no usada, deseleccionada, regenerada o con el modal cerrado). Responde `204`; `404` si un control no existe. Se guarda el **control** del catálogo, sin evaluación, organización ni usuario. Lo que la IA no llegó a generar no se registra |
-| POST | `/` | `PRISMA_ADMIN`, `ORG_RESPONSIBLE` | `{evaluationId, controlId?, action, responsible?, priority?, dueDate?, comments?}` — `priority` ∈ `HIGH`/`MEDIUM`/`LOW` (inglés, no `ALTA`/`MEDIA`/`BAJA`); `comments` hasta 2000 caracteres (400 si lo supera) |
+| POST | `/` | `PRISMA_ADMIN`, `ORG_RESPONSIBLE` | `{evaluationId, controlId?, action, responsible?, priority?, dueDate?, comments?, guideId?, guideEdited?}` — `guideId` es la guía de IA (trabajo asíncrono) con la que se armó la acción: en la **misma transacción** se la marca `USED` y se registra el feedback (`ACCEPTED_UNEDITED`, o `ACCEPTED_EDITED` con `action` como texto final si `guideEdited=true`); `400` si la guía ya se usó, venció o es de otro control; `403` si es de otra organización. `priority` ∈ `HIGH`/`MEDIUM`/`LOW` (inglés, no `ALTA`/`MEDIA`/`BAJA`); `comments` hasta 2000 caracteres (400 si lo supera) |
 | PUT | `/{id}` | `PRISMA_ADMIN`, `ORG_RESPONSIBLE` | también actualiza `status` (`PENDING`/`IN_PROGRESS`/`COMPLETED`/`OVERDUE`). `comments`: ausente (`null`) = sin cambios; cadena vacía = borra el comentario |
+
+## Trabajos de IA — `/api/ai/jobs`
+
+Cola de trabajos de IA (hoy solo `GUIDE`). Mismos roles que la función de origen: `PRISMA_ADMIN`,
+`ORG_RESPONSIBLE`. La organización del trabajo se **reverifica en cada consulta** (conocer el id no
+alcanza: otra organización recibe `403`).
+
+| Método | Path | Notas |
+|---|---|---|
+| GET | `/{id}` | estado del trabajo: `{id, type, status, queuePosition, attempts, maxAttempts, errorCode, errorMessage, createdAt, startedAt, finishedAt, guide}`. `status` ∈ `QUEUED`, `RUNNING`, `SUCCEEDED`, `FAILED`, `CANCELLED`, `EXPIRED`. `queuePosition` solo en cola (1 = el próximo). `guide` (`{id, controlId, summary, tips[], model}`) solo con `SUCCEEDED`; la primera vez que quien la pidió la consulta, la guía pasa de `GENERATED` a `SHOWN` |
+| GET | `/?mine=true` | los últimos 50 trabajos de quien consulta (sin el cuerpo de la guía): alimenta el indicador «Tareas de IA» |
+| DELETE | `/{id}` | cancela un trabajo **en cola**. `409` si ya se está ejecutando o ya terminó. Cancelar uno ya cancelado es idempotente |
+
+Códigos de error de un trabajo fallido (`errorCode`): `AI_UNAVAILABLE` (backend-ai caído, colgado o
+sin respuesta del modelo) y `AI_ERROR` (5xx) se reintentan hasta `AI_JOBS_MAX_ATTEMPTS` (2) con
+espera creciente (`AI_JOBS_RETRY_BACKOFF_SECONDS`, 30 s, el doble en cada reintento);
+`PROMPT_TOO_LARGE` (el prompt no entra en el contexto del modelo), `AI_REJECTED` (4xx) e
+`INTERNAL_ERROR` no se reintentan; `WORKER_LOST` (la réplica murió a mitad de camino) se reencola.
+
+Cómo funciona: cada réplica de `backend-core` mira la cola cada `AI_JOBS_POLL_INTERVAL_MS` (2 s). El
+reclamo corre bajo ShedLock y usa `SELECT … FOR UPDATE SKIP LOCKED`: un trabajo nunca se ejecuta dos
+veces aunque haya varias réplicas, y el tope **global** de trabajos corriendo contra Ollama es
+`AI_JOBS_CONCURRENCY` (2). Los resultados se conservan `AI_JOBS_RESULT_TTL_DAYS` (30) días. Una
+limpieza diaria (03:15) vence los resultados viejos y cierra las guías: una guía **mostrada y no
+usada** a los 30 días (`AI_GUIDE_FEEDBACK_DAYS`) pasa a `EXPIRED` y se registra como `REJECTED`; una
+nunca mostrada solo vence. El feedback sigue sin organización ni usuario (V32).
+
+Métricas (Prometheus, `/actuator/prometheus`): `prisma_ai_job_queue_wait_seconds`,
+`prisma_ai_job_run_seconds`, `prisma_ai_jobs_finished_total{type,outcome,error}`,
+`prisma_ai_job_retries_total`, `prisma_ai_jobs{status="queued|running"}`,
+`prisma_ai_ollama_tokens_total{kind="prompt|completion"}` y
+`prisma_ai_ollama_seconds_total{phase="prompt_eval|generation|load"}`.
 
 ## Reportes — `/api/reports`
 
@@ -315,6 +350,8 @@ tipo nuevo, sumarlo en los dos lados.
 | GET | `/rag/status` | estado del índice del catálogo MCU 5.0 (`ready`, `collection`, `documents`) |
 | POST | `/rag/query` | `{question, k?}` — pregunta libre sobre el catálogo (Llama 3 vía Ollama) |
 | POST | `/rag/ingest` | agrega texto a la colección del catálogo |
+| POST | `/rag/remediation-tips` | guía de remediación: `{control_code, control_description, function_name?, category_name?, subcategory_name?, current_level, target_level}` → `{summary, tips[], generated, model, metrics}`. `generated=false` = el LLM no respondió y `tips` es un texto de reemplazo (la cola de backend-core lo trata como falla reintentable). `metrics` trae los tiempos (ns) y tokens que informa Ollama. Con un prompt que no entra en el contexto responde **`413`** `{code: "PROMPT_TOO_LARGE", detail, estimated_tokens, limit_tokens}` sin llamar a Ollama (Ollama lo recortaría en silencio) |
+| GET | `/runtime` | modelo (con `digest`), versión de Ollama, opciones realmente enviadas (`num_ctx`, `keep_alive`, `num_predict`, `temperature`, `seed`, `num_thread`, límite del prompt), estado de carga de LLM y embedding (`/api/ps`) y estado del precalentamiento. Nunca falla: con Ollama caído informa `ollama.reachable=false` |
 | POST | `/evaluate/evidence` | `{control_id?, control_description, evidence_text}` — juicio automático sobre si una evidencia satisface un control |
 | POST | `/evidence/ingest` | indexa una evidencia recién subida (llamado por `EvidenceService.upload`) |
 | POST | `/evidence/citations` | fragmentos relevantes de evidencia ya indexada, acotados a organización/evaluación/control |

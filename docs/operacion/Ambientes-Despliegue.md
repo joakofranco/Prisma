@@ -375,6 +375,79 @@ make prod-secrets   # solo genera y muestra, sin levantar nada
 
 El script es `scripts/generate-prod-secrets.sh`.
 
+## Ollama: configuración y precalentamiento
+
+Hay **un solo Ollama por entorno** (servicio `ollama` de `docker-compose.yml` y de
+`docker-stack.yml`). Se configura por variables de entorno, todas con valor por defecto y
+sobrescribibles desde el `.env` (ver `.env.example`).
+
+**Servicio `ollama`:**
+
+| Variable | Por defecto | Para qué |
+|---|---|---|
+| `OLLAMA_KEEP_ALIVE` | `-1` | no descargar el modelo (sin esto se descarga a los 5 min y el siguiente pedido paga la carga en frío) |
+| `OLLAMA_NUM_PARALLEL` | `2` | pedidos simultáneos |
+| `OLLAMA_CONTEXT_LENGTH` | `16384` | contexto **por ranura**: la memoria crece con `CONTEXT_LENGTH × NUM_PARALLEL` |
+| `OLLAMA_MAX_LOADED_MODELS` | `2` | LLM y embedding cargados a la vez |
+| `OLLAMA_MAX_QUEUE` | `64` | cola interna de Ollama |
+
+**Servicio `backend-ai`** (opciones que envía en cada pedido):
+
+| Variable | Por defecto | Para qué |
+|---|---|---|
+| `OLLAMA_MODEL` | `llama3:8b` | modelo de LLM; cambiarlo es solo configuración |
+| `OLLAMA_EMBEDDING_MODEL` | `nomic-embed-text` | modelo de embedding. **Cambiarlo exige reindexar todas las colecciones** (`evidence-<org>` y la del marco): cambian las dimensiones (768 → 1024 con `bge-m3`) |
+| `AI_NUM_CTX` | `16384` | `num_ctx` de cada pedido. **Tiene que valer lo mismo que `OLLAMA_CONTEXT_LENGTH`**; si no, Ollama recarga el modelo |
+| `AI_KEEP_ALIVE` | `-1` | `keep_alive` de cada pedido (igual que `OLLAMA_KEEP_ALIVE`) |
+| `AI_NUM_PREDICT` | `1024` | tope de tokens de la respuesta. **Provisional**: definirlo con las guías reales |
+| `AI_TEMPERATURE`, `AI_SEED`, `AI_NUM_THREAD` | sin definir | si están definidos se envían; si no, rige el valor del modelo. `AI_NUM_THREAD` depende del servidor (12 hilos dio 9,4 tok/s contra 6,7 por defecto en el VPS de pruebas) |
+| `AI_THINK` | `false` | razonamiento; solo se aplica si el modelo declara la capability `thinking` (en `llama3`/`gemma3` Ollama responde 400) |
+| `AI_WARMUP` | `true` | precalentar LLM y embedding al arrancar |
+| `AI_WARMUP_CHECK_SECONDS` | `60` | cada cuánto revisar que los modelos sigan cargados y recargarlos si no (`0` = desactivado) |
+| `AI_PROMPT_MAX_TOKENS` | `AI_NUM_CTX − AI_NUM_PREDICT − 256` | límite del prompt: si lo supera, `backend-ai` responde `413 PROMPT_TOO_LARGE` sin llamar a Ollama (Ollama lo recortaría a la mitad sin avisar) |
+
+**Precalentamiento.** Al arrancar, `backend-ai` envía un pedido vacío al LLM y uno de `embed` al
+embedding, con las mismas opciones que usará la app, y reintenta cada 5 s (hasta ~10 min) mientras
+Ollama no responda. Corre en segundo plano: no demora el arranque ni el `healthcheck`. Si
+`backend-ai` corre con más de un proceso (`--workers 2` en el stack) cada uno lo hace; es idempotente.
+
+**Verificar** (en el servidor, sin credenciales):
+
+```bash
+docker compose exec ollama ollama ps          # ambos modelos cargados, "UNTIL: Forever"
+curl -s http://localhost:11434/api/ps          # lo mismo por API
+# opciones efectivas, digest, versión de Ollama y estado del precalentamiento:
+curl -s -H "X-Internal-Api-Key: $AI_INTERNAL_API_KEY" http://localhost:8000/api/v1/runtime
+```
+
+**Reinicio de Ollama.** Un vigilante revisa `/api/ps` cada `AI_WARMUP_CHECK_SECONDS` (60 s; `0` =
+solo precalentar al arrancar) y, si LLM o embedding ya no están cargados (por ejemplo tras
+`docker compose restart ollama`), los vuelve a precalentar. El contador `warmup.reloads` de
+`GET /api/v1/runtime` dice cuántas veces lo hizo.
+
+## Cola de trabajos de IA
+
+`backend-core` ejecuta las guías de IA como trabajos asíncronos. Variables (todas opcionales):
+
+| Variable | Por defecto | Para qué |
+|---|---|---|
+| `AI_JOBS_ENABLED` | `true` | enciende el trabajador (la API de encolado sigue funcionando) |
+| `AI_JOBS_CONCURRENCY` | `2` | tope **global** (suma de réplicas) de trabajos corriendo contra Ollama |
+| `AI_JOBS_MAX_PENDING_PER_ORG` | `20` | trabajos activos por organización (`429` si se supera) |
+| `AI_JOBS_RESULT_TTL_DAYS` | `30` | cuánto se conserva un resultado |
+| `AI_JOBS_MAX_ATTEMPTS` | `2` | intentos por trabajo |
+| `AI_JOBS_RETRY_BACKOFF_SECONDS` | `30` | espera base entre intentos (se duplica) |
+| `AI_JOBS_POLL_INTERVAL_MS` | `2000` | cada cuánto mira la cola cada réplica |
+| `AI_GUIDE_FEEDBACK_DAYS` | `30` | a los cuántos días una guía mostrada y no usada cuenta como rechazada |
+| `AI_GUIDE_READ_TIMEOUT` | `300s` | espera de `backend-core` a `backend-ai` por una guía |
+
+Es seguro con las 2 réplicas de `backend-core` del stack. Estado en vivo (solo lectura):
+
+```sql
+SELECT status, count(*) FROM prisma.ai_job GROUP BY status;
+SELECT id, status, attempts, queue_wait_ms, run_ms, error_code FROM prisma.ai_job ORDER BY created_at DESC LIMIT 20;
+```
+
 ## Versión y entorno
 
 **Versión.** PRISMA tiene una sola versión (SemVer `MAJOR.MINOR.PATCH`, hoy `0.6.0`) compartida por la

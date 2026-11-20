@@ -473,6 +473,44 @@ export interface RemediationTips {
   tips: string[];
   /** false = texto de reemplazo porque la IA falló: no se ofrece para usar ni se registra. */
   generated?: boolean;
+  /** Id de la guía persistida (trabajo asíncrono): se manda al crear la acción para registrar
+   * el feedback en el servidor. */
+  guideId?: string;
+}
+
+/** Estados de un trabajo de IA (cola asíncrona). */
+export type AiJobStatus = 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED' | 'EXPIRED';
+
+/** Guía ya generada y guardada por el servidor. */
+export interface GeneratedGuide {
+  id: string;
+  controlId: string;
+  summary: string;
+  tips: string[];
+  model?: string | null;
+}
+
+/** Trabajo de IA: se consulta por id hasta que termina. */
+export interface AiJob {
+  id: string;
+  type: 'GUIDE';
+  status: AiJobStatus;
+  /** Solo en cola: 1 = el próximo. */
+  queuePosition: number | null;
+  attempts: number;
+  maxAttempts: number;
+  errorCode: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  /** Solo cuando terminó bien. */
+  guide: GeneratedGuide | null;
+}
+
+export interface AiJobAccepted {
+  jobId: string;
+  status: AiJobStatus;
 }
 
 /** Qué se hizo con una guía de IA (PRI-370): alimenta el dataset de fine-tuning. */

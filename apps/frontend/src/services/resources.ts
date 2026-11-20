@@ -19,6 +19,8 @@ import type {
   ImprovementPlan,
   SuggestedImprovement,
   RemediationTips,
+  AiJob,
+  AiJobAccepted,
   AiSuggestionFeedback,
   MaturityResult,
   DashboardStats,
@@ -341,11 +343,24 @@ export const improvementService = {
   }) {
     return apiClient.post<RemediationTips>('/improvement/suggestions/tips', data);
   },
+  /** Versión asíncrona de la guía: encola un trabajo (202) y se consulta con aiJobsService. El
+   * código y la descripción del control los resuelve el servidor a partir de controlId. */
+  requestTipsAsync(data: {
+    controlId: string;
+    evaluationId?: string;
+    functionName?: string;
+    categoryName?: string;
+    subcategoryName?: string;
+    currentLevel: number;
+    targetLevel: number;
+  }) {
+    return apiClient.post<AiJobAccepted>('/improvement/suggestions/tips/async', data);
+  },
   /** Registra qué se hizo con las guías de IA (usada, editada o descartada). */
   sendSuggestionFeedback(items: AiSuggestionFeedback[]) {
     return apiClient.post<void>('/improvement/suggestions/feedback', { items });
   },
-  create(data: Partial<ImprovementPlan>) {
+  create(data: Partial<ImprovementPlan> & { guideId?: string; guideEdited?: boolean }) {
     return apiClient.post<ImprovementPlan>('/improvement', data);
   },
   update(id: string, data: Partial<ImprovementPlan>) {
@@ -471,5 +486,19 @@ export const emailSettingsService = {
   },
   test(recipientEmail: string) {
     return apiClient.post<void>('/admin/email-settings/test', { recipientEmail });
+  },
+};
+
+/** Trabajos de IA asíncronos (cola): consultar, listar los propios y cancelar. */
+export const aiJobsService = {
+  get(id: string) {
+    return apiClient.get<AiJob>(`/ai/jobs/${id}`);
+  },
+  listMine() {
+    return apiClient.get<AiJob[]>('/ai/jobs', { params: { mine: true } });
+  },
+  /** Solo cancela si sigue en cola. */
+  cancel(id: string) {
+    return apiClient.delete<AiJob>(`/ai/jobs/${id}`);
   },
 };

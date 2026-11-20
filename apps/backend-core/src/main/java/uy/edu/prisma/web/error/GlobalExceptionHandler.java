@@ -30,6 +30,7 @@ import uy.edu.prisma.domain.exception.InvalidRequestException;
 import uy.edu.prisma.domain.exception.MalwareDetectedException;
 import uy.edu.prisma.domain.exception.PayloadTooLargeException;
 import uy.edu.prisma.domain.exception.ResourceNotFoundException;
+import uy.edu.prisma.domain.exception.TooManyRequestsException;
 import uy.edu.prisma.domain.exception.VpnRequiredException;
 import uy.edu.prisma.web.dto.Dto.ApiErrorDto;
 
@@ -61,6 +62,11 @@ public class GlobalExceptionHandler {
   public ResponseEntity<ApiErrorDto> handleAiUnavailable(AiUnavailableException ex) {
     log.warn("Asistente de IA no disponible: {}", ex.getCause() != null ? ex.getCause() : ex);
     return build(HttpStatus.SERVICE_UNAVAILABLE, "AI_UNAVAILABLE", ex.getMessage(), null);
+  }
+
+  @ExceptionHandler(TooManyRequestsException.class)
+  public ResponseEntity<ApiErrorDto> handleTooManyRequests(TooManyRequestsException ex) {
+    return build(HttpStatus.TOO_MANY_REQUESTS, "TOO_MANY_REQUESTS", ex.getMessage(), null);
   }
 
   @ExceptionHandler(InvalidRequestException.class)

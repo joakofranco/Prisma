@@ -1118,7 +1118,23 @@ public class Dto {
       String priority,
       String dueDate,
       @Size(max = 2000, message = "Los comentarios no pueden superar los 2000 caracteres")
-          String comments) {}
+          String comments,
+      // Guía de IA (trabajo asíncrono) con la que se arma la acción: al crearla se marca como
+      // usada y se registra el feedback en el servidor. guideEdited = la persona la modificó.
+      UUID guideId,
+      Boolean guideEdited) {
+
+    public CreateImprovementPlanDto(
+        UUID evaluationId,
+        UUID controlId,
+        String action,
+        String responsible,
+        String priority,
+        String dueDate,
+        String comments) {
+      this(evaluationId, controlId, action, responsible, priority, dueDate, comments, null, null);
+    }
+  }
 
   public record UpdateImprovementPlanDto(
       String action,
@@ -1166,6 +1182,40 @@ public class Dto {
       String subcategoryName,
       @Min(0) @Max(4) int currentLevel,
       @Min(0) @Max(4) int targetLevel) {}
+
+  // Pedido de una guía de IA asíncrona: se identifica por el control del catálogo (el código y la
+  // descripción los resuelve el servidor). evaluationId es opcional y, si viene, define la
+  // organización dueña del trabajo.
+  public record GuideJobRequestDto(
+      @NotNull(message = "El control es obligatorio") UUID controlId,
+      UUID evaluationId,
+      String functionName,
+      String categoryName,
+      String subcategoryName,
+      @Min(0) @Max(4) int currentLevel,
+      @Min(0) @Max(4) int targetLevel) {}
+
+  public record AiJobAcceptedDto(UUID jobId, String status) {}
+
+  // Guía ya generada y guardada (C5). Para usarla en una acción se manda guideId al crearla.
+  public record GeneratedGuideDto(
+      UUID id, UUID controlId, String summary, List<String> tips, String model) {}
+
+  // Estado de un trabajo de IA. queuePosition solo mientras está en cola (1 = el próximo); guide
+  // solo cuando terminó bien; errorCode/errorMessage cuando falló (o en el último reintento).
+  public record AiJobDto(
+      UUID id,
+      String type,
+      String status,
+      Integer queuePosition,
+      int attempts,
+      int maxAttempts,
+      String errorCode,
+      String errorMessage,
+      OffsetDateTime createdAt,
+      OffsetDateTime startedAt,
+      OffsetDateTime finishedAt,
+      GeneratedGuideDto guide) {}
 
   // generated=false es el texto de reemplazo cuando la IA falla: el frontend no lo ofrece para
   // usar en la acción ni lo registra como retroalimentación (PRI-370).

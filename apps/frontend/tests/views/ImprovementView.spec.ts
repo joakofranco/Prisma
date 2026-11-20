@@ -5,10 +5,12 @@ const improvementService = vi.hoisted(() => ({
   getByEvaluation: vi.fn(),
   getSuggestions: vi.fn(),
   getRemediationTips: vi.fn(),
+  requestTipsAsync: vi.fn(),
   sendSuggestionFeedback: vi.fn(),
   create: vi.fn(),
   update: vi.fn(),
 }));
+const aiJobsService = vi.hoisted(() => ({ get: vi.fn(), listMine: vi.fn(), cancel: vi.fn() }));
 const evaluationsService = vi.hoisted(() => ({ getById: vi.fn(), getResults: vi.fn() }));
 const planDeadlinesService = vi.hoisted(() => ({ get: vi.fn() }));
 const auth = vi.hoisted(() => ({ hasAnyRole: vi.fn() }));
@@ -25,6 +27,7 @@ vi.mock('@/services/resources', () => ({
   evaluationsService,
   planDeadlinesService,
   reportsService,
+  aiJobsService,
 }));
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => auth }));
 vi.mock('@/utils/files', async (importOriginal) => ({
@@ -35,6 +38,7 @@ vi.mock('@/composables/useUtils', () => ({ useNotification: () => notification }
 vi.mock('vue-router', () => ({ useRoute: () => ({ params: { evaluationId: 'eval-1' } }) }));
 
 import ImprovementView from '@/views/improvement/ImprovementView.vue';
+import { installMemoryStorage } from '../helpers/memoryStorage';
 
 const plan = (
   id: string,
@@ -85,6 +89,9 @@ beforeEach(() => {
   improvementService.update.mockResolvedValue({ data: {} });
   improvementService.create.mockResolvedValue({ data: {} });
   improvementService.sendSuggestionFeedback.mockResolvedValue({ data: undefined });
+  aiJobsService.listMine.mockResolvedValue({ data: [] });
+  aiJobsService.get.mockReset();
+  installMemoryStorage();
 });
 
 afterEach(() => {
@@ -843,7 +850,7 @@ describe('ImprovementView: brechas por subcategoría (RF-CALC-07)', () => {
   });
 });
 
-describe('ImprovementView: guías de IA en las sugerencias (PRI-370)', () => {
+describe('ImprovementView: guías de IA asíncronas (cola de trabajos)', () => {
   const suggestion = (controlId: string, subcategoryId: string, extra = {}) => ({
     controlId,
     subcategoryId,
@@ -859,13 +866,39 @@ describe('ImprovementView: guías de IA en las sugerencias (PRI-370)', () => {
     suggestedDueDate: '2026-12-31',
     ...extra,
   });
-  const tips = { summary: 'Definir una política', tips: ['Paso A', 'Paso B'], generated: true };
   const GUIDE_TEXT = 'Definir una política\n1. Paso A\n2. Paso B';
+  const job = (status: string, extra: Record<string, unknown> = {}) => ({
+    id: 'job-1',
+    type: 'GUIDE',
+    status,
+    queuePosition: null,
+    attempts: 1,
+    maxAttempts: 2,
+    errorCode: null,
+    errorMessage: null,
+    createdAt: '2026-11-09T12:00:00Z',
+    startedAt: null,
+    finishedAt: null,
+    guide: null,
+    ...extra,
+  });
+  const succeeded = () =>
+    job('SUCCEEDED', {
+      guide: {
+        id: 'guide-1',
+        controlId: 'c1',
+        summary: 'Definir una política',
+        tips: ['Paso A', 'Paso B'],
+        model: 'llama3:8b',
+      },
+    });
 
   const byText = (text: string) =>
     Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find((b) =>
       b.textContent?.includes(text),
     )!;
+  const hasButton = (text: string) =>
+    Array.from(document.body.querySelectorAll('button')).some((b) => b.textContent?.includes(text));
   const actionBoxes = () =>
     Array.from(document.body.querySelectorAll<HTMLTextAreaElement>('textarea'));
   const typeInto = async (el: HTMLTextAreaElement, value: string) => {
@@ -873,154 +906,374 @@ describe('ImprovementView: guías de IA en las sugerencias (PRI-370)', () => {
     el.dispatchEvent(new Event('input'));
     await flushPromises();
   };
+  const requestButtons = () =>
+    Array.from(document.body.querySelectorAll<HTMLButtonElement>('[data-testid="request-tips"]'));
+  const advance = async (ms: number) => {
+    await vi.advanceTimersByTimeAsync(ms);
+    await flushPromises();
+  };
+
+  beforeEach(() => {
+    // Los trabajos se consultan con timers: se los controla a mano (los reales siguen para
+    // flushPromises, que usa setImmediate).
+    // Hay que resetear antes: Vitest ignora un segundo useFakeTimers si ya hay timers falsos (el
+    // beforeEach global solo finge Date).
+    vi.useRealTimers();
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    vi.setSystemTime(new Date(2026, 10, 9, 12, 0, 0));
+    installMemoryStorage();
+    aiJobsService.listMine.mockResolvedValue({ data: [] });
+    improvementService.requestTipsAsync.mockResolvedValue({
+      data: { jobId: 'job-1', status: 'QUEUED' },
+    });
+  });
 
   async function openSuggestions(items = [suggestion('c1', 's1')]) {
     improvementService.getSuggestions.mockResolvedValue({ data: items });
-    improvementService.getRemediationTips.mockResolvedValue({ data: tips });
     const wrapper = await mountView();
     byText('Generar Sugerencias').click();
     await flushPromises();
     return wrapper;
   }
-  async function generate(index = 0) {
-    const buttons = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).filter(
-      (b) => /sugerencia con IA|Regenerar/.test(b.textContent ?? ''),
-    );
-    buttons[index].click();
+  async function request(index = 0) {
+    requestButtons()[index].click();
     await flushPromises();
   }
-  const sent = () => improvementService.sendSuggestionFeedback.mock.calls.flatMap((c) => c[0]);
+  /** Pide la guía y la deja lista (el primer sondeo ya devuelve SUCCEEDED). */
+  async function generateReady(index = 0) {
+    aiJobsService.get.mockResolvedValue({ data: succeeded() });
+    await request(index);
+    await advance(3000);
+  }
+
+  it('pide la guía por control y responde sin esperar: la fila pasa a «En cola»', async () => {
+    await openSuggestions();
+    await request();
+
+    expect(improvementService.requestTipsAsync).toHaveBeenCalledWith({
+      controlId: 'c1',
+      evaluationId: 'eval-1',
+      functionName: 'Proteger',
+      categoryName: 'Acceso',
+      subcategoryName: 'Sub s1',
+      currentLevel: 0,
+      targetLevel: 2,
+    });
+    expect(requestButtons()[0].textContent).toContain('En cola…');
+    expect(requestButtons()[0].disabled).toBe(true);
+    // No se usa más el pedido síncrono (que el frontend cortaba a los 30 s).
+    expect(improvementService.getRemediationTips).not.toHaveBeenCalled();
+  });
+
+  it('la fila avanza de «en cola» a «generando» a «lista» consultando el trabajo', async () => {
+    aiJobsService.get
+      .mockResolvedValueOnce({ data: job('QUEUED', { queuePosition: 3 }) })
+      .mockResolvedValueOnce({ data: job('RUNNING') })
+      .mockResolvedValue({ data: succeeded() });
+    await openSuggestions();
+    await request();
+
+    await advance(3000);
+    expect(requestButtons()[0].textContent).toContain('En cola (posición 3)…');
+
+    await advance(4000);
+    expect(requestButtons()[0].textContent).toContain('Generando sugerencia…');
+
+    await advance(6000);
+    expect(document.body.textContent).toContain('Definir una política');
+    expect(document.body.textContent).toContain('Paso A');
+    expect(requestButtons()[0].textContent).toContain('Regenerar sugerencia con IA');
+    expect(requestButtons()[0].disabled).toBe(false);
+    expect(aiJobsService.get).toHaveBeenCalledWith('job-1');
+  });
+
+  it('una guía que tarda más de 30 s se obtiene igual (ya no hay corte a los 30 s)', async () => {
+    aiJobsService.get
+      .mockResolvedValueOnce({ data: job('RUNNING') })
+      .mockResolvedValueOnce({ data: job('RUNNING') })
+      .mockResolvedValueOnce({ data: job('RUNNING') })
+      .mockResolvedValue({ data: succeeded() });
+    await openSuggestions();
+    await request();
+
+    await advance(40_000);
+
+    expect(document.body.textContent).toContain('Definir una política');
+    expect(notification.error).not.toHaveBeenCalled();
+  });
 
   it('«Usar en la acción» copia el resumen y los pasos al texto de la acción', async () => {
     await openSuggestions();
-    await generate();
+    await generateReady();
     byText('Usar en la acción').click();
     await flushPromises();
 
     expect(actionBoxes()[0].value).toBe(GUIDE_TEXT);
   });
 
-  it('usada sin editar y creada: queda registrada como aceptada sin editar', async () => {
+  it('usada sin editar: la acción lleva guideId y el servidor registra el feedback', async () => {
     await openSuggestions();
-    await generate();
+    await generateReady();
     byText('Usar en la acción').click();
     await flushPromises();
     byText('Crear seleccionadas').click();
     await flushPromises();
 
     expect(improvementService.create).toHaveBeenCalledWith(
-      expect.objectContaining({ controlId: 'c1', action: GUIDE_TEXT }),
-    );
-    expect(sent()).toEqual([
-      {
+      expect.objectContaining({
         controlId: 'c1',
-        currentLevel: 0,
-        targetLevel: 2,
-        originalSummary: 'Definir una política',
-        originalTips: ['Paso A', 'Paso B'],
-        outcome: 'ACCEPTED_UNEDITED',
-      },
-    ]);
+        action: GUIDE_TEXT,
+        guideId: 'guide-1',
+        guideEdited: false,
+      }),
+    );
+    // El feedback lo registra el servidor al crear la acción: el frontend ya no lo manda.
+    expect(improvementService.sendSuggestionFeedback).not.toHaveBeenCalled();
   });
 
-  it('usada y editada: registra la original y el texto final', async () => {
+  it('usada y editada: guideEdited viaja en true con el texto final como acción', async () => {
     await openSuggestions();
-    await generate();
+    await generateReady();
     byText('Usar en la acción').click();
     await flushPromises();
     await typeInto(actionBoxes()[0], 'Texto corregido por la persona');
     byText('Crear seleccionadas').click();
     await flushPromises();
 
-    expect(sent()).toHaveLength(1);
-    expect(sent()[0]).toMatchObject({
-      outcome: 'ACCEPTED_EDITED',
-      originalSummary: 'Definir una política',
-      originalTips: ['Paso A', 'Paso B'],
-      editedText: 'Texto corregido por la persona',
-    });
+    expect(improvementService.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'Texto corregido por la persona',
+        guideId: 'guide-1',
+        guideEdited: true,
+      }),
+    );
   });
 
-  it('generada pero no usada: se registra como rechazada al crear', async () => {
+  it('generada pero no usada: la acción se crea sin guideId', async () => {
     await openSuggestions();
-    await generate();
+    await generateReady();
     byText('Crear seleccionadas').click();
     await flushPromises();
 
-    expect(sent().map((f) => f.outcome)).toEqual(['REJECTED']);
+    const sentDto = improvementService.create.mock.calls[0][0];
+    expect(sentDto).not.toHaveProperty('guideId');
+    expect(sentDto).not.toHaveProperty('guideEdited');
   });
 
-  it('generada y con el modal cerrado sin crear: se registra como rechazada', async () => {
+  it('al crear la acción se olvida el trabajo guardado', async () => {
     await openSuggestions();
-    await generate();
-    byText('Cerrar').click();
-    await flushPromises();
-
-    expect(sent().map((f) => f.outcome)).toEqual(['REJECTED']);
-    expect(improvementService.create).not.toHaveBeenCalled();
-  });
-
-  it('usada pero deseleccionada: se registra como rechazada', async () => {
-    await openSuggestions();
-    await generate();
-    byText('Usar en la acción').click();
-    await flushPromises();
-    const check = document.body.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
-    check.checked = false;
-    check.dispatchEvent(new Event('change'));
-    await flushPromises();
-    byText('Cerrar').click();
-    await flushPromises();
-
-    expect(sent().map((f) => f.outcome)).toEqual(['REJECTED']);
-  });
-
-  it('regenerar registra la anterior como rechazada y la nueva sigue su camino', async () => {
-    await openSuggestions();
-    await generate();
-    improvementService.getRemediationTips.mockResolvedValue({
-      data: { summary: 'Otra guía', tips: ['Otro paso'], generated: true },
-    });
-    await generate();
+    await generateReady();
+    expect(window.localStorage.getItem('prisma.aiGuideJobs.eval-1')).not.toBeNull();
     byText('Usar en la acción').click();
     await flushPromises();
     byText('Crear seleccionadas').click();
     await flushPromises();
 
-    expect(sent().map((f) => [f.outcome, f.originalSummary])).toEqual([
-      ['REJECTED', 'Definir una política'],
-      ['ACCEPTED_UNEDITED', 'Otra guía'],
-    ]);
+    expect(window.localStorage.getItem('prisma.aiGuideJobs.eval-1')).toBeNull();
   });
 
-  it('si la IA no generó la guía (texto de reemplazo) no se ofrece usarla ni se registra nada', async () => {
-    await openSuggestions();
-    improvementService.getRemediationTips.mockResolvedValue({
-      data: { summary: '', tips: ['No se pudo generar'], generated: false },
+  it('si el trabajo falla muestra qué pasó y cómo seguir, y se puede volver a pedir', async () => {
+    aiJobsService.get.mockResolvedValue({
+      data: job('FAILED', { errorCode: 'AI_UNAVAILABLE', errorMessage: 'caído' }),
     });
-    await generate();
+    await openSuggestions();
+    await request();
+    await advance(3000);
 
-    expect(
-      Array.from(document.body.querySelectorAll('button')).some((b) =>
-        b.textContent?.includes('Usar en la acción'),
-      ),
-    ).toBe(false);
+    const error = document.body.querySelector('[data-testid="tips-error"]')!;
+    expect(error.textContent).toContain('no está disponible');
+    expect(error.textContent).toContain('Probá de nuevo');
+    expect(hasButton('Usar en la acción')).toBe(false);
+    expect(requestButtons()[0].disabled).toBe(false);
+    expect(window.localStorage.getItem('prisma.aiGuideJobs.eval-1')).toBeNull();
+  });
+
+  it('un prompt demasiado largo sugiere redactar la acción a mano', async () => {
+    aiJobsService.get.mockResolvedValue({
+      data: job('FAILED', { errorCode: 'PROMPT_TOO_LARGE', errorMessage: 'x' }),
+    });
+    await openSuggestions();
+    await request();
+    await advance(3000);
+
+    expect(document.body.querySelector('[data-testid="tips-error"]')!.textContent).toContain(
+      'Redactá la acción a mano',
+    );
+  });
+
+  it('si no se pudo encolar (límite de pendientes) avisa con el mensaje del servidor', async () => {
+    improvementService.requestTipsAsync.mockRejectedValue({
+      response: { data: { message: 'Hay demasiadas guías de IA en proceso (20).' } },
+    });
+    await openSuggestions();
+    await request();
+
+    expect(notification.error).toHaveBeenCalledWith('Hay demasiadas guías de IA en proceso (20).');
+    expect(requestButtons()[0].disabled).toBe(false);
+  });
+
+  it('un trabajo en cola se puede cancelar', async () => {
+    aiJobsService.get.mockResolvedValue({ data: job('QUEUED', { queuePosition: 2 }) });
+    aiJobsService.cancel.mockResolvedValue({ data: job('CANCELLED') });
+    await openSuggestions();
+    await request();
+
+    (document.body.querySelector('[data-testid="cancel-tips"]') as HTMLButtonElement).click();
+    await flushPromises();
+
+    expect(aiJobsService.cancel).toHaveBeenCalledWith('job-1');
+    expect(requestButtons()[0].textContent).toContain('¿Cómo puedo solucionar esto?');
+    expect(window.localStorage.getItem('prisma.aiGuideJobs.eval-1')).toBeNull();
+  });
+
+  it('uno que ya corre no ofrece cancelar', async () => {
+    aiJobsService.get.mockResolvedValue({ data: job('RUNNING') });
+    await openSuggestions();
+    await request();
+    await advance(3000);
+
+    expect(document.body.querySelector('[data-testid="cancel-tips"]')).toBeNull();
+  });
+
+  it('si no se puede cancelar (ya lo tomaron) avisa y sigue consultando', async () => {
+    aiJobsService.get.mockResolvedValue({ data: job('QUEUED') });
+    aiJobsService.cancel.mockRejectedValue({
+      response: { data: { message: 'El trabajo ya se está ejecutando y no se puede cancelar' } },
+    });
+    await openSuggestions();
+    await request();
+
+    (document.body.querySelector('[data-testid="cancel-tips"]') as HTMLButtonElement).click();
+    await flushPromises();
+
+    expect(notification.error).toHaveBeenCalledWith(
+      'El trabajo ya se está ejecutando y no se puede cancelar',
+    );
+    expect(requestButtons()[0].disabled).toBe(true);
+  });
+
+  it('cerrar el modal corta el sondeo pero el trabajo se retoma al volver a abrirlo', async () => {
+    aiJobsService.get.mockResolvedValue({ data: job('RUNNING') });
+    await openSuggestions();
+    await request();
     byText('Cerrar').click();
     await flushPromises();
-    expect(improvementService.sendSuggestionFeedback).not.toHaveBeenCalled();
-  });
+    aiJobsService.get.mockClear();
 
-  it('si la guía no se pidió, no se registra nada', async () => {
-    await openSuggestions();
-    byText('Crear seleccionadas').click();
+    await advance(30_000);
+    expect(aiJobsService.get).not.toHaveBeenCalled();
+
+    // Vuelve: el trabajo terminó mientras tanto.
+    aiJobsService.get.mockResolvedValue({ data: succeeded() });
+    byText('Generar Sugerencias').click();
     await flushPromises();
 
-    expect(improvementService.sendSuggestionFeedback).not.toHaveBeenCalled();
+    expect(aiJobsService.get).toHaveBeenCalledWith('job-1');
+    expect(document.body.textContent).toContain('Definir una política');
+  });
+
+  it('sobrevive a recargar la página: el trabajo guardado se retoma al abrir las sugerencias', async () => {
+    window.localStorage.setItem('prisma.aiGuideJobs.eval-1', JSON.stringify({ 'c1:s1': 'job-1' }));
+    aiJobsService.get.mockResolvedValue({ data: succeeded() });
+    await openSuggestions();
+
+    expect(aiJobsService.get).toHaveBeenCalledWith('job-1');
+    expect(document.body.textContent).toContain('Paso B');
+    expect(improvementService.requestTipsAsync).not.toHaveBeenCalled();
+  });
+
+  it('al recargar, un trabajo todavía activo sigue consultándose', async () => {
+    window.localStorage.setItem('prisma.aiGuideJobs.eval-1', JSON.stringify({ 'c1:s1': 'job-1' }));
+    aiJobsService.get
+      .mockResolvedValueOnce({ data: job('RUNNING') })
+      .mockResolvedValue({ data: succeeded() });
+    await openSuggestions();
+    expect(requestButtons()[0].textContent).toContain('Generando sugerencia…');
+
+    await advance(3000);
+
+    expect(document.body.textContent).toContain('Definir una política');
+  });
+
+  it('un trabajo guardado que ya no existe se olvida sin molestar', async () => {
+    window.localStorage.setItem('prisma.aiGuideJobs.eval-1', JSON.stringify({ 'c1:s1': 'viejo' }));
+    aiJobsService.get.mockRejectedValue({ response: { status: 404 } });
+    await openSuggestions();
+
+    expect(notification.error).not.toHaveBeenCalled();
+    expect(requestButtons()[0].disabled).toBe(false);
+    expect(window.localStorage.getItem('prisma.aiGuideJobs.eval-1')).toBeNull();
+  });
+
+  it('una falla de red al consultar no pierde el trabajo: reintenta', async () => {
+    aiJobsService.get
+      .mockRejectedValueOnce(new Error('network'))
+      .mockResolvedValue({ data: succeeded() });
+    await openSuggestions();
+    await request();
+
+    await advance(3000);
+    expect(requestButtons()[0].textContent).toContain('En cola…');
+    await advance(5000);
+
+    expect(document.body.textContent).toContain('Definir una política');
+  });
+
+  it('la consulta pierde acceso (403): se descarta y se puede volver a pedir', async () => {
+    aiJobsService.get.mockRejectedValue({ response: { status: 403 } });
+    await openSuggestions();
+    await request();
+    await advance(3000);
+
+    expect(requestButtons()[0].disabled).toBe(false);
+  });
+
+  it('el indicador «Tareas de IA» cuenta los trabajos propios en curso', async () => {
+    aiJobsService.listMine.mockResolvedValue({
+      data: [job('RUNNING'), job('QUEUED'), job('SUCCEEDED'), job('FAILED')],
+    });
+    await mountView();
+
+    expect(document.body.querySelector('[data-testid="ai-tasks"]')!.textContent).toContain(
+      'Tareas de IA: 2 en curso',
+    );
+  });
+
+  it('sin trabajos en curso no muestra el indicador', async () => {
+    await mountView();
+
+    expect(document.body.querySelector('[data-testid="ai-tasks"]')).toBeNull();
+  });
+
+  it('regenerar pide un trabajo nuevo y reemplaza la guía al terminar', async () => {
+    await openSuggestions();
+    await generateReady();
+    improvementService.requestTipsAsync.mockResolvedValue({
+      data: { jobId: 'job-2', status: 'QUEUED' },
+    });
+    aiJobsService.get.mockResolvedValue({
+      data: job('SUCCEEDED', {
+        id: 'job-2',
+        guide: { id: 'guide-2', controlId: 'c1', summary: 'Otra guía', tips: ['Otro paso'] },
+      }),
+    });
+    await request();
+    await advance(3000);
+
+    expect(improvementService.requestTipsAsync).toHaveBeenCalledTimes(2);
+    expect(document.body.textContent).toContain('Otra guía');
+    byText('Usar en la acción').click();
+    await flushPromises();
+    byText('Crear seleccionadas').click();
+    await flushPromises();
+    expect(improvementService.create).toHaveBeenCalledWith(
+      expect.objectContaining({ guideId: 'guide-2' }),
+    );
   });
 
   it('dos sugerencias del mismo control no mezclan su guía', async () => {
     await openSuggestions([suggestion('c1', 's1'), suggestion('c1', 's2')]);
-    await generate(0);
+    await generateReady(0);
 
     const useButtons = Array.from(document.body.querySelectorAll('button')).filter((b) =>
       b.textContent?.includes('Usar en la acción'),
@@ -1029,15 +1282,15 @@ describe('ImprovementView: guías de IA en las sugerencias (PRI-370)', () => {
     expect(document.body.textContent?.match(/Definir una política/g)).toHaveLength(1);
   });
 
-  it('si falla el registro no molesta a la persona', async () => {
-    improvementService.sendSuggestionFeedback.mockRejectedValue(new Error('boom'));
+  it('si la guía no se pidió no se consulta ningún trabajo', async () => {
     await openSuggestions();
-    await generate();
-    byText('Cerrar').click();
+    byText('Crear seleccionadas').click();
     await flushPromises();
 
-    expect(notification.error).not.toHaveBeenCalled();
+    expect(aiJobsService.get).not.toHaveBeenCalled();
+    expect(improvementService.sendSuggestionFeedback).not.toHaveBeenCalled();
   });
+
   it('muestra «También cuenta en» cuando el control pertenece a más de una subcategoría', async () => {
     await openSuggestions([
       suggestion('c1', 's1', { subcategoryNames: ['Sub s1', 'Sub s2', 'Sub s3'] }),
