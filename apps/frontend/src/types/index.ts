@@ -530,6 +530,150 @@ export interface AiSuggestionFeedback {
   editedText?: string;
 }
 
+/** RF-VIZ-07 (PRI-321): una evaluación aprobada (o archivada tras aprobarse) en la tendencia. */
+export interface MaturityTrendPoint {
+  evaluationId: string;
+  evaluationName: string;
+  /** Estado de la evaluación (EVALUATION_STATUS_CONFIG). */
+  status: string;
+  /** true = en curso o en auditoría: valor de hoy, todavía no validado por el auditor. */
+  provisional: boolean;
+  /** Fecha del punto: la de aprobación, o «ahora» para una provisoria. */
+  date: string;
+  approvedAt: string | null;
+  /** null = sin perfil comunitario («Catálogo completo»). */
+  profileId: string | null;
+  profileName: string;
+  compliantControls: number;
+  totalControls: number;
+  /** Controles cumplidos sobre los del alcance, con un decimal (0–100). */
+  compliancePercent: number;
+  /** Madurez global sin redondear, con dos decimales (0–4). */
+  maturityAverage: number;
+  /** Nivel global oficial (entero). */
+  globalMaturity: number | null;
+}
+
+/** Tendencia de UNA organización (multitenant: nunca mezcla organizaciones). */
+export interface MaturityTrend {
+  // null: el administrador sin organización elegida y sin ninguna con actividad.
+  organizationId: string | null;
+  organizationName: string | null;
+  points: MaturityTrendPoint[];
+}
+
+/** Un control que pasó a «Cumple» (gained) o dejó de cumplirse (lost) en una semana. */
+export interface ControlChange {
+  controlId: string;
+  code: string;
+  description: string;
+  functionName: string;
+  changedAt: string;
+  changedBy: string | null;
+}
+
+/** Escala del avance: día, semana o mes. */
+export type ProgressGranularity = 'DAY' | 'WEEK' | 'MONTH';
+
+/** Un período (día, semana o mes) del avance de una evaluación. */
+export interface ProgressPeriod {
+  periodStart: string;
+  periodEnd: string;
+  compliantControls: number;
+  answeredControls: number;
+  totalControls: number;
+  /** Respuestas guardadas en el período (aunque repitan el valor). */
+  responseActivity: number;
+  /** Evidencias subidas en el período. */
+  evidenceActivity: number;
+  gained: ControlChange[];
+  lost: ControlChange[];
+}
+
+/** RF-VIZ-07 (PRI-321): avance semana a semana, reconstruido con la bitácora de respuestas. */
+export interface EvaluationProgress {
+  evaluationId: string;
+  evaluationName: string;
+  status: string;
+  statusLabel: string;
+  profileName: string;
+  startedAt: string | null;
+  compliantControls: number;
+  answeredControls: number;
+  totalControls: number;
+  last30DaysDelta: number;
+  /** Controles respondidos ganados en los últimos 30 días (el trabajo, aunque no cambie «Cumple»). */
+  last30DaysAnsweredDelta: number;
+  /** Escala usada (con «automática», la elige el backend según lo que dura la historia). */
+  granularity: ProgressGranularity;
+  /** El primero es un período vacío anterior al inicio: la curva arranca en 0. */
+  periods: ProgressPeriod[];
+  statusEvents: { status: string; label: string; occurredAt: string }[];
+}
+
+/** RF-VIZ-06 (PRI-320): evaluación finalizada que se puede elegir para comparar. */
+export interface ComparisonCandidate {
+  id: string;
+  name: string;
+  profileName: string;
+  approvedAt: string | null;
+  globalMaturity: number | null;
+}
+
+/** Una de las dos evaluaciones comparadas, con su medición. */
+export interface ComparedEvaluation {
+  id: string;
+  name: string;
+  profileName: string;
+  approvedAt: string | null;
+  globalMaturity: number | null;
+  maturityAverage: number;
+  compliantControls: number;
+  totalControls: number;
+  compliancePercent: number;
+}
+
+/** Nivel promedio de una función en A y en B (0–4); null si esa evaluación no la tiene. */
+export interface FunctionDelta {
+  functionId: string;
+  functionName: string;
+  levelA: number | null;
+  levelB: number | null;
+  delta: number | null;
+}
+
+/** Nivel de una subcategoría en A y en B; levelA o levelB null = está en una sola. */
+export interface SubcategoryDelta {
+  subcategoryId: string;
+  code: string | null;
+  name: string;
+  functionId: string;
+  functionName: string;
+  categoryName: string;
+  levelA: number | null;
+  levelB: number | null;
+  delta: number | null;
+  targetLevel: number | null;
+}
+
+/** RF-VIZ-06 (PRI-320): comparativo entre dos evaluaciones de la misma organización. */
+export interface EvaluationComparison {
+  organizationId: string;
+  organizationName: string;
+  evaluationA: ComparedEvaluation;
+  evaluationB: ComparedEvaluation;
+  sameProfile: boolean;
+  subcategoriesUp: number;
+  subcategoriesDown: number;
+  subcategoriesSame: number;
+  onlyInA: number;
+  onlyInB: number;
+  /** Una frase con lo principal: cambio global, mayor mejora y mayor baja. */
+  reading: string;
+  functions: FunctionDelta[];
+  subcategories: SubcategoryDelta[];
+}
+
 export interface DashboardStats {
   totalEvaluations: number;
   activeOrganizations: number;

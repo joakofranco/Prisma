@@ -41,6 +41,11 @@ import type {
   ControlGuideImportResult,
   OrganizationReactivation,
   InviteUserPayload,
+  MaturityTrend,
+  EvaluationProgress,
+  ProgressGranularity,
+  ComparisonCandidate,
+  EvaluationComparison,
 } from '@/types';
 
 export const usersService = {
@@ -394,9 +399,40 @@ export const reportsService = {
   },
 };
 
+// RF-VIZ-06 (PRI-320): comparativo entre dos evaluaciones finalizadas de la misma organización.
+export const comparisonService = {
+  /** Evaluaciones finalizadas de la organización (sin organización: la del responsable). */
+  candidates(organizationId?: string) {
+    return apiClient.get<ComparisonCandidate[]>('/evaluations/compare/candidates', {
+      params: organizationId ? { organizationId } : {},
+    });
+  },
+  compare(a: string, b: string) {
+    return apiClient.get<EvaluationComparison>('/evaluations/compare', { params: { a, b } });
+  },
+  downloadPdf(a: string, b: string) {
+    return apiClient.get<Blob>('/evaluations/compare/pdf', {
+      params: { a, b },
+      responseType: 'blob',
+    });
+  },
+};
+
 export const dashboardService = {
   getStats(tenantId?: string) {
     return apiClient.get<DashboardStats>('/dashboard/stats', { params: { tenantId } });
+  },
+  /** RF-VIZ-07: tendencia de una organización. El responsable no la elige (es la suya). */
+  getMaturityTrend(organizationId?: string) {
+    return apiClient.get<MaturityTrend>('/dashboard/maturity-trend', {
+      params: organizationId ? { organizationId } : {},
+    });
+  },
+  /** Avance de una evaluación por día, semana o mes (sin escala: la elige el backend). */
+  getEvaluationProgress(evaluationId: string, granularity?: ProgressGranularity) {
+    return apiClient.get<EvaluationProgress>(`/dashboard/evaluations/${evaluationId}/progress`, {
+      params: granularity ? { granularity } : {},
+    });
   },
 };
 
