@@ -566,6 +566,69 @@ export interface EvaluationProgress {
   statusEvents: { status: string; label: string; occurredAt: string }[];
 }
 
+/** RF-VIZ-06 (PRI-320): evaluación finalizada que se puede elegir para comparar. */
+export interface ComparisonCandidate {
+  id: string;
+  name: string;
+  profileName: string;
+  approvedAt: string | null;
+  globalMaturity: number | null;
+}
+
+/** Una de las dos evaluaciones comparadas, con su medición. */
+export interface ComparedEvaluation {
+  id: string;
+  name: string;
+  profileName: string;
+  approvedAt: string | null;
+  globalMaturity: number | null;
+  maturityAverage: number;
+  compliantControls: number;
+  totalControls: number;
+  compliancePercent: number;
+}
+
+/** Nivel promedio de una función en A y en B (0–4); null si esa evaluación no la tiene. */
+export interface FunctionDelta {
+  functionId: string;
+  functionName: string;
+  levelA: number | null;
+  levelB: number | null;
+  delta: number | null;
+}
+
+/** Nivel de una subcategoría en A y en B; levelA o levelB null = está en una sola. */
+export interface SubcategoryDelta {
+  subcategoryId: string;
+  code: string | null;
+  name: string;
+  functionId: string;
+  functionName: string;
+  categoryName: string;
+  levelA: number | null;
+  levelB: number | null;
+  delta: number | null;
+  targetLevel: number | null;
+}
+
+/** RF-VIZ-06 (PRI-320): comparativo entre dos evaluaciones de la misma organización. */
+export interface EvaluationComparison {
+  organizationId: string;
+  organizationName: string;
+  evaluationA: ComparedEvaluation;
+  evaluationB: ComparedEvaluation;
+  sameProfile: boolean;
+  subcategoriesUp: number;
+  subcategoriesDown: number;
+  subcategoriesSame: number;
+  onlyInA: number;
+  onlyInB: number;
+  /** Una frase con lo principal: cambio global, mayor mejora y mayor baja. */
+  reading: string;
+  functions: FunctionDelta[];
+  subcategories: SubcategoryDelta[];
+}
+
 export interface DashboardStats {
   totalEvaluations: number;
   activeOrganizations: number;

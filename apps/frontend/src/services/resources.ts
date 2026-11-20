@@ -42,6 +42,8 @@ import type {
   MaturityTrend,
   EvaluationProgress,
   ProgressGranularity,
+  ComparisonCandidate,
+  EvaluationComparison,
 } from '@/types';
 
 export const usersService = {
@@ -380,6 +382,25 @@ export const reportsService = {
   },
   exportImprovementPlanExcel(evaluationId: string) {
     return apiClient.get(`/reports/${evaluationId}/improvement-plan/excel`, {
+      responseType: 'blob',
+    });
+  },
+};
+
+// RF-VIZ-06 (PRI-320): comparativo entre dos evaluaciones finalizadas de la misma organización.
+export const comparisonService = {
+  /** Evaluaciones finalizadas de la organización (sin organización: la del responsable). */
+  candidates(organizationId?: string) {
+    return apiClient.get<ComparisonCandidate[]>('/evaluations/compare/candidates', {
+      params: organizationId ? { organizationId } : {},
+    });
+  },
+  compare(a: string, b: string) {
+    return apiClient.get<EvaluationComparison>('/evaluations/compare', { params: { a, b } });
+  },
+  downloadPdf(a: string, b: string) {
+    return apiClient.get<Blob>('/evaluations/compare/pdf', {
+      params: { a, b },
       responseType: 'blob',
     });
   },

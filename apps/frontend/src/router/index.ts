@@ -52,6 +52,17 @@ const routes: RouteRecordRaw[] = [
     },
   },
   {
+    // RF-VIZ-06 (PRI-320): actores del RF (Responsable y Auditor) más el Administrador.
+    path: '/evaluations/compare',
+    name: 'EvaluationCompare',
+    component: () => import('@/views/evaluations/EvaluationCompareView.vue'),
+    meta: {
+      requiresAuth: true,
+      title: 'Comparar evaluaciones',
+      roles: ['PRISMA_ADMIN', 'ORG_RESPONSIBLE', 'AUDITOR'],
+    },
+  },
+  {
     path: '/evaluations/:id',
     name: 'EvaluationDetail',
     component: () => import('@/views/evaluations/EvaluationDetailView.vue'),

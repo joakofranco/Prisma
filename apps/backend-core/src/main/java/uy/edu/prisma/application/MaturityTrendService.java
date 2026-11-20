@@ -131,6 +131,18 @@ public class MaturityTrendService {
     return own;
   }
 
+  /**
+   * Mide UNA evaluación (controles cumplidos y madurez promedio) con el mismo cálculo que la
+   * tendencia. La usa el comparativo (PRI-320). No valida acceso: lo hace quien llama.
+   */
+  public MaturityTrendPointDto measure(Evaluation e) {
+    MaturityTrendPointDto p = point(e, OffsetDateTime.now(), new HashMap<>(), new HashMap<>());
+    if (p == null) {
+      throw new IllegalStateException("La evaluación " + e.getId() + " no tiene respuestas");
+    }
+    return p;
+  }
+
   /** {@code null} para una evaluación sin aprobar que todavía no tiene ninguna respuesta. */
   private MaturityTrendPointDto point(
       Evaluation e,

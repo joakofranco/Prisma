@@ -78,6 +78,13 @@
     <EvaluationProgressSection v-else-if="trend && view === 'progress'" :points="trend.points" />
 
     <template v-else-if="trend">
+      <!-- RF-VIZ-06 (PRI-320): atajo al comparativo entre dos evaluaciones de esta organización. -->
+      <router-link
+        :to="{ path: '/evaluations/compare', query: { organizationId: trend.organizationId } }"
+        class="inline-flex text-sm font-semibold text-blue-700 hover:underline dark:text-blue-300"
+        data-testid="trend-compare-link"
+        >Comparar dos evaluaciones →</router-link
+      >
       <div
         class="flex flex-wrap items-end gap-6 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-900/40"
       >

@@ -876,6 +876,70 @@ public class Dto {
   /** Cambio de estado de la evaluación (marca vertical en el gráfico de avance). */
   public record ProgressStatusEventDto(String status, String label, OffsetDateTime occurredAt) {}
 
+  /** RF-VIZ-06 (PRI-320): evaluación finalizada que se puede elegir para comparar. */
+  public record ComparisonCandidateDto(
+      UUID id,
+      String name,
+      String profileName,
+      OffsetDateTime approvedAt,
+      Integer globalMaturity) {}
+
+  /** Una de las dos evaluaciones comparadas, con su medición (la misma de la tendencia). */
+  public record ComparedEvaluationDto(
+      UUID id,
+      String name,
+      String profileName,
+      OffsetDateTime approvedAt,
+      Integer globalMaturity,
+      double maturityAverage,
+      int compliantControls,
+      int totalControls,
+      double compliancePercent) {}
+
+  /** Nivel promedio de una función en A y en B (0–4, dos decimales); null si no la tiene. */
+  public record FunctionDeltaDto(
+      UUID functionId, String functionName, Double levelA, Double levelB, Double delta) {}
+
+  /**
+   * Nivel de una subcategoría en A y en B. {@code levelA} o {@code levelB} null = está en una sola
+   * evaluación (perfiles distintos): sin delta.
+   */
+  public record SubcategoryDeltaDto(
+      UUID subcategoryId,
+      String code,
+      String name,
+      UUID functionId,
+      String functionName,
+      String categoryName,
+      Integer levelA,
+      Integer levelB,
+      Integer delta,
+      Integer targetLevel) {}
+
+  /**
+   * RF-VIZ-06 (PRI-320): comparativo entre dos evaluaciones de la MISMA organización. {@code
+   * reading}: una frase con lo principal (cambio global, mayor mejora y mayor baja).
+   */
+  public record EvaluationComparisonDto(
+      UUID organizationId,
+      String organizationName,
+      ComparedEvaluationDto evaluationA,
+      ComparedEvaluationDto evaluationB,
+      boolean sameProfile,
+      int subcategoriesUp,
+      int subcategoriesDown,
+      int subcategoriesSame,
+      int onlyInA,
+      int onlyInB,
+      String reading,
+      List<FunctionDeltaDto> functions,
+      List<SubcategoryDeltaDto> subcategories) {
+    public EvaluationComparisonDto {
+      functions = functions == null ? List.of() : List.copyOf(functions);
+      subcategories = subcategories == null ? List.of() : List.copyOf(subcategories);
+    }
+  }
+
   public record DashboardStatsDto(
       long totalEvaluations,
       long activeOrganizations,
