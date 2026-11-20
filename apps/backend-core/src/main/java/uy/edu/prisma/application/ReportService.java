@@ -310,7 +310,7 @@ public class ReportService {
    */
   private void addCategoryMaturity(
       Document document, PdfWriter writer, List<MaturityResult> results)
-      throws DocumentException, java.io.IOException {
+      throws DocumentException, IOException {
     Paragraph heading = new Paragraph("Madurez por Categoría", PdfA.font(true, 12, SLATE_900));
     heading.setSpacingAfter(4);
 
@@ -970,7 +970,7 @@ public class ReportService {
 
   private void addFunctionMaturity(
       Document document, PdfWriter writer, List<MaturityResult> results)
-      throws DocumentException, java.io.IOException {
+      throws DocumentException, IOException {
     Paragraph heading = new Paragraph("Madurez por Función", PdfA.font(true, 12, SLATE_900));
     heading.setSpacingAfter(6);
     document.add(heading);

@@ -997,6 +997,40 @@ public class Dto {
     }
   }
 
+  public record ReportSignatureDto(
+      String role,
+      String signerName,
+      String signerEmail,
+      String signerUserId,
+      String signedAt,
+      boolean integrityValid,
+      boolean trusted,
+      boolean coversWholeDocument) {}
+
+  public record ReportVerificationDto(
+      boolean sealingAvailable,
+      boolean signed,
+      boolean sealedByPrisma,
+      boolean signedByUser,
+      boolean intact,
+      boolean registered,
+      String registeredAt,
+      String registeredUserId,
+      boolean userMatchesRegistry,
+      boolean valid,
+      String sha256,
+      String message,
+      List<ReportSignatureDto> signatures) {
+    public ReportVerificationDto {
+      signatures = signatures == null ? List.of() : List.copyOf(signatures);
+    }
+
+    @Override
+    public List<ReportSignatureDto> signatures() {
+      return Collections.unmodifiableList(signatures);
+    }
+  }
+
   public record CreateImprovementPlanDto(
       UUID evaluationId,
       UUID controlId,

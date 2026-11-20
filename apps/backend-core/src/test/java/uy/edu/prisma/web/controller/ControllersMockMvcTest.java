@@ -41,6 +41,7 @@ class ControllersMockMvcTest {
   @Mock private AiCitationFeedbackService aiCitationFeedbackService;
   @Mock private ReportService reportService;
   @Mock private uy.edu.prisma.application.TechnicalReportService technicalReportService;
+  @Mock private uy.edu.prisma.application.ReportSealingService reportSealingService;
   @Mock private EmailSettingsService emailSettingsService;
   @Mock private PlanDeadlineSettingsService planDeadlineSettingsService;
   @Mock private SessionSettingsService sessionSettingsService;
@@ -97,9 +98,12 @@ class ControllersMockMvcTest {
     improvement =
         MockMvcBuilders.standaloneSetup(new ImprovementPlanController(improvementPlanService))
             .build();
+    lenient()
+        .when(reportSealingService.seal(any(), any(), any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
     reports =
         MockMvcBuilders.standaloneSetup(
-                new ReportsController(reportService, technicalReportService))
+                new ReportsController(reportService, technicalReportService, reportSealingService))
             .build();
     emailSettings =
         MockMvcBuilders.standaloneSetup(new EmailSettingsController(emailSettingsService)).build();
@@ -1407,6 +1411,51 @@ class ControllersMockMvcTest {
         .perform(get("/api/reports/{id}/pdf", id))
         .andExpect(status().isOk())
         .andExpect(content().contentType(MediaType.APPLICATION_PDF));
+  }
+
+  @Test
+  void verifyReportReturnsTheVerificationOfTheUploadedPdf() throws Exception {
+    var dto =
+        new uy.edu.prisma.web.dto.Dto.ReportVerificationDto(
+            true, true, true, true, true, true, null, null, true, true, "abc", "ok", List.of());
+    when(reportSealingService.verify(any())).thenReturn(dto);
+
+    reports
+        .perform(
+            org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart(
+                    "/api/reports/verify")
+                .file(
+                    new org.springframework.mock.web.MockMultipartFile(
+                        "file", "reporte.pdf", "application/pdf", "%PDF-1.4".getBytes())))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.valid").value(true))
+        .andExpect(jsonPath("$.sha256").value("abc"));
+  }
+
+  @Test
+  void verifyReportRejectsAnEmptyFile() {
+    var error =
+        assertThrows(
+            jakarta.servlet.ServletException.class,
+            () ->
+                reports.perform(
+                    org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart(
+                            "/api/reports/verify")
+                        .file(
+                            new org.springframework.mock.web.MockMultipartFile(
+                                "file", "reporte.pdf", "application/pdf", new byte[0]))));
+
+    assertInstanceOf(
+        uy.edu.prisma.domain.exception.InvalidRequestException.class, error.getCause());
+  }
+
+  @Test
+  void verifyReportIsOpenToAdminOrgResponsibleAndAuditor() throws Exception {
+    var annotation =
+        ReportsController.class
+            .getMethod("verify", org.springframework.web.multipart.MultipartFile.class)
+            .getAnnotation(org.springframework.security.access.prepost.PreAuthorize.class);
+    assertEquals("hasAnyRole('PRISMA_ADMIN','ORG_RESPONSIBLE','AUDITOR')", annotation.value());
   }
 
   @Test
