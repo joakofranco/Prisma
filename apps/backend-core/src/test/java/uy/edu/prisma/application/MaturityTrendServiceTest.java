@@ -23,7 +23,6 @@ import uy.edu.prisma.domain.entity.Evaluation;
 import uy.edu.prisma.domain.entity.EvaluationResponse;
 import uy.edu.prisma.domain.entity.MaturityResult;
 import uy.edu.prisma.domain.entity.Organization;
-import uy.edu.prisma.domain.exception.InvalidRequestException;
 import uy.edu.prisma.domain.exception.ResourceNotFoundException;
 import uy.edu.prisma.domain.repository.CatalogControlRepository;
 import uy.edu.prisma.domain.repository.CatalogSubcategoryRepository;
@@ -219,11 +218,14 @@ class MaturityTrendServiceTest {
   }
 
   @Test
-  void withoutActivityTheAdminMustChooseTheOrganization() {
+  void withoutActivityTheAdminGetsAnEmptyTrendInsteadOfAnError() {
     when(currentUser.isPrismaAdmin()).thenReturn(true);
     when(responseRepo.findOrganizationIdsByLatestResponse(any())).thenReturn(List.of());
 
-    assertThrows(InvalidRequestException.class, () -> service.trend(null));
+    MaturityTrendDto dto = service.trend(null);
+
+    assertNull(dto.organizationId());
+    assertTrue(dto.points().isEmpty());
   }
 
   @Test

@@ -17,7 +17,6 @@ import uy.edu.prisma.domain.entity.Evaluation;
 import uy.edu.prisma.domain.entity.EvaluationResponse;
 import uy.edu.prisma.domain.entity.MaturityResult;
 import uy.edu.prisma.domain.entity.Organization;
-import uy.edu.prisma.domain.exception.InvalidRequestException;
 import uy.edu.prisma.domain.exception.ResourceNotFoundException;
 import uy.edu.prisma.domain.repository.CatalogControlRepository;
 import uy.edu.prisma.domain.repository.CatalogSubcategoryRepository;
@@ -75,6 +74,11 @@ public class MaturityTrendService {
 
   public MaturityTrendDto trend(UUID requestedOrganizationId) {
     UUID organizationId = resolveOrganization(requestedOrganizationId);
+    if (organizationId == null) {
+      // El administrador sin organización elegida y sin ninguna con actividad: no es un error
+      // (el Panel arranca así en una instalación nueva), solo no hay tendencia que mostrar.
+      return new MaturityTrendDto(null, null, List.of());
+    }
     Organization organization =
         orgRepo
             .findById(organizationId)
@@ -108,7 +112,8 @@ public class MaturityTrendService {
    * El responsable no elige: es su organización, y pedir otra es un intento de ver datos ajenos. El
    * administrador elige una (la tendencia es siempre de una sola organización); si todavía no
    * eligió, se usa la organización activa con la respuesta más reciente, para que el Panel no
-   * arranque vacío.
+   * arranque vacío. Si tampoco hay ninguna, devuelve {@code null}: no hay tendencia que mostrar
+   * hasta que elija una.
    */
   private UUID resolveOrganization(UUID requested) {
     if (currentUser.isPrismaAdmin()) {
@@ -119,8 +124,7 @@ public class MaturityTrendService {
           .findOrganizationIdsByLatestResponse(org.springframework.data.domain.PageRequest.of(0, 1))
           .stream()
           .findFirst()
-          .orElseThrow(
-              () -> new InvalidRequestException("Elegí la organización para ver su tendencia"));
+          .orElse(null);
     }
     UUID own = currentUser.currentTenantId();
     if (requested != null && !requested.equals(own)) {

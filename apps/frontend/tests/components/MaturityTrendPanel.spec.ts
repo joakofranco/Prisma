@@ -231,14 +231,15 @@ describe('MaturityTrendPanel (PRI-321)', () => {
   });
 
   it('el administrador sin organizaciones con actividad ve el pedido de elegir una', async () => {
-    dashboardService.getMaturityTrend.mockRejectedValue({
-      response: { data: { message: 'Elegí la organización para ver su tendencia' } },
+    // El backend responde 200 con tendencia vacía (sin organización): no es un error.
+    dashboardService.getMaturityTrend.mockResolvedValue({
+      data: { organizationId: null, organizationName: null, points: [] },
     });
     const w = mountPanel(true);
     await flushPromises();
 
     expect(w.text()).toContain('Elegí una organización para ver su tendencia');
-    expect(w.text()).not.toContain('Elegí la organización para ver su tendencia');
+    expect(w.find('[role="alert"]').exists()).toBe(false);
   });
 
   it('arranca en «Avance de la evaluación» con las evaluaciones de la organización', async () => {

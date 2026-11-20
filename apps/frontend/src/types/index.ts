@@ -512,8 +512,9 @@ export interface MaturityTrendPoint {
 
 /** Tendencia de UNA organización (multitenant: nunca mezcla organizaciones). */
 export interface MaturityTrend {
-  organizationId: string;
-  organizationName: string;
+  // null: el administrador sin organización elegida y sin ninguna con actividad.
+  organizationId: string | null;
+  organizationName: string | null;
   points: MaturityTrendPoint[];
 }
 

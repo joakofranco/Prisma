@@ -318,6 +318,11 @@
       const { data } = await dashboardService.getMaturityTrend(
         props.isPlatformAdmin && organizationId.value ? organizationId.value : undefined,
       );
+      // Sin organización (instalación sin actividad): queda el pedido de elegir una.
+      if (data.organizationId === null) {
+        trend.value = null;
+        return;
+      }
       trend.value = data;
       // Al cambiar de organización arrancan marcados todos sus perfiles.
       selected.value = profileOptions(data.points).map((o) => o.key);
