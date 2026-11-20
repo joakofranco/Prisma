@@ -5,6 +5,8 @@ import java.util.Set;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import uy.edu.prisma.domain.entity.AiCitationValidationFeedback;
+import uy.edu.prisma.domain.entity.AiCitationValidationFeedback.Outcome;
 import uy.edu.prisma.domain.entity.AuditObservation;
 import uy.edu.prisma.domain.entity.AuditObservation.ObservationStatus;
 import uy.edu.prisma.domain.entity.AuditObservation.ObservationType;
@@ -16,12 +18,14 @@ import uy.edu.prisma.domain.entity.User;
 import uy.edu.prisma.domain.exception.ConflictException;
 import uy.edu.prisma.domain.exception.InvalidRequestException;
 import uy.edu.prisma.domain.exception.ResourceNotFoundException;
+import uy.edu.prisma.domain.repository.AiCitationValidationFeedbackRepository;
 import uy.edu.prisma.domain.repository.AuditObservationRepository;
 import uy.edu.prisma.domain.repository.CatalogControlRepository;
 import uy.edu.prisma.domain.repository.CatalogSubcategoryRepository;
 import uy.edu.prisma.domain.repository.EvaluationRepository;
 import uy.edu.prisma.domain.repository.EvidenceRepository;
 import uy.edu.prisma.web.dto.Dto.AuditObservationDto;
+import uy.edu.prisma.web.dto.Dto.CitationSourceDto;
 import uy.edu.prisma.web.dto.Dto.CreateAuditObservationDto;
 import uy.edu.prisma.web.dto.Dto.UpdateAuditObservationDto;
 
@@ -35,6 +39,7 @@ public class AuditObservationService {
   private final CatalogSubcategoryRepository subcategoryRepo;
   private final EvidenceRepository evidenceRepo;
   private final CurrentUserService currentUser;
+  private final AiCitationValidationFeedbackRepository validationFeedbackRepo;
 
   // Estados en los que la organización puede leer las observaciones del auditor: cuando la
   // evaluación vuelve (RETURNED) y después. Las observaciones son la forma en que el auditor le
@@ -57,13 +62,15 @@ public class AuditObservationService {
       CatalogControlRepository controlRepo,
       CatalogSubcategoryRepository subcategoryRepo,
       EvidenceRepository evidenceRepo,
-      CurrentUserService currentUser) {
+      CurrentUserService currentUser,
+      AiCitationValidationFeedbackRepository validationFeedbackRepo) {
     this.repo = repo;
     this.evaluationRepo = evaluationRepo;
     this.controlRepo = controlRepo;
     this.subcategoryRepo = subcategoryRepo;
     this.evidenceRepo = evidenceRepo;
     this.currentUser = currentUser;
+    this.validationFeedbackRepo = validationFeedbackRepo;
   }
 
   @Transactional(readOnly = true)
@@ -121,7 +128,38 @@ public class AuditObservationService {
                     : ObservationStatus.OPEN)
             .createdBy(currentUser.currentUser().orElse(null))
             .build();
-    return toDto(repo.save(obs));
+    AuditObservation saved = repo.save(obs);
+    if (dto.citation() != null) {
+      recordCitationValidation(dto.citation(), saved);
+    }
+    return toDto(saved);
+  }
+
+  /**
+   * C4b: al guardar una observación creada desde «Registrar como observación» de una cita, se
+   * registra la diferencia entre el texto que la app precargó y el que dejó el auditor, junto con
+   * el tipo que eligió. Se escribe SOLO al guardar (si cierra el formulario no queda nada) y el
+   * dataset es anónimo (V32/V33). Registrar una observación no dictamina el control: el tipo puede
+   * ser una no conformidad, que no lo respalda.
+   */
+  private void recordCitationValidation(CitationSourceDto citation, AuditObservation saved) {
+    if (saved.getControl() == null) {
+      throw new InvalidRequestException(
+          "Una observación creada desde una cita tiene que indicar el control");
+    }
+    boolean unedited = citation.prefillText().strip().equals(saved.getDescription().strip());
+    validationFeedbackRepo.save(
+        AiCitationValidationFeedback.builder()
+            .control(saved.getControl())
+            .fileName(citation.fileName())
+            .location(citation.location())
+            .snippet(citation.snippet())
+            .score(citation.score())
+            .prefillText(citation.prefillText())
+            .finalText(saved.getDescription())
+            .finalType(saved.getType().name())
+            .outcome(unedited ? Outcome.UNEDITED : Outcome.EDITED)
+            .build());
   }
 
   public AuditObservationDto update(UUID id, UpdateAuditObservationDto dto) {

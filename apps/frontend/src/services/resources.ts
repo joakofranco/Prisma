@@ -13,6 +13,7 @@ import type {
   Evidence,
   EvidenceCitation,
   CitationFeedbackItem,
+  CitationFeedbackResult,
   EvidenceRules,
   AuditObservation,
   AuditLog,
@@ -21,6 +22,7 @@ import type {
   RemediationTips,
   AiJob,
   AiJobAccepted,
+  CitationSource,
   AiSuggestionFeedback,
   MaturityResult,
   DashboardStats,
@@ -284,9 +286,22 @@ export const evidenceService = {
       `/evidence/evaluation/${evaluationId}/control/${controlId}/citations`,
     );
   },
-  /** El auditor acepta o rechaza las citas de la IA (la evaluación solo valida acceso y estado). */
-  sendCitationFeedback(evaluationId: string, items: CitationFeedbackItem[]) {
-    return apiClient.post<void>('/evidence/citations/feedback', { evaluationId, items });
+  /**
+   * El auditor acepta o rechaza las citas de la IA. Aceptar una cita valida el control (C4a): la
+   * respuesta dice qué pasó con el dictamen. Si habría que pisar un dictamen puesto a mano, el
+   * servidor responde 409 `VERDICT_OVERRIDE_REQUIRED` y hay que repetir con
+   * `confirmVerdictOverride = true`.
+   */
+  sendCitationFeedback(
+    evaluationId: string,
+    items: CitationFeedbackItem[],
+    confirmVerdictOverride = false,
+  ) {
+    return apiClient.post<CitationFeedbackResult>('/evidence/citations/feedback', {
+      evaluationId,
+      items,
+      ...(confirmVerdictOverride ? { confirmVerdictOverride: true } : {}),
+    });
   },
 };
 
@@ -294,7 +309,7 @@ export const auditService = {
   getObservations(evaluationId: string) {
     return apiClient.get<AuditObservation[]>(`/audit/observations/${evaluationId}`);
   },
-  createObservation(data: Partial<AuditObservation>) {
+  createObservation(data: Partial<AuditObservation> & { citation?: CitationSource }) {
     return apiClient.post<AuditObservation>('/audit/observations', data);
   },
   updateObservation(id: string, data: Partial<AuditObservation>) {

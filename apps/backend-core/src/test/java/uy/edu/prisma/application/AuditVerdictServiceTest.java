@@ -11,6 +11,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -163,5 +164,149 @@ class AuditVerdictServiceTest {
 
     assertEquals(1, result.size());
     assertEquals("NOT_VALIDATED", result.get(0).verdict());
+  }
+
+  // ---- C4a: aceptar una cita valida el control (reglas de D1, D5 y D10) ----
+
+  private java.util.Map<String, Object> citationRef() {
+    return java.util.Map.of("evidenceId", UUID.randomUUID().toString(), "fileName", "politica.pdf");
+  }
+
+  private AuditControlVerdict existing(AuditControlVerdict.Verdict verdict) {
+    AuditControlVerdict v =
+        AuditControlVerdict.builder().evaluation(eval).control(control).verdict(verdict).build();
+    when(repo.findByEvaluationIdAndControlId(eval.getId(), control.getId()))
+        .thenReturn(Optional.of(v));
+    return v;
+  }
+
+  @Test
+  void acceptingACitationOnAControlWithoutVerdictValidatesItWithOriginCitation() {
+    when(repo.findByEvaluationIdAndControlId(any(), any())).thenReturn(Optional.empty());
+    var ref = citationRef();
+
+    var change = service.applyCitation(eval, control, ref, false);
+
+    assertTrue(change.changed());
+    assertEquals("VALIDATED", change.verdict());
+    assertEquals("CITATION", change.source());
+    ArgumentCaptor<AuditControlVerdict> saved = ArgumentCaptor.forClass(AuditControlVerdict.class);
+    verify(repo).save(saved.capture());
+    assertEquals(AuditControlVerdict.Verdict.VALIDATED, saved.getValue().getVerdict());
+    assertEquals(AuditControlVerdict.Source.CITATION, saved.getValue().getSource());
+    assertEquals(ref, saved.getValue().getSourceRef());
+  }
+
+  @Test
+  void anAlreadyValidatedControlIsLeftAsIsAndTheCitationIsExtraBackup() {
+    var manual = existing(AuditControlVerdict.Verdict.VALIDATED);
+
+    var change = service.applyCitation(eval, control, citationRef(), false);
+
+    assertFalse(change.changed());
+    assertEquals("MANUAL", change.source(), "no se pisa el origen del dictamen existente");
+    verify(repo, never()).save(any());
+    verify(auditLog, never()).record(any(), any(), any());
+    assertEquals(AuditControlVerdict.Source.MANUAL, manual.getSource());
+  }
+
+  @Test
+  void aManualNotValidatedVerdictNeedsConfirmationBeforeBeingReplaced() {
+    existing(AuditControlVerdict.Verdict.NOT_VALIDATED);
+
+    var ex =
+        assertThrows(
+            uy.edu.prisma.domain.exception.VerdictOverrideRequiredException.class,
+            () -> service.applyCitation(eval, control, citationRef(), false));
+
+    assertEquals("NOT_VALIDATED", ex.getCurrentVerdict());
+    assertEquals(control.getId(), ex.getControlId());
+    verify(repo, never()).save(any());
+  }
+
+  @Test
+  void aManualNeedsMoreEvidenceVerdictAlsoNeedsConfirmation() {
+    existing(AuditControlVerdict.Verdict.NEEDS_MORE_EVIDENCE);
+
+    assertThrows(
+        uy.edu.prisma.domain.exception.VerdictOverrideRequiredException.class,
+        () -> service.applyCitation(eval, control, citationRef(), false));
+  }
+
+  @Test
+  void withConfirmationTheManualVerdictIsReplacedAndTheChangeIsAudited() {
+    var current = existing(AuditControlVerdict.Verdict.NOT_VALIDATED);
+
+    var change = service.applyCitation(eval, control, citationRef(), true);
+
+    assertTrue(change.changed());
+    assertEquals(AuditControlVerdict.Verdict.VALIDATED, current.getVerdict());
+    assertEquals(AuditControlVerdict.Source.CITATION, current.getSource());
+    ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+    verify(auditLog)
+        .record(eq("SET_CONTROL_VERDICT"), eq("evaluation:" + eval.getId()), payload.capture());
+    assertTrue(payload.getValue().contains("\"previousVerdict\":\"NOT_VALIDATED\""));
+  }
+
+  @Test
+  void theAuditLogRecordsTheOriginAndTheCitation() {
+    when(repo.findByEvaluationIdAndControlId(any(), any())).thenReturn(Optional.empty());
+
+    service.applyCitation(eval, control, citationRef(), false);
+
+    ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+    verify(auditLog)
+        .record(eq("SET_CONTROL_VERDICT"), eq("evaluation:" + eval.getId()), payload.capture());
+    assertTrue(payload.getValue().contains("\"source\":\"CITATION\""));
+    assertTrue(payload.getValue().contains("\"citation\":{"));
+    assertTrue(payload.getValue().contains("politica.pdf"));
+    assertTrue(payload.getValue().contains("\"controlId\":\"" + control.getId() + "\""));
+  }
+
+  @Test
+  void aVerdictSetByHandDropsTheCitationOrigin() {
+    var fromCitation = existing(AuditControlVerdict.Verdict.VALIDATED);
+    fromCitation.setSource(AuditControlVerdict.Source.CITATION);
+    fromCitation.setSourceRef(citationRef());
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(controlRepo.findById(control.getId())).thenReturn(Optional.of(control));
+
+    service.set(eval.getId(), control.getId(), "NOT_VALIDATED");
+
+    assertEquals(AuditControlVerdict.Source.MANUAL, fromCitation.getSource());
+    assertNull(fromCitation.getSourceRef());
+    ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+    verify(auditLog).record(eq("SET_CONTROL_VERDICT"), any(), payload.capture());
+    assertTrue(payload.getValue().contains("\"source\":\"MANUAL\""));
+  }
+
+  @Test
+  void aCitationOnAControlOutsideTheCommunityProfileIsRejected() {
+    var profile =
+        uy.edu.prisma.domain.entity.CommunityProfile.builder()
+            .id(UUID.randomUUID())
+            .controls(new java.util.HashSet<>())
+            .build();
+    eval.setCommunityProfile(profile);
+
+    assertThrows(
+        uy.edu.prisma.domain.exception.InvalidRequestException.class,
+        () -> service.applyCitation(eval, control, citationRef(), true));
+    verify(repo, never()).save(any());
+  }
+
+  @Test
+  void theVerdictDtoExposesTheOriginAndTheCitation() {
+    var v = existing(AuditControlVerdict.Verdict.VALIDATED);
+    v.setSource(AuditControlVerdict.Source.CITATION);
+    var ref = citationRef();
+    v.setSourceRef(ref);
+    when(repo.findByEvaluationId(eval.getId())).thenReturn(java.util.List.of(v));
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+
+    var dto = service.listByEvaluation(eval.getId()).get(0);
+
+    assertEquals("CITATION", dto.source());
+    assertEquals(ref, dto.sourceRef());
   }
 }

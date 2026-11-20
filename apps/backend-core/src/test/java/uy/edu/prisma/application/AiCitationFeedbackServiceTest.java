@@ -35,6 +35,7 @@ class AiCitationFeedbackServiceTest {
   @Mock private CatalogControlRepository controlRepo;
   @Mock private AiCitationFeedbackRepository feedbackRepo;
   @Mock private CurrentUserService currentUser;
+  @Mock private AuditVerdictService verdictService;
 
   private AiCitationFeedbackService service;
   private Evaluation eval;
@@ -42,7 +43,9 @@ class AiCitationFeedbackServiceTest {
 
   @BeforeEach
   void setUp() {
-    service = new AiCitationFeedbackService(evaluationRepo, controlRepo, feedbackRepo, currentUser);
+    service =
+        new AiCitationFeedbackService(
+            evaluationRepo, controlRepo, feedbackRepo, currentUser, verdictService);
     eval =
         Evaluation.builder()
             .id(UUID.randomUUID())
@@ -53,6 +56,11 @@ class AiCitationFeedbackServiceTest {
     control = CatalogControl.builder().id(UUID.randomUUID()).code("CA.1-11").build();
     when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
     when(controlRepo.findAllById(any())).thenReturn(List.of(control));
+    when(verdictService.applyCitation(any(), any(), any(), anyBoolean()))
+        .thenAnswer(
+            inv ->
+                new uy.edu.prisma.web.dto.Dto.VerdictChangeDto(
+                    control.getId(), "VALIDATED", "CITATION", true));
   }
 
   private CitationFeedbackItemDto item(String decision) {
@@ -121,6 +129,110 @@ class AiCitationFeedbackServiceTest {
 
     assertThrows(
         ResourceNotFoundException.class,
+        () ->
+            service.record(new CitationFeedbackBatchDto(eval.getId(), List.of(item("ACCEPTED")))));
+    verify(feedbackRepo, never()).saveAll(any());
+  }
+
+  // ---- C4a: aceptar una cita valida el control (versión reducida) ----
+
+  @Test
+  void acceptingACitationValidatesTheControlInTheSameOperation() {
+    var result =
+        service.record(new CitationFeedbackBatchDto(eval.getId(), List.of(item("ACCEPTED"))));
+
+    verify(verdictService).applyCitation(eq(eval), eq(control), any(), eq(false));
+    assertEquals(1, result.verdicts().size());
+    assertEquals("VALIDATED", result.verdicts().get(0).verdict());
+    assertEquals("CITATION", result.verdicts().get(0).source());
+  }
+
+  @Test
+  void theCitationBecomesTheBackupOfTheVerdict() {
+    UUID evidenceId = UUID.randomUUID();
+    service.record(
+        new CitationFeedbackBatchDto(
+            eval.getId(),
+            List.of(
+                new CitationFeedbackItemDto(
+                    control.getId(),
+                    "politica.pdf",
+                    "Página 2",
+                    "texto citado",
+                    0.71,
+                    "ACCEPTED",
+                    evidenceId))));
+
+    @SuppressWarnings("unchecked")
+    ArgumentCaptor<java.util.Map<String, Object>> ref =
+        ArgumentCaptor.forClass(java.util.Map.class);
+    verify(verdictService).applyCitation(any(), any(), ref.capture(), anyBoolean());
+    assertEquals(evidenceId.toString(), ref.getValue().get("evidenceId"));
+    assertEquals("politica.pdf", ref.getValue().get("fileName"));
+    assertEquals("Página 2", ref.getValue().get("location"));
+    assertEquals(0.71, ref.getValue().get("score"));
+  }
+
+  @Test
+  void aLongSnippetIsTruncatedInTheBackupReference() {
+    String longText = "x".repeat(1000);
+    service.record(
+        new CitationFeedbackBatchDto(
+            eval.getId(),
+            List.of(
+                new CitationFeedbackItemDto(
+                    control.getId(), "a.pdf", "p1", longText, 0.5, "ACCEPTED"))));
+
+    @SuppressWarnings("unchecked")
+    ArgumentCaptor<java.util.Map<String, Object>> ref =
+        ArgumentCaptor.forClass(java.util.Map.class);
+    verify(verdictService).applyCitation(any(), any(), ref.capture(), anyBoolean());
+    assertTrue(((String) ref.getValue().get("snippet")).length() <= 301);
+  }
+
+  @Test
+  void rejectingCitationsNeverChangesTheVerdict() {
+    service.record(
+        new CitationFeedbackBatchDto(
+            eval.getId(), List.of(item("REJECTED"), item("REJECTED"), item("REJECTED"))));
+
+    verifyNoInteractions(verdictService);
+  }
+
+  @Test
+  void rejectingAllCitationsOfAControlSuggestsNothingAndChangesNothing() {
+    var result =
+        service.record(new CitationFeedbackBatchDto(eval.getId(), List.of(item("REJECTED"))));
+
+    assertTrue(result.verdicts().isEmpty());
+    verify(feedbackRepo).saveAll(any());
+  }
+
+  @Test
+  void severalAcceptedCitationsOfTheSameControlValidateItOnce() {
+    service.record(
+        new CitationFeedbackBatchDto(eval.getId(), List.of(item("ACCEPTED"), item("ACCEPTED"))));
+
+    verify(verdictService, times(1)).applyCitation(any(), any(), any(), anyBoolean());
+  }
+
+  @Test
+  void theOverrideConfirmationIsForwardedToTheVerdictRules() {
+    service.record(
+        new CitationFeedbackBatchDto(eval.getId(), List.of(item("ACCEPTED")), Boolean.TRUE));
+
+    verify(verdictService).applyCitation(any(), any(), any(), eq(true));
+  }
+
+  @Test
+  void whenAManualVerdictNeedsConfirmationNothingIsSaved() {
+    when(verdictService.applyCitation(any(), any(), any(), eq(false)))
+        .thenThrow(
+            new uy.edu.prisma.domain.exception.VerdictOverrideRequiredException(
+                control.getId(), "CA.1-11", "NOT_VALIDATED"));
+
+    assertThrows(
+        uy.edu.prisma.domain.exception.VerdictOverrideRequiredException.class,
         () ->
             service.record(new CitationFeedbackBatchDto(eval.getId(), List.of(item("ACCEPTED")))));
     verify(feedbackRepo, never()).saveAll(any());

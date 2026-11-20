@@ -65,6 +65,17 @@ class GlobalExceptionHandlerTest {
   }
 
   @Test
+  void verdictOverrideRequiredMapsTo409WithItsCodeAndTheCurrentVerdict() throws Exception {
+    mockMvc
+        .perform(get("/verdict-override"))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("VERDICT_OVERRIDE_REQUIRED"))
+        .andExpect(jsonPath("$.details.currentVerdict[0]").value("NOT_VALIDATED"))
+        .andExpect(jsonPath("$.details.controlCode[0]").value("CA.1-11"))
+        .andExpect(jsonPath("$.details.controlId[0]").isNotEmpty());
+  }
+
+  @Test
   void payloadTooLargeMapsTo413WithItsMessage() throws Exception {
     mockMvc
         .perform(get("/too-large"))
@@ -291,6 +302,12 @@ class GlobalExceptionHandlerTest {
     @GetMapping("/notfound")
     public String notFound() {
       throw new ResourceNotFoundException("nope");
+    }
+
+    @GetMapping("/verdict-override")
+    public String verdictOverride() {
+      throw new uy.edu.prisma.domain.exception.VerdictOverrideRequiredException(
+          java.util.UUID.randomUUID(), "CA.1-11", "NOT_VALIDATED");
     }
 
     @GetMapping("/ai-unavailable")

@@ -1016,7 +1016,14 @@ class ControllersMockMvcTest {
   }
 
   @Test
-  void citationFeedbackReturnsNoContent() throws Exception {
+  void citationFeedbackReturnsTheVerdictChanges() throws Exception {
+    UUID controlId = UUID.randomUUID();
+    when(aiCitationFeedbackService.record(any()))
+        .thenReturn(
+            new uy.edu.prisma.web.dto.Dto.CitationFeedbackResultDto(
+                List.of(
+                    new uy.edu.prisma.web.dto.Dto.VerdictChangeDto(
+                        controlId, "VALIDATED", "CITATION", true))));
     citationFeedback
         .perform(
             post("/api/evidence/citations/feedback")
@@ -1028,7 +1035,10 @@ class ControllersMockMvcTest {
                         + UUID.randomUUID()
                         + "\",\"fileName\":\"a.pdf\",\"location\":\"Página 1\","
                         + "\"snippet\":\"texto\",\"score\":0.7,\"decision\":\"ACCEPTED\"}]}"))
-        .andExpect(status().isNoContent());
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.verdicts[0].controlId").value(controlId.toString()))
+        .andExpect(jsonPath("$.verdicts[0].verdict").value("VALIDATED"))
+        .andExpect(jsonPath("$.verdicts[0].source").value("CITATION"));
     verify(aiCitationFeedbackService).record(any());
   }
 

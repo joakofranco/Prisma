@@ -409,12 +409,12 @@ describe('AuditView: citas de la IA (PRI-359)', () => {
     return wrapper;
   }
 
-  it('cada cita tiene «Aceptar cita» y «Rechazar cita», además de «Registrar validación»', async () => {
+  it('cada cita tiene «Aceptar cita» y «Rechazar cita», además de «Registrar como observación»', async () => {
     const wrapper = await searchCitations();
 
     expect(wrapper.findAll('[data-testid="accept-citation"]')).toHaveLength(2);
     expect(wrapper.findAll('[data-testid="reject-citation"]')).toHaveLength(2);
-    expect(wrapper.text()).toContain('Registrar validación');
+    expect(wrapper.text()).toContain('Registrar como observación');
   });
 
   it('aceptar una cita la envía con el control y el fragmento, y queda marcada', async () => {
@@ -423,16 +423,21 @@ describe('AuditView: citas de la IA (PRI-359)', () => {
     await wrapper.findAll('[data-testid="accept-citation"]')[0].trigger('click');
     await flushPromises();
 
-    expect(evidenceService.sendCitationFeedback).toHaveBeenCalledWith('eval-1', [
-      {
-        controlId: 'ctl-1',
-        fileName: 'politica-1.pdf',
-        location: 'Página 1',
-        snippet: 'fragmento 1',
-        score: 0.7,
-        decision: 'ACCEPTED',
-      },
-    ]);
+    expect(evidenceService.sendCitationFeedback).toHaveBeenCalledWith(
+      'eval-1',
+      [
+        {
+          controlId: 'ctl-1',
+          fileName: 'politica-1.pdf',
+          location: 'Página 1',
+          snippet: 'fragmento 1',
+          score: 0.7,
+          decision: 'ACCEPTED',
+          evidenceId: 'ev-1',
+        },
+      ],
+      false,
+    );
     expect(wrapper.findAll('[data-testid="accept-citation"]')[0].attributes('aria-pressed')).toBe(
       'true',
     );
@@ -562,12 +567,12 @@ describe('AuditView: citas de la IA (PRI-359)', () => {
   async function openObservationFromCitation(wrapper: Awaited<ReturnType<typeof searchCitations>>) {
     await wrapper
       .findAll('button')
-      .find((b) => b.text().includes('Registrar validación'))!
+      .find((b) => b.text().includes('Registrar como observación'))!
       .trigger('click');
     await flushPromises();
   }
 
-  it('«Registrar validación» precarga el texto y al guardar envía el evidenceId de la cita', async () => {
+  it('«Registrar como observación» precarga el texto y al guardar envía el evidenceId de la cita', async () => {
     auditService.createObservation.mockResolvedValue({ data: {} });
     const wrapper = await searchCitations();
 
@@ -694,4 +699,318 @@ describe('AuditView: «Buscar citas» según el estado (RF-EVI-14)', () => {
       expect(evidenceService.getCitations).not.toHaveBeenCalled();
     },
   );
+});
+
+describe('AuditView: aceptar una cita valida el control (C4a) y puntaje (C3.1)', () => {
+  const citation = (n: number, score: number) => ({
+    evidenceId: `ev-${n}`,
+    fileName: `politica-${n}.pdf`,
+    location: `Página ${n}`,
+    snippet: `fragmento ${n}`,
+    score,
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    document.body.innerHTML = '';
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    auditService.getObservations.mockResolvedValue({ data: [] });
+    auditService.getVerdicts.mockResolvedValue({ data: [] });
+    auditService.setVerdict.mockResolvedValue({ data: {} });
+    evaluationsService.getFlags.mockResolvedValue({ data: [] });
+    evidenceService.getByEvaluation.mockResolvedValue({
+      data: [{ id: 'ev-1', controlId: 'ctl-1', fileName: 'politica-1.pdf' }],
+    });
+    evidenceService.getCitations.mockResolvedValue({
+      data: [citation(1, 0.41), citation(2, 0.83), citation(3, 0.55)],
+    });
+    evidenceService.sendCitationFeedback.mockResolvedValue({
+      data: {
+        verdicts: [{ controlId: 'ctl-1', verdict: 'VALIDATED', source: 'CITATION', changed: true }],
+      },
+    });
+    catalogService.getByVersion.mockResolvedValue({ data: catalog });
+  });
+
+  async function searchCitations() {
+    const wrapper = await mountView('IN_AUDIT');
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Buscar citas'))!
+      .trigger('click');
+    await flushPromises();
+    return wrapper;
+  }
+
+  const verdictRow = (wrapper: Awaited<ReturnType<typeof searchCitations>>, i: number) =>
+    wrapper.findAll('[data-testid="verdict-row"]')[i];
+
+  it('muestra el puntaje de cada cita y marca la mejor coincidencia', async () => {
+    const wrapper = await searchCitations();
+
+    const scores = wrapper.findAll('[data-testid="citation-score"]').map((n) => n.text());
+    expect(scores).toEqual(['Relevancia 0,41', 'Relevancia 0,83', 'Relevancia 0,55']);
+    const best = wrapper.findAll('[data-testid="best-citation"]');
+    expect(best).toHaveLength(1);
+    // La mejor es la segunda (0,83).
+    const cards = wrapper.findAll('[data-testid="citation-score"]');
+    expect(cards[1].element.parentElement!.textContent).toContain('Mejor coincidencia');
+  });
+
+  it('con una sola cita no hay «mejor coincidencia»', async () => {
+    evidenceService.getCitations.mockResolvedValue({ data: [citation(1, 0.9)] });
+    const wrapper = await searchCitations();
+
+    expect(wrapper.find('[data-testid="best-citation"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="citation-score"]').text()).toContain('0,90');
+  });
+
+  it('una cita sin puntaje no rompe la pantalla', async () => {
+    evidenceService.getCitations.mockResolvedValue({
+      data: [{ ...citation(1, 0), score: null }],
+    });
+    const wrapper = await searchCitations();
+
+    expect(wrapper.find('[data-testid="citation-score"]').text()).toContain('—');
+  });
+
+  it('el texto ya no dice que la IA es «sólo una guía» y explica qué significa aceptar', async () => {
+    const wrapper = await searchCitations();
+
+    expect(wrapper.text()).not.toContain('Es sólo una guía');
+    expect(wrapper.text()).toContain('Aceptar una cita');
+    expect(wrapper.text()).toContain('lo pasa a «Validado»');
+    expect(wrapper.text()).toContain('Rechazar una cita no cambia el dictamen');
+  });
+
+  it('aceptar una cita pasa el control a Validado y lo muestra «por cita»', async () => {
+    const wrapper = await searchCitations();
+
+    await wrapper.findAll('[data-testid="accept-citation"]')[1].trigger('click');
+    await flushPromises();
+
+    const row = verdictRow(wrapper, 0);
+    expect((row.find('select').element as HTMLSelectElement).value).toBe('VALIDATED');
+    expect(row.find('[data-testid="verdict-source"]').text()).toBe(
+      'Validado por cita (politica-2.pdf, Página 2)',
+    );
+  });
+
+  it('un dictamen que ya venía de una cita se muestra «por cita» al cargar', async () => {
+    auditService.getVerdicts.mockResolvedValue({
+      data: [
+        {
+          controlId: 'ctl-1',
+          verdict: 'VALIDATED',
+          source: 'CITATION',
+          sourceRef: { fileName: 'politica-9.pdf', location: 'Página 9' },
+        },
+      ],
+    });
+    const wrapper = await mountView('IN_AUDIT');
+
+    expect(verdictRow(wrapper, 0).find('[data-testid="verdict-source"]').text()).toContain(
+      'politica-9.pdf, Página 9',
+    );
+  });
+
+  it('un control que ya estaba Validado a mano no pasa a «por cita»', async () => {
+    evidenceService.sendCitationFeedback.mockResolvedValue({
+      data: {
+        verdicts: [{ controlId: 'ctl-1', verdict: 'VALIDATED', source: 'MANUAL', changed: false }],
+      },
+    });
+    const wrapper = await searchCitations();
+
+    await wrapper.findAll('[data-testid="accept-citation"]')[0].trigger('click');
+    await flushPromises();
+
+    expect(verdictRow(wrapper, 0).find('[data-testid="verdict-source"]').exists()).toBe(false);
+  });
+
+  it('rechazar una cita no toca el dictamen', async () => {
+    evidenceService.sendCitationFeedback.mockResolvedValue({ data: { verdicts: [] } });
+    const wrapper = await searchCitations();
+
+    await wrapper.findAll('[data-testid="reject-citation"]')[0].trigger('click');
+    await flushPromises();
+
+    expect((verdictRow(wrapper, 0).find('select').element as HTMLSelectElement).value).toBe('');
+    expect(wrapper.find('[data-testid="verdict-source"]').exists()).toBe(false);
+  });
+
+  it('fijar el dictamen a mano después le quita el origen «por cita»', async () => {
+    const wrapper = await searchCitations();
+    await wrapper.findAll('[data-testid="accept-citation"]')[0].trigger('click');
+    await flushPromises();
+
+    await verdictRow(wrapper, 0).find('select').setValue('NOT_VALIDATED');
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="verdict-source"]').exists()).toBe(false);
+    expect(auditService.setVerdict).toHaveBeenCalledWith('eval-1', 'ctl-1', 'NOT_VALIDATED');
+  });
+
+  // ---- pisar un dictamen puesto a mano pide confirmación (D10) ----
+
+  const overrideError = {
+    response: {
+      status: 409,
+      data: {
+        code: 'VERDICT_OVERRIDE_REQUIRED',
+        message: 'ya tiene un dictamen',
+        details: { currentVerdict: ['NOT_VALIDATED'], controlCode: ['AD.1'] },
+      },
+    },
+  };
+
+  it('si hay un dictamen manual distinto, pide confirmación y no marca la cita todavía', async () => {
+    evidenceService.sendCitationFeedback.mockRejectedValueOnce(overrideError);
+    const wrapper = await searchCitations();
+
+    await wrapper.findAll('[data-testid="accept-citation"]')[0].trigger('click');
+    await flushPromises();
+
+    const message = document.body.querySelector('[data-testid="override-message"]')!;
+    expect(message.textContent).toContain('AD.1');
+    expect(message.textContent).toContain('No validado');
+    expect(message.textContent).toContain('Validado');
+    expect(wrapper.findAll('[data-testid="accept-citation"]')[0].attributes('aria-pressed')).toBe(
+      'false',
+    );
+    expect(notification.error).not.toHaveBeenCalled();
+  });
+
+  it('al confirmar repite el pedido con la confirmación y queda aceptada', async () => {
+    evidenceService.sendCitationFeedback.mockRejectedValueOnce(overrideError);
+    const wrapper = await searchCitations();
+    await wrapper.findAll('[data-testid="accept-citation"]')[0].trigger('click');
+    await flushPromises();
+
+    (document.body.querySelector('[data-testid="override-confirm"]') as HTMLButtonElement).click();
+    await flushPromises();
+
+    expect(evidenceService.sendCitationFeedback).toHaveBeenCalledTimes(2);
+    expect(evidenceService.sendCitationFeedback.mock.calls[1][2]).toBe(true);
+    expect(evidenceService.sendCitationFeedback.mock.calls[1][1][0].decision).toBe('ACCEPTED');
+    expect(wrapper.findAll('[data-testid="accept-citation"]')[0].attributes('aria-pressed')).toBe(
+      'true',
+    );
+    expect((verdictRow(wrapper, 0).find('select').element as HTMLSelectElement).value).toBe(
+      'VALIDATED',
+    );
+  });
+
+  it('al cancelar no se repite el pedido ni cambia nada', async () => {
+    evidenceService.sendCitationFeedback.mockRejectedValueOnce(overrideError);
+    const wrapper = await searchCitations();
+    await wrapper.findAll('[data-testid="accept-citation"]')[0].trigger('click');
+    await flushPromises();
+
+    (document.body.querySelector('[data-testid="override-cancel"]') as HTMLButtonElement).click();
+    await flushPromises();
+
+    expect(evidenceService.sendCitationFeedback).toHaveBeenCalledTimes(1);
+    expect(wrapper.findAll('[data-testid="accept-citation"]')[0].attributes('aria-pressed')).toBe(
+      'false',
+    );
+  });
+
+  it('un 409 que no es de dictamen se avisa como cualquier error', async () => {
+    evidenceService.sendCitationFeedback.mockRejectedValueOnce({
+      response: {
+        status: 409,
+        data: { code: 'CONFLICT', message: 'La evaluación no está en auditoría' },
+      },
+    });
+    const wrapper = await searchCitations();
+
+    await wrapper.findAll('[data-testid="accept-citation"]')[0].trigger('click');
+    await flushPromises();
+
+    expect(notification.error).toHaveBeenCalledWith('La evaluación no está en auditoría');
+    expect(document.body.querySelector('[data-testid="override-message"]')).toBeNull();
+  });
+
+  // ---- C4b: «Registrar como observación» deja feedback de la diferencia ----
+
+  const openObservation = async (wrapper: Awaited<ReturnType<typeof searchCitations>>) => {
+    await wrapper.find('[data-testid="register-observation"]').trigger('click');
+    await flushPromises();
+  };
+  const clickCreate = async () => {
+    await Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+      .find((b) => b.textContent?.trim() === 'Crear')!
+      .click();
+    await flushPromises();
+  };
+
+  it('al guardar envía la cita con el texto que la app precargó', async () => {
+    auditService.createObservation.mockResolvedValue({ data: {} });
+    const wrapper = await searchCitations();
+
+    await openObservation(wrapper);
+    const prefilled = document.body.querySelector<HTMLTextAreaElement>('textarea')!.value;
+    await clickCreate();
+
+    const sent = auditService.createObservation.mock.calls[0][0];
+    expect(sent.citation).toEqual({
+      fileName: 'politica-1.pdf',
+      location: 'Página 1',
+      snippet: 'fragmento 1',
+      score: 0.41,
+      prefillText: prefilled,
+    });
+    expect(sent.description).toBe(prefilled);
+  });
+
+  it('si el auditor reescribe el texto, la cita lleva el precargado original', async () => {
+    auditService.createObservation.mockResolvedValue({ data: {} });
+    const wrapper = await searchCitations();
+
+    await openObservation(wrapper);
+    const textarea = document.body.querySelector<HTMLTextAreaElement>('textarea')!;
+    const prefilled = textarea.value;
+    textarea.value = 'Texto reescrito por el auditor';
+    textarea.dispatchEvent(new Event('input'));
+    await clickCreate();
+
+    const sent = auditService.createObservation.mock.calls[0][0];
+    expect(sent.description).toBe('Texto reescrito por el auditor');
+    expect(sent.citation.prefillText).toBe(prefilled);
+  });
+
+  it('si cierra el formulario sin guardar no se envía nada', async () => {
+    const wrapper = await searchCitations();
+
+    await openObservation(wrapper);
+    await Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+      .find((b) => b.textContent?.trim() === 'Cancelar')!
+      .click();
+    await flushPromises();
+
+    expect(auditService.createObservation).not.toHaveBeenCalled();
+  });
+
+  it('una observación libre no lleva cita aunque antes se haya abierto una desde una cita', async () => {
+    auditService.createObservation.mockResolvedValue({ data: {} });
+    const wrapper = await searchCitations();
+    await openObservation(wrapper);
+    await Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+      .find((b) => b.textContent?.trim() === 'Cancelar')!
+      .click();
+    await flushPromises();
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Nueva Observación'))!
+      .trigger('click');
+    await flushPromises();
+    const textarea = document.body.querySelector<HTMLTextAreaElement>('textarea')!;
+    textarea.value = 'Hallazgo general';
+    textarea.dispatchEvent(new Event('input'));
+    await clickCreate();
+
+    expect(auditService.createObservation.mock.calls[0][0]).not.toHaveProperty('citation');
+  });
 });

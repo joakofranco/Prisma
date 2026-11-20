@@ -31,6 +31,7 @@ import uy.edu.prisma.domain.exception.MalwareDetectedException;
 import uy.edu.prisma.domain.exception.PayloadTooLargeException;
 import uy.edu.prisma.domain.exception.ResourceNotFoundException;
 import uy.edu.prisma.domain.exception.TooManyRequestsException;
+import uy.edu.prisma.domain.exception.VerdictOverrideRequiredException;
 import uy.edu.prisma.domain.exception.VpnRequiredException;
 import uy.edu.prisma.web.dto.Dto.ApiErrorDto;
 
@@ -62,6 +63,18 @@ public class GlobalExceptionHandler {
   public ResponseEntity<ApiErrorDto> handleAiUnavailable(AiUnavailableException ex) {
     log.warn("Asistente de IA no disponible: {}", ex.getCause() != null ? ex.getCause() : ex);
     return build(HttpStatus.SERVICE_UNAVAILABLE, "AI_UNAVAILABLE", ex.getMessage(), null);
+  }
+
+  @ExceptionHandler(VerdictOverrideRequiredException.class)
+  public ResponseEntity<ApiErrorDto> handleVerdictOverride(VerdictOverrideRequiredException ex) {
+    return build(
+        HttpStatus.CONFLICT,
+        "VERDICT_OVERRIDE_REQUIRED",
+        ex.getMessage(),
+        Map.of(
+            "controlId", List.of(ex.getControlId().toString()),
+            "controlCode", List.of(ex.getControlCode()),
+            "currentVerdict", List.of(ex.getCurrentVerdict())));
   }
 
   @ExceptionHandler(TooManyRequestsException.class)
