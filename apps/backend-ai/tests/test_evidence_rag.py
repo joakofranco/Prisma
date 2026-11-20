@@ -436,3 +436,91 @@ def test_an_empty_threshold_in_the_environment_means_no_threshold(
     assert Settings(_env_file=None).ai_citation_min_score is None  # type: ignore[call-arg]
     monkeypatch.setenv("AI_CITATION_MIN_SCORE", "0.35")
     assert Settings(_env_file=None).ai_citation_min_score == 0.35  # type: ignore[call-arg]
+
+
+# ----------------------------------------------------------------------------------
+# D6 — id estable de fragmento
+# ----------------------------------------------------------------------------------
+
+
+class RecordingStore:
+    """Chroma simulado que recuerda los ids con los que se agregaron los fragmentos."""
+
+    def __init__(self) -> None:
+        self.added: list[tuple[list[Document], list[str] | None]] = []
+
+    def add_documents(self, documents, ids=None):  # noqa: ANN001
+        self.added.append((documents, ids))
+
+
+def _ingest_twice(tmp_path: Path, monkeypatch) -> list[list[str] | None]:  # noqa: ANN001
+    store = EvidenceStore(settings=_settings(tmp_path), embeddings=FakeEmbeddings())
+    recording = RecordingStore()
+    store._stores["org-a"] = recording
+    store.delete_evidence = lambda *a, **k: None  # type: ignore[method-assign]
+
+    async def fake_load(self, url, name):  # noqa: ANN001
+        return [Document(page_content="uno dos tres " * 40, metadata={})]
+
+    monkeypatch.setattr(EvidenceStore, "_download_and_load", fake_load)
+    for _ in range(2):
+        asyncio.run(
+            store.ingest(
+                organization_id="org-a",
+                evaluation_id="eval-1",
+                evidence_id="ev-9",
+                control_id="ctl-1",
+                file_name="doc.txt",
+                file_url="http://x/doc.txt",
+            )
+        )
+    return [ids for _, ids in recording.added]
+
+
+def test_reindexing_the_same_file_gives_the_same_fragment_ids(tmp_path: Path, monkeypatch) -> None:
+    first, second = _ingest_twice(tmp_path, monkeypatch)
+
+    assert first is not None and len(first) > 1
+    assert first == second
+    assert first[0] == "ev-9::0" and first[1] == "ev-9::1"
+    assert len(set(first)) == len(first)
+
+
+def test_citations_return_the_fragment_id(tmp_path: Path) -> None:
+    store = EvidenceStore(settings=_settings(tmp_path))
+    store._stores["org-a"] = FakeCitationStore(
+        [(Document(id="ev-9::3", page_content="texto", metadata={"evidence_id": "ev-9"}), 0.8)]
+    )
+
+    result = asyncio.run(
+        store.citations(organization_id="org-a", evaluation_id="e", control_id=None, query="q")
+    )
+
+    assert result[0]["fragment_id"] == "ev-9::3"
+
+
+def test_a_citation_without_id_has_no_fragment_id(tmp_path: Path) -> None:
+    store = EvidenceStore(settings=_settings(tmp_path))
+    store._stores["org-a"] = _scored(0.9)
+
+    result = asyncio.run(
+        store.citations(organization_id="org-a", evaluation_id="e", control_id=None, query="q")
+    )
+
+    assert result[0]["fragment_id"] is None
+
+
+def test_the_citations_endpoint_exposes_fragment_id(client: TestClient) -> None:
+    from app.api.v1.evidence import EvidenceCitation
+
+    assert (
+        EvidenceCitation(
+            fragment_id="ev::1",
+            evidence_id="ev",
+            file_name="a",
+            location="l",
+            snippet="s",
+            score=0.5,
+        ).model_dump()["fragment_id"]
+        == "ev::1"
+    )

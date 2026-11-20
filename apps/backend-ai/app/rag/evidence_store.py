@@ -105,7 +105,11 @@ class EvidenceStore:
 
         try:
             store = self._connect(organization_id)
-            store.add_documents(chunks)
+            # IDs deterministicos (evidencia + posicion del fragmento): el mismo archivo reindexado
+            # da los mismos IDs, asi las decisiones del auditor sobre un fragmento sobreviven a
+            # re-indexar (D6, C2). Sin esto Chroma generaba UUID aleatorios en cada indexacion.
+            ids = [f"{evidence_id}::{i}" for i in range(len(chunks))]
+            store.add_documents(chunks, ids=ids)
             return len(chunks)
         except Exception:
             logger.exception("Falla indexando evidencia %s (org %s)", evidence_id, organization_id)
@@ -172,6 +176,7 @@ class EvidenceStore:
         minimum = self.settings.ai_citation_min_score
         return [
             {
+                "fragment_id": getattr(doc, "id", None),
                 "evidence_id": doc.metadata.get("evidence_id"),
                 "file_name": doc.metadata.get("file_name"),
                 "location": doc.metadata.get("location"),
