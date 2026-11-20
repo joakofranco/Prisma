@@ -21,6 +21,14 @@ from app.rag.vector_store import VectorStore
 _REAL_ASYNC_CLIENT = httpx.AsyncClient
 
 
+@pytest.fixture(autouse=True)
+def _clean_effective_context() -> Any:
+    """El contexto efectivo es estado del módulo: cada test parte (y deja) en blanco."""
+    ollama_runtime.reset_effective_context()
+    yield
+    ollama_runtime.reset_effective_context()
+
+
 def _settings(**overrides: Any) -> Settings:
     return Settings(_env_file=None, **overrides)  # type: ignore[call-arg]
 
@@ -342,22 +350,18 @@ def test_keep_warm_reloads_the_models_after_ollama_restarts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     generates = {"n": 0}
-    ps_calls = {"n": 0}
 
     class StopLoopError(Exception):
         pass
 
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/api/generate":
+        path = request.url.path
+        if path == "/api/generate":
             generates["n"] += 1
-        if request.url.path == "/api/ps":
-            ps_calls["n"] += 1
-            # 1ª revisión: Ollama reinició y no tiene nada cargado; 2ª: ya está cargado.
+        if path == "/api/ps":
+            # Ollama reinició: no tiene nada cargado hasta que se vuelve a precalentar.
             both = [{"name": "llama3:8b"}, {"name": "nomic-embed-text:latest"}]
-            models = [] if ps_calls["n"] == 1 else both
-            if ps_calls["n"] >= 3:
-                raise StopLoopError
-            return httpx.Response(200, json={"models": models})
+            return httpx.Response(200, json={"models": both if generates["n"] >= 2 else []})
         return httpx.Response(200, json={})
 
     sleeps = {"n": 0}
@@ -385,4 +389,161 @@ def test_keep_warm_without_watchdog_only_warms_up_once(monkeypatch: pytest.Monke
     asyncio.run(ollama_runtime.keep_warm(_settings(ai_warmup_check_seconds=0), state))
 
     assert state["status"] == "ready"
-    assert [r.url.path for r in requests] == ["/api/generate", "/api/embed"]
+    paths = [r.url.path for r in requests]
+    assert paths.count("/api/generate") == 1
+    assert paths.count("/api/embed") == 1
+
+
+# ----------------------------------------------------------------------
+# Contexto efectivo del modelo (llama3:8b carga con 8192 aunque se pida 16384)
+# ----------------------------------------------------------------------
+def _ctx_handler(loaded: bool = True) -> Callable[[httpx.Request], httpx.Response]:
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/api/ps":
+            models = (
+                [
+                    {"name": "llama3:8b", "context_length": 8192},
+                    {"name": "nomic-embed-text:latest", "context_length": 2048},
+                ]
+                if loaded
+                else []
+            )
+            return httpx.Response(200, json={"models": models})
+        if path == "/api/show":
+            body = json.loads(request.content)
+            ctx = 8192 if body["model"].startswith("llama3") else 2048
+            arch = "llama" if body["model"].startswith("llama3") else "nomic-bert"
+            return httpx.Response(200, json={"model_info": {f"{arch}.context_length": ctx}})
+        if path == "/api/version":
+            return httpx.Response(200, json={"version": "0.40.6"})
+        if path == "/api/tags":
+            return httpx.Response(200, json={"models": []})
+        return httpx.Response(200, json={})
+
+    return handler
+
+
+def test_prompt_limit_without_model_data_uses_the_requested_context() -> None:
+    s = _settings()
+    assert ollama_runtime.prompt_limit(s) == 16384 - 1024 - 256
+
+
+def test_prompt_limit_uses_the_effective_context_of_the_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _mock_ollama(monkeypatch, _ctx_handler())
+    s = _settings()
+    asyncio.run(ollama_runtime.refresh_effective_context(s))
+
+    assert ollama_runtime.get_effective_context("llm") == 8192
+    assert ollama_runtime.get_effective_context("embedding") == 2048
+    assert ollama_runtime.llm_context(s) == 8192
+    assert ollama_runtime.prompt_limit(s) == 8192 - 1024 - 256
+
+
+def test_a_prompt_that_only_fit_the_requested_context_is_now_rejected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _mock_ollama(monkeypatch, _ctx_handler())
+    s = _settings(chroma_persist_dir=str(tmp_path))
+    asyncio.run(ollama_runtime.refresh_effective_context(s))
+    nine_thousand_tokens = "x" * (9000 * 3)
+
+    with pytest.raises(PromptTooLargeError) as err:
+        ollama_runtime.guard_prompt(s, nine_thousand_tokens)
+    assert err.value.limit_tokens == 8192 - 1024 - 256
+
+    # Con lo pedido (16384) el mismo prompt habría pasado y Ollama lo habría recortado.
+    ollama_runtime.reset_effective_context()
+    assert ollama_runtime.guard_prompt(s, nine_thousand_tokens) == 9000
+
+
+def test_effective_context_falls_back_to_the_model_maximum_when_not_loaded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _mock_ollama(monkeypatch, _ctx_handler(loaded=False))
+    asyncio.run(ollama_runtime.refresh_effective_context(_settings()))
+
+    assert ollama_runtime.get_effective_context("llm") == 8192
+    assert ollama_runtime.get_effective_context("embedding") == 2048
+
+
+def test_a_model_with_more_context_than_requested_does_not_raise_the_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _mock_ollama(monkeypatch, _ctx_handler())
+    s = _settings(ai_num_ctx=4096)
+    asyncio.run(ollama_runtime.refresh_effective_context(s))
+
+    assert ollama_runtime.llm_context(s) == 4096
+
+
+def test_explicit_prompt_limit_can_shrink_but_never_exceed_the_effective_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _mock_ollama(monkeypatch, _ctx_handler())
+    asyncio.run(ollama_runtime.refresh_effective_context(_settings()))
+
+    assert ollama_runtime.prompt_limit(_settings(ai_prompt_max_tokens=300)) == 300
+    assert ollama_runtime.prompt_limit(_settings(ai_prompt_max_tokens=15000)) == 8192 - 1024 - 256
+
+
+def test_embedding_input_limit_follows_the_effective_embedding_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert ollama_runtime.embedding_input_limit(_settings()) is None
+    _mock_ollama(monkeypatch, _ctx_handler())
+    asyncio.run(ollama_runtime.refresh_effective_context(_settings()))
+
+    assert ollama_runtime.embedding_input_limit(_settings()) == 2048 - 256
+
+
+def test_runtime_endpoint_reports_the_requested_vs_effective_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _mock_ollama(monkeypatch, _ctx_handler())
+    app.state.warmup = {"status": "ready"}
+
+    body = TestClient(app).get("/api/v1/runtime").json()
+
+    ctx = body["context"]
+    assert ctx["requested_num_ctx"] == 16384
+    assert ctx["llm"] == {"effective": 8192, "source": "ps", "used_for_limit": 8192}
+    assert ctx["embedding"]["effective"] == 2048
+    assert ctx["embedding"]["input_max_tokens"] == 2048 - 256
+    assert ctx["prompt_max_tokens"] == 8192 - 1024 - 256
+    assert ctx["mismatch"] is True
+    assert body["options"]["prompt_max_tokens"] == 8192 - 1024 - 256
+
+
+def test_runtime_endpoint_with_ollama_down_reports_no_effective_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def down(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("sin conexión", request=request)
+
+    _mock_ollama(monkeypatch, down)
+    ctx = TestClient(app).get("/api/v1/runtime").json()["context"]
+
+    assert ctx["llm"]["effective"] is None
+    assert ctx["mismatch"] is False
+    assert ctx["prompt_max_tokens"] == 16384 - 1024 - 256
+
+
+def test_chunk_size_larger_than_the_embedding_context_is_warned(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    _mock_ollama(monkeypatch, _ctx_handler())
+    with caplog.at_level("WARNING"):
+        asyncio.run(ollama_runtime.refresh_effective_context(_settings(rag_chunk_size=9000)))
+
+    assert "RAG_CHUNK_SIZE=9000" in caplog.text
+    assert "carga con contexto 8192, menor que AI_NUM_CTX=16384" in caplog.text
+
+
+def test_keep_warm_refreshes_the_effective_context(monkeypatch: pytest.MonkeyPatch) -> None:
+    _mock_ollama(monkeypatch, _ctx_handler())
+    asyncio.run(ollama_runtime.keep_warm(_settings(ai_warmup_check_seconds=0), {}))
+
+    assert ollama_runtime.get_effective_context("llm") == 8192

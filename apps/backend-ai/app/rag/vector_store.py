@@ -142,7 +142,7 @@ class VectorStore:
         prompt = self._build_prompt(context, question)
         guard_prompt(self.settings, prompt)
         try:
-            response = await asyncio.to_thread(self.llm.invoke, prompt)
+            response = await self._invoke_llm(prompt)
             answer_text = str(response.content)
         except Exception:
             logger.warning("No se pudo invocar el LLM; se responde sin generación")
@@ -183,7 +183,7 @@ class VectorStore:
         try:
             # En un hilo aparte: invoke() es bloqueante (decenas de segundos en CPU) y no debe
             # frenar el event loop (health, métricas y otros pedidos).
-            response = await asyncio.to_thread(self.llm.invoke, prompt)
+            response = await self._invoke_llm(prompt)
             result = self._parse_remediation(str(response.content))
             result["generated"] = True
             result["model"] = self.settings.ollama_model
@@ -241,6 +241,19 @@ class VectorStore:
     # ------------------------------------------------------------------
     # Internos
     # ------------------------------------------------------------------
+    async def _invoke_llm(self, prompt: str) -> Any:
+        """Llama al LLM sin bloquear el event loop y de forma CANCELABLE.
+
+        Con ``ainvoke`` (ChatOllama) cancelar la tarea cierra la conexión HTTP con Ollama, y Ollama
+        aborta la generación; con ``invoke`` en un hilo no se podría cortar y la respuesta
+        abandonada seguiría ocupando una ranura (ver ``run_until_disconnect``). Los LLM sin
+        ``ainvoke`` (simulados en los tests) caen al hilo.
+        """
+        ainvoke = getattr(self.llm, "ainvoke", None)
+        if ainvoke is not None:
+            return await ainvoke(prompt)
+        return await asyncio.to_thread(self.llm.invoke, prompt)
+
     def _connect(self) -> Chroma:
         # Ver app/rag/chroma_client.py: PersistentClient local.
         return Chroma(

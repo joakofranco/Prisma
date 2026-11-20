@@ -21,7 +21,12 @@ from app.api.v1 import router as api_router
 from app.core.config import get_settings
 from app.core.logging import setup_logging
 from app.rag.evidence_store import EvidenceStore
-from app.rag.ollama_runtime import PromptTooLargeError, keep_warm, supports_thinking
+from app.rag.ollama_runtime import (
+    PromptTooLargeError,
+    keep_warm,
+    refresh_effective_context,
+    supports_thinking,
+)
 from app.rag.vector_store import VectorStore
 from app.version import __version__, normalize_environment
 
@@ -48,6 +53,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     warmup_task: asyncio.Task[None] | None = None
     if cfg.ai_warmup:
         warmup_task = asyncio.create_task(keep_warm(cfg, app.state.warmup))
+    else:
+        # Sin precalentamiento igual hay que conocer el contexto efectivo del modelo: de eso
+        # depende el límite del prompt (ver ollama_runtime.prompt_limit).
+        warmup_task = asyncio.create_task(refresh_effective_context(cfg))
     yield
     if warmup_task is not None:
         warmup_task.cancel()
