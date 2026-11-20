@@ -45,6 +45,11 @@ class RemediationTipsRequest(BaseModel):
 class RemediationTipsResponse(BaseModel):
     summary: str
     tips: list[str]
+    # False = el LLM no respondió y los tips son un texto de reemplazo (no una guía).
+    generated: bool = True
+    model: str | None = None
+    # Tiempos (ns) y tokens de Ollama; ver VectorStore._llm_metrics.
+    metrics: dict[str, Any] = Field(default_factory=dict)
 
 
 class EvaluateEvidenceRequest(BaseModel):

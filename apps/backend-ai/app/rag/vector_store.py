@@ -10,6 +10,7 @@ devuelven contexto vacío en lugar de tumbar el proceso.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from pathlib import Path
@@ -23,6 +24,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from app.core.config import Settings, get_settings
 from app.rag import loaders
 from app.rag.chroma_client import build_chroma_client
+from app.rag.ollama_runtime import chat_kwargs, embedding_kwargs, estimate_tokens, guard_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -37,15 +39,20 @@ class VectorStore:
         settings: Settings | None = None,
         embeddings: Any | None = None,
         llm: Any | None = None,
+        think_supported: bool = False,
     ) -> None:
         self.settings = settings or get_settings()
         self.embeddings = embeddings or OllamaEmbeddings(
             base_url=self.settings.ollama_host,
             model=self.settings.ollama_embedding_model,
+            **embedding_kwargs(self.settings),
         )
+        # num_ctx/keep_alive/num_predict (+ temperature/seed/num_thread si están definidos): ver
+        # app/rag/ollama_runtime.py. "reasoning" solo si el modelo declara la capability.
         self.llm = llm or ChatOllama(
             base_url=self.settings.ollama_host,
             model=self.settings.ollama_model,
+            **chat_kwargs(self.settings, think_supported),
         )
         self.collection_name = "mcu-5.0"
         self._vectorstore: Chroma | None = None
@@ -130,8 +137,12 @@ class VectorStore:
             "No pude generar una respuesta. Verifica que el índice RAG y Ollama "
             "estén disponibles."
         )
+        # Fuera del try: un prompt que no entra en el contexto es un error explícito
+        # (PromptTooLargeError), no un "no pude generar" genérico ni un recorte silencioso.
+        prompt = self._build_prompt(context, question)
+        guard_prompt(self.settings, prompt)
         try:
-            response = self.llm.invoke(self._build_prompt(context, question))
+            response = await asyncio.to_thread(self.llm.invoke, prompt)
             answer_text = str(response.content)
         except Exception:
             logger.warning("No se pudo invocar el LLM; se responde sin generación")
@@ -168,12 +179,24 @@ class VectorStore:
             target_level,
             context,
         )
+        guard_prompt(self.settings, prompt)
         try:
-            response = self.llm.invoke(prompt)
-            return self._parse_remediation(str(response.content))
+            # En un hilo aparte: invoke() es bloqueante (decenas de segundos en CPU) y no debe
+            # frenar el event loop (health, métricas y otros pedidos).
+            response = await asyncio.to_thread(self.llm.invoke, prompt)
+            result = self._parse_remediation(str(response.content))
+            result["generated"] = True
+            result["model"] = self.settings.ollama_model
+            result["metrics"] = self._llm_metrics(response, prompt)
+            return result
         except Exception:
             logger.warning("No se pudo invocar el LLM para sugerir remediación")
+            # generated=False: backend-core (cola asíncrona) lo trata como falla reintentable en
+            # vez de guardar este texto de reemplazo como si fuera una guía.
             return {
+                "generated": False,
+                "model": self.settings.ollama_model,
+                "metrics": {},
                 "summary": "",
                 "tips": [
                     "No se pudo generar una sugerencia automática en este momento -- "
@@ -295,6 +318,25 @@ class VectorStore:
             # como sugerencia que dejar la lista de tips vacía silenciosamente.
             tips = lines or [text.strip()]
         return {"summary": summary, "tips": tips}
+
+    @staticmethod
+    def _llm_metrics(response: Any, prompt: str) -> dict[str, Any]:
+        """Tiempos (ns) y tokens que Ollama informa en la respuesta, para la medición (WP3).
+
+        Los modelos simulados de los tests no traen metadata: devuelve solo lo estimado.
+        """
+        meta = getattr(response, "response_metadata", None) or {}
+        keys = (
+            "total_duration",
+            "load_duration",
+            "prompt_eval_count",
+            "prompt_eval_duration",
+            "eval_count",
+            "eval_duration",
+        )
+        metrics: dict[str, Any] = {k: meta[k] for k in keys if meta.get(k) is not None}
+        metrics["prompt_tokens_estimated"] = estimate_tokens(prompt)
+        return metrics
 
     @staticmethod
     def _strip_list_marker(line: str) -> str:

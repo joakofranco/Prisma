@@ -2,13 +2,40 @@
 
 from functools import lru_cache
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     ollama_host: str = "http://ollama:11434"
     ollama_model: str = "llama3:8b"
+    # Cambiar el modelo de embedding exige REINDEXAR todas las colecciones (la del marco y las
+    # evidence-<org>): cambian las dimensiones del vector (nomic-embed-text 768 -> bge-m3 1024) y
+    # Chroma no mezcla dimensiones dentro de una colección.
     ollama_embedding_model: str = "nomic-embed-text"
+    # --- Opciones de Ollama enviadas en CADA pedido (ver app/rag/ollama_runtime.py) ---
+    # num_ctx y keep_alive son siempre los mismos (LLM, embedding y precalentamiento): si
+    # cambian entre pedidos Ollama recarga el modelo.
+    ai_num_ctx: int = 16384
+    ai_keep_alive: str = "-1"
+    # Tope de tokens de la respuesta. Valor provisional [POR VERIFICAR]: definirlo con las guías
+    # reales del hito 1 (una guía de 3-5 pasos ronda pocos cientos de tokens).
+    ai_num_predict: int = 1024
+    # Sin definir = no se envía y rige el valor del modelo.
+    ai_temperature: float | None = None
+    ai_seed: int | None = None
+    ai_num_thread: int | None = None
+    # Razonamiento. Solo se pide si el modelo declara la capability "thinking" (en llama3/gemma3
+    # Ollama responde 400 si se lo pedís).
+    ai_think: bool = False
+    # Precalentar LLM y embedding al arrancar (carga los modelos sin pedido de usuario).
+    ai_warmup: bool = True
+    # Cada cuántos segundos revisar que los modelos sigan cargados (/api/ps) y recargarlos si no
+    # (p. ej. tras reiniciar Ollama). 0 = solo precalentar al arrancar.
+    ai_warmup_check_seconds: int = 60
+    # Límite de tokens del prompt. Sin definir = ai_num_ctx - ai_num_predict - margen.
+    ai_prompt_max_tokens: int | None = None
+    ai_prompt_margin_tokens: int = 256
     chroma_persist_dir: str = "/data/chroma"
     rag_docs_dir: str = "/data/knowledge-base"
     rag_chunk_size: int = 1000
@@ -23,6 +50,23 @@ class Settings(BaseSettings):
     app_env: str = "development"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    @field_validator(
+        "ai_temperature", "ai_seed", "ai_num_thread", "ai_prompt_max_tokens", mode="before"
+    )
+    @classmethod
+    def _empty_is_unset(cls, value: object) -> object:
+        # docker-compose pasa "${AI_TEMPERATURE:-}" como cadena vacía cuando no está definida.
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @property
+    def prompt_max_tokens(self) -> int:
+        """Tope de tokens del prompt: lo que queda del contexto tras reservar la respuesta."""
+        if self.ai_prompt_max_tokens is not None:
+            return self.ai_prompt_max_tokens
+        return max(1, self.ai_num_ctx - self.ai_num_predict - self.ai_prompt_margin_tokens)
 
 
 @lru_cache

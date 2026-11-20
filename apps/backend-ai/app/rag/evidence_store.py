@@ -42,8 +42,12 @@ class EvidenceStore:
     def _default_embeddings(self) -> Any:
         from langchain_ollama import OllamaEmbeddings
 
+        from app.rag.ollama_runtime import embedding_kwargs
+
         return OllamaEmbeddings(
-            base_url=self.settings.ollama_host, model=self.settings.ollama_embedding_model
+            base_url=self.settings.ollama_host,
+            model=self.settings.ollama_embedding_model,
+            **embedding_kwargs(self.settings),
         )
 
     # ------------------------------------------------------------------
