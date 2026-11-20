@@ -160,8 +160,16 @@ class EvidenceStore:
             logger.exception("No se pudo conectar la coleccion de evidencia de %s", organization_id)
             return []
 
+        # D7: ademas de la evidencia del control, entran los fragmentos de la evidencia GLOBAL
+        # (control_id = "") de la misma evaluacion: una politica sin control asignado puede
+        # respaldar cualquier control. Se marcan "unassigned" para mostrarlos como tales.
         where: dict[str, Any] = (
-            {"$and": [{"evaluation_id": evaluation_id}, {"control_id": control_id}]}
+            {
+                "$and": [
+                    {"evaluation_id": evaluation_id},
+                    {"control_id": {"$in": [control_id, ""]}},
+                ]
+            }
             if control_id
             else {"evaluation_id": evaluation_id}
         )
@@ -177,6 +185,7 @@ class EvidenceStore:
         return [
             {
                 "fragment_id": getattr(doc, "id", None),
+                "unassigned": not (doc.metadata.get("control_id") or ""),
                 "evidence_id": doc.metadata.get("evidence_id"),
                 "file_name": doc.metadata.get("file_name"),
                 "location": doc.metadata.get("location"),
@@ -187,6 +196,50 @@ class EvidenceStore:
             # Umbral (C3.1): lo que puntúa por debajo no es una cita que valga la pena mostrar.
             if minimum is None or score >= minimum
         ]
+
+    async def classify(
+        self,
+        *,
+        organization_id: str,
+        evaluation_id: str,
+        evidence_id: str,
+        candidates: list[dict[str, str]],
+        top_n: int = 3,
+    ) -> list[dict[str, Any]]:
+        """Preclasifica una evidencia global: devuelve los ``top_n`` controles candidatos cuya
+        consulta ("codigo: descripcion") mas se parece a algun fragmento de ESA evidencia.
+
+        Es solo una SUGERENCIA (D7): no asigna nada. Nunca lanza: ante cualquier falla devuelve
+        una lista vacia.
+        """
+        if not candidates:
+            return []
+        try:
+            store = self._connect(organization_id)
+            vectors = self.embeddings.embed_documents([c["query"] for c in candidates])
+            where = {"$and": [{"evidence_id": evidence_id}, {"evaluation_id": evaluation_id}]}
+            scored: list[dict[str, Any]] = []
+            for candidate, vector in zip(candidates, vectors, strict=True):
+                hits = store.similarity_search_by_vector_with_relevance_scores(
+                    vector, k=1, filter=where
+                )
+                if not hits:
+                    continue
+                doc, score = hits[0]
+                scored.append(
+                    {
+                        "control_id": candidate["control_id"],
+                        "score": float(score),
+                        "fragment_id": getattr(doc, "id", None),
+                    }
+                )
+        except Exception:
+            logger.exception("Falla la preclasificacion de la evidencia %s", evidence_id)
+            return []
+        minimum = self.settings.ai_classify_min_score
+        scored = [s for s in scored if minimum is None or s["score"] >= minimum]
+        scored.sort(key=lambda s: s["score"], reverse=True)
+        return scored[:top_n]
 
     # ------------------------------------------------------------------
     # Mantenimiento

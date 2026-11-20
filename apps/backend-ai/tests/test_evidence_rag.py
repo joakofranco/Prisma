@@ -108,7 +108,10 @@ def test_citations_filters_by_evaluation_and_control(tmp_path: Path) -> None:
         )
     )
 
-    assert fake.last_filter == {"$and": [{"evaluation_id": "eval-1"}, {"control_id": "control-9"}]}
+    # D7: la evidencia del control Y la global (control_id vacio) de la misma evaluacion.
+    assert fake.last_filter == {
+        "$and": [{"evaluation_id": "eval-1"}, {"control_id": {"$in": ["control-9", ""]}}]
+    }
 
 
 def test_citations_without_control_filters_only_by_evaluation(tmp_path: Path) -> None:
@@ -267,6 +270,13 @@ class FakeApiEvidenceStore:
     async def ingest(self, **kwargs) -> int:
         self.ingested.append(kwargs)
         return 3
+
+    async def classify(self, **kwargs) -> list[dict]:
+        self.classified = kwargs
+        return [
+            {"control_id": "c-9", "score": 0.81, "fragment_id": "ev-1::2"},
+            {"control_id": "c-2", "score": 0.55, "fragment_id": "ev-1::0"},
+        ]
 
     async def citations(self, **kwargs) -> list[dict]:
         return [
@@ -524,3 +534,173 @@ def test_the_citations_endpoint_exposes_fragment_id(client: TestClient) -> None:
         ).model_dump()["fragment_id"]
         == "ev::1"
     )
+
+
+# ----------------------------------------------------------------------------------
+# D7 — evidencia global en las citas y preclasificación
+# ----------------------------------------------------------------------------------
+
+
+def test_citations_mark_fragments_of_global_evidence_as_unassigned(tmp_path: Path) -> None:
+    store = EvidenceStore(settings=_settings(tmp_path))
+    store._stores["org-a"] = FakeCitationStore(
+        [
+            (Document(id="a::0", page_content="del control", metadata={"control_id": "c1"}), 0.9),
+            (Document(id="g::1", page_content="global", metadata={"control_id": ""}), 0.7),
+            (Document(id="h::2", page_content="sin clave", metadata={}), 0.6),
+        ]
+    )
+
+    result = asyncio.run(
+        store.citations(organization_id="org-a", evaluation_id="e", control_id="c1", query="q")
+    )
+
+    assert [r["unassigned"] for r in result] == [False, True, True]
+
+
+class FakeClassifyStore:
+    """Chroma simulado: el puntaje depende del texto de la consulta (via el vector)."""
+
+    def __init__(self, scores: dict[float, float]) -> None:
+        self.scores = scores
+        self.filters: list[dict] = []
+
+    def similarity_search_by_vector_with_relevance_scores(
+        self, vector, k=1, filter=None
+    ):  # noqa: A002, ANN001
+        self.filters.append(filter)
+        score = self.scores.get(vector[0])
+        if score is None:
+            return []
+        return [(Document(id=f"ev::{int(vector[0])}", page_content="x", metadata={}), score)]
+
+
+class IndexedEmbeddings:
+    """Cada consulta se embebe como [n]: asi el puntaje se asocia al candidato."""
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return [[float(i)] for i, _ in enumerate(texts)]
+
+    def embed_query(self, text: str) -> list[float]:
+        return [0.0]
+
+
+def _candidates(n: int) -> list[dict[str, str]]:
+    return [{"control_id": f"c{i}", "query": f"CTL-{i}: descripcion"} for i in range(n)]
+
+
+def test_classify_returns_the_top_controls_by_score(tmp_path: Path) -> None:
+    store = EvidenceStore(settings=_settings(tmp_path), embeddings=IndexedEmbeddings())
+    fake = FakeClassifyStore({0.0: 0.2, 1.0: 0.9, 2.0: 0.5, 3.0: 0.7, 4.0: 0.1})
+    store._stores["org-a"] = fake
+
+    result = asyncio.run(
+        store.classify(
+            organization_id="org-a",
+            evaluation_id="eval-1",
+            evidence_id="ev-9",
+            candidates=_candidates(5),
+            top_n=3,
+        )
+    )
+
+    assert [r["control_id"] for r in result] == ["c1", "c3", "c2"]
+    assert result[0]["score"] == 0.9
+    assert result[0]["fragment_id"] == "ev::1"
+
+
+def test_classify_only_looks_at_that_evidence_of_that_evaluation(tmp_path: Path) -> None:
+    store = EvidenceStore(settings=_settings(tmp_path), embeddings=IndexedEmbeddings())
+    fake = FakeClassifyStore({0.0: 0.5})
+    store._stores["org-a"] = fake
+
+    asyncio.run(
+        store.classify(
+            organization_id="org-a",
+            evaluation_id="eval-1",
+            evidence_id="ev-9",
+            candidates=_candidates(1),
+        )
+    )
+
+    assert fake.filters == [{"$and": [{"evidence_id": "ev-9"}, {"evaluation_id": "eval-1"}]}]
+
+
+def test_classify_applies_the_optional_minimum_score(tmp_path: Path) -> None:
+    store = EvidenceStore(
+        settings=_settings(tmp_path, ai_classify_min_score=0.6), embeddings=IndexedEmbeddings()
+    )
+    store._stores["org-a"] = FakeClassifyStore({0.0: 0.9, 1.0: 0.59, 2.0: 0.6})
+
+    result = asyncio.run(
+        store.classify(
+            organization_id="org-a",
+            evaluation_id="e",
+            evidence_id="ev",
+            candidates=_candidates(3),
+        )
+    )
+
+    assert [r["control_id"] for r in result] == ["c0", "c2"]
+
+
+def test_classify_without_candidates_or_on_error_returns_nothing(tmp_path: Path) -> None:
+    store = EvidenceStore(settings=_settings(tmp_path), embeddings=IndexedEmbeddings())
+    assert (
+        asyncio.run(
+            store.classify(organization_id="o", evaluation_id="e", evidence_id="v", candidates=[])
+        )
+        == []
+    )
+
+    class Boom:
+        def similarity_search_by_vector_with_relevance_scores(
+            self, *a, **k
+        ):  # noqa: ANN002, ANN003
+            raise RuntimeError("chroma caido")
+
+    store._stores["org-a"] = Boom()
+    assert (
+        asyncio.run(
+            store.classify(
+                organization_id="org-a",
+                evaluation_id="e",
+                evidence_id="v",
+                candidates=_candidates(2),
+            )
+        )
+        == []
+    )
+
+
+def test_classify_endpoint(client: TestClient) -> None:
+    response = client.post(
+        "/api/v1/evidence/classify",
+        json={
+            "organization_id": "org-a",
+            "evaluation_id": "eval-1",
+            "evidence_id": "ev-1",
+            "candidates": [{"control_id": "c-9", "query": "PR.AA-01: cuentas"}],
+            "top_n": 2,
+        },
+    )
+
+    assert response.status_code == 200
+    suggestions = response.json()["suggestions"]
+    assert [s["control_id"] for s in suggestions] == ["c-9", "c-2"]
+    assert suggestions[0]["fragment_id"] == "ev-1::2"
+    assert app.state.evidence_store.classified["top_n"] == 2
+
+
+def test_classify_endpoint_rejects_an_empty_candidate_list(client: TestClient) -> None:
+    response = client.post(
+        "/api/v1/evidence/classify",
+        json={
+            "organization_id": "org-a",
+            "evaluation_id": "e",
+            "evidence_id": "ev",
+            "candidates": [],
+        },
+    )
+
+    assert response.status_code == 422
