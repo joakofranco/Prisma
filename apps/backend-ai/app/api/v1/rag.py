@@ -83,6 +83,9 @@ class RemediationTipsRequest(BaseModel):
     subcategory_name: str | None = None
     current_level: int = Field(ge=0, le=4)
     target_level: int = Field(ge=0, le=4)
+    # Modo investigación (C8): pedir la traza y fijar la semilla. Sin trace no se arma nada.
+    trace: bool = False
+    seed: int | None = Field(default=None, ge=0, le=2**31 - 1)
 
 
 class RemediationTipsResponse(BaseModel):
@@ -93,6 +96,8 @@ class RemediationTipsResponse(BaseModel):
     model: str | None = None
     # Tiempos (ns) y tokens de Ollama; ver VectorStore._llm_metrics.
     metrics: dict[str, Any] = Field(default_factory=dict)
+    # Solo si se pidió trace=true.
+    trace: dict[str, Any] | None = None
 
 
 class EvaluateEvidenceRequest(BaseModel):
@@ -156,6 +161,8 @@ async def remediation_tips(
             subcategory_name=body.subcategory_name,
             current_level=body.current_level,
             target_level=body.target_level,
+            trace=body.trace,
+            seed=body.seed,
         ),
     )
     if isinstance(result, JSONResponse):

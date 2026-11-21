@@ -432,3 +432,44 @@ async def warmup(settings: Settings, state: dict[str, Any]) -> None:
                 await asyncio.sleep(_WARMUP_RETRY_SECONDS)
     state["status"] = "failed"
     logger.error("Precalentamiento abandonado tras %d intentos", _WARMUP_MAX_ATTEMPTS)
+
+
+_TRACE_CONFIG_TTL_SECONDS = 300.0
+_trace_config_cache: dict[str, Any] = {"at": 0.0, "value": None}
+
+
+async def trace_config(settings: Settings) -> dict[str, Any]:
+    """Configuración efectiva para la traza del modo investigación (C8).
+
+    Modelo y digest, versión de Ollama y las opciones con que se genera. Se cachea unos
+    minutos: no cambia entre pedidos y consultar a Ollama cada vez sería un costo inútil.
+    Nunca lanza.
+    """
+    now = time.monotonic()
+    cached = _trace_config_cache["value"]
+    if cached is not None and now - float(_trace_config_cache["at"]) < _TRACE_CONFIG_TTL_SECONDS:
+        return dict(cached)
+    info = await runtime_info(settings)
+    options = info.get("options", {})
+    llm = (info.get("models") or {}).get("llm") or {}
+    embedding = (info.get("models") or {}).get("embedding") or {}
+    value = {
+        "model": llm.get("name") or settings.ollama_model,
+        "model_digest": llm.get("digest"),
+        "embedding_model": embedding.get("name") or settings.ollama_embedding_model,
+        "embedding_digest": embedding.get("digest"),
+        "ollama_version": (info.get("ollama") or {}).get("version"),
+        "num_ctx": ((info.get("context") or {}).get("llm") or {}).get("used_for_limit")
+        or options.get("num_ctx"),
+        "keep_alive": options.get("keep_alive"),
+        "num_parallel": settings.ollama_num_parallel,
+        "temperature": options.get("temperature"),
+        "top_p": None,
+        "top_k": None,
+        "think": settings.ai_think,
+        "num_predict": options.get("num_predict"),
+    }
+    # Solo se cachea si Ollama respondió: un resultado a medias no debe quedar fijo.
+    if (info.get("ollama") or {}).get("reachable"):
+        _trace_config_cache.update(at=now, value=value)
+    return value
