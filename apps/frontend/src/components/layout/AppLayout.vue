@@ -11,6 +11,7 @@
       <AppHeader :collapsed="sidebarCollapsed" @toggle-mobile="mobileMenuOpen = !mobileMenuOpen" />
 
       <main class="pt-16 min-h-screen">
+        <ResearchModeBanner />
         <div class="p-4 lg:p-6">
           <slot />
         </div>
@@ -39,6 +40,7 @@
   import { onMounted, onUnmounted, ref } from 'vue';
   import AppSidebar from './AppSidebar.vue';
   import AppHeader from './AppHeader.vue';
+  import ResearchModeBanner from './ResearchModeBanner.vue';
 
   const sidebarCollapsed = ref(false);
   const mobileMenuOpen = ref(false);

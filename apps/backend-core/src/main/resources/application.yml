@@ -158,6 +158,10 @@ prisma:
     # pasar de los 120 s. No afecta al frontend, nginx ni Cloudflare: el pedido de encolado
     # responde enseguida y el resultado se consulta por separado.
     guide-read-timeout: ${AI_GUIDE_READ_TIMEOUT:300s}
+    # Modo investigación (C8): días que se conservan las trazas. 0 = no se borran nunca.
+    # [POR VERIFICAR] el plazo: sin definir en el documento de requisitos.
+    trace:
+      retention-days: ${AI_TRACE_RETENTION_DAYS:0}
     # Cola de trabajos de IA (ver AiJobProperties). Todo opcional.
     jobs:
       enabled: ${AI_JOBS_ENABLED:true}

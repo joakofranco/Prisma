@@ -107,6 +107,14 @@ public class AuditObservationService {
     }
   }
 
+  // Modo investigación (C8). Por setter y opcional: el servicio funciona igual sin trazas.
+  private AiTraceService traceService;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  public void setTraceService(AiTraceService traceService) {
+    this.traceService = traceService;
+  }
+
   public AuditObservationDto create(CreateAuditObservationDto dto) {
     Evaluation eval =
         evaluationRepo
@@ -131,6 +139,15 @@ public class AuditObservationService {
     AuditObservation saved = repo.save(obs);
     if (dto.citation() != null) {
       recordCitationValidation(dto.citation(), saved);
+      // Modo investigación (C8): la observación hereda la traza de la cita de la que sale.
+      if (traceService != null) {
+        traceService.linkLike(
+            uy.edu.prisma.domain.entity.AiTraceLink.ResourceType.CITATION,
+            dto.citation().citationId(),
+            uy.edu.prisma.domain.entity.AiTraceLink.ResourceType.OBSERVATION,
+            saved.getId(),
+            eval.getOrganization().getId());
+      }
     }
     return toDto(saved);
   }

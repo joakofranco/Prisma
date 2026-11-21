@@ -46,6 +46,10 @@ public class AiGeneratedGuide {
   @Column(name = "requested_by")
   private UUID requestedBy;
 
+  /** Traza del modo investigación, si estaba encendido al generarla (V45). */
+  @Column(name = "trace_id")
+  private UUID traceId;
+
   @ManyToOne(fetch = FetchType.LAZY)
   @JoinColumn(name = "control_id", nullable = false)
   private CatalogControl control;

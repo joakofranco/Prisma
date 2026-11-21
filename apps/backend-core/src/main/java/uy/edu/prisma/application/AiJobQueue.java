@@ -108,6 +108,12 @@ public class AiJobQueue {
 
   @Transactional
   public void complete(UUID jobId, GuideResult result, long runMs) {
+    complete(jobId, result, runMs, null);
+  }
+
+  /** Igual, y deja en la guía la traza del modo investigación (C8) si se guardó. */
+  @Transactional
+  public void complete(UUID jobId, GuideResult result, long runMs, UUID traceId) {
     AiJob job = repo.findById(jobId).orElse(null);
     if (job == null || job.getStatus() != Status.RUNNING) {
       return; // cancelado, vencido o ya resuelto por otro camino
@@ -126,6 +132,7 @@ public class AiJobQueue {
                 .model(result.model())
                 .summary(result.summary())
                 .tips(result.tips())
+                .traceId(traceId)
                 .build());
     OffsetDateTime now = OffsetDateTime.now();
     job.setStatus(Status.SUCCEEDED);

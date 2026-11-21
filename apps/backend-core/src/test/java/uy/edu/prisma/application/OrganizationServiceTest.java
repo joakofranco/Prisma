@@ -601,6 +601,53 @@ class OrganizationServiceTest {
     verify(auditLog, never()).record(eq("DELETE"), any(), any());
   }
 
+  // ---- Modo investigación (C8, hito 5) ----
+
+  @Test
+  void setResearchModeTurnsItOnAndAuditsTheChange() {
+    when(repo.findById(org.getId())).thenReturn(Optional.of(org));
+    when(repo.save(org)).thenReturn(org);
+
+    OrganizationDto dto = service.setResearchMode(org.getId(), true);
+
+    assertTrue(org.isResearchMode());
+    assertTrue(dto.researchMode());
+    verify(auditLog)
+        .record("RESEARCH_MODE_ON", "organization:" + org.getId(), "{\"researchMode\":true}");
+  }
+
+  @Test
+  void setResearchModeOffAuditsToo() {
+    org.setResearchMode(true);
+    when(repo.findById(org.getId())).thenReturn(Optional.of(org));
+    when(repo.save(org)).thenReturn(org);
+
+    service.setResearchMode(org.getId(), false);
+
+    assertFalse(org.isResearchMode());
+    verify(auditLog)
+        .record("RESEARCH_MODE_OFF", "organization:" + org.getId(), "{\"researchMode\":false}");
+  }
+
+  @Test
+  void setResearchModeWithoutChangeDoesNotSaveNorAudit() {
+    when(repo.findById(org.getId())).thenReturn(Optional.of(org));
+
+    OrganizationDto dto = service.setResearchMode(org.getId(), false);
+
+    assertFalse(dto.researchMode());
+    verify(repo, never()).save(any());
+    verify(auditLog, never()).record(any(), any(), any());
+  }
+
+  @Test
+  void setResearchModeOnAMissingOrganizationIsNotFound() {
+    UUID id = UUID.randomUUID();
+    when(repo.findById(id)).thenReturn(Optional.empty());
+
+    assertThrows(ResourceNotFoundException.class, () -> service.setResearchMode(id, true));
+  }
+
   // ---- Reactivar (C8) ----
 
   @Test

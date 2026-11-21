@@ -53,6 +53,8 @@ export interface Organization {
   /** Nombre (o email) del responsable; null si no tiene (PRI-367, lo muestra Reportes). */
   responsibleName?: string | null;
   enabled: boolean;
+  /** Modo investigación de la IA (C8): mientras está encendido se guardan las trazas. */
+  researchMode?: boolean;
   createdAt: string;
 }
 
@@ -437,6 +439,22 @@ export interface CitationSource {
   snippet: string;
   score: number | null;
   prefillText: string;
+  /** Cita guardada de la que sale (para enlazar su traza, C8). */
+  citationId?: string | null;
+}
+
+/** Traza de una llamada a la IA (modo investigación). En evidencia solo hay ids y puntajes. */
+export interface AiTrace {
+  id: string;
+  kind: 'GUIDE' | 'CITATIONS' | 'CLASSIFY';
+  seed: number | null;
+  config: Record<string, unknown>;
+  prompt: string | null;
+  response: string | null;
+  thinking: string | null;
+  retrieval: Record<string, unknown>[];
+  metrics: Record<string, unknown>;
+  createdAt: string;
 }
 
 export interface AuditObservation {

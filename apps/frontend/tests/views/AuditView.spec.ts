@@ -972,6 +972,19 @@ describe('AuditView: aceptar una cita valida el control (C4a) y puntaje (C3.1)',
     expect(sent.description).toBe(prefilled);
   });
 
+  it('si la cita está guardada, la observación lleva su id para enlazar la traza (C8)', async () => {
+    evidenceService.getCitations.mockResolvedValue({
+      data: [{ ...citation(1), citationId: 'cit-9' }, citation(2)],
+    });
+    auditService.createObservation.mockResolvedValue({ data: {} });
+    const wrapper = await searchCitations();
+
+    await openObservation(wrapper);
+    await clickCreate();
+
+    expect(auditService.createObservation.mock.calls[0][0].citation.citationId).toBe('cit-9');
+  });
+
   it('si el auditor reescribe el texto, la cita lleva el precargado original', async () => {
     auditService.createObservation.mockResolvedValue({ data: {} });
     const wrapper = await searchCitations();

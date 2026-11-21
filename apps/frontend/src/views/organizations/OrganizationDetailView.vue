@@ -141,7 +141,50 @@
         </div>
       </div>
 
-      <div>
+      <div class="space-y-6">
+        <div
+          v-if="authStore.isAdmin"
+          class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6"
+          data-testid="research-mode-card"
+        >
+          <h3 class="text-lg font-semibold text-slate-900 dark:text-white mb-2">
+            Modo investigación de la IA
+          </h3>
+          <p class="text-sm text-slate-600 dark:text-slate-300 mb-3">
+            Encendido, se guarda la traza de cada respuesta de la IA de esta organización (consulta,
+            semilla, configuración del modelo y razonamiento; en evidencia, solo ids y puntajes).
+            Apagado no se registra nada. Quienes usan la organización ven un aviso mientras esté
+            encendido.
+          </p>
+          <p
+            v-if="organization.researchMode"
+            class="text-xs font-medium text-violet-700 dark:text-violet-300 mb-3"
+            data-testid="research-mode-on"
+          >
+            Modo investigación ACTIVO
+          </p>
+          <BaseButton
+            :variant="organization.researchMode ? 'secondary' : 'primary'"
+            class="w-full"
+            :disabled="savingResearchMode"
+            data-testid="toggle-research-mode"
+            @click="toggleResearchMode"
+          >
+            {{
+              organization.researchMode
+                ? 'Apagar modo investigación'
+                : 'Encender modo investigación'
+            }}
+          </BaseButton>
+          <BaseButton
+            variant="secondary"
+            class="w-full mt-2"
+            data-testid="export-traces"
+            @click="exportTraces"
+          >
+            Exportar trazas (JSONL)
+          </BaseButton>
+        </div>
         <div
           class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6"
         >
@@ -169,7 +212,9 @@
 <script setup lang="ts">
   import { ref, computed, onMounted } from 'vue';
   import { useRoute, useRouter } from 'vue-router';
-  import { organizationsService, evaluationsService } from '@/services/resources';
+  import { organizationsService, evaluationsService, aiTraceService } from '@/services/resources';
+  import { useAuthStore } from '@/stores/auth';
+  import { useNotificationStore } from '@/stores/notification';
   import { formatDate, getStatusLabel, getStatusBadgeStyle } from '@/utils/helpers';
   import BaseButton from '@/components/common/BaseButton.vue';
   import EvaluationMaturityTrendChart from '@/components/charts/EvaluationMaturityTrendChart.vue';
@@ -178,6 +223,9 @@
 
   const route = useRoute();
   const router = useRouter();
+  const authStore = useAuthStore();
+  const notification = useNotificationStore();
+  const savingResearchMode = ref(false);
 
   const organization = ref<Organization | null>(null);
   const loading = ref(true);
@@ -209,6 +257,43 @@
       evalsLoading.value = false;
     }
   });
+
+  async function toggleResearchMode() {
+    if (!organization.value) return;
+    const enable = !organization.value.researchMode;
+    if (
+      enable &&
+      !confirm(
+        `Se va a registrar lo que genera la IA de ${organization.value.name} para investigación. ¿Encender el modo investigación?`,
+      )
+    ) {
+      return;
+    }
+    savingResearchMode.value = true;
+    try {
+      const { data } = await organizationsService.setResearchMode(organization.value.id, enable);
+      organization.value = { ...organization.value, researchMode: data.researchMode };
+      notification.success(enable ? 'Modo investigación encendido' : 'Modo investigación apagado');
+    } catch {
+      notification.error('No se pudo cambiar el modo investigación');
+    } finally {
+      savingResearchMode.value = false;
+    }
+  }
+
+  async function exportTraces() {
+    try {
+      const { data } = await aiTraceService.exportJsonl();
+      const url = URL.createObjectURL(data);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'ai-traces.jsonl';
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      notification.error('No se pudieron exportar las trazas');
+    }
+  }
 
   async function handleDelete() {
     if (!organization.value) return;

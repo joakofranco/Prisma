@@ -241,6 +241,41 @@ Métricas (Prometheus, `/actuator/prometheus`): `prisma_ai_job_queue_wait_second
 `prisma_ai_ollama_tokens_total{kind="prompt|completion"}` y
 `prisma_ai_ollama_seconds_total{phase="prompt_eval|generation|load"}`.
 
+### Modo investigación y trazas de la IA (hito 5)
+
+**Modo por organización.** `PUT /api/organizations/{id}/research-mode` `{enabled}` (solo `PRISMA_ADMIN`)
+enciende o apaga el modo y devuelve la organización; `OrganizationDto` suma `researchMode`. Cada cambio queda
+en la auditoría (`RESEARCH_MODE_ON` / `RESEARCH_MODE_OFF`). **Apagado (el valor por defecto) no se registra
+nada (D2)**; apagarlo no borra las trazas ya guardadas. Mientras está encendido, quienes usan la
+organización ven un aviso en pantalla.
+
+**Qué se registra** (`ai_trace`, sin organización ni usuario; `ai_trace_link` dice a qué recurso pertenece):
+
+- *Guía de mejora:* semilla aleatoria por pedido (se envía a Ollama y se guarda), configuración efectiva
+  (modelo y `digest`, versión de Ollama, `num_ctx`, `keep_alive`, `NUM_PARALLEL`, temperatura, `top_p`,
+  `top_k`, `think`), consulta enviada, respuesta cruda, razonamiento (si el modelo lo devolvió), fragmentos
+  del marco recuperados (ids y puntajes) y las métricas de Ollama. Al crear la acción con la guía, la traza
+  se enlaza al plan.
+- *Citas y preclasificación (D15):* **solo ids y puntajes** de los fragmentos o controles, más la
+  configuración del modelo de embedding; nunca texto de archivos ni la consulta. Cada cita guardada queda
+  enlazada a su traza y una observación creada desde una cita (`CitationSourceDto.citationId`) la hereda.
+
+**Consulta** (todo `PRISMA_ADMIN`; se verifica el acceso a la organización del recurso enlazado; `404` si
+no hay traza porque el modo estaba apagado):
+
+| Método y ruta | Devuelve |
+|---|---|
+| `GET /api/ai/traces/{traceId}` | La traza (`AiTraceDto`) |
+| `GET /api/improvement-plans/{planId}/ai-trace` | La traza de la guía con que se creó la acción |
+| `GET /api/evidence/evaluation/{evaluationId}/control/{controlId}/citations/{citationId}/ai-trace` | La de la búsqueda que produjo la cita |
+| `GET /api/audit/observations/{id}/ai-trace` | La de la cita de la que sale la observación |
+| `GET /api/ai/traces/export` | **JSONL** (una traza por línea) leído solo de `ai_trace`: sin organización, usuario ni recurso |
+
+`backend-ai`: `POST /api/v1/rag/remediation-tips` acepta `trace` y `seed` (sin `trace` no arma ni envía
+nada; con `trace` devuelve `trace`) y `GET /api/v1/runtime/trace-config` informa la configuración efectiva
+(cacheada 5 minutos). `AI_TRACE_RETENTION_DAYS` (0 = no se borra nunca) define la retención: **`[POR
+VERIFICAR]` el plazo**, el documento no lo fija y no se inventó uno.
+
 ### Lote de guías y evidencia global (hito 4)
 
 **Lote de guías (F3).** `POST /api/improvement/suggestions/tips/batch` (`PRISMA_ADMIN`, `ORG_RESPONSIBLE`):

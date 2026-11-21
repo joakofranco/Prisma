@@ -80,7 +80,17 @@ class EntityTest {
     UUID id = UUID.randomUUID();
     Organization all =
         new Organization(
-            id, "N", "NIT", true, "S", "Z", null, true, OffsetDateTime.now(), OffsetDateTime.now());
+            id,
+            "N",
+            "NIT",
+            true,
+            "S",
+            "Z",
+            null,
+            true,
+            false,
+            OffsetDateTime.now(),
+            OffsetDateTime.now());
     assertEquals(id, all.getId());
     assertEquals("N", all.getName());
     assertEquals("NIT", all.getIdentifier());
@@ -89,6 +99,7 @@ class EntityTest {
     assertEquals("Z", all.getSize());
     assertNull(all.getResponsible());
     assertTrue(all.getEnabled());
+    assertFalse(all.isResearchMode());
 
     Organization built =
         Organization.builder().id(id).name("N2").identifier("N2").sector("S2").size("Z2").build();

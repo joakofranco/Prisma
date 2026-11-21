@@ -192,10 +192,27 @@ public class ImprovementPlanService {
     // Guía de IA asíncrona (C5): en la misma transacción que crea la acción se la marca como
     // usada y se registra el feedback (sin organización ni usuario, V32).
     if (dto.guideId() != null) {
-      guideService.markUsed(
-          dto.guideId(), dto.controlId(), Boolean.TRUE.equals(dto.guideEdited()), dto.action());
+      UUID traceId =
+          guideService.markUsed(
+              dto.guideId(), dto.controlId(), Boolean.TRUE.equals(dto.guideEdited()), dto.action());
+      // Modo investigación (C8): la traza de la guía pasa a ser la de esta acción.
+      if (traceId != null && traceService != null) {
+        traceService.link(
+            traceId,
+            uy.edu.prisma.domain.entity.AiTraceLink.ResourceType.IMPROVEMENT_PLAN,
+            saved.getId(),
+            eval.getOrganization().getId());
+      }
     }
     return toDto(saved);
+  }
+
+  // Modo investigación (C8). Por setter y opcional: el servicio funciona igual sin trazas.
+  private AiTraceService traceService;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  public void setTraceService(AiTraceService traceService) {
+    this.traceService = traceService;
   }
 
   /**

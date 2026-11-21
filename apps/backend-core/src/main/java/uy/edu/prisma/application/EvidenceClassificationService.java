@@ -97,6 +97,14 @@ public class EvidenceClassificationService {
     this.currentUser = currentUser;
   }
 
+  // Modo investigación (C8). Por setter y opcional: el servicio funciona igual sin trazas.
+  private AiTraceService traceService;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  public void setTraceService(AiTraceService traceService) {
+    this.traceService = traceService;
+  }
+
   /** Encola la preclasificación de una evidencia global ya indexada (lote, trabajo del sistema). */
   @Transactional
   public void enqueue(Evidence evidence) {
@@ -169,6 +177,9 @@ public class EvidenceClassificationService {
             input.candidates(),
             TOP_N);
     Integer saved = tx.execute(status -> doSave(evidenceId, suggestions));
+    if (traceService != null) {
+      traceService.recordClassification(input.organizationId(), evidenceId, suggestions);
+    }
     return saved == null ? 0 : saved;
   }
 

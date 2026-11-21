@@ -249,6 +249,14 @@
                     Registrar como observación
                   </button>
                 </div>
+                <div v-if="cit.citationId" class="mt-2">
+                  <AiTraceButton
+                    :load="
+                      () =>
+                        aiTraceService.getCitationTrace(evaluationId, c.controlId, cit.citationId!)
+                    "
+                  />
+                </div>
               </div>
             </div>
           </div>
@@ -482,6 +490,9 @@
                   {{ formatDate(obs.createdAt) }}
                   <span v-if="obs.createdByName"> — Registrada por {{ obs.createdByName }}</span>
                 </p>
+                <div class="mt-2">
+                  <AiTraceButton :load="() => aiTraceService.getObservationTrace(obs.id)" />
+                </div>
               </div>
               <div v-if="canWriteObservations" class="flex gap-1 shrink-0">
                 <button
@@ -571,11 +582,13 @@
     evidenceService,
     evaluationsService,
     catalogService,
+    aiTraceService,
   } from '@/services/resources';
   import { formatDate, getErrorMessage } from '@/utils/helpers';
   import { useNotification } from '@/composables/useUtils';
   import BaseButton from '@/components/common/BaseButton.vue';
   import BaseModal from '@/components/common/BaseModal.vue';
+  import AiTraceButton from '@/components/ai/AiTraceButton.vue';
   import BaseSelect from '@/components/common/BaseSelect.vue';
   import BaseTextarea from '@/components/common/BaseTextarea.vue';
   import { useAuthStore } from '@/stores/auth';
@@ -1051,6 +1064,7 @@
       snippet: citation.snippet,
       score: citation.score ?? null,
       prefillText: newObs.description,
+      ...(citation.citationId ? { citationId: citation.citationId } : {}),
     };
     showCreateModal.value = true;
   }

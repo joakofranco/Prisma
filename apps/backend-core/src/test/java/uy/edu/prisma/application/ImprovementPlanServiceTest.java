@@ -53,6 +53,7 @@ class ImprovementPlanServiceTest {
   @Mock private PlanDeadlineSettingsService deadlines;
   @Mock private uy.edu.prisma.domain.repository.AiSuggestionFeedbackRepository feedbackRepo;
   @Mock private AiGuideService guideService;
+  @Mock private AiTraceService traceService;
 
   private ImprovementPlanService service;
   private Evaluation eval;
@@ -85,6 +86,7 @@ class ImprovementPlanServiceTest {
             deadlines,
             feedbackRepo,
             guideService);
+    service.setTraceService(traceService);
     // IN_PROGRESS: el plan está activo (en DRAFT / ARCHIVED no se puede crear ni editar).
     eval =
         Evaluation.builder()
@@ -188,6 +190,52 @@ class ImprovementPlanServiceTest {
             eval.getId(), controlId, "Texto final", "R", "HIGH", null, null, guideId, true));
 
     verify(guideService).markUsed(guideId, controlId, true, "Texto final");
+  }
+
+  @Test
+  void createWithAGuideThatHasATraceLinksItToTheNewPlan() {
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(repo.save(any(ImprovementPlan.class)))
+        .thenAnswer(
+            inv -> {
+              ImprovementPlan p = inv.getArgument(0);
+              p.setId(UUID.randomUUID());
+              return p;
+            });
+    UUID guideId = UUID.randomUUID();
+    UUID controlId = UUID.randomUUID();
+    UUID traceId = UUID.randomUUID();
+    when(controlRepo.findById(controlId))
+        .thenReturn(Optional.of(CatalogControl.builder().id(controlId).code("CT-1").build()));
+    when(guideService.markUsed(guideId, controlId, false, "T")).thenReturn(traceId);
+
+    var created =
+        service.create(
+            new CreateImprovementPlanDto(
+                eval.getId(), controlId, "T", "R", "HIGH", null, null, guideId, false));
+
+    verify(traceService)
+        .link(
+            traceId,
+            uy.edu.prisma.domain.entity.AiTraceLink.ResourceType.IMPROVEMENT_PLAN,
+            created.id(),
+            eval.getOrganization().getId());
+  }
+
+  @Test
+  void createWithAGuideWithoutTraceDoesNotLinkAnything() {
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(repo.save(any(ImprovementPlan.class))).thenAnswer(inv -> inv.getArgument(0));
+    UUID controlId = UUID.randomUUID();
+    when(controlRepo.findById(controlId))
+        .thenReturn(Optional.of(CatalogControl.builder().id(controlId).code("CT-1").build()));
+    when(guideService.markUsed(any(), any(), anyBoolean(), any())).thenReturn(null);
+
+    service.create(
+        new CreateImprovementPlanDto(
+            eval.getId(), controlId, "T", "R", "HIGH", null, null, UUID.randomUUID(), false));
+
+    verifyNoInteractions(traceService);
   }
 
   @Test
