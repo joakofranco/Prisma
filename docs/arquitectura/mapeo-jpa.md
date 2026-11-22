@@ -53,6 +53,7 @@
 | [`AiJob`](#aijob-y-aigeneratedguide) | `ai_job` | `prisma` |
 | [`AiGeneratedGuide`](#aijob-y-aigeneratedguide) | `ai_generated_guide` | `prisma` |
 | [`AiCitationFeedback`](#aicitationfeedback) | `ai_citation_feedback` | `prisma` |
+| `AiCitationValidationFeedback` | `ai_citation_validation_feedback` | `prisma` |
 | [`AuditObservation`](#auditobservation) | `audit_observations` | `prisma` |
 | [`AuditLog`](#auditlog) | `audit_logs` | `audit` |
 | `AuditControlVerdict` | `audit_control_verdicts` | `prisma` |
@@ -443,7 +444,7 @@ Entidades simples, sin colecciones, agregadas después de las anteriores:
 
 | Entidad | Qué representa | Relaciones |
 |---|---|---|
-| `AuditControlVerdict` | Dictamen del auditor sobre un control de una evaluación (`VALIDATED`, `NOT_VALIDATED`, `NEEDS_MORE_EVIDENCE`). Único por evaluación y control. | `@ManyToOne` a `Evaluation`, `CatalogControl` y `User` (quien lo fijó) |
+| `AuditControlVerdict` | Dictamen del auditor sobre un control de una evaluación (`VALIDATED`, `NOT_VALIDATED`, `NEEDS_MORE_EVIDENCE`). Único por evaluación y control. Desde V42 lleva `source` (`MANUAL`/`CITATION`) y `source_ref` (`jsonb`, la cita que lo respalda; un CHECK exige uno si y solo si el otro). | `@ManyToOne` a `Evaluation`, `CatalogControl` y `User` (quien lo fijó) |
 | `EvaluationControlFlag` | Control marcado para revisar dentro de una evaluación. Único por evaluación y control. | `@ManyToOne` a `Evaluation`, `CatalogControl` y `User` |
 | `EvaluationSubcategoryComment` | Comentario por subcategoría de una evaluación. Único por evaluación y subcategoría. | `@ManyToOne` a `Evaluation`, `CatalogSubcategory` y `User` |
 | `PlanDefaultDeadline` | Plazo por defecto, en meses, de las acciones del plan de mejora para cada prioridad. La clave es la prioridad. | — |

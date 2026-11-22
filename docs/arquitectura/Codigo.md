@@ -43,7 +43,8 @@ uy.edu.prisma
 | `EvaluationOverviewService` | Estructura de la evaluación (función, categoría, subcategoría, controles por nivel) podada al perfil comunitario, con la prioridad de cada subcategoría. |
 | `ControlGuideService` | Guía de interpretación de los controles (interpretación, ejemplo y evidencia esperada): edición, importación y exportación en CSV (`ControlGuideParser`, `ControlGuideCsv`). |
 | `TechnicalReportService` | Reporte técnico detallado en PDF: el desglose control por control que respalda el nivel de madurez de cada subcategoría. |
-| `AiCitationFeedbackService` | Registra si el auditor aceptó o rechazó cada cita de la IA (tabla `ai_citation_feedback`). |
+| `AiCitationFeedbackService` | Registra si el auditor aceptó o rechazó cada cita de la IA (tabla `ai_citation_feedback`, anónima). Aceptar una cita valida el control en la misma transacción (`AuditVerdictService.applyCitation`): reglas de D1, D5 y D10 (rechazar nunca cambia el dictamen; pisar uno manual pide confirmación). |
+| `AuditVerdictService` (`applyCitation`) | Dictamen por control con origen `MANUAL`/`CITATION`; aplica la regla de «aceptar una cita» y deja el origen y la cita en la bitácora (`SET_CONTROL_VERDICT`). |
 | `EvidenceRescanScheduler` | Tarea programada que reanaliza con ClamAV las evidencias en cuarentena y las libera o las elimina. |
 | `EmailSettingsService` | Configuración del servidor SMTP de Keycloak (recuperación de contraseña, invitaciones) y envío de un correo de prueba. |
 | `AlertSettingsService` | Configuración del correo de alertas de Alertmanager: valida, guarda en `alert_settings`, reescribe la configuración de Alertmanager y envía una alerta de prueba. |

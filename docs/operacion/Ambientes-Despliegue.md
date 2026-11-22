@@ -401,6 +401,7 @@ sobrescribibles desde el `.env` (ver `.env.example`).
 | `AI_KEEP_ALIVE` | `-1` | `keep_alive` de cada pedido (igual que `OLLAMA_KEEP_ALIVE`) |
 | `AI_NUM_PREDICT` | `1024` | tope de tokens de la respuesta. **Provisional**: definirlo con las guías reales |
 | `AI_TEMPERATURE`, `AI_SEED`, `AI_NUM_THREAD` | sin definir | si están definidos se envían; si no, rige el valor del modelo. `AI_NUM_THREAD` depende del servidor (12 hilos dio 9,4 tok/s contra 6,7 por defecto en el VPS de pruebas) |
+| `AI_CITATION_MIN_SCORE` | sin definir | puntaje mínimo de una cita de evidencia (relevancia de Chroma); lo que puntúa menos no se devuelve. **Sin definir = no se filtra**: el valor se calibra con el feedback real de `ai_citation_feedback` (el banco de pruebas calcula uno sugerido; `[POR VERIFICAR]`) |
 | `AI_THINK` | `false` | razonamiento; solo se aplica si el modelo declara la capability `thinking` (en `llama3`/`gemma3` Ollama responde 400) |
 | `AI_WARMUP` | `true` | precalentar LLM y embedding al arrancar |
 | `AI_WARMUP_CHECK_SECONDS` | `60` | cada cuánto revisar que los modelos sigan cargados y recargarlos si no (`0` = desactivado) |

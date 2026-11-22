@@ -393,6 +393,30 @@ export interface CitationFeedbackItem {
   snippet: string;
   score: number | null;
   decision: 'ACCEPTED' | 'REJECTED';
+  /** Evidencia de la que sale la cita: queda como respaldo del dictamen. */
+  evidenceId?: string | null;
+}
+
+/** Qué pasó con el dictamen de un control al aceptar una cita (C4a). */
+export interface VerdictChange {
+  controlId: string;
+  verdict: AuditVerdict;
+  source: 'MANUAL' | 'CITATION';
+  /** false = ya estaba Validado: la cita queda como respaldo adicional. */
+  changed: boolean;
+}
+
+export interface CitationFeedbackResult {
+  verdicts: VerdictChange[];
+}
+
+/** La cita de la que sale una observación y el texto que la app precargó (C4b). */
+export interface CitationSource {
+  fileName: string | null;
+  location: string | null;
+  snippet: string;
+  score: number | null;
+  prefillText: string;
 }
 
 export interface AuditObservation {
@@ -433,6 +457,14 @@ export interface ControlVerdict {
   setBy: string | null;
   setByName: string | null;
   updatedAt: string | null;
+  /** MANUAL (lo fijó el auditor) o CITATION (se aceptó una cita de la IA). */
+  source?: 'MANUAL' | 'CITATION';
+  /** La cita que respalda el dictamen cuando source = CITATION. */
+  sourceRef?: {
+    evidenceId?: string | null;
+    fileName?: string | null;
+    location?: string | null;
+  } | null;
 }
 
 export interface ImprovementPlan {

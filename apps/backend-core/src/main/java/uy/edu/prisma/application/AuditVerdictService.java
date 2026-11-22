@@ -1,7 +1,11 @@
 package uy.edu.prisma.application;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.OffsetDateTime;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -12,10 +16,12 @@ import uy.edu.prisma.domain.entity.Evaluation;
 import uy.edu.prisma.domain.entity.User;
 import uy.edu.prisma.domain.exception.InvalidRequestException;
 import uy.edu.prisma.domain.exception.ResourceNotFoundException;
+import uy.edu.prisma.domain.exception.VerdictOverrideRequiredException;
 import uy.edu.prisma.domain.repository.AuditControlVerdictRepository;
 import uy.edu.prisma.domain.repository.CatalogControlRepository;
 import uy.edu.prisma.domain.repository.EvaluationRepository;
 import uy.edu.prisma.web.dto.Dto.ControlVerdictDto;
+import uy.edu.prisma.web.dto.Dto.VerdictChangeDto;
 
 /**
  * Dictamen del auditor por control (RF-AUD-06): Validado, No validado o Requiere más evidencia.
@@ -25,6 +31,8 @@ import uy.edu.prisma.web.dto.Dto.ControlVerdictDto;
 @Service
 @Transactional
 public class AuditVerdictService {
+
+  private static final ObjectMapper JSON = new ObjectMapper();
 
   private final AuditControlVerdictRepository repo;
   private final EvaluationRepository evaluationRepo;
@@ -65,6 +73,98 @@ public class AuditVerdictService {
         controlRepo
             .findById(controlId)
             .orElseThrow(() -> new ResourceNotFoundException("Control", controlId));
+    assertControlInProfile(eval, control);
+
+    AuditControlVerdict entity =
+        repo.findByEvaluationIdAndControlId(evaluationId, controlId)
+            .orElseGet(AuditControlVerdict::new);
+    entity.setEvaluation(eval);
+    entity.setControl(control);
+    entity.setVerdict(verdict);
+    // Lo fija el auditor a mano: pisa cualquier origen anterior (también uno que vino de una cita).
+    entity.setSource(AuditControlVerdict.Source.MANUAL);
+    entity.setSourceRef(null);
+    entity.setSetBy(currentUser.currentUser().orElse(null));
+    entity.setUpdatedAt(OffsetDateTime.now());
+    ControlVerdictDto result = toDto(repo.save(entity));
+    auditLog.record(
+        "SET_CONTROL_VERDICT",
+        "evaluation:" + evaluationId,
+        "{\"controlId\":\""
+            + controlId
+            + "\",\"verdict\":\""
+            + verdict
+            + "\",\"source\":\"MANUAL\"}");
+    return result;
+  }
+
+  /**
+   * Aceptar una cita pasa el control a «Validado» (C4a, versión reducida; D1, D5, D10). Se llama
+   * desde la misma transacción que registra la decisión sobre la cita. Reglas:
+   *
+   * <ul>
+   *   <li>Sin dictamen: pasa a {@code VALIDATED} con origen {@code CITATION} y la cita de respaldo.
+   *   <li>Ya {@code VALIDATED}: sin cambios (la cita queda como respaldo adicional).
+   *   <li>{@code NOT_VALIDATED} / {@code NEEDS_MORE_EVIDENCE} puesto a mano: hace falta la
+   *       confirmación del auditor ({@code confirmOverride}); si no, {@link
+   *       VerdictOverrideRequiredException} (HTTP 409).
+   * </ul>
+   *
+   * Rechazar una cita no pasa por acá: nunca cambia el dictamen. La evaluación tiene que estar en
+   * auditoría (lo verifica quien llama) y el control en el perfil comunitario.
+   */
+  public VerdictChangeDto applyCitation(
+      Evaluation eval,
+      CatalogControl control,
+      Map<String, Object> citation,
+      boolean confirmOverride) {
+    assertControlInProfile(eval, control);
+    AuditControlVerdict entity =
+        repo.findByEvaluationIdAndControlId(eval.getId(), control.getId()).orElse(null);
+    if (entity != null && entity.getVerdict() == Verdict.VALIDATED) {
+      return new VerdictChangeDto(
+          control.getId(), Verdict.VALIDATED.name(), entity.getSource().name(), false);
+    }
+    if (entity != null && !confirmOverride) {
+      throw new VerdictOverrideRequiredException(
+          control.getId(), control.getCode(), entity.getVerdict().name());
+    }
+    // Antes de pisarlo: el registro de auditoría guarda qué dictamen había.
+    String previousVerdict = entity != null ? entity.getVerdict().name() : null;
+    AuditControlVerdict target = entity != null ? entity : new AuditControlVerdict();
+    target.setEvaluation(eval);
+    target.setControl(control);
+    target.setVerdict(Verdict.VALIDATED);
+    target.setSource(AuditControlVerdict.Source.CITATION);
+    target.setSourceRef(citation);
+    target.setSetBy(currentUser.currentUser().orElse(null));
+    target.setUpdatedAt(OffsetDateTime.now());
+    repo.save(target);
+    Map<String, Object> payload = new LinkedHashMap<>();
+    payload.put("controlId", control.getId().toString());
+    payload.put("verdict", Verdict.VALIDATED.name());
+    payload.put("source", "CITATION");
+    payload.put("citation", citation);
+    if (previousVerdict != null) {
+      payload.put("previousVerdict", previousVerdict);
+    }
+    auditLog.record("SET_CONTROL_VERDICT", "evaluation:" + eval.getId(), toJson(payload));
+    return new VerdictChangeDto(
+        control.getId(),
+        Verdict.VALIDATED.name(),
+        AuditControlVerdict.Source.CITATION.name(),
+        true);
+  }
+
+  private static String toJson(Map<String, Object> payload) {
+    try {
+      return JSON.writeValueAsString(payload);
+    } catch (JsonProcessingException e) {
+      throw new IllegalStateException("No se pudo serializar el registro de auditoría", e);
+    }
+  }
+
+  private static void assertControlInProfile(Evaluation eval, CatalogControl control) {
     if (eval.getCommunityProfile() != null
         && eval.getCommunityProfile().getControls().stream()
             .noneMatch(c -> c.getId().equals(control.getId()))) {
@@ -73,21 +173,6 @@ public class AuditVerdictService {
               + control.getCode()
               + " no pertenece al perfil comunitario de esta evaluación");
     }
-
-    AuditControlVerdict entity =
-        repo.findByEvaluationIdAndControlId(evaluationId, controlId)
-            .orElseGet(AuditControlVerdict::new);
-    entity.setEvaluation(eval);
-    entity.setControl(control);
-    entity.setVerdict(verdict);
-    entity.setSetBy(currentUser.currentUser().orElse(null));
-    entity.setUpdatedAt(OffsetDateTime.now());
-    ControlVerdictDto result = toDto(repo.save(entity));
-    auditLog.record(
-        "SET_CONTROL_VERDICT",
-        "evaluation:" + evaluationId,
-        "{\"controlId\":\"" + controlId + "\",\"verdict\":\"" + verdict + "\"}");
-    return result;
   }
 
   private Evaluation findAccessibleEvaluation(UUID evaluationId) {
@@ -117,6 +202,8 @@ public class AuditVerdictService {
         v.getVerdict().name(),
         author != null ? author.getId() : null,
         author != null ? (author.getFirstName() + " " + author.getLastName()).trim() : null,
-        v.getUpdatedAt());
+        v.getUpdatedAt(),
+        v.getSource().name(),
+        v.getSourceRef());
   }
 }

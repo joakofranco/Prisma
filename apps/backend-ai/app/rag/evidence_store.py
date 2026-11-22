@@ -169,6 +169,7 @@ class EvidenceStore:
             logger.exception("Falla la búsqueda de citas de evidencia")
             return []
 
+        minimum = self.settings.ai_citation_min_score
         return [
             {
                 "evidence_id": doc.metadata.get("evidence_id"),
@@ -178,6 +179,8 @@ class EvidenceStore:
                 "score": score,
             }
             for doc, score in results
+            # Umbral (C3.1): lo que puntúa por debajo no es una cita que valga la pena mostrar.
+            if minimum is None or score >= minimum
         ]
 
     # ------------------------------------------------------------------

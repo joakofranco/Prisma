@@ -1057,7 +1057,21 @@ public class Dto {
       String status,
       // Evidencia citada de la que sale la observación (opcional, RF-EVI-15): tiene que ser de la
       // misma evaluación.
-      UUID evidenceId) {
+      UUID evidenceId,
+      // Presente cuando la observación se crea desde «Registrar como observación» de una cita: al
+      // guardarla se registra la diferencia entre el texto precargado y el final (C4b).
+      @Valid CitationSourceDto citation) {
+
+    public CreateAuditObservationDto(
+        UUID evaluationId,
+        UUID controlId,
+        UUID subcategoryId,
+        String type,
+        String description,
+        String status,
+        UUID evidenceId) {
+      this(evaluationId, controlId, subcategoryId, type, description, status, evidenceId, null);
+    }
 
     public CreateAuditObservationDto(
         UUID evaluationId,
@@ -1066,9 +1080,21 @@ public class Dto {
         String type,
         String description,
         String status) {
-      this(evaluationId, controlId, subcategoryId, type, description, status, null);
+      this(evaluationId, controlId, subcategoryId, type, description, status, null, null);
     }
   }
+
+  // La cita de la que sale una observación y el texto que la app precargó en el formulario.
+  public record CitationSourceDto(
+      @Size(max = 255, message = "El nombre del archivo es demasiado largo") String fileName,
+      @Size(max = 255, message = "La ubicación es demasiado larga") String location,
+      @NotBlank(message = "El fragmento es obligatorio")
+          @Size(max = 20000, message = "El fragmento es demasiado largo")
+          String snippet,
+      Double score,
+      @NotBlank(message = "El texto precargado es obligatorio")
+          @Size(max = 40000, message = "El texto precargado es demasiado largo")
+          String prefillText) {}
 
   public record UpdateAuditObservationDto(
       UUID controlId,
@@ -1087,7 +1113,51 @@ public class Dto {
   // ---- Audit control verdicts (dictamen) ----
   // verdict: VALIDATED | NOT_VALIDATED | NEEDS_MORE_EVIDENCE.
   public record ControlVerdictDto(
-      UUID controlId, String verdict, UUID setBy, String setByName, OffsetDateTime updatedAt) {}
+      UUID controlId,
+      String verdict,
+      UUID setBy,
+      String setByName,
+      OffsetDateTime updatedAt,
+      // MANUAL (lo fijó el auditor) o CITATION (se aceptó una cita de la IA); sourceRef es la cita.
+      String source,
+      Map<String, Object> sourceRef) {
+
+    public ControlVerdictDto(
+        UUID controlId, String verdict, UUID setBy, String setByName, OffsetDateTime updatedAt) {
+      this(controlId, verdict, setBy, setByName, updatedAt, "MANUAL", null);
+    }
+
+    // Copia defensiva (SpotBugs EI_EXPOSE_REP).
+    public ControlVerdictDto {
+      sourceRef =
+          sourceRef == null
+              ? null
+              : Collections.unmodifiableMap(new java.util.HashMap<>(sourceRef));
+    }
+
+    @Override
+    public Map<String, Object> sourceRef() {
+      return sourceRef == null ? null : Collections.unmodifiableMap(sourceRef);
+    }
+  }
+
+  // Qué pasó con el dictamen de un control al aceptar una cita (changed=false: ya estaba Validado).
+  public record VerdictChangeDto(UUID controlId, String verdict, String source, boolean changed) {}
+
+  public record CitationFeedbackResultDto(List<VerdictChangeDto> verdicts) {
+
+    public CitationFeedbackResultDto {
+      verdicts =
+          verdicts == null
+              ? List.of()
+              : Collections.unmodifiableList(new java.util.ArrayList<>(verdicts));
+    }
+
+    @Override
+    public List<VerdictChangeDto> verdicts() {
+      return Collections.unmodifiableList(verdicts);
+    }
+  }
 
   public record SetControlVerdictDto(
       @NotBlank(message = "El dictamen es obligatorio") String verdict) {}
@@ -1374,15 +1444,35 @@ public class Dto {
       Double score,
       @NotNull(message = "La decisión es obligatoria")
           @Pattern(regexp = "ACCEPTED|REJECTED", message = "Decisión inválida")
-          String decision) {}
+          String decision,
+      // Evidencia de la que sale la cita: se guarda como respaldo del dictamen (source_ref).
+      UUID evidenceId) {
+
+    public CitationFeedbackItemDto(
+        UUID controlId,
+        String fileName,
+        String location,
+        String snippet,
+        Double score,
+        String decision) {
+      this(controlId, fileName, location, snippet, score, decision, null);
+    }
+  }
 
   public record CitationFeedbackBatchDto(
       @NotNull(message = "La evaluación es obligatoria") UUID evaluationId,
       @NotEmpty(message = "Debe enviar al menos un registro")
           @Size(max = 100, message = "Demasiados registros")
-          List<@Valid CitationFeedbackItemDto> items) {
+          List<@Valid CitationFeedbackItemDto> items,
+      // true = el auditor confirmó reemplazar un dictamen puesto a mano («No validado» o «Requiere
+      // más evidencia») al aceptar una cita (C4a). Sin esto el servidor responde 409.
+      Boolean confirmVerdictOverride) {
     public CitationFeedbackBatchDto {
       items = items == null ? List.of() : List.copyOf(items);
+    }
+
+    public CitationFeedbackBatchDto(UUID evaluationId, List<CitationFeedbackItemDto> items) {
+      this(evaluationId, items, null);
     }
 
     @Override

@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     # Límite de tokens del prompt. Sin definir = ai_num_ctx - ai_num_predict - margen.
     ai_prompt_max_tokens: int | None = None
     ai_prompt_margin_tokens: int = 256
+    # Puntaje mínimo de una cita (relevancia devuelta por Chroma). Sin definir = no se filtra: el
+    # valor se calibra con el feedback real de ai_citation_feedback (hoy [POR VERIFICAR]; el banco
+    # de pruebas calcula uno sugerido). Un puntaje menor que el umbral no se devuelve.
+    ai_citation_min_score: float | None = None
     chroma_persist_dir: str = "/data/chroma"
     rag_docs_dir: str = "/data/knowledge-base"
     rag_chunk_size: int = 1000
@@ -52,7 +56,12 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     @field_validator(
-        "ai_temperature", "ai_seed", "ai_num_thread", "ai_prompt_max_tokens", mode="before"
+        "ai_temperature",
+        "ai_seed",
+        "ai_num_thread",
+        "ai_prompt_max_tokens",
+        "ai_citation_min_score",
+        mode="before",
     )
     @classmethod
     def _empty_is_unset(cls, value: object) -> object:
