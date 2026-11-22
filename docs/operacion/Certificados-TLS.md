@@ -136,6 +136,15 @@ verificarlo sin desactivar la validación.
 - `scripts/backup/backup.sh` y `restore.sh` no cambian: `docker-compose.prod.yml` le da a `backup-runner`
   `PGSSLMODE`, `PGSSLROOTCERT`, `S3_ENDPOINT` y `AWS_CA_BUNDLE`.
 
+### Certificado de sellado de PDFs (RF-REP-06, PRI-314)
+
+No es TLS, pero sale de la misma CA interna: `scripts/generate-report-signing-cert.sh` (`make
+report-signing-cert`) emite el certificado intermedio «PRISMA – Sellado de reportes»
+(`basicConstraints CA:TRUE, pathlen:0`) y lo empaqueta con su cadena en
+`infra/tls/signing/report-signing.p12`, que `backend-core` monta de solo lectura. Con esa clave,
+PRISMA firma cada PDF y emite el certificado efímero del usuario; la CA raíz no sale de
+`infra/tls`. Detalles de operación en el [RUNBOOK](RUNBOOK.md).
+
 ### Resumen de lo que queda sin TLS
 
 En producción ya no queda ningún tramo entre servicios de PRISMA ni hacia el navegador sin cifrar,
@@ -293,6 +302,7 @@ funciona igual de principio a fin (login incluido) siempre que su `iss` correspo
 | `KEYCLOAK_AUTH_SERVER_URL` | backend-core, para resolver las JWKS y la Admin REST API — dirección **interna** de Docker, no cruza el navegador (con el prefijo `/auth` agregado en `application.yml`, ya que Keycloak corre con `KC_HTTP_RELATIVE_PATH=/auth`) | `https://keycloak:8443` |
 | `VITE_API_BASE_URL` / `VITE_KEYCLOAK_URL` | Frontend (build-time) — rutas relativas, mismo origen que sirvió la SPA | `/api` / `/auth` |
 | `CORS_ALLOWED_ORIGINS` | backend-core — ya no lo necesita la SPA (mismo origen), pero sigue permitiendo llamadas directas desde herramientas de prueba (Swagger UI en `:8081`, Postman, etc.) | incluye `https://prisma.local` y `https://localhost` |
+| `PDF_SIGNING_ENABLED`, `PDF_SIGNING_KEYSTORE_PASSWORD`, `PDF_SIGNING_KEY_ALIAS` | backend-core — sellado de los PDF (RF-REP-06). El keystore es `infra/tls/signing/report-signing.p12`, montado en `/etc/prisma/signing`; la contraseña la imprime `make report-signing-cert` | `true` en producción (obligatorio: sin keystore válido no arranca); `false` por defecto en desarrollo |
 
 ## Referencias
 

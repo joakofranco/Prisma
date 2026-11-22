@@ -499,6 +499,50 @@ export interface ImprovementPlan {
   createdAt: string;
 }
 
+export type PlanCompliance =
+  'ON_TIME' | 'LATE' | 'DELAYED' | 'IN_TERM' | 'NO_CLOSE_DATE' | 'NO_DATE';
+
+export interface PlanBaselineItem {
+  id: string;
+  controlCode: string | null;
+  action: string;
+  status: ImprovementPlan['status'];
+  baselineDueDate: string | null;
+  dueDate: string | null;
+  dueDateShiftDays: number | null;
+  replanned: boolean;
+  baselinePriority: ImprovementPlan['priority'];
+  priority: ImprovementPlan['priority'];
+  priorityChanged: boolean;
+  baselineResponsible: string | null;
+  responsible: string | null;
+  responsibleChanged: boolean;
+  completedAt: string | null;
+  compliance: PlanCompliance;
+  delayDays: number | null;
+}
+
+export interface PlanBaselineSummary {
+  total: number;
+  replanned: number;
+  averageShiftDays: number | null;
+  priorityChanged: number;
+  responsibleChanged: number;
+  onTime: number;
+  late: number;
+  delayed: number;
+  plannedDue: number;
+  completed: number;
+  plannedPercent: number | null;
+  actualPercent: number | null;
+  deviationPoints: number | null;
+}
+
+export interface PlanBaselineComparison {
+  summary: PlanBaselineSummary;
+  items: PlanBaselineItem[];
+}
+
 // Sugerencia generada por el motor de reglas (RF-PLN-01). Todavía no es un ImprovementPlan
 // persistido: el usuario la revisa/edita y recién ahí se crea vía improvementService.create().
 export interface SuggestedImprovement {
@@ -893,4 +937,31 @@ export interface CatalogImportPayload {
       }[];
     }[];
   }[];
+}
+
+export interface ReportSignature {
+  role: 'PRISMA' | 'USER' | 'UNKNOWN';
+  signerName: string;
+  signerEmail: string | null;
+  signerUserId: string | null;
+  signedAt: string | null;
+  integrityValid: boolean;
+  trusted: boolean;
+  coversWholeDocument: boolean;
+}
+
+export interface ReportVerification {
+  sealingAvailable: boolean;
+  signed: boolean;
+  sealedByPrisma: boolean;
+  signedByUser: boolean;
+  intact: boolean;
+  registered: boolean;
+  registeredAt: string | null;
+  registeredUserId: string | null;
+  userMatchesRegistry: boolean;
+  valid: boolean;
+  sha256: string;
+  message: string;
+  signatures: ReportSignature[];
 }

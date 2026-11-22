@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import uy.edu.prisma.application.ComparisonPdfService;
 import uy.edu.prisma.application.EvaluationComparisonService;
+import uy.edu.prisma.application.ReportSealingService;
 import uy.edu.prisma.web.dto.Dto.ComparisonCandidateDto;
 import uy.edu.prisma.web.dto.Dto.EvaluationComparisonDto;
 
@@ -28,11 +29,13 @@ public class EvaluationComparisonController {
 
   private final EvaluationComparisonService service;
   private final ComparisonPdfService pdf;
+  private final ReportSealingService sealing;
 
   public EvaluationComparisonController(
-      EvaluationComparisonService service, ComparisonPdfService pdf) {
+      EvaluationComparisonService service, ComparisonPdfService pdf, ReportSealingService sealing) {
     this.service = service;
     this.pdf = pdf;
+    this.sealing = sealing;
   }
 
   /** Evaluaciones finalizadas que se pueden comparar (la más reciente primero). */
@@ -56,6 +59,6 @@ public class EvaluationComparisonController {
     return ResponseEntity.ok()
         .headers(headers)
         .contentType(MediaType.APPLICATION_PDF)
-        .body(pdf.generate(a, b));
+        .body(sealing.seal(pdf.generate(a, b), "comparativo", a));
   }
 }
