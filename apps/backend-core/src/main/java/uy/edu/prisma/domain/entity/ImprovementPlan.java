@@ -63,6 +63,20 @@ public class ImprovementPlan {
   @Column(columnDefinition = "TEXT")
   private String comments;
 
+  @Column(name = "baseline_due_date")
+  private LocalDate baselineDueDate;
+
+  @Enumerated(EnumType.STRING)
+  @Column(name = "baseline_priority", nullable = false, length = 10)
+  @Builder.Default
+  private Priority baselinePriority = Priority.MEDIUM;
+
+  @Column(name = "baseline_responsible", length = 200)
+  private String baselineResponsible;
+
+  @Column(name = "completed_at")
+  private OffsetDateTime completedAt;
+
   @Column(name = "created_at", nullable = false, updatable = false)
   @Builder.Default
   private OffsetDateTime createdAt = OffsetDateTime.now();

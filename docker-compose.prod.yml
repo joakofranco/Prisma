@@ -63,6 +63,7 @@ services:
       APP_ENV: production
       SPRING_PROFILES_ACTIVE: production
       LOGGING_LEVEL_ROOT: WARN
+      PDF_SIGNING_ENABLED: "true"
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}?sslmode=verify-full&sslrootcert=/etc/prisma/tls/ca.crt
       SERVER_SSL_ENABLED: "true"
       SERVER_SSL_CERTIFICATE: /etc/prisma/tls/backend-core.crt
