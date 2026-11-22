@@ -105,7 +105,7 @@ destino() {
     DEST_OPTS=("-Japi_protocolo=https" "-Japi_host=nginx" "-Japi_port=443" "${auth[@]}")
     DEST_DESC="nginx:443 en la red $DEST_RED (por el borde, con límites)"
   else
-    DEST_OPTS=("-Japi_protocolo=https" "-Japi_host=${PERF_API_HOST:-backend-core}" "-Japi_port=${PERF_API_PORT:-8080}" "${auth[@]}")
+    DEST_OPTS=("-Japi_protocolo=${PERF_API_PROTOCOLO:-https}" "-Japi_host=${PERF_API_HOST:-backend-core}" "-Japi_port=${PERF_API_PORT:-8080}" "${auth[@]}")
     DEST_DESC="backend-core:8080 en la red $DEST_RED (directo a la aplicación)"
   fi
 }
@@ -419,7 +419,7 @@ cmd_datos() {
   if [ -n "${BASE_URL:-}" ]; then
     api="$BASE_URL"; auth="$BASE_URL"; header="${AUTH_HOST_HEADER:-$URL_HOST}"
   else
-    api="https://${PERF_API_HOST:-backend-core}:${PERF_API_PORT:-8080}"
+    api="${PERF_API_PROTOCOLO:-https}://${PERF_API_HOST:-backend-core}:${PERF_API_PORT:-8080}"
     auth="https://${PERF_AUTH_HOST:-nginx}:${PERF_AUTH_PORT:-443}"
     header="${AUTH_HOST_HEADER:-localhost}"
   fi
