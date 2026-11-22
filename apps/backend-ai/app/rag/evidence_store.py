@@ -2,9 +2,10 @@
 
 A diferencia de VectorStore (una unica coleccion Chroma con la documentacion del catalogo MCU
 5.0, compartida por todos), acá cada organizacion tiene su PROPIA coleccion Chroma
-(``evidence-{organization_id}``). No es un filtro por metadata que se pueda olvidar en una
-query: son colecciones fisicamente distintas dentro del mismo store persistente, así que
-consultar la de una organizacion no puede, estructuralmente, devolver fragmentos de otra.
+(``evidence-{organization_id}__{modelo}``, ver app/rag/collections.py). No es un filtro por
+metadata que se pueda olvidar en una query: son colecciones fisicamente distintas dentro del
+mismo store persistente, así que consultar la de una organizacion no puede, estructuralmente,
+devolver fragmentos de otra.
 
 Cada chunk ademas lleva ``evaluation_id``/``control_id`` en la metadata para acotar la busqueda
 de citas a la evaluacion/control puntual dentro de esa organizacion.
@@ -28,6 +29,7 @@ from langchain_core.documents import Document
 from app.core.config import Settings, get_settings
 from app.rag import loaders
 from app.rag.chroma_client import build_chroma_client
+from app.rag.collections import evidence_collection, is_evidence_collection_of
 
 logger = logging.getLogger(__name__)
 
@@ -385,11 +387,15 @@ class EvidenceStore:
     def delete_evidence(self, organization_id: str, evidence_id: str) -> None:
         """Borra todos los chunks de una evidencia puntual (idempotente)."""
         try:
-            # Con el MISMO cliente que busca e indexa (ver ``_chroma_client``).
-            collection = self._chroma_client().get_or_create_collection(
-                self._collection_name(organization_id)
-            )
-            collection.delete(where={"evidence_id": evidence_id})
+            # Con el MISMO cliente que busca e indexa (ver ``_chroma_client``), y de TODOS los
+            # índices de la organización (también los de modelos anteriores y la colección vieja
+            # sin sufijo): borrar un archivo no puede dejar copias de su texto en una colección
+            # vieja.
+            client = self._chroma_client()
+            for entry in client.list_collections():
+                name = entry if isinstance(entry, str) else getattr(entry, "name", "")
+                if is_evidence_collection_of(name, organization_id):
+                    client.get_collection(name).delete(where={"evidence_id": evidence_id})
         except Exception:
             logger.exception(
                 "No se pudieron borrar chunks previos de evidencia %s (org %s)",
@@ -401,7 +407,7 @@ class EvidenceStore:
     # Internos
     # ------------------------------------------------------------------
     def _collection_name(self, organization_id: str) -> str:
-        return f"evidence-{organization_id}"
+        return evidence_collection(self.settings, organization_id)
 
     def _connect(self, organization_id: str) -> Any:
         # Ver app/rag/chroma_client.py: mismo criterio que VectorStore (PersistentClient local).
