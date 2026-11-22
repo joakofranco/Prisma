@@ -507,6 +507,33 @@ encola un trabajo `CITATIONS_PRECOMPUTE`; al salir de auditoría se descartan la
 `backend-ai` devuelve un id estable por fragmento (`<evidenceId>::<posición>`): **reindexar el mismo archivo da los
 mismos ids**, así las decisiones del auditor sobreviven a un reindexado.
 
+## Diagnóstico de tiempos de un lote de guías (hallazgo 3.8)
+
+El lote de 10 guías con `evaluationId` tardó casi el doble que el de la prueba B8. Revisado en el código:
+**`evaluationId` solo sirve para saber de qué organización es el pedido** (`AiJobService.resolveOrganization`):
+no entra en los parámetros del trabajo ni en el prompt, y el contexto del marco que se agrega al prompt
+(los 3 fragmentos más parecidos del MCU) no depende de la evaluación. Es decir que el contexto de la
+evaluación **no agrega tokens**. La causa más probable es otra: la prueba corrió mientras la preclasificación
+de evidencia seguía calculando en `backend-ai` después del corte (hallazgo 3.3: varios pedidos de 1,5 a 4
+minutos saturando las 18 vCPU), que se corrige con la cancelación al desconectarse. Sin arreglo de código
+para este hallazgo; para confirmarlo hay que medir de nuevo sin otra actividad y comparar tokens y tiempos:
+
+```sql
+-- Tokens de entrada y de salida y tiempo de ejecución por lote (solo lectura)
+SELECT batch_id,
+       count(*)                                         AS guias,
+       round(avg(run_ms))                               AS run_ms_prom,
+       round(avg((metrics->>'prompt_eval_count')::int)) AS tokens_prompt_prom,
+       round(avg((metrics->>'eval_count')::int))        AS tokens_salida_prom
+FROM prisma.ai_job
+WHERE type = 'GUIDE' AND status = 'SUCCEEDED'
+GROUP BY batch_id ORDER BY max(finished_at) DESC LIMIT 10;
+```
+
+Si con el servidor quieto `tokens_prompt_prom` es parecido al del lote B8 y el tiempo vuelve a ser el de
+B8, la diferencia era carga ajena. Si el prompt es más largo, comparar las descripciones de los controles
+elegidos (hay controles con descripciones de varias líneas). `[POR VERIFICAR]` en el servidor.
+
 ## Modo investigación (hito 5)
 
 Se enciende por organización desde el detalle de la organización (solo `PRISMA_ADMIN`): «Encender modo
