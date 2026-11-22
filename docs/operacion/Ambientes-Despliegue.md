@@ -610,7 +610,7 @@ mantiene actualizadas las imágenes.
 
 ## Versión y entorno
 
-**Versión.** PRISMA tiene una sola versión (SemVer `MAJOR.MINOR.PATCH`, hoy `0.6.0`) compartida por la
+**Versión.** PRISMA tiene una sola versión (SemVer `MAJOR.MINOR.PATCH`, hoy `0.7.0`) compartida por la
 API, el servicio de IA y la web. Vive en cuatro archivos que tienen que coincidir
 (`apps/backend-core/pom.xml`, `apps/frontend/package.json`, `apps/backend-ai/app/version.py` y
 `sonar-project.properties`); el CI lo verifica (`version-sync`). Para cambiarla:

@@ -7,7 +7,7 @@ variable `APP_ENV` (en docker-compose, el `ENV` del `.env`): `development`, `sta
 error es visible en vez de pasar desapercibido.
 """
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 
 DEVELOPMENT = "development"
 

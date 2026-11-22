@@ -14,7 +14,7 @@
 
     <groupId>uy.edu.prisma</groupId>
     <artifactId>prisma-backend-core</artifactId>
-    <version>0.6.0</version>
+    <version>0.7.0</version>
     <name>PRISMA Backend Core</name>
     <description>API principal de la Plataforma PRISMA (MCU 5.0)</description>
 
