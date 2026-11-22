@@ -8,6 +8,8 @@
       </p>
     </div>
 
+    <ReportVerifier />
+
     <div class="flex flex-col sm:flex-row gap-3 sm:items-center">
       <div class="relative flex-1 sm:max-w-md">
         <label for="reports-search" class="sr-only">Buscar organización o evaluación</label>
@@ -264,6 +266,7 @@
   import { saveBlob } from '@/utils/files';
   import { useNotification } from '@/composables/useUtils';
   import BaseButton from '@/components/common/BaseButton.vue';
+  import ReportVerifier from '@/components/reports/ReportVerifier.vue';
   import {
     ArrowDownTrayIcon,
     ChevronDownIcon,
