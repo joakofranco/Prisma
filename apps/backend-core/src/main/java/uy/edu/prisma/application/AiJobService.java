@@ -46,6 +46,9 @@ import uy.edu.prisma.web.dto.Dto.GuideJobRequestDto;
 @Service
 public class AiJobService {
 
+  private static final org.slf4j.Logger log =
+      org.slf4j.LoggerFactory.getLogger(AiJobService.class);
+
   private static final Set<Status> ACTIVE = Set.of(Status.QUEUED, Status.RUNNING);
   private static final int LIST_LIMIT = 50;
 
@@ -126,6 +129,7 @@ public class AiJobService {
         result.add(get(id));
       } catch (ResourceNotFoundException gone) {
         // venció o se borró: no rompe el seguimiento del resto
+        log.debug("Trabajo de IA {} ya no existe: se omite del seguimiento", id);
       }
     }
     return result;

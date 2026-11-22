@@ -163,10 +163,21 @@ public class EvidenceClassificationService {
 
   /** Lo que se manda a backend-ai (calculado en una transacción corta). */
   public record ClassifyInput(
-      UUID organizationId,
-      UUID evaluationId,
-      UUID evidenceId,
-      List<ClassifyCandidate> candidates) {}
+      UUID organizationId, UUID evaluationId, UUID evidenceId, List<ClassifyCandidate> candidates) {
+
+    // Copia defensiva (SpotBugs EI_EXPOSE_REP).
+    public ClassifyInput {
+      candidates =
+          candidates == null
+              ? List.of()
+              : java.util.Collections.unmodifiableList(new java.util.ArrayList<>(candidates));
+    }
+
+    @Override
+    public List<ClassifyCandidate> candidates() {
+      return java.util.Collections.unmodifiableList(candidates);
+    }
+  }
 
   ClassifyInput prepare(UUID evidenceId) {
     return tx.execute(status -> doPrepare(evidenceId));
