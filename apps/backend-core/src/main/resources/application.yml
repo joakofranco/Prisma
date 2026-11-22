@@ -158,6 +158,9 @@ prisma:
     # pasar de los 120 s. No afecta al frontend, nginx ni Cloudflare: el pedido de encolado
     # responde enseguida y el resultado se consulta por separado.
     guide-read-timeout: ${AI_GUIDE_READ_TIMEOUT:300s}
+    # Preclasificación de evidencia global: compara ~670 controles con la evidencia (55 a 68 s a
+    # solas, más de 2 min con dos a la vez en el VPS). Aparte de la espera general de 60 s.
+    classify-read-timeout: ${AI_CLASSIFY_READ_TIMEOUT:300s}
     # Cola de trabajos de IA (ver AiJobProperties). Todo opcional.
     jobs:
       enabled: ${AI_JOBS_ENABLED:true}

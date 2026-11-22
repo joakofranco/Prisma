@@ -36,12 +36,21 @@ public class AiEvidenceClient {
   // Con la espera larga de la guía de mejora (genera con el LLM, tarda cerca de un minuto).
   private final RestClient guideRestClient;
 
+  // Con la espera de la preclasificación de evidencia global (varios minutos, ver AiProperties).
+  private final RestClient classifyRestClient;
+
   @Autowired
   public AiEvidenceClient(
       @Qualifier("aiRestClient") RestClient aiRestClient,
-      @Qualifier("aiGuideRestClient") RestClient aiGuideRestClient) {
+      @Qualifier("aiGuideRestClient") RestClient aiGuideRestClient,
+      @Qualifier("aiClassifyRestClient") RestClient aiClassifyRestClient) {
     this.restClient = aiRestClient;
     this.guideRestClient = aiGuideRestClient;
+    this.classifyRestClient = aiClassifyRestClient;
+  }
+
+  public AiEvidenceClient(RestClient aiRestClient, RestClient aiGuideRestClient) {
+    this(aiRestClient, aiGuideRestClient, aiGuideRestClient);
   }
 
   public AiEvidenceClient(RestClient aiRestClient) {
@@ -313,7 +322,7 @@ public class AiEvidenceClient {
       int topN) {
     try {
       ClassifyResponse response =
-          restClient
+          classifyRestClient
               .post()
               .uri("/api/v1/evidence/classify")
               .contentType(MediaType.APPLICATION_JSON)

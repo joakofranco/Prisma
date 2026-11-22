@@ -8,8 +8,10 @@ request antes de llegar acá.
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from app.api.v1.rag import run_until_disconnect
 from app.core.security import verify_internal_key
 from app.rag.evidence_store import EvidenceStore
 
@@ -117,15 +119,21 @@ async def evidence_citations(
 @evidence_router.post("/classify", response_model=EvidenceClassifyResponse)
 async def classify_evidence(
     request: Request, body: EvidenceClassifyRequest
-) -> EvidenceClassifyResponse:
+) -> EvidenceClassifyResponse | JSONResponse:
     """Sugiere a que controles podria pertenecer una evidencia sin control asignado (D7)."""
-    results = await _store(request).classify(
-        organization_id=body.organization_id,
-        evaluation_id=body.evaluation_id,
-        evidence_id=body.evidence_id,
-        candidates=[c.model_dump() for c in body.candidates],
-        top_n=body.top_n,
+    # Si backend-core corta por timeout, el cálculo se cancela (antes seguía y saturaba la CPU).
+    results = await run_until_disconnect(
+        request,
+        _store(request).classify(
+            organization_id=body.organization_id,
+            evaluation_id=body.evaluation_id,
+            evidence_id=body.evidence_id,
+            candidates=[c.model_dump() for c in body.candidates],
+            top_n=body.top_n,
+        ),
     )
+    if isinstance(results, JSONResponse):
+        return results
     return EvidenceClassifyResponse(suggestions=[ClassifySuggestion(**r) for r in results])
 
 

@@ -212,6 +212,8 @@ services:
       AI_READ_TIMEOUT: ${AI_READ_TIMEOUT:-60s}
       # 300 s: con 2 guías en paralelo varias pasan de 120 s y se cortaban.
       AI_GUIDE_READ_TIMEOUT: ${AI_GUIDE_READ_TIMEOUT:-300s}
+      # Preclasificación de evidencia global (aparte de la general de 60 s).
+      AI_CLASSIFY_READ_TIMEOUT: ${AI_CLASSIFY_READ_TIMEOUT:-300s}
       # Cola de trabajos de IA (ver AiJobProperties). Opcionales; estos son los valores por defecto.
       AI_JOBS_ENABLED: ${AI_JOBS_ENABLED:-true}
       AI_JOBS_CONCURRENCY: ${AI_JOBS_CONCURRENCY:-2}
