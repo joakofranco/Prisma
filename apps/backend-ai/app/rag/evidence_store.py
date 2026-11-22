@@ -31,6 +31,39 @@ logger = logging.getLogger(__name__)
 _DOWNLOAD_TIMEOUT_SECONDS = 30.0
 
 
+class IndexSearchError(Exception):
+    """La búsqueda en el índice de evidencia falló (no es «sin resultados»).
+
+    Antes estos errores se tragaban y la API contestaba 200 con una lista vacía: el auditor veía
+    «sin citas» cuando en realidad el índice estaba roto o a medio reindexar. Ahora se informa
+    como error recuperable (503): backend-core reintenta o usa lo ya guardado, y reindexar o
+    reiniciar backend-ai lo arregla.
+    """
+
+    code = "INDEX_UNAVAILABLE"
+
+    def __init__(self, message: str, *, inconsistent: bool = False) -> None:
+        super().__init__(message)
+        # «Error finding id» (Chroma): el índice de la colección quedó inconsistente.
+        self.inconsistent = inconsistent
+        if inconsistent:
+            self.code = "INDEX_INCONSISTENT"
+
+
+def _is_inconsistent_index(exc: Exception) -> bool:
+    return "error finding id" in str(exc).lower()
+
+
+def _search_error(exc: Exception) -> IndexSearchError:
+    inconsistent = _is_inconsistent_index(exc)
+    return IndexSearchError(
+        "El índice de evidencia no está disponible"
+        + (" (inconsistente: hay que reindexar la evidencia)" if inconsistent else "")
+        + f": {type(exc).__name__}",
+        inconsistent=inconsistent,
+    )
+
+
 class EvidenceStore:
     def __init__(self, settings: Settings | None = None, embeddings: Any | None = None) -> None:
         self.settings = settings or get_settings()
@@ -38,6 +71,27 @@ class EvidenceStore:
         # Cache de instancias Chroma por organizacion (una coleccion por organizacion). Los
         # tests inyectan fakes acá directamente en vez de conectar a un Chroma real.
         self._stores: dict[str, Any] = {}
+        # UN solo cliente Chroma para indexar, borrar y buscar: antes el borrado abría otro cliente
+        # distinto del que usaba la búsqueda (3.5). Se recrea si el índice queda inconsistente.
+        self._client: Any | None = None
+
+    def _chroma_client(self) -> Any:
+        if self._client is None:
+            self._client = build_chroma_client(self.settings)
+        return self._client
+
+    def reopen(self) -> None:
+        """Descarta el cliente y las colecciones abiertas (y la caché de Chroma por ruta): la
+        próxima operación abre todo de nuevo desde lo persistido. Es lo que arreglaba reiniciar
+        backend-ai cuando el índice en memoria quedaba inconsistente con el persistido."""
+        self._stores.clear()
+        self._client = None
+        try:
+            from chromadb.api.shared_system_client import SharedSystemClient
+
+            SharedSystemClient.clear_system_cache()
+        except Exception:  # pragma: no cover - depende de la versión de chromadb
+            logger.warning("No se pudo limpiar la caché de sistemas de Chroma")
 
     def _default_embeddings(self) -> Any:
         from langchain_ollama import OllamaEmbeddings
@@ -103,17 +157,24 @@ class EvidenceStore:
                 "location": location,
             }
 
-        try:
-            store = self._connect(organization_id)
-            # IDs deterministicos (evidencia + posicion del fragmento): el mismo archivo reindexado
-            # da los mismos IDs, asi las decisiones del auditor sobre un fragmento sobreviven a
-            # re-indexar (D6, C2). Sin esto Chroma generaba UUID aleatorios en cada indexacion.
-            ids = [f"{evidence_id}::{i}" for i in range(len(chunks))]
-            store.add_documents(chunks, ids=ids)
-            return len(chunks)
-        except Exception:
-            logger.exception("Falla indexando evidencia %s (org %s)", evidence_id, organization_id)
-            return 0
+        # IDs deterministicos (evidencia + posicion del fragmento): el mismo archivo reindexado
+        # da los mismos IDs, asi las decisiones del auditor sobre un fragmento sobreviven a
+        # re-indexar (D6, C2). Sin esto Chroma generaba UUID aleatorios en cada indexacion.
+        ids = [f"{evidence_id}::{i}" for i in range(len(chunks))]
+        for attempt in (1, 2):
+            try:
+                self._connect(organization_id).add_documents(chunks, ids=ids)
+                return len(chunks)
+            except Exception as exc:
+                logger.exception(
+                    "Falla indexando evidencia %s (org %s)", evidence_id, organization_id
+                )
+                if attempt == 1 and _is_inconsistent_index(exc):
+                    # Indice inconsistente: se reabre el cliente y se reintenta UNA vez.
+                    self.reopen()
+                    continue
+                return 0
+        return 0
 
     async def _download_and_load(self, file_url: str, file_name: str) -> list[Document]:
         suffix = Path(file_name).suffix.lower()
@@ -154,24 +215,17 @@ class EvidenceStore:
     ) -> list[dict[str, Any]]:
         """Busca los fragmentos mas relevantes de evidencia DE ESTA ORGANIZACION unicamente,
         acotado a la evaluacion (y control, si se especifica)."""
-        try:
-            store = self._connect(organization_id)
-        except Exception:
-            logger.exception("No se pudo conectar la coleccion de evidencia de %s", organization_id)
-            return []
-
         where: dict[str, Any] = (
             {"$and": [{"evaluation_id": evaluation_id}, {"control_id": control_id}]}
             if control_id
             else {"evaluation_id": evaluation_id}
         )
-        try:
-            results = store.similarity_search_with_relevance_scores(
+        results = self._search_with_recovery(
+            organization_id,
+            lambda store: store.similarity_search_with_relevance_scores(
                 query, k=top_k or self.settings.rag_top_k, filter=where
-            )
-        except Exception:
-            logger.exception("Falla la búsqueda de citas de evidencia")
-            return []
+            ),
+        )
 
         minimum = self.settings.ai_citation_min_score
         return [
@@ -188,14 +242,41 @@ class EvidenceStore:
             if minimum is None or score >= minimum
         ]
 
+    def _search_with_recovery(self, organization_id: str, search: Any) -> Any:
+        """Ejecuta ``search(store)``. Ante «Error finding id» reabre el cliente y reintenta UNA
+        vez; si sigue fallando (o es otro error) lanza ``IndexSearchError`` (503, recuperable): no
+        se devuelve una lista vacía como si no hubiera resultados."""
+        try:
+            return search(self._connect(organization_id))
+        except Exception as exc:
+            if not _is_inconsistent_index(exc):
+                logger.exception(
+                    "Falla la búsqueda en el índice de evidencia de %s", organization_id
+                )
+                raise _search_error(exc) from exc
+            logger.warning(
+                "Índice de evidencia inconsistente (org %s): se reabre el cliente y se reintenta",
+                organization_id,
+            )
+        self.reopen()
+        try:
+            return search(self._connect(organization_id))
+        except Exception as exc:
+            logger.exception(
+                "El índice de evidencia sigue fallando tras reabrirlo (org %s)", organization_id
+            )
+            raise _search_error(exc) from exc
+
     # ------------------------------------------------------------------
     # Mantenimiento
     # ------------------------------------------------------------------
     def delete_evidence(self, organization_id: str, evidence_id: str) -> None:
         """Borra todos los chunks de una evidencia puntual (idempotente)."""
         try:
-            client = build_chroma_client(self.settings)
-            collection = client.get_or_create_collection(self._collection_name(organization_id))
+            # Con el MISMO cliente que busca e indexa (ver ``_chroma_client``).
+            collection = self._chroma_client().get_or_create_collection(
+                self._collection_name(organization_id)
+            )
             collection.delete(where={"evidence_id": evidence_id})
         except Exception:
             logger.exception(
@@ -214,7 +295,7 @@ class EvidenceStore:
         # Ver app/rag/chroma_client.py: mismo criterio que VectorStore (PersistentClient local).
         if organization_id not in self._stores:
             self._stores[organization_id] = Chroma(
-                client=build_chroma_client(self.settings),
+                client=self._chroma_client(),
                 collection_name=self._collection_name(organization_id),
                 embedding_function=self.embeddings,
             )
