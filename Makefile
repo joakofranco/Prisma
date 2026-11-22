@@ -224,10 +224,10 @@ restore: ## Restaurar PostgreSQL y las evidencias desde el respaldo MÁS RECIENT
 	$(DC) exec -T backup-runner /usr/local/bin/restore.sh
 
 # ---------- IA / OLLAMA ----------
-pull-llm: ## Descargar en Ollama los modelos llama3:8b (~4.7 GB) y nomic-embed-text. Solo la primera vez; necesita el contenedor ollama levantado
+pull-llm: ## Descargar en Ollama los modelos nemotron-3-nano:30b (LLM, ~24 GB) y bge-m3 (embedding, ~1,2 GB). Solo la primera vez; necesita el contenedor ollama levantado
 	@echo "$(CYAN)Descargando los modelos de Ollama...$(RESET)"
-	$(DC) exec ollama ollama pull llama3:8b
-	$(DC) exec ollama ollama pull nomic-embed-text
+	$(DC) exec ollama ollama pull nemotron-3-nano:30b
+	$(DC) exec ollama ollama pull bge-m3
 	@echo "$(GREEN)Modelos descargados$(RESET)"
 
 # ---------- CALIDAD & SEGURIDAD ----------

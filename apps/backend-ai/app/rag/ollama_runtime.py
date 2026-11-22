@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 PROMPT_TOO_LARGE = "PROMPT_TOO_LARGE"
 
-# Estimación conservadora para español con tokenizadores tipo llama3 (~3,5 caracteres por
+# Estimación conservadora para español con tokenizadores comunes (~3,5 caracteres por
 # token): se divide por 3 para sobreestimar un poco y no quedarse corto.
 _CHARS_PER_TOKEN = 3
 
@@ -59,8 +59,8 @@ def estimate_tokens(text: str) -> int:
 # ----------------------------------------------------------------------
 # Contexto efectivo (el que Ollama realmente carga)
 # ----------------------------------------------------------------------
-# ``AI_NUM_CTX`` es lo que se PIDE; el modelo puede tener un máximo menor (llama3:8b: 8192,
-# nomic-embed-text: 2048) y Ollama carga con ese. Si el límite del prompt se calculara con lo
+# ``AI_NUM_CTX`` es lo que se PIDE; el modelo puede tener un máximo menor (p. ej. un LLM de
+# 8192 o un embedding de 2048) y Ollama carga con ese. Si el límite del prompt se calculara con lo
 # pedido, un prompt de 9 000 tokens pasaría el control y Ollama lo recortaría en silencio. Por eso
 # se guarda el contexto efectivo (de ``/api/ps``, o del máximo del modelo de ``/api/show`` si aún
 # no está cargado) y se usa ``min(AI_NUM_CTX, efectivo)``.
@@ -327,7 +327,8 @@ async def runtime_info(settings: Settings, warmup: dict[str, Any] | None = None)
 
 
 def _lookup(by_name: dict[Any, Any], name: str) -> Any:
-    """Ollama lista ``llama3:8b`` pero también ``nomic-embed-text:latest``: matchea ambos."""
+    """Ollama lista ``nemotron-3-nano:30b`` (con su etiqueta) pero ``bge-m3:latest`` (el
+    ``:latest`` que agrega a lo que se bajó sin etiqueta): matchea ambos."""
     if name in by_name:
         return by_name[name]
     return by_name.get(f"{name}:latest")

@@ -29,3 +29,11 @@ async def get_runtime(request: Request) -> dict[str, Any]:
 async def get_trace_config() -> dict[str, Any]:
     """Configuración efectiva para la traza del modo investigación (C8)."""
     return await trace_config(get_settings())
+
+
+@runtime_router.get("/models")
+async def get_models() -> dict[str, str]:
+    """Modelos configurados (sin consultar a Ollama). backend-core lo usa para detectar un cambio
+    de modelo de embedding y reindexar la evidencia."""
+    settings = get_settings()
+    return {"llm": settings.ollama_model, "embedding": settings.ollama_embedding_model}

@@ -8,11 +8,13 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     ollama_host: str = "http://ollama:11434"
-    ollama_model: str = "llama3:8b"
-    # Cambiar el modelo de embedding exige REINDEXAR todas las colecciones (la del marco y las
-    # evidence-<org>): cambian las dimensiones del vector (nomic-embed-text 768 -> bge-m3 1024) y
-    # Chroma no mezcla dimensiones dentro de una colección.
-    ollama_embedding_model: str = "nomic-embed-text"
+    # Un solo LLM y un solo embedding (decisión 2026-11-22): no se dejan modelos alternativos.
+    ollama_model: str = "nemotron-3-nano:30b"
+    # Cada colección lleva el modelo en el nombre (mcu-5.0__bge-m3, evidence-<org>__bge-m3; ver
+    # app/rag/collections.py): cambiar de modelo crea colecciones nuevas (Chroma no mezcla 768 con
+    # 1024 dimensiones) y no pisa las anteriores. El marco se indexa solo al arrancar; la
+    # evidencia la reindexa backend-core (un trabajo EVIDENCE_INDEX por evidencia).
+    ollama_embedding_model: str = "bge-m3"
     # --- Opciones de Ollama enviadas en CADA pedido (ver app/rag/ollama_runtime.py) ---
     # num_ctx y keep_alive son siempre los mismos (LLM, embedding y precalentamiento): si
     # cambian entre pedidos Ollama recarga el modelo.
@@ -21,12 +23,16 @@ class Settings(BaseSettings):
     # Tope de tokens de la respuesta. Valor provisional [POR VERIFICAR]: definirlo con las guías
     # reales del hito 1 (una guía de 3-5 pasos ronda pocos cientos de tokens).
     ai_num_predict: int = 1024
-    # Sin definir = no se envía y rige el valor del modelo.
-    ai_temperature: float | None = None
+    # 0,1 y 12 hilos son con lo que se midió el banco (perfil tuned_t12): fijarlos hace valer lo
+    # medido y que la guía no cambie entre corridas (sin temperatura rige 0,8 de Ollama). Vacío
+    # (AI_TEMPERATURE=) = no se envía y rige el valor del modelo. 12 hilos: [POR VERIFICAR] con
+    # nemotron (se midió con llama3:8b).
+    ai_temperature: float | None = 0.1
     ai_seed: int | None = None
-    ai_num_thread: int | None = None
-    # Razonamiento. Solo se pide si el modelo declara la capability "thinking" (en llama3/gemma3
-    # Ollama responde 400 si se lo pedís).
+    ai_num_thread: int | None = 12
+    # Razonamiento. Solo se pide si el modelo declara la capability "thinking" (en modelos sin ella,
+    # p. ej. llama3/gemma3, Ollama responde 400 si se lo pedís). Con nemotron-3-nano queda
+    # apagado: la guía pasa de 39 a 91 s y la cita en QA de 100 % a 62 %.
     ai_think: bool = False
     # Pedidos simultáneos de Ollama (OLLAMA_NUM_PARALLEL del servidor): solo se informa en la traza.
     ollama_num_parallel: int | None = None

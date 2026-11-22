@@ -55,7 +55,13 @@ def test_defaults_match_the_spec() -> None:
     assert s.ai_keep_alive == "-1"
     assert s.ai_think is False
     assert s.ai_warmup is True
-    assert s.ai_temperature is None and s.ai_seed is None and s.ai_num_thread is None
+    # Lo medido en el banco (perfil tuned_t12): temperatura 0,1 y 12 hilos; sin semilla fija.
+    assert s.ai_temperature == 0.1 and s.ai_num_thread == 12 and s.ai_seed is None
+    # Exactamente un LLM y un embedding (decisión 2026-11-22).
+    assert s.ollama_model == "nemotron-3-nano:30b"
+    assert s.ollama_embedding_model == "bge-m3"
+    # Los umbrales se calibran después con datos reales de bge-m3: sin definir.
+    assert s.ai_citation_min_score is None and s.ai_classify_min_score is None
     assert s.prompt_max_tokens == 16384 - s.ai_num_predict - s.ai_prompt_margin_tokens
 
 
@@ -75,12 +81,17 @@ def test_explicit_prompt_limit_wins() -> None:
 
 
 def test_chat_kwargs_only_sends_defined_optionals() -> None:
-    base = chat_kwargs(_settings())
+    base = chat_kwargs(_settings(ai_temperature=None, ai_num_thread=None))
     assert set(base) == {"num_ctx", "keep_alive", "num_predict"}
     assert base["keep_alive"] == -1 and isinstance(base["keep_alive"], int)
 
     full = chat_kwargs(_settings(ai_temperature=0.2, ai_seed=7, ai_num_thread=12))
     assert full["temperature"] == 0.2 and full["seed"] == 7 and full["num_thread"] == 12
+
+
+def test_default_options_sent_to_the_llm_include_temperature_and_threads() -> None:
+    sent = chat_kwargs(_settings())
+    assert sent["temperature"] == 0.1 and sent["num_thread"] == 12 and "seed" not in sent
 
 
 def test_keep_alive_duration_string_is_kept() -> None:
@@ -197,7 +208,7 @@ def _ollama_handler(requests: list[httpx.Request]) -> Callable[[httpx.Request], 
                 json={
                     "models": [
                         {
-                            "name": "llama3:8b",
+                            "name": "nemotron-3-nano:30b",
                             "size": 6_000,
                             "size_vram": 0,
                             "context_length": 16384,
@@ -211,8 +222,8 @@ def _ollama_handler(requests: list[httpx.Request]) -> Callable[[httpx.Request], 
                 200,
                 json={
                     "models": [
-                        {"name": "llama3:8b", "digest": "aaa"},
-                        {"name": "nomic-embed-text:latest", "digest": "bbb"},
+                        {"name": "nemotron-3-nano:30b", "digest": "aaa"},
+                        {"name": "bge-m3:latest", "digest": "bbb"},
                     ]
                 },
             )
@@ -257,8 +268,8 @@ def test_warmup_loads_both_models_with_the_app_options(monkeypatch: pytest.Monke
     assert state["status"] == "ready"
     by_path = {r.url.path: json.loads(r.content) for r in requests}
     assert by_path["/api/generate"]["prompt"] == ""
-    assert by_path["/api/generate"]["model"] == "llama3:8b"
-    assert by_path["/api/embed"]["model"] == "nomic-embed-text"
+    assert by_path["/api/generate"]["model"] == "nemotron-3-nano:30b"
+    assert by_path["/api/embed"]["model"] == "bge-m3"
     for payload in (by_path["/api/generate"], by_path["/api/embed"]):
         assert payload["keep_alive"] == -1
         assert payload["options"] == {"num_ctx": 16384, "num_thread": 8}
@@ -302,7 +313,7 @@ def test_remediation_reports_generated_model_and_ollama_metrics(tmp_path: Path) 
     store.llm = MetricsLLM()
     result = asyncio.run(store.suggest_remediation("PR.AA-01", "desc", None, None, None, 1, 3))
     assert result["generated"] is True
-    assert result["model"] == "llama3:8b"
+    assert result["model"] == "nemotron-3-nano:30b"
     assert result["metrics"]["eval_count"] == 42
     assert result["metrics"]["prompt_eval_count"] == 100
     assert "x" not in result["metrics"]
@@ -324,12 +335,12 @@ def test_remediation_marks_fallback_as_not_generated(tmp_path: Path) -> None:
 def test_models_loaded_reports_whether_both_models_are_in_memory(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _mock_ollama(monkeypatch, _ollama_handler([]))  # solo llama3:8b cargado
+    _mock_ollama(monkeypatch, _ollama_handler([]))  # solo nemotron-3-nano:30b cargado
     assert asyncio.run(ollama_runtime.models_loaded(_settings())) is False
 
     def both(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
-            200, json={"models": [{"name": "llama3:8b"}, {"name": "nomic-embed-text:latest"}]}
+            200, json={"models": [{"name": "nemotron-3-nano:30b"}, {"name": "bge-m3:latest"}]}
         )
 
     _mock_ollama(monkeypatch, both)
@@ -360,7 +371,7 @@ def test_keep_warm_reloads_the_models_after_ollama_restarts(
             generates["n"] += 1
         if path == "/api/ps":
             # Ollama reinició: no tiene nada cargado hasta que se vuelve a precalentar.
-            both = [{"name": "llama3:8b"}, {"name": "nomic-embed-text:latest"}]
+            both = [{"name": "nemotron-3-nano:30b"}, {"name": "bge-m3:latest"}]
             return httpx.Response(200, json={"models": both if generates["n"] >= 2 else []})
         return httpx.Response(200, json={})
 
@@ -395,7 +406,8 @@ def test_keep_warm_without_watchdog_only_warms_up_once(monkeypatch: pytest.Monke
 
 
 # ----------------------------------------------------------------------
-# Contexto efectivo del modelo (llama3:8b carga con 8192 aunque se pida 16384)
+# Contexto efectivo: un modelo que carga con menos contexto que el pedido (mecanismo general;
+# las cifras son de prueba, no las reales de nemotron)
 # ----------------------------------------------------------------------
 def _ctx_handler(loaded: bool = True) -> Callable[[httpx.Request], httpx.Response]:
     def handler(request: httpx.Request) -> httpx.Response:
@@ -403,8 +415,8 @@ def _ctx_handler(loaded: bool = True) -> Callable[[httpx.Request], httpx.Respons
         if path == "/api/ps":
             models = (
                 [
-                    {"name": "llama3:8b", "context_length": 8192},
-                    {"name": "nomic-embed-text:latest", "context_length": 2048},
+                    {"name": "nemotron-3-nano:30b", "context_length": 8192},
+                    {"name": "bge-m3:latest", "context_length": 2048},
                 ]
                 if loaded
                 else []
@@ -412,8 +424,8 @@ def _ctx_handler(loaded: bool = True) -> Callable[[httpx.Request], httpx.Respons
             return httpx.Response(200, json={"models": models})
         if path == "/api/show":
             body = json.loads(request.content)
-            ctx = 8192 if body["model"].startswith("llama3") else 2048
-            arch = "llama" if body["model"].startswith("llama3") else "nomic-bert"
+            ctx = 8192 if body["model"].startswith("nemotron") else 2048
+            arch = "nemotron_h" if body["model"].startswith("nemotron") else "bert"
             return httpx.Response(200, json={"model_info": {f"{arch}.context_length": ctx}})
         if path == "/api/version":
             return httpx.Response(200, json={"version": "0.40.6"})
@@ -547,3 +559,10 @@ def test_keep_warm_refreshes_the_effective_context(monkeypatch: pytest.MonkeyPat
     asyncio.run(ollama_runtime.keep_warm(_settings(ai_warmup_check_seconds=0), {}))
 
     assert ollama_runtime.get_effective_context("llm") == 8192
+
+
+def test_models_endpoint_reports_the_configured_models_without_asking_ollama() -> None:
+    # backend-core lo usa para detectar un cambio de modelo de embedding y reindexar.
+    response = TestClient(app).get("/api/v1/runtime/models")
+    assert response.status_code == 200
+    assert response.json() == {"llm": "nemotron-3-nano:30b", "embedding": "bge-m3"}

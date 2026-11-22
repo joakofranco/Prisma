@@ -286,18 +286,20 @@ services:
     environment:
       APP_ENV: ${ENV:-development}
       OLLAMA_HOST: http://ollama:11434
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3:8b}
-      # Cambiar el embedding exige REINDEXAR todas las colecciones (cambian las dimensiones).
-      OLLAMA_EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-nomic-embed-text}
+      # Un solo LLM y un solo embedding. Cambiar el embedding crea colecciones nuevas
+      # (mcu-5.0__<modelo>, evidence-<org>__<modelo>) y backend-core reindexa la evidencia solo.
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-nemotron-3-nano:30b}
+      OLLAMA_EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-bge-m3}
       # Opciones enviadas a Ollama en cada pedido (ver app/rag/ollama_runtime.py). AI_NUM_CTX y
       # AI_KEEP_ALIVE deben coincidir con OLLAMA_CONTEXT_LENGTH / OLLAMA_KEEP_ALIVE del servicio
       # ollama: si difieren, Ollama recarga el modelo entre pedidos. Vacío = no se envía.
       AI_NUM_CTX: ${AI_NUM_CTX:-16384}
       AI_KEEP_ALIVE: ${AI_KEEP_ALIVE:--1}
       AI_NUM_PREDICT: ${AI_NUM_PREDICT:-1024}
-      AI_TEMPERATURE: ${AI_TEMPERATURE:-}
+      # 0,1 y 12 hilos: con lo que se midió el banco. Vacío (AI_TEMPERATURE=) = no se envía.
+      AI_TEMPERATURE: ${AI_TEMPERATURE-0.1}
       AI_SEED: ${AI_SEED:-}
-      AI_NUM_THREAD: ${AI_NUM_THREAD:-}
+      AI_NUM_THREAD: ${AI_NUM_THREAD-12}
       AI_THINK: ${AI_THINK:-false}
       # Solo se informa en la traza del modo investigación (el valor real lo fija el servicio ollama).
       OLLAMA_NUM_PARALLEL: ${OLLAMA_NUM_PARALLEL:-2}
