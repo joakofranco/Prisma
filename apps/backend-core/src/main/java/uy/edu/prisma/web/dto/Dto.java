@@ -118,13 +118,43 @@ public class Dto {
       UUID id,
       String kind,
       Long seed,
-      java.util.Map<String, Object> config,
+      Map<String, Object> config,
       String prompt,
       String response,
       String thinking,
-      java.util.List<java.util.Map<String, Object>> retrieval,
-      java.util.Map<String, Object> metrics,
-      OffsetDateTime createdAt) {}
+      List<Map<String, Object>> retrieval,
+      Map<String, Object> metrics,
+      OffsetDateTime createdAt) {
+
+    // Copias defensivas (SpotBugs EI_EXPOSE_REP).
+    public AiTraceDto {
+      config =
+          config == null ? Map.of() : Collections.unmodifiableMap(new java.util.HashMap<>(config));
+      retrieval =
+          retrieval == null
+              ? List.of()
+              : Collections.unmodifiableList(new java.util.ArrayList<>(retrieval));
+      metrics =
+          metrics == null
+              ? Map.of()
+              : Collections.unmodifiableMap(new java.util.HashMap<>(metrics));
+    }
+
+    @Override
+    public Map<String, Object> config() {
+      return Collections.unmodifiableMap(config);
+    }
+
+    @Override
+    public List<Map<String, Object>> retrieval() {
+      return Collections.unmodifiableList(retrieval);
+    }
+
+    @Override
+    public Map<String, Object> metrics() {
+      return Collections.unmodifiableMap(metrics);
+    }
+  }
 
   public record CreateOrganizationDto(
       @NotBlank(message = "El nombre es obligatorio") String name,
@@ -1275,6 +1305,19 @@ public class Dto {
         UUID controlId, String verdict, UUID setBy, String setByName, OffsetDateTime updatedAt) {
       this(controlId, verdict, setBy, setByName, updatedAt, "MANUAL", null);
     }
+
+    // Copia defensiva (SpotBugs EI_EXPOSE_REP).
+    public ControlVerdictDto {
+      sourceRef =
+          sourceRef == null
+              ? null
+              : Collections.unmodifiableMap(new java.util.HashMap<>(sourceRef));
+    }
+
+    @Override
+    public Map<String, Object> sourceRef() {
+      return sourceRef == null ? null : Collections.unmodifiableMap(sourceRef);
+    }
   }
 
   // Qué pasó con el dictamen de un control al decidir una cita. changed=false: ya estaba Validado.
@@ -1282,7 +1325,20 @@ public class Dto {
   // venía de la cita: vuelve a «Sin dictamen»).
   public record VerdictChangeDto(UUID controlId, String verdict, String source, boolean changed) {}
 
-  public record CitationFeedbackResultDto(List<VerdictChangeDto> verdicts) {}
+  public record CitationFeedbackResultDto(List<VerdictChangeDto> verdicts) {
+
+    public CitationFeedbackResultDto {
+      verdicts =
+          verdicts == null
+              ? List.of()
+              : Collections.unmodifiableList(new java.util.ArrayList<>(verdicts));
+    }
+
+    @Override
+    public List<VerdictChangeDto> verdicts() {
+      return Collections.unmodifiableList(verdicts);
+    }
+  }
 
   public record SetControlVerdictDto(
       @NotBlank(message = "El dictamen es obligatorio") String verdict) {}
@@ -1550,7 +1606,18 @@ public class Dto {
 
   public record BatchItemDto(UUID controlId, UUID jobId, String status) {}
 
-  public record GuideBatchAcceptedDto(UUID batchId, List<BatchItemDto> jobs) {}
+  public record GuideBatchAcceptedDto(UUID batchId, List<BatchItemDto> jobs) {
+
+    public GuideBatchAcceptedDto {
+      jobs =
+          jobs == null ? List.of() : Collections.unmodifiableList(new java.util.ArrayList<>(jobs));
+    }
+
+    @Override
+    public List<BatchItemDto> jobs() {
+      return Collections.unmodifiableList(jobs);
+    }
+  }
 
   public record BatchCancelDto(int cancelled) {}
 

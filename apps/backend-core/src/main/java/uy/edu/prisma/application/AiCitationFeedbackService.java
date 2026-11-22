@@ -70,7 +70,7 @@ public class AiCitationFeedbackService {
               + eval.getStatus()
               + ")");
     }
-    java.util.Map<UUID, CatalogControl> controls =
+    Map<UUID, CatalogControl> controls =
         controlRepo
             .findAllById(
                 batch.items().stream().map(CitationFeedbackItemDto::controlId).distinct().toList())
