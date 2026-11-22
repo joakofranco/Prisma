@@ -118,13 +118,43 @@ public class Dto {
       UUID id,
       String kind,
       Long seed,
-      java.util.Map<String, Object> config,
+      Map<String, Object> config,
       String prompt,
       String response,
       String thinking,
-      java.util.List<java.util.Map<String, Object>> retrieval,
-      java.util.Map<String, Object> metrics,
-      OffsetDateTime createdAt) {}
+      List<Map<String, Object>> retrieval,
+      Map<String, Object> metrics,
+      OffsetDateTime createdAt) {
+
+    // Copias defensivas (SpotBugs EI_EXPOSE_REP).
+    public AiTraceDto {
+      config =
+          config == null ? Map.of() : Collections.unmodifiableMap(new java.util.HashMap<>(config));
+      retrieval =
+          retrieval == null
+              ? List.of()
+              : Collections.unmodifiableList(new java.util.ArrayList<>(retrieval));
+      metrics =
+          metrics == null
+              ? Map.of()
+              : Collections.unmodifiableMap(new java.util.HashMap<>(metrics));
+    }
+
+    @Override
+    public Map<String, Object> config() {
+      return Collections.unmodifiableMap(config);
+    }
+
+    @Override
+    public List<Map<String, Object>> retrieval() {
+      return Collections.unmodifiableList(retrieval);
+    }
+
+    @Override
+    public Map<String, Object> metrics() {
+      return Collections.unmodifiableMap(metrics);
+    }
+  }
 
   public record CreateOrganizationDto(
       @NotBlank(message = "El nombre es obligatorio") String name,
