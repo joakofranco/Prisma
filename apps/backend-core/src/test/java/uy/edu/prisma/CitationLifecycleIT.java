@@ -77,6 +77,7 @@ class CitationLifecycleIT {
     when(currentUser.hasAllOrganizationsAccess()).thenReturn(true);
     when(currentUser.isAuditor()).thenReturn(true);
     jdbc.update("DELETE FROM prisma.evidence_citation_result");
+    jdbc.update("DELETE FROM prisma.audit_control_verdicts");
     jdbc.update("DELETE FROM prisma.ai_job");
     orgId = UUID.randomUUID();
     jdbc.update(
@@ -109,5 +110,54 @@ class CitationLifecycleIT {
         1,
         count("SELECT count(*) FROM prisma.ai_job WHERE type = 'CITATIONS_PRECOMPUTE'"),
         "el trabajo tiene que quedar confirmado en la base, no solo 'guardado'");
+  }
+
+  @Test
+  void leavingTheAuditReallyDropsTheSavedCitations() {
+    Evaluation eval = evaluation(Evaluation.Status.IN_AUDIT);
+    CatalogControl control = controlRepo.findAll().get(0);
+    Evidence evidence =
+        evidenceRepo.save(
+            Evidence.builder()
+                .evaluation(eval)
+                .control(control)
+                .fileName("a.pdf")
+                .fileType("application/pdf")
+                .storageKey("evidence/" + UUID.randomUUID())
+                .scanStatus(Evidence.ScanStatus.CLEAN)
+                .build());
+    citationStore.merge(
+        eval,
+        control,
+        List.of(
+            new EvidenceCitationDto(
+                evidence.getId(),
+                "a.pdf",
+                "p1",
+                "texto",
+                0.7,
+                "f1",
+                null,
+                null,
+                null,
+                null,
+                false)));
+    assertEquals(1, count("SELECT count(*) FROM prisma.evidence_citation_result"));
+    jdbc.update(
+        "INSERT INTO prisma.audit_control_verdicts (evaluation_id, control_id, verdict) VALUES (?, ?,"
+            + " 'VALIDATED')",
+        eval.getId(),
+        control.getId());
+
+    evaluationService.updateStatus(eval.getId(), "RETURNED");
+
+    assertEquals(
+        0,
+        count("SELECT count(*) FROM prisma.evidence_citation_result"),
+        "al salir de auditoría las citas pendientes se descartan");
+    assertEquals(
+        1,
+        count("SELECT count(*) FROM prisma.audit_control_verdicts"),
+        "el dictamen ya fijado no se toca");
   }
 }

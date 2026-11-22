@@ -51,8 +51,10 @@ public class CitationLifecycleListener {
   public void onStatusChanged(EvaluationStatusChangedEvent event) {
     try {
       if (event.from() == Evaluation.Status.IN_AUDIT) {
-        int removed = store.invalidateEvaluation(event.evaluationId());
-        if (removed > 0) {
+        // Un DELETE masivo necesita transacción: sin ella falla con TransactionRequiredException
+        // (y el catch de abajo lo escondía como un WARN).
+        Integer removed = tx.execute(status -> store.invalidateEvaluation(event.evaluationId()));
+        if (removed != null && removed > 0) {
           log.info(
               "Evaluación {} salió de auditoría: {} citas guardadas descartadas",
               event.evaluationId(),
