@@ -166,7 +166,11 @@ class CitationPrecomputeAndLifecycleTest {
   // ------------------------------------------------------------ ciclo de vida
 
   private CitationLifecycleListener listener() {
-    return new CitationLifecycleListener(store, service);
+    var txManager =
+        org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class);
+    when(txManager.getTransaction(any()))
+        .thenReturn(new org.springframework.transaction.support.SimpleTransactionStatus());
+    return new CitationLifecycleListener(store, service, txManager);
   }
 
   @Test

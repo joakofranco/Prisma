@@ -20,7 +20,7 @@ from prometheus_fastapi_instrumentator import Instrumentator
 from app.api.v1 import router as api_router
 from app.core.config import get_settings
 from app.core.logging import setup_logging
-from app.rag.evidence_store import EvidenceStore
+from app.rag.evidence_store import EvidenceStore, IndexSearchError
 from app.rag.ollama_runtime import (
     PromptTooLargeError,
     keep_warm,
@@ -85,6 +85,16 @@ app.add_middleware(
 )
 
 app.include_router(api_router, prefix="/api/v1")
+
+
+@app.exception_handler(IndexSearchError)
+async def index_search_error_handler(_request: Request, exc: IndexSearchError) -> JSONResponse:
+    """El índice de evidencia falló: error recuperable (503), no «sin resultados» con 200.
+    backend-core lo trata como IA no disponible (reintenta o usa lo guardado)."""
+    return JSONResponse(
+        status_code=503,
+        content={"code": exc.code, "detail": str(exc), "retryable": True},
+    )
 
 
 @app.exception_handler(PromptTooLargeError)
