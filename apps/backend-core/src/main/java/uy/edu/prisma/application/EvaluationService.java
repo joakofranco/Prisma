@@ -727,10 +727,11 @@ public class EvaluationService {
     }
     MaturityCatalogModel built =
         MaturityCatalogModel.from(controlRepo.findByVersionOrdered(version));
-    if (!built.isEmpty()) {
-      maturityModels.putIfAbsent(version, built);
+    if (built.isEmpty()) {
+      return built;
     }
-    return built;
+    MaturityCatalogModel previous = maturityModels.putIfAbsent(version, built);
+    return previous != null ? previous : built;
   }
 
   private static void updateIfChanged(
