@@ -328,4 +328,26 @@ class EvidenceClassificationServiceTest {
     assertEquals(0.81, list.get(0).score());
     assertEquals(2, list.get(0).rank());
   }
+
+  @Test
+  void withoutAThresholdTheSuggestionsAreMarkedWithoutCalibratedConfidence() {
+    EvidenceControlSuggestion s = pending();
+    when(suggestionRepo.findByEvaluationIdOrderByEvidenceIdAscRankAsc(eval.getId()))
+        .thenReturn(List.of(s));
+
+    // AI_CLASSIFY_MIN_SCORE sin definir (o vacío): el puntaje no tiene umbral calibrado (3.4).
+    assertFalse(service.list(eval.getId()).get(0).calibrated());
+    service.setClassifyMinScore("");
+    assertFalse(service.list(eval.getId()).get(0).calibrated());
+  }
+
+  @Test
+  void withAThresholdTheSuggestionsAreCalibrated() {
+    EvidenceControlSuggestion s = pending();
+    when(suggestionRepo.findByEvaluationIdOrderByEvidenceIdAscRankAsc(eval.getId()))
+        .thenReturn(List.of(s));
+    service.setClassifyMinScore("0.52");
+
+    assertTrue(service.list(eval.getId()).get(0).calibrated());
+  }
 }

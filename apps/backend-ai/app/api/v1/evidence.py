@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from app.api.v1.rag import run_until_disconnect
+from app.core.config import get_settings
 from app.core.security import verify_internal_key
 from app.rag.evidence_store import EvidenceStore
 
@@ -79,6 +80,9 @@ class ClassifySuggestion(BaseModel):
 
 class EvidenceClassifyResponse(BaseModel):
     suggestions: list[ClassifySuggestion]
+    # False = AI_CLASSIFY_MIN_SCORE sin definir: los puntajes no tienen un umbral calibrado con
+    # datos reales y las sugerencias son «sin confianza calibrada» (3.4).
+    calibrated: bool = False
 
 
 def _store(request: Request) -> EvidenceStore:
@@ -134,7 +138,10 @@ async def classify_evidence(
     )
     if isinstance(results, JSONResponse):
         return results
-    return EvidenceClassifyResponse(suggestions=[ClassifySuggestion(**r) for r in results])
+    return EvidenceClassifyResponse(
+        suggestions=[ClassifySuggestion(**r) for r in results],
+        calibrated=get_settings().ai_classify_min_score is not None,
+    )
 
 
 @evidence_router.delete("/{organization_id}/{evidence_id}")

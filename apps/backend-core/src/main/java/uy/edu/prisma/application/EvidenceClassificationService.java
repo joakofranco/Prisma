@@ -213,7 +213,7 @@ public class EvidenceClassificationService {
   public List<EvidenceSuggestionDto> list(UUID evaluationId) {
     assertAuditAccess(evaluationId);
     return suggestionRepo.findByEvaluationIdOrderByEvidenceIdAscRankAsc(evaluationId).stream()
-        .map(EvidenceClassificationService::toDto)
+        .map(this::toDto)
         .toList();
   }
 
@@ -263,7 +263,17 @@ public class EvidenceClassificationService {
     }
   }
 
-  private static EvidenceSuggestionDto toDto(EvidenceControlSuggestion s) {
+  // Mismo AI_CLASSIFY_MIN_SCORE que backend-ai: definido = el umbral está calibrado con datos
+  // reales; sin definir, las sugerencias se marcan «sin confianza calibrada» (3.4). Por setter y
+  // opcional (sin Spring queda en «sin calibrar»).
+  private boolean calibrated;
+
+  @org.springframework.beans.factory.annotation.Value("${prisma.ai.classify-min-score:}")
+  public void setClassifyMinScore(String value) {
+    this.calibrated = value != null && !value.isBlank();
+  }
+
+  private EvidenceSuggestionDto toDto(EvidenceControlSuggestion s) {
     return new EvidenceSuggestionDto(
         s.getId(),
         s.getEvidence().getId(),
@@ -273,7 +283,8 @@ public class EvidenceClassificationService {
         s.getControl().getDescription(),
         s.getScore(),
         s.getRank(),
-        s.getStatus().name());
+        s.getStatus().name(),
+        calibrated);
   }
 
   static String dedupKey(UUID evidenceId) {

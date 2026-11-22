@@ -1419,7 +1419,34 @@ public class Dto {
       String controlDescription,
       double score,
       int rank,
-      String status) {}
+      String status,
+      // false mientras AI_CLASSIFY_MIN_SCORE no esté definido: el puntaje no tiene un umbral
+      // calibrado con datos reales y la sugerencia se muestra «sin confianza calibrada» (3.4).
+      boolean calibrated) {
+
+    public EvidenceSuggestionDto(
+        UUID id,
+        UUID evidenceId,
+        String fileName,
+        UUID controlId,
+        String controlCode,
+        String controlDescription,
+        double score,
+        int rank,
+        String status) {
+      this(
+          id,
+          evidenceId,
+          fileName,
+          controlId,
+          controlCode,
+          controlDescription,
+          score,
+          rank,
+          status,
+          false);
+    }
+  }
 
   public record SuggestionDecisionDto(
       @NotNull(message = "La decisión es obligatoria")

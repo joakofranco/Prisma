@@ -989,6 +989,29 @@ def test_classify_endpoint(client: TestClient) -> None:
     assert [s["control_id"] for s in suggestions] == ["c-9", "c-2"]
     assert suggestions[0]["fragment_id"] == "ev-1::2"
     assert app.state.evidence_store.classified["top_n"] == 2
+    # Sin AI_CLASSIFY_MIN_SCORE las sugerencias son «sin confianza calibrada» (3.4).
+    assert response.json()["calibrated"] is False
+
+
+def test_classify_endpoint_reports_calibrated_when_a_threshold_is_defined(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AI_CLASSIFY_MIN_SCORE", "0.52")
+    from app.core.config import get_settings
+
+    get_settings.cache_clear()
+    response = client.post(
+        "/api/v1/evidence/classify",
+        json={
+            "organization_id": "org-a",
+            "evaluation_id": "eval-1",
+            "evidence_id": "ev-1",
+            "candidates": [{"control_id": "c-9", "query": "PR.AA-01: cuentas"}],
+        },
+    )
+    get_settings.cache_clear()
+
+    assert response.json()["calibrated"] is True
 
 
 def test_classify_endpoint_rejects_an_empty_candidate_list(client: TestClient) -> None:

@@ -84,6 +84,14 @@
                   Podría pertenecer a <strong>{{ sug.controlCode }}</strong> (confianza
                   {{ formatScore(sug.score) }})
                 </span>
+                <span
+                  v-if="sug.calibrated !== true"
+                  class="text-[11px] font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
+                  title="Todavía no hay un umbral calibrado con datos reales: el puntaje orienta, pero no garantiza que el control sea el correcto. Revisá el contenido antes de aceptar."
+                  data-testid="suggestion-uncalibrated"
+                >
+                  Sin confianza calibrada
+                </span>
                 <template v-if="sug.status === 'PENDING' && canWriteObservations">
                   <button
                     type="button"

@@ -1345,6 +1345,30 @@ describe('AuditView: evidencia sin control asignado y sugerencias (F4, hito 4)',
     expect(items[1]).toContain('CA.1-3 (confianza 0,55)');
   });
 
+  it('marca la sugerencia «Sin confianza calibrada» mientras no haya umbral (3.4)', async () => {
+    evidenceService.getSuggestions.mockResolvedValue({
+      data: [
+        suggestion('s1', 'g1', 'CA.1-2'),
+        suggestion('s2', 'g1', 'CA.1-3', { calibrated: false }),
+      ],
+    });
+    const wrapper = await mountView('IN_AUDIT');
+
+    const badges = wrapper.findAll('[data-testid="suggestion-uncalibrated"]');
+    expect(badges).toHaveLength(2);
+    expect(badges[0].text()).toBe('Sin confianza calibrada');
+  });
+
+  it('con el umbral calibrado no muestra la marca', async () => {
+    evidenceService.getSuggestions.mockResolvedValue({
+      data: [suggestion('s1', 'g1', 'CA.1-2', { calibrated: true })],
+    });
+    const wrapper = await mountView('IN_AUDIT');
+
+    expect(wrapper.findAll('[data-testid="suggestion"]')).toHaveLength(1);
+    expect(wrapper.find('[data-testid="suggestion-uncalibrated"]').exists()).toBe(false);
+  });
+
   it('aceptar una sugerencia la registra y suma el control a la lista de citas', async () => {
     evidenceService.getSuggestions.mockResolvedValue({
       data: [suggestion('s1', 'g1', 'CA.1-2')],
