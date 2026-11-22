@@ -197,6 +197,37 @@ public class AiEvidenceClient {
         String summary, List<String> tips, String model, Map<String, Object> metrics) {
       this(summary, tips, model, metrics, null);
     }
+
+    // Copias defensivas (SpotBugs EI_EXPOSE_REP).
+    public GuideResult {
+      tips =
+          tips == null
+              ? List.of()
+              : java.util.Collections.unmodifiableList(new java.util.ArrayList<>(tips));
+      metrics =
+          metrics == null
+              ? Map.of()
+              : java.util.Collections.unmodifiableMap(new java.util.HashMap<>(metrics));
+      trace =
+          trace == null
+              ? null
+              : java.util.Collections.unmodifiableMap(new java.util.HashMap<>(trace));
+    }
+
+    @Override
+    public List<String> tips() {
+      return java.util.Collections.unmodifiableList(tips);
+    }
+
+    @Override
+    public Map<String, Object> metrics() {
+      return java.util.Collections.unmodifiableMap(metrics);
+    }
+
+    @Override
+    public Map<String, Object> trace() {
+      return trace == null ? null : java.util.Collections.unmodifiableMap(trace);
+    }
   }
 
   /**
