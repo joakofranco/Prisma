@@ -1521,7 +1521,18 @@ public class Dto {
 
   public record BatchItemDto(UUID controlId, UUID jobId, String status) {}
 
-  public record GuideBatchAcceptedDto(UUID batchId, List<BatchItemDto> jobs) {}
+  public record GuideBatchAcceptedDto(UUID batchId, List<BatchItemDto> jobs) {
+
+    public GuideBatchAcceptedDto {
+      jobs =
+          jobs == null ? List.of() : Collections.unmodifiableList(new java.util.ArrayList<>(jobs));
+    }
+
+    @Override
+    public List<BatchItemDto> jobs() {
+      return Collections.unmodifiableList(jobs);
+    }
+  }
 
   public record BatchCancelDto(int cancelled) {}
 
