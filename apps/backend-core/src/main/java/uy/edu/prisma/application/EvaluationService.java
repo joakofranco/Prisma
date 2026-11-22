@@ -3,6 +3,7 @@ package uy.edu.prisma.application;
 import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
@@ -46,6 +47,7 @@ public class EvaluationService {
   private final AuditLogService auditLog;
   private final String certificationSecret;
   private org.springframework.context.ApplicationEventPublisher events;
+  private final Map<String, MaturityCatalogModel> maturityModels = new ConcurrentHashMap<>();
 
   public EvaluationService(
       EvaluationRepository evalRepo,
@@ -661,97 +663,59 @@ public class EvaluationService {
               + ", que ya no admite cambios");
     }
 
-    // Delete old results
-    matRepo.deleteAllInBatch(matRepo.findByEvaluationId(evaluationId));
+    MaturityCatalogModel model = maturityModel(eval.getCatalogVersion());
+    Set<UUID> compliantControlIds = new HashSet<>(respRepo.findCompliantControlIds(evaluationId));
+    boolean hasAnyResponse = respRepo.existsByEvaluationId(evaluationId);
 
-    // La madurez de una subcategoria se mide sobre TODOS los controles del marco ubicados en
-    // ella, NO solo sobre los del perfil comunitario -- igual que la planilla oficial de Agesic
-    // (formula de la columna "Nivel de Madurez" en la hoja "Madurez Subcategoria"). Un control
-    // que el perfil no exige, si no tiene respuesta "cumple", frena el nivel: por eso NO se
-    // filtra por perfil aca. El perfil sigue acotando que controles se pueden responder
-    // (ver saveResponse); un control sin respuesta cuenta como no cumplido en el gate de abajo.
-    List<CatalogControl> controls = controlRepo.findByVersionOrdered(eval.getCatalogVersion());
-
-    // Get responses
-    List<EvaluationResponse> responses = respRepo.findByEvaluationId(evaluationId);
-    Map<UUID, EvaluationResponse> responseMap =
-        responses.stream().collect(Collectors.toMap(r -> r.getControl().getId(), r -> r));
-
-    // Se agrupan TODOS los controles de la version por Subcategoria segun el mapeo CURADO
-    // control<->subcategoria (CatalogControl.effectiveSubcategories(), ver V18): cada control
-    // cuenta solo para las subcategorias en las que Agesic lo ubico. Para catalogos que no traen
-    // ese mapeo (5.0 / 5.1) effectiveSubcategories() cae al mapeo Requisito->Subcategoria.
-    // Se emite una fila por cada subcategoria con >=1 control mapeado (para MCU 5.x = 103); las
-    // que el perfil no cubre quedan en currentLevel 0, igual que la hoja "Madurez Subcategoria".
-    Map<UUID, CatalogSubcategory> subcategoriesById = new LinkedHashMap<>();
-    Map<UUID, List<CatalogControl>> bySubcategory = new LinkedHashMap<>();
-    for (CatalogControl control : controls) {
-      for (CatalogSubcategory sub : control.effectiveSubcategories()) {
-        subcategoriesById.putIfAbsent(sub.getId(), sub);
-        bySubcategory.computeIfAbsent(sub.getId(), k -> new ArrayList<>()).add(control);
+    Map<UUID, MaturityResult> existing = new HashMap<>();
+    List<MaturityResult> stale = new ArrayList<>();
+    for (MaturityResult row : matRepo.findByEvaluationId(evaluationId)) {
+      if (row.getSubcategoryId() == null
+          || existing.putIfAbsent(row.getSubcategoryId(), row) != null) {
+        stale.add(row);
       }
     }
 
-    List<MaturityResult> results = new ArrayList<>();
-    for (Map.Entry<UUID, List<CatalogControl>> entry : bySubcategory.entrySet()) {
-      var sub = subcategoriesById.get(entry.getKey());
-      var cat = sub.getCategory();
-      var func = cat.getFunction_();
-
-      // Target level = el nivel mas alto definido entre los controles de esta subcategoria
-      // (normalmente 4: el catalogo real solo define niveles 1-4).
-      int targetLevel =
-          entry.getValue().stream().mapToInt(CatalogControl::getTargetLevel).max().orElse(1);
-
-      // Modelo acumulativo: la subcategoria alcanza el nivel N solo si TODOS sus controles del
-      // marco de nivel <= N estan marcados como cumplidos. Un control sin respuesta (los que el
-      // perfil no exige, o los que aun no se respondieron) cuenta como NO cumplido y frena el
-      // nivel -- misma semantica que la formula de la planilla. Iteramos solo sobre los niveles
-      // que REALMENTE tienen algun control en esta subcategoria (no 1..targetLevel a ciegas):
-      // si no hubiera controles de,
-      // por ejemplo, nivel 1 o 2, filtrar "targetLevel <= N" da un stream vacío y allMatch()
-      // sobre un stream vacío es true por vacuidad -- eso "regalaba" niveles sin haber
-      // verificado nada real.
-      List<Integer> levelsPresent =
-          entry.getValue().stream()
-              .map(CatalogControl::getTargetLevel)
-              .distinct()
-              .sorted()
-              .toList();
-      int currentLevel = 0;
-      for (int level : levelsPresent) {
-        final int upTo = level;
-        boolean allCompliantUpToLevel =
-            entry.getValue().stream()
-                .filter(c -> c.getTargetLevel() <= upTo)
-                .allMatch(
-                    c -> {
-                      EvaluationResponse r = responseMap.get(c.getId());
-                      return r != null && Boolean.TRUE.equals(r.getCompliant());
-                    });
-        if (allCompliantUpToLevel) {
-          currentLevel = level;
-        } else {
-          break;
-        }
+    List<MaturityResult> created = new ArrayList<>();
+    Set<UUID> reused = new HashSet<>();
+    int levelSum = 0;
+    for (MaturityCatalogModel.Subcategory sub : model.subcategories()) {
+      int currentLevel = sub.levelReached(compliantControlIds);
+      int gap = Math.max(0, sub.targetLevel() - currentLevel);
+      levelSum += currentLevel;
+      MaturityResult row = existing.get(sub.id());
+      if (row == null) {
+        created.add(
+            MaturityResult.builder()
+                .evaluation(eval)
+                .functionId(sub.functionId())
+                .functionName(sub.functionName())
+                .categoryId(sub.categoryId())
+                .categoryName(sub.categoryName())
+                .subcategoryId(sub.id())
+                .subcategoryName(sub.name())
+                .currentLevel(currentLevel)
+                .targetLevel(sub.targetLevel())
+                .gap(gap)
+                .build());
+      } else {
+        reused.add(sub.id());
+        updateIfChanged(row, sub, currentLevel, gap);
       }
-
-      results.add(
-          MaturityResult.builder()
-              .evaluation(eval)
-              .functionId(func.getId())
-              .functionName(func.getName())
-              .categoryId(cat.getId())
-              .categoryName(cat.getName())
-              .subcategoryId(sub.getId())
-              .subcategoryName(sub.getName())
-              .currentLevel(currentLevel)
-              .targetLevel(targetLevel)
-              .gap(Math.max(0, targetLevel - currentLevel))
-              .build());
     }
+    existing.forEach(
+        (subcategoryId, row) -> {
+          if (!reused.contains(subcategoryId)) {
+            stale.add(row);
+          }
+        });
 
-    matRepo.saveAll(results);
+    if (!stale.isEmpty()) {
+      matRepo.deleteAllInBatch(stale);
+    }
+    if (!created.isEmpty()) {
+      matRepo.saveAll(created);
+    }
 
     // Madurez global: promedio del currentLevel sobre TODAS las subcategorias de la version del
     // catalogo (para MCU 5.x = 103), tratando como 0 las que el perfil no cubre -- igual que la
@@ -760,16 +724,54 @@ public class EvaluationService {
     // Sigue siendo null solo si NO se cargo ninguna respuesta todavia (evaluacion sin empezar);
     // nivel 0 con respuestas es un resultado real, no "sin calcular".
     long totalSubcategories = subcategoryRepo.countByCatalogVersion(eval.getCatalogVersion());
-    boolean hasAnyResponse = !responses.isEmpty();
     Integer globalMaturity =
         (!hasAnyResponse || totalSubcategories == 0)
             ? null
-            : (int)
-                Math.round(
-                    results.stream().mapToInt(MaturityResult::getCurrentLevel).sum()
-                        / (double) totalSubcategories);
+            : (int) Math.round(levelSum / (double) totalSubcategories);
     eval.setGlobalMaturity(globalMaturity);
     evalRepo.save(eval);
+  }
+
+  private MaturityCatalogModel maturityModel(String version) {
+    MaturityCatalogModel cached = maturityModels.get(version);
+    if (cached != null) {
+      return cached;
+    }
+    MaturityCatalogModel built =
+        MaturityCatalogModel.from(controlRepo.findByVersionOrdered(version));
+    if (built.isEmpty()) {
+      return built;
+    }
+    MaturityCatalogModel previous = maturityModels.putIfAbsent(version, built);
+    return previous != null ? previous : built;
+  }
+
+  private static void updateIfChanged(
+      MaturityResult row, MaturityCatalogModel.Subcategory sub, int currentLevel, int gap) {
+    if (!Objects.equals(row.getFunctionId(), sub.functionId())) {
+      row.setFunctionId(sub.functionId());
+    }
+    if (!Objects.equals(row.getFunctionName(), sub.functionName())) {
+      row.setFunctionName(sub.functionName());
+    }
+    if (!Objects.equals(row.getCategoryId(), sub.categoryId())) {
+      row.setCategoryId(sub.categoryId());
+    }
+    if (!Objects.equals(row.getCategoryName(), sub.categoryName())) {
+      row.setCategoryName(sub.categoryName());
+    }
+    if (!Objects.equals(row.getSubcategoryName(), sub.name())) {
+      row.setSubcategoryName(sub.name());
+    }
+    if (!Objects.equals(row.getCurrentLevel(), currentLevel)) {
+      row.setCurrentLevel(currentLevel);
+    }
+    if (!Objects.equals(row.getTargetLevel(), sub.targetLevel())) {
+      row.setTargetLevel(sub.targetLevel());
+    }
+    if (!Objects.equals(row.getGap(), gap)) {
+      row.setGap(gap);
+    }
   }
 
   private EvaluationDto toDto(Evaluation e, Map<UUID, List<String>> auditorsByOrg) {
