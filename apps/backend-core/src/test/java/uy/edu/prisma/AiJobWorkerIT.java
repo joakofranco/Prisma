@@ -129,7 +129,9 @@ class AiJobWorkerIT {
             org.mockito.ArgumentMatchers.any(),
             org.mockito.ArgumentMatchers.any(),
             anyInt(),
-            anyInt()))
+            anyInt(),
+            org.mockito.ArgumentMatchers.anyBoolean(),
+            org.mockito.ArgumentMatchers.any()))
         .thenAnswer(
             inv -> {
               String code = inv.getArgument(0);
@@ -177,7 +179,9 @@ class AiJobWorkerIT {
             org.mockito.ArgumentMatchers.any(),
             org.mockito.ArgumentMatchers.any(),
             anyInt(),
-            anyInt()))
+            anyInt(),
+            org.mockito.ArgumentMatchers.anyBoolean(),
+            org.mockito.ArgumentMatchers.any()))
         .thenAnswer(
             inv -> {
               attempts.incrementAndGet();
@@ -210,7 +214,9 @@ class AiJobWorkerIT {
             org.mockito.ArgumentMatchers.any(),
             org.mockito.ArgumentMatchers.any(),
             anyInt(),
-            anyInt()))
+            anyInt(),
+            org.mockito.ArgumentMatchers.anyBoolean(),
+            org.mockito.ArgumentMatchers.any()))
         .thenAnswer(
             inv -> {
               attempts.incrementAndGet();
