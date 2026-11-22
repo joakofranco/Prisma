@@ -161,6 +161,82 @@ SampleResult.setIgnore()</stringProp>
             <stringProp name="ConstantTimer.delay">${__P(pausa_ms,500)}</stringProp>
           </ConstantTimer>
           <hashTree/>
+          <IfController guiclass="IfControllerPanel" testclass="IfController" testname="Si hay calentamiento" enabled="true">
+            <stringProp name="IfController.condition">${__groovy((props.get('calentamiento') ?: '1') != '0')}</stringProp>
+            <boolProp name="IfController.evaluateAll">false</boolProp>
+            <boolProp name="IfController.useExpression">true</boolProp>
+          </IfController>
+          <hashTree>
+            <OnceOnlyController guiclass="OnceOnlyControllerGui" testclass="OnceOnlyController" testname="Calentamiento (una vez por usuario virtual)" enabled="true"/>
+            <hashTree>
+              <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="_calentamiento" enabled="true">
+                <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+                <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+                  <collectionProp name="Arguments.arguments">
+                    <elementProp name="" elementType="HTTPArgument">
+                      <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                      <stringProp name="Argument.value"/>
+                      <stringProp name="Argument.metadata">=</stringProp>
+                    </elementProp>
+                  </collectionProp>
+                </elementProp>
+                <stringProp name="HTTPSampler.domain"/>
+                <stringProp name="HTTPSampler.port"/>
+                <stringProp name="HTTPSampler.protocol"/>
+                <stringProp name="HTTPSampler.contentEncoding">UTF-8</stringProp>
+                <stringProp name="HTTPSampler.path">/api/evaluations/${calcEval}/calculate</stringProp>
+                <stringProp name="HTTPSampler.method">POST</stringProp>
+                <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+                <boolProp name="HTTPSampler.auto_redirects">false</boolProp>
+                <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+                <boolProp name="HTTPSampler.DO_MULTIPART_POST">false</boolProp>
+              </HTTPSamplerProxy>
+              <hashTree/>
+            </hashTree>
+          </hashTree>
+          <IfController guiclass="IfControllerPanel" testclass="IfController" testname="Si cambia una respuesta antes de calcular" enabled="true">
+            <stringProp name="IfController.condition">${__groovy('true'.equals(props.get('cambiar_respuesta')))}</stringProp>
+            <boolProp name="IfController.evaluateAll">false</boolProp>
+            <boolProp name="IfController.useExpression">true</boolProp>
+          </IfController>
+          <hashTree>
+            <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler" testname="_elegir-respuesta" enabled="true">
+              <stringProp name="scriptLanguage">groovy</stringProp>
+              <stringProp name="parameters"/>
+              <stringProp name="filename"/>
+              <stringProp name="cacheKey">true</stringProp>
+              <stringProp name="script">int n = (props.get('total_controles') ?: '1') as int
+int it = vars.getIteration() - 1
+int idx = ((ctx.getThreadNum() * 13) + it.intdiv(2)) % n + 1
+vars.put('chgControl', props.get('control_' + idx))
+vars.put('chgCompliant', (it % 2 == 0) ? 'false' : 'true')
+SampleResult.setIgnore()</stringProp>
+            </JSR223Sampler>
+            <hashTree/>
+            <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="_cambiar-respuesta" enabled="true">
+              <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+              <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+                <collectionProp name="Arguments.arguments">
+                  <elementProp name="" elementType="HTTPArgument">
+                    <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                    <stringProp name="Argument.value">{"controlId":"${chgControl}","compliant":${chgCompliant},"observations":"PERF"}</stringProp>
+                    <stringProp name="Argument.metadata">=</stringProp>
+                  </elementProp>
+                </collectionProp>
+              </elementProp>
+              <stringProp name="HTTPSampler.domain"/>
+              <stringProp name="HTTPSampler.port"/>
+              <stringProp name="HTTPSampler.protocol"/>
+              <stringProp name="HTTPSampler.contentEncoding">UTF-8</stringProp>
+              <stringProp name="HTTPSampler.path">/api/evaluations/${calcEval}/responses</stringProp>
+              <stringProp name="HTTPSampler.method">POST</stringProp>
+              <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+              <boolProp name="HTTPSampler.auto_redirects">false</boolProp>
+              <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+              <boolProp name="HTTPSampler.DO_MULTIPART_POST">false</boolProp>
+            </HTTPSamplerProxy>
+            <hashTree/>
+          </hashTree>
           <IfController guiclass="IfControllerPanel" testclass="IfController" testname="Si esta habilitado: calcular-madurez" enabled="true">
             <stringProp name="IfController.condition">${__groovy((props.get('endpoints') ?: '').split('\,').toList().contains('calcular-madurez'))}</stringProp>
             <boolProp name="IfController.evaluateAll">false</boolProp>

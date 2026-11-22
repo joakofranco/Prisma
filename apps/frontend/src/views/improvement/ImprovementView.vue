@@ -1,68 +1,49 @@
 <template>
   <div class="space-y-6">
-    <div class="flex items-center gap-3">
-      <router-link
-        :to="`/evaluations/${evaluationId}`"
-        class="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400"
-        title="Volver a la evaluación"
-      >
-        <ArrowLeftIcon class="w-5 h-5" />
-      </router-link>
-      <div class="flex-1">
-        <h1 class="text-2xl font-bold text-slate-900 dark:text-white">Plan de Mejora</h1>
-        <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">
-          Acciones correctivas basadas en las brechas detectadas
-        </p>
-      </div>
-      <div v-if="canManage" class="flex items-center gap-2">
-        <span
-          v-if="aiActiveCount > 0"
-          class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-indigo-50 text-indigo-700 border border-indigo-100 dark:bg-indigo-950 dark:text-indigo-300 dark:border-indigo-900"
-          role="status"
-          data-testid="ai-tasks"
-        >
-          <SparklesIcon class="w-3.5 h-3.5" />
-          Tareas de IA: {{ aiActiveCount }} en curso
-        </span>
-        <BaseButton
-          variant="secondary"
-          :loading="loadingSuggestions"
-          :disabled="!canEditFully"
-          @click="openSuggestModal"
-        >
-          <SparklesIcon class="w-4 h-4" />
-          Generar Sugerencias
-        </BaseButton>
-        <BaseButton variant="primary" :disabled="!canEditFully" @click="openCreateModal">
-          <PlusIcon class="w-4 h-4" />
-          Nueva Acción
-        </BaseButton>
-      </div>
-    </div>
-
     <div
-      v-if="isApproved"
-      class="px-4 py-3 rounded-lg bg-amber-50 border border-amber-200 text-sm text-amber-900 dark:bg-amber-950 dark:border-amber-800 dark:text-amber-200"
-      role="status"
-      data-test="approved-banner"
+      class="sm:sticky sm:top-16 z-20 -mx-4 lg:-mx-6 px-4 lg:px-6 pt-2 pb-3 space-y-4 bg-slate-50 dark:bg-slate-900"
+      data-test="plan-sticky"
     >
-      Evaluación <strong>Aprobada</strong>: solo se puede actualizar el estado de cada acción.
-    </div>
-    <div
-      v-else-if="isClosed"
-      class="px-4 py-3 rounded-lg bg-slate-100 border border-slate-200 text-sm text-slate-700 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300"
-      role="status"
-      data-test="closed-banner"
-    >
-      El plan de mejora no está activo: la evaluación está en borrador o archivada.
-    </div>
-
-    <div v-if="loading" class="flex items-center justify-center py-12">
-      <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
-    </div>
-
-    <template v-else>
-      <div class="grid grid-cols-1 sm:grid-cols-4 gap-4">
+      <div class="flex items-center gap-3">
+        <router-link
+          :to="`/evaluations/${evaluationId}`"
+          class="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400"
+          title="Volver a la evaluación"
+        >
+          <ArrowLeftIcon class="w-5 h-5" />
+        </router-link>
+        <div class="flex-1">
+          <h1 class="text-2xl font-bold text-slate-900 dark:text-white">Plan de Mejora</h1>
+          <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">
+            Acciones correctivas basadas en las brechas detectadas
+          </p>
+        </div>
+        <div v-if="canManage" class="flex items-center gap-2">
+          <span
+            v-if="aiActiveCount > 0"
+            class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-indigo-50 text-indigo-700 border border-indigo-100 dark:bg-indigo-950 dark:text-indigo-300 dark:border-indigo-900"
+            role="status"
+            data-testid="ai-tasks"
+          >
+            <SparklesIcon class="w-3.5 h-3.5" />
+            Tareas de IA: {{ aiActiveCount }} en curso
+          </span>
+          <BaseButton
+            variant="secondary"
+            :loading="loadingSuggestions"
+            :disabled="!canEditFully"
+            @click="openSuggestModal"
+          >
+            <SparklesIcon class="w-4 h-4" />
+            Generar Sugerencias
+          </BaseButton>
+          <BaseButton variant="primary" :disabled="!canEditFully" @click="openCreateModal">
+            <PlusIcon class="w-4 h-4" />
+            Nueva Acción
+          </BaseButton>
+        </div>
+      </div>
+      <div v-if="!loading" class="grid grid-cols-1 sm:grid-cols-4 gap-4" data-test="plan-stats">
         <StatsCard
           title="Pendientes"
           :value="plansByStatus('PENDING')"
@@ -92,7 +73,30 @@
           icon-color-class="text-red-600 dark:text-red-400"
         />
       </div>
+    </div>
 
+    <div
+      v-if="isApproved"
+      class="px-4 py-3 rounded-lg bg-amber-50 border border-amber-200 text-sm text-amber-900 dark:bg-amber-950 dark:border-amber-800 dark:text-amber-200"
+      role="status"
+      data-test="approved-banner"
+    >
+      Evaluación <strong>Aprobada</strong>: solo se puede actualizar el estado de cada acción.
+    </div>
+    <div
+      v-else-if="isClosed"
+      class="px-4 py-3 rounded-lg bg-slate-100 border border-slate-200 text-sm text-slate-700 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300"
+      role="status"
+      data-test="closed-banner"
+    >
+      El plan de mejora no está activo: la evaluación está en borrador o archivada.
+    </div>
+
+    <div v-if="loading" class="flex items-center justify-center py-12">
+      <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
+    </div>
+
+    <template v-else>
       <section
         class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-5"
         aria-labelledby="remediation-progress-title"
@@ -135,6 +139,8 @@
           </div>
         </div>
       </section>
+
+      <BaselineComparisonSection :comparison="baseline" />
 
       <MaturityGapSection
         :results="results"
@@ -618,6 +624,7 @@
   import ProgressBar from '@/components/common/ProgressBar.vue';
   import { planProgress, type Progress } from '@/utils/planProgress';
   import BaseButton from '@/components/common/BaseButton.vue';
+  import BaselineComparisonSection from '@/components/improvement/BaselineComparisonSection.vue';
   import MaturityGapSection, {
     type GapActionDraft,
   } from '@/components/improvement/MaturityGapSection.vue';
@@ -640,6 +647,7 @@
   } from '@heroicons/vue/24/outline';
   import type {
     ImprovementPlan,
+    PlanBaselineComparison,
     PlanDeadlines,
     MaturityResult,
     SuggestedImprovement,
@@ -1151,10 +1159,23 @@
     try {
       const { data } = await improvementService.getByEvaluation(evaluationId);
       plans.value = data;
+      fetchBaseline();
     } catch (err) {
       console.error(err);
     } finally {
       loading.value = false;
+    }
+  }
+
+  const baseline = ref<PlanBaselineComparison | null>(null);
+
+  async function fetchBaseline() {
+    try {
+      const { data } = await improvementService.getBaseline(evaluationId);
+      baseline.value = data;
+    } catch (err) {
+      console.error(err);
+      baseline.value = null;
     }
   }
 
