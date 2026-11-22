@@ -36,6 +36,7 @@ import uy.edu.prisma.web.dto.Dto.SaveResponseDto;
 class MaturityQueryCountIT {
 
   private static final long MAX_STATEMENTS_CALCULATE = 30;
+  private static final long MAX_STATEMENTS_RECALCULATE = 10;
   private static final long MAX_STATEMENTS_RESULTS = 20;
   private static final long MAX_STATEMENTS_OVERVIEW = 25;
 
@@ -102,6 +103,10 @@ class MaturityQueryCountIT {
     long calculate = stats.getPrepareStatementCount();
 
     stats.clear();
+    evaluationService.calculateMaturity(created.id());
+    long recalculate = stats.getPrepareStatementCount();
+
+    stats.clear();
     List<MaturityResultDto> results = evaluationService.getResults(created.id());
     long resultsCount = stats.getPrepareStatementCount();
 
@@ -110,8 +115,16 @@ class MaturityQueryCountIT {
     long overview = stats.getPrepareStatementCount();
 
     System.out.println(
-        "QUERYCOUNT calculate=" + calculate + " results=" + resultsCount + " overview=" + overview);
+        "QUERYCOUNT calculate="
+            + calculate
+            + " recalculate="
+            + recalculate
+            + " results="
+            + resultsCount
+            + " overview="
+            + overview);
     assertEquals(103, results.size());
+    assertTrue(recalculate <= MAX_STATEMENTS_RECALCULATE, "recalculo sin cambios: " + recalculate);
     assertTrue(calculate <= MAX_STATEMENTS_CALCULATE, "calculateMaturity: " + calculate);
     assertTrue(resultsCount <= MAX_STATEMENTS_RESULTS, "getResults: " + resultsCount);
     assertTrue(overview <= MAX_STATEMENTS_OVERVIEW, "getOverview: " + overview);

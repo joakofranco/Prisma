@@ -1126,21 +1126,14 @@ class EvaluationServiceTest {
     CatalogControl c2 = controlAtLevel(graph, 2);
     CatalogControl c3 = controlAtLevel(graph, 3);
     CatalogControl c4 = controlAtLevel(graph, 4);
-    List<EvaluationResponse> responses =
-        List.of(
-            EvaluationResponse.builder().id(UUID.randomUUID()).control(c1).compliant(true).build(),
-            EvaluationResponse.builder().id(UUID.randomUUID()).control(c2).compliant(true).build(),
-            EvaluationResponse.builder()
-                .id(UUID.randomUUID())
-                .control(c3)
-                .compliant(false)
-                .build());
     MaturityResult oldResult =
         MaturityResult.builder().id(UUID.randomUUID()).evaluation(eval).build();
 
     when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
     when(controlRepo.findByVersionOrdered("5.0")).thenReturn(List.of(c1, c2, c3, c4));
-    when(respRepo.findByEvaluationId(eval.getId())).thenReturn(responses);
+    when(respRepo.findCompliantControlIds(eval.getId()))
+        .thenReturn(List.of(c1.getId(), c2.getId()));
+    when(respRepo.existsByEvaluationId(eval.getId())).thenReturn(true);
     when(matRepo.findByEvaluationId(eval.getId())).thenReturn(List.of(oldResult));
     when(matRepo.saveAll(any())).thenAnswer(inv -> new java.util.ArrayList<>(inv.getArgument(0)));
     when(evalRepo.save(any(Evaluation.class))).thenAnswer(inv -> inv.getArgument(0));
@@ -1169,12 +1162,11 @@ class EvaluationServiceTest {
     // casos guardaban null, indistinguibles en la UI ("—" para los dos).
     SubGraph graph = buildSubgraph();
     CatalogControl c1 = controlAtLevel(graph, 1);
-    EvaluationResponse response =
-        EvaluationResponse.builder().id(UUID.randomUUID()).control(c1).compliant(false).build();
 
     when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
     when(controlRepo.findByVersionOrdered("5.0")).thenReturn(List.of(c1));
-    when(respRepo.findByEvaluationId(eval.getId())).thenReturn(List.of(response));
+    when(respRepo.findCompliantControlIds(eval.getId())).thenReturn(List.of());
+    when(respRepo.existsByEvaluationId(eval.getId())).thenReturn(true);
     when(matRepo.findByEvaluationId(eval.getId())).thenReturn(List.of());
     when(matRepo.saveAll(any())).thenAnswer(inv -> new java.util.ArrayList<>(inv.getArgument(0)));
     when(evalRepo.save(any(Evaluation.class))).thenAnswer(inv -> inv.getArgument(0));
@@ -1192,7 +1184,8 @@ class EvaluationServiceTest {
 
     when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
     when(controlRepo.findByVersionOrdered("5.0")).thenReturn(List.of(c1));
-    when(respRepo.findByEvaluationId(eval.getId())).thenReturn(List.of());
+    when(respRepo.findCompliantControlIds(eval.getId())).thenReturn(List.of());
+    when(respRepo.existsByEvaluationId(eval.getId())).thenReturn(false);
     when(matRepo.findByEvaluationId(eval.getId())).thenReturn(List.of());
     when(matRepo.saveAll(any())).thenAnswer(inv -> new java.util.ArrayList<>(inv.getArgument(0)));
     when(evalRepo.save(any(Evaluation.class))).thenAnswer(inv -> inv.getArgument(0));
@@ -1210,16 +1203,11 @@ class EvaluationServiceTest {
     CommunityProfile profile =
         CommunityProfile.builder().id(UUID.randomUUID()).controls(Set.of(inProfile)).build();
     eval.setCommunityProfile(profile);
-    EvaluationResponse response =
-        EvaluationResponse.builder()
-            .id(UUID.randomUUID())
-            .control(inProfile)
-            .compliant(true)
-            .build();
 
     when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
     when(controlRepo.findByVersionOrdered("5.0")).thenReturn(List.of(inProfile, outsideProfile));
-    when(respRepo.findByEvaluationId(eval.getId())).thenReturn(List.of(response));
+    when(respRepo.findCompliantControlIds(eval.getId())).thenReturn(List.of(inProfile.getId()));
+    when(respRepo.existsByEvaluationId(eval.getId())).thenReturn(true);
     when(matRepo.findByEvaluationId(eval.getId())).thenReturn(List.of());
     when(matRepo.saveAll(any())).thenAnswer(inv -> new java.util.ArrayList<>(inv.getArgument(0)));
     when(evalRepo.save(any(Evaluation.class))).thenAnswer(inv -> inv.getArgument(0));
@@ -1243,7 +1231,8 @@ class EvaluationServiceTest {
 
     when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
     when(controlRepo.findByVersionOrdered("5.0")).thenReturn(List.of(high));
-    when(respRepo.findByEvaluationId(eval.getId())).thenReturn(List.of());
+    when(respRepo.findCompliantControlIds(eval.getId())).thenReturn(List.of());
+    when(respRepo.existsByEvaluationId(eval.getId())).thenReturn(false);
     when(matRepo.findByEvaluationId(eval.getId())).thenReturn(List.of());
     when(matRepo.saveAll(any())).thenAnswer(inv -> new java.util.ArrayList<>(inv.getArgument(0)));
     when(evalRepo.save(any(Evaluation.class))).thenAnswer(inv -> inv.getArgument(0));
@@ -1270,12 +1259,11 @@ class EvaluationServiceTest {
             .build();
     linkRequirementToSubcategory(graph.requirement(), secondSubcategory);
     CatalogControl shared = controlAtLevel(graph, 1);
-    EvaluationResponse response =
-        EvaluationResponse.builder().id(UUID.randomUUID()).control(shared).compliant(false).build();
 
     when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
     when(controlRepo.findByVersionOrdered("5.0")).thenReturn(List.of(shared));
-    when(respRepo.findByEvaluationId(eval.getId())).thenReturn(List.of(response));
+    when(respRepo.findCompliantControlIds(eval.getId())).thenReturn(List.of());
+    when(respRepo.existsByEvaluationId(eval.getId())).thenReturn(true);
     when(matRepo.findByEvaluationId(eval.getId())).thenReturn(List.of());
     when(matRepo.saveAll(any())).thenAnswer(inv -> new java.util.ArrayList<>(inv.getArgument(0)));
     when(evalRepo.save(any(Evaluation.class))).thenAnswer(inv -> inv.getArgument(0));
@@ -1290,6 +1278,115 @@ class EvaluationServiceTest {
         saved.stream()
             .map(MaturityResult::getSubcategoryId)
             .collect(java.util.stream.Collectors.toSet()));
+  }
+
+  private MaturityResult storedResult(
+      SubGraph graph, UUID subcategoryId, int currentLevel, int targetLevel) {
+    return MaturityResult.builder()
+        .id(UUID.randomUUID())
+        .evaluation(eval)
+        .functionId(graph.function().getId())
+        .functionName(graph.function().getName())
+        .categoryId(graph.category().getId())
+        .categoryName(graph.category().getName())
+        .subcategoryId(subcategoryId)
+        .subcategoryName(graph.subcategory().getName())
+        .currentLevel(currentLevel)
+        .targetLevel(targetLevel)
+        .gap(Math.max(0, targetLevel - currentLevel))
+        .build();
+  }
+
+  @Test
+  void calculateMaturityDoesNotWriteRowsWhoseValuesDidNotChange() {
+    SubGraph graph = buildSubgraph();
+    CatalogControl c1 = controlAtLevel(graph, 1);
+    CatalogControl c2 = controlAtLevel(graph, 2);
+    MaturityResult current = storedResult(graph, graph.subcategory().getId(), 1, 2);
+
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(controlRepo.findByVersionOrdered("5.0")).thenReturn(List.of(c1, c2));
+    when(respRepo.findCompliantControlIds(eval.getId())).thenReturn(List.of(c1.getId()));
+    when(respRepo.existsByEvaluationId(eval.getId())).thenReturn(true);
+    when(matRepo.findByEvaluationId(eval.getId())).thenReturn(List.of(current));
+    when(evalRepo.save(any(Evaluation.class))).thenAnswer(inv -> inv.getArgument(0));
+
+    service.calculateMaturity(eval.getId());
+
+    verify(matRepo, never()).saveAll(any());
+    verify(matRepo, never()).deleteAllInBatch(any());
+    assertEquals(1, current.getCurrentLevel());
+    assertEquals(1, current.getGap());
+  }
+
+  @Test
+  void calculateMaturityUpdatesExistingRowsInPlaceWhenTheLevelChanges() {
+    SubGraph graph = buildSubgraph();
+    CatalogControl c1 = controlAtLevel(graph, 1);
+    CatalogControl c2 = controlAtLevel(graph, 2);
+    MaturityResult current = storedResult(graph, graph.subcategory().getId(), 0, 2);
+    UUID originalId = current.getId();
+
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(controlRepo.findByVersionOrdered("5.0")).thenReturn(List.of(c1, c2));
+    when(respRepo.findCompliantControlIds(eval.getId()))
+        .thenReturn(List.of(c1.getId(), c2.getId()));
+    when(respRepo.existsByEvaluationId(eval.getId())).thenReturn(true);
+    when(matRepo.findByEvaluationId(eval.getId())).thenReturn(List.of(current));
+    when(evalRepo.save(any(Evaluation.class))).thenAnswer(inv -> inv.getArgument(0));
+
+    service.calculateMaturity(eval.getId());
+
+    verify(matRepo, never()).saveAll(any());
+    verify(matRepo, never()).deleteAllInBatch(any());
+    assertEquals(originalId, current.getId());
+    assertEquals(2, current.getCurrentLevel());
+    assertEquals(0, current.getGap());
+  }
+
+  @Test
+  void calculateMaturityDeletesRowsOfSubcategoriesThatAreNoLongerInTheCatalog() {
+    SubGraph graph = buildSubgraph();
+    CatalogControl c1 = controlAtLevel(graph, 1);
+    MaturityResult current = storedResult(graph, graph.subcategory().getId(), 0, 1);
+    MaturityResult orphan = storedResult(graph, UUID.randomUUID(), 0, 1);
+
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(controlRepo.findByVersionOrdered("5.0")).thenReturn(List.of(c1));
+    when(respRepo.findCompliantControlIds(eval.getId())).thenReturn(List.of());
+    when(respRepo.existsByEvaluationId(eval.getId())).thenReturn(false);
+    when(matRepo.findByEvaluationId(eval.getId())).thenReturn(List.of(current, orphan));
+    when(evalRepo.save(any(Evaluation.class))).thenAnswer(inv -> inv.getArgument(0));
+
+    service.calculateMaturity(eval.getId());
+
+    verify(matRepo, times(1))
+        .deleteAllInBatch(
+            argThat(
+                rows ->
+                    java.util.stream.StreamSupport.stream(rows.spliterator(), false)
+                        .toList()
+                        .equals(List.of(orphan))));
+    verify(matRepo, never()).saveAll(any());
+  }
+
+  @Test
+  void calculateMaturityReadsTheCatalogOnlyOncePerVersion() {
+    SubGraph graph = buildSubgraph();
+    CatalogControl c1 = controlAtLevel(graph, 1);
+
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(controlRepo.findByVersionOrdered("5.0")).thenReturn(List.of(c1));
+    when(respRepo.findCompliantControlIds(eval.getId())).thenReturn(List.of());
+    when(respRepo.existsByEvaluationId(eval.getId())).thenReturn(false);
+    when(matRepo.findByEvaluationId(eval.getId())).thenReturn(List.of());
+    when(matRepo.saveAll(any())).thenAnswer(inv -> new java.util.ArrayList<>(inv.getArgument(0)));
+    when(evalRepo.save(any(Evaluation.class))).thenAnswer(inv -> inv.getArgument(0));
+
+    service.calculateMaturity(eval.getId());
+    service.calculateMaturity(eval.getId());
+
+    verify(controlRepo, times(1)).findByVersionOrdered("5.0");
   }
 
   private CatalogControl controlAtLevel(SubGraph graph, int level) {
@@ -1362,7 +1459,8 @@ class EvaluationServiceTest {
     // la respuesta anterior con argumentos nulos.
     when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
     when(controlRepo.findByVersionOrdered("5.0")).thenReturn(List.of(c1));
-    when(respRepo.findByEvaluationId(eval.getId())).thenReturn(List.of());
+    when(respRepo.findCompliantControlIds(eval.getId())).thenReturn(List.of());
+    when(respRepo.existsByEvaluationId(eval.getId())).thenReturn(false);
     when(matRepo.findByEvaluationId(eval.getId())).thenReturn(List.of());
     when(matRepo.saveAll(any())).thenAnswer(inv -> new java.util.ArrayList<>(inv.getArgument(0)));
     when(evalRepo.save(any(Evaluation.class))).thenAnswer(inv -> inv.getArgument(0));
