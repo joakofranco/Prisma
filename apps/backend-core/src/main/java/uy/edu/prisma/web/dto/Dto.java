@@ -1220,6 +1220,19 @@ public class Dto {
         UUID controlId, String verdict, UUID setBy, String setByName, OffsetDateTime updatedAt) {
       this(controlId, verdict, setBy, setByName, updatedAt, "MANUAL", null);
     }
+
+    // Copia defensiva (SpotBugs EI_EXPOSE_REP).
+    public ControlVerdictDto {
+      sourceRef =
+          sourceRef == null
+              ? null
+              : Collections.unmodifiableMap(new java.util.HashMap<>(sourceRef));
+    }
+
+    @Override
+    public Map<String, Object> sourceRef() {
+      return sourceRef == null ? null : Collections.unmodifiableMap(sourceRef);
+    }
   }
 
   // Qué pasó con el dictamen de un control al decidir una cita. changed=false: ya estaba Validado.
@@ -1227,7 +1240,20 @@ public class Dto {
   // venía de la cita: vuelve a «Sin dictamen»).
   public record VerdictChangeDto(UUID controlId, String verdict, String source, boolean changed) {}
 
-  public record CitationFeedbackResultDto(List<VerdictChangeDto> verdicts) {}
+  public record CitationFeedbackResultDto(List<VerdictChangeDto> verdicts) {
+
+    public CitationFeedbackResultDto {
+      verdicts =
+          verdicts == null
+              ? List.of()
+              : Collections.unmodifiableList(new java.util.ArrayList<>(verdicts));
+    }
+
+    @Override
+    public List<VerdictChangeDto> verdicts() {
+      return Collections.unmodifiableList(verdicts);
+    }
+  }
 
   public record SetControlVerdictDto(
       @NotBlank(message = "El dictamen es obligatorio") String verdict) {}
