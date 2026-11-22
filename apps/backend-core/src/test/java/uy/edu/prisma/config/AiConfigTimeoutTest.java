@@ -45,7 +45,9 @@ class AiConfigTimeoutTest {
               path.endsWith("remediation-tips")
                   ? "{\"summary\":\"Resumen\",\"tips\":[\"Paso 1\"]}"
                   : path.endsWith("classify")
-                      ? "{\"suggestions\":[{\"control_id\":\"" + UUID.randomUUID() + "\",\"score\":0.8}]}"
+                      ? "{\"suggestions\":[{\"control_id\":\""
+                          + UUID.randomUUID()
+                          + "\",\"score\":0.8}]}"
                       : "{\"chunks_indexed\":3,\"chunksIndexed\":3}";
           byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
           exchange.getResponseHeaders().add("Content-Type", "application/json");
@@ -102,7 +104,8 @@ class AiConfigTimeoutTest {
   void classificationWaitsLongerThanTheGeneralTimeout() {
     // 700 ms de demora: la espera general (300 ms) la cortaría; la de la clasificación no.
     delayMs = 700;
-    AiEvidenceClient client = client(Duration.ofMillis(300), Duration.ofSeconds(2), Duration.ofSeconds(3));
+    AiEvidenceClient client =
+        client(Duration.ofMillis(300), Duration.ofSeconds(2), Duration.ofSeconds(3));
 
     var suggestions =
         client.classify(
@@ -118,7 +121,8 @@ class AiConfigTimeoutTest {
   @Test
   void classificationHasItsOwnTimeoutAndStillGivesUpIfBackendAiHangs() {
     delayMs = 1_500;
-    AiEvidenceClient client = client(Duration.ofSeconds(5), Duration.ofSeconds(5), Duration.ofMillis(300));
+    AiEvidenceClient client =
+        client(Duration.ofSeconds(5), Duration.ofSeconds(5), Duration.ofMillis(300));
 
     long start = System.nanoTime();
     assertThrows(

@@ -134,7 +134,8 @@ public class EvidenceController {
   @PreAuthorize("hasRole('PRISMA_ADMIN')")
   @PostMapping("/{evidenceId}/classification/retry")
   public ResponseEntity<ClassificationRetryDto> retryClassification(@PathVariable UUID evidenceId) {
-    return ResponseEntity.accepted().body(new ClassificationRetryDto(classification.retry(evidenceId)));
+    return ResponseEntity.accepted()
+        .body(new ClassificationRetryDto(classification.retry(evidenceId)));
   }
 
   /** Acepta o rechaza una sugerencia (no asigna la evidencia; deja feedback anónimo). */

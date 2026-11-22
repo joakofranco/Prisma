@@ -147,7 +147,8 @@ public class EvidenceClassificationService {
               + ")");
     }
     if (evidence.getControl() != null) {
-      throw new ConflictException("La evidencia ya tiene un control asignado: no hay nada que sugerir");
+      throw new ConflictException(
+          "La evidencia ya tiene un control asignado: no hay nada que sugerir");
     }
     if (evidence.getIndexStatus() != Evidence.IndexStatus.INDEXED) {
       throw new ConflictException(
