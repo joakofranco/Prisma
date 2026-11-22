@@ -42,7 +42,7 @@ DC := docker compose
         mfa-enable mfa-status mfa-disable mfa-reset-requires-otp auth-policy auth-policy-status \
         certs certs-force internal-ca restart-nginx \
         shell-core shell-ai shell-db shell-front \
-        prod-secrets prod-up swarm-deploy swarm-ps swarm-down \
+        prod-secrets prod-up deploy-cloudflare swarm-deploy swarm-ps swarm-down \
         perf-build perf-setup perf-umbrales perf perf-all perf-clean \
         vuln-scan \
         mcu50-build mcu50-validate bugasura-build
@@ -331,6 +331,13 @@ prod-up: ## Producción: generar las contraseñas que falten (como prod-secrets)
 	@./scripts/generate-prod-secrets.sh
 	$(DC) -f docker-compose.yml -f docker-compose.prod.yml --profile full up -d --remove-orphans
 	@echo "Stack de produccion levantado. Si se generaron claves, se mostraron arriba y quedaron en .env"
+
+deploy-cloudflare: ## Publicar con Cloudflare Tunnel: deja el .env coherente con el dominio (URL pública, CORS e issuers de confianza), levanta el stack con docker-compose.cloudflare.yml y comprueba que la API aceptará los tokens del dominio. Idempotente
+#> DOMINIO=prisma.tudominio.com  dominio público (obligatorio)    PROD=1  sumar docker-compose.prod.yml
+#> BUILD=1  construir las imágenes locales    PERFIL=full  perfil de compose    ENV_FILE=.env  archivo de variables
+#> En .env: INTERNAL_BIND_IP (obligatoria, IP de la VPN) y TUNNEL_ORIGIN_PORT (8443). Antes del cambio guarda .env.bak-<fecha>
+	@./scripts/deploy-cloudflare.sh
+
 
 # ---------- DOCKER SWARM (un solo servidor, 2 réplicas) ----------
 swarm-deploy: ## Desplegar o actualizar el stack en Docker Swarm (docker-stack.yml) con las imágenes ya publicadas en GHCR. Inicializa Swarm si hace falta; no construye imágenes. Con ENV=production genera antes las contraseñas que falten

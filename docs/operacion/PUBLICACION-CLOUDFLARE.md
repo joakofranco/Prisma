@@ -42,7 +42,7 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml -f docker-compos
 
 1. **Firewall del proveedor** (el panel del VPS, no solo `ufw`): bloquear todo el tráfico entrante. Dejar solo SSH desde tu IP o desde la VPN, y el puerto de la VPN si el VPS la aloja. Docker publica puertos saltándose `ufw`, por eso el firewall del proveedor es el que cuenta.
 2. Completar el `.env` con las variables de la tabla.
-3. Levantar con los tres archivos de compose (comando de arriba).
+3. Levantar con los tres archivos de compose (comando de arriba). `make deploy-cloudflare DOMINIO=prisma.tudominio.com` hace los pasos 2 y 3: guarda una copia del `.env`, agrega el dominio a `PUBLIC_BASE_URL`, `CORS_ALLOWED_ORIGINS`, `KEYCLOAK_TRUSTED_ISSUERS` y `KEYCLOAK_ISSUER_URL` (sin duplicar, se puede repetir en cada despliegue), levanta el stack y comprueba que el issuer que anuncia Keycloak está entre los de confianza; sin eso la API responde 401 y la sesión se cierra. Exige `INTERNAL_BIND_IP` en el `.env`.
 4. Comprobar desde otra máquina, fuera de la VPN, que no responde ningún puerto del VPS: `nmap -Pn <ip-del-vps>`.
 
 ## Pasos en Cloudflare
