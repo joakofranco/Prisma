@@ -118,6 +118,40 @@ public class EvidenceClassificationService {
             .build());
   }
 
+  /**
+   * Reintento a mano de la preclasificación de una evidencia global (3.6): con la evaluación en
+   * auditoría no se puede reindexar (exige IN_PROGRESS), así que una clasificación que se agotó no
+   * tenía salida sin devolver la evaluación. Solo PRISMA_ADMIN (lo exige el controlador). Devuelve
+   * {@code false} si ya hay un trabajo en cola o corriendo (no se duplica).
+   */
+  @Transactional
+  public boolean retry(UUID evidenceId) {
+    Evidence evidence =
+        evidenceRepo
+            .findById(evidenceId)
+            .orElseThrow(() -> new ResourceNotFoundException("Evidencia", evidenceId));
+    Evaluation eval = evidence.getEvaluation();
+    currentUser.assertOrganizationAccess(eval.getOrganization().getId());
+    if (eval.getStatus() != Evaluation.Status.IN_AUDIT) {
+      throw new ConflictException(
+          "La preclasificación solo se reintenta con la evaluación en auditoría (estado actual: "
+              + eval.getStatus()
+              + ")");
+    }
+    if (evidence.getControl() != null) {
+      throw new ConflictException("La evidencia ya tiene un control asignado: no hay nada que sugerir");
+    }
+    if (evidence.getIndexStatus() != Evidence.IndexStatus.INDEXED) {
+      throw new ConflictException(
+          "La evidencia todavía no está indexada (estado: " + evidence.getIndexStatus() + ")");
+    }
+    if (jobRepo.findFirstByDedupKeyAndStatusIn(dedupKey(evidenceId), ACTIVE).isPresent()) {
+      return false;
+    }
+    enqueue(evidence);
+    return true;
+  }
+
   /** Lo que se manda a backend-ai (calculado en una transacción corta). */
   public record ClassifyInput(
       UUID organizationId,

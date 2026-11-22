@@ -1448,6 +1448,9 @@ public class Dto {
     }
   }
 
+  /** Respuesta de reintentar la preclasificación: {@code queued=false} = ya había un trabajo. */
+  public record ClassificationRetryDto(boolean queued) {}
+
   public record SuggestionDecisionDto(
       @NotNull(message = "La decisión es obligatoria")
           @Pattern(regexp = "ACCEPTED|REJECTED", message = "Decisión inválida")

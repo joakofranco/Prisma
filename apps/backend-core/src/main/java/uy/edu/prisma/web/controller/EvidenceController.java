@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import uy.edu.prisma.application.EvidenceClassificationService;
 import uy.edu.prisma.application.EvidenceService;
+import uy.edu.prisma.web.dto.Dto.ClassificationRetryDto;
 import uy.edu.prisma.web.dto.Dto.EvidenceCitationDto;
 import uy.edu.prisma.web.dto.Dto.EvidenceDto;
 import uy.edu.prisma.web.dto.Dto.EvidenceRulesDto;
@@ -124,6 +125,16 @@ public class EvidenceController {
   @GetMapping("/evaluation/{evaluationId}/suggestions")
   public ResponseEntity<List<EvidenceSuggestionDto>> suggestions(@PathVariable UUID evaluationId) {
     return ResponseEntity.ok(classification.list(evaluationId));
+  }
+
+  /**
+   * Vuelve a pedir la preclasificación de una evidencia global (3.6), con la evaluación en
+   * auditoría. {@code 202} con {@code queued=false} si ya había un trabajo en curso.
+   */
+  @PreAuthorize("hasRole('PRISMA_ADMIN')")
+  @PostMapping("/{evidenceId}/classification/retry")
+  public ResponseEntity<ClassificationRetryDto> retryClassification(@PathVariable UUID evidenceId) {
+    return ResponseEntity.accepted().body(new ClassificationRetryDto(classification.retry(evidenceId)));
   }
 
   /** Acepta o rechaza una sugerencia (no asigna la evidencia; deja feedback anónimo). */

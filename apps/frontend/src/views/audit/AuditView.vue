@@ -74,6 +74,16 @@
             >
               <span class="font-medium">{{ ev.fileName }}</span>
               <span class="text-slate-500 dark:text-slate-400"> · {{ indexLabel(ev) }}</span>
+              <button
+                v-if="canRetryClassification(ev)"
+                type="button"
+                class="ml-2 font-medium px-2 py-0.5 rounded border text-indigo-700 border-indigo-300 hover:bg-indigo-100 dark:text-indigo-300 dark:border-indigo-700 dark:hover:bg-indigo-900"
+                title="Si la IA no llegó a sugerir controles (por ejemplo por un corte), pedila de nuevo"
+                data-testid="retry-classification"
+                @click="retryClassification(ev)"
+              >
+                Reintentar sugerencias
+              </button>
               <div
                 v-for="sug in visibleSuggestions(ev.id)"
                 :key="sug.id"
@@ -727,6 +737,29 @@
       suggestions.value = data;
     } catch {
       // sin sugerencias todavía (la IA las calcula en segundo plano): no es un error
+    }
+  }
+
+  // Solo PRISMA_ADMIN, en auditoría, con la evidencia ya indexada y sin sugerencias (3.6).
+  function canRetryClassification(ev: Evidence) {
+    return (
+      authStore.hasAnyRole('PRISMA_ADMIN') &&
+      canWriteObservations.value &&
+      (ev.indexStatus === 'INDEXED' || (!ev.indexStatus && ev.aiIndexed)) &&
+      suggestions.value.every((s) => s.evidenceId !== ev.id)
+    );
+  }
+
+  async function retryClassification(ev: Evidence) {
+    try {
+      const { data } = await evidenceService.retryClassification(ev.id);
+      notification.success(
+        data.queued
+          ? 'Preclasificación en cola: las sugerencias aparecen en unos minutos'
+          : 'La preclasificación ya está en curso',
+      );
+    } catch (err) {
+      notification.error(getErrorMessage(err, 'No se pudo reintentar la preclasificación'));
     }
   }
 

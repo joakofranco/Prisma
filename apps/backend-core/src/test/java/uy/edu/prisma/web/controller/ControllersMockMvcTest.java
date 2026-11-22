@@ -1153,6 +1153,23 @@ class ControllersMockMvcTest {
   }
 
   @Test
+  void retryingTheClassificationAnswersAcceptedWithWhetherItWasQueued() throws Exception {
+    UUID id = UUID.randomUUID();
+    when(evidenceClassificationService.retry(id)).thenReturn(true);
+
+    evidence
+        .perform(post("/api/evidence/{id}/classification/retry", id))
+        .andExpect(status().isAccepted())
+        .andExpect(jsonPath("$.queued").value(true));
+
+    when(evidenceClassificationService.retry(id)).thenReturn(false);
+    evidence
+        .perform(post("/api/evidence/{id}/classification/retry", id))
+        .andExpect(status().isAccepted())
+        .andExpect(jsonPath("$.queued").value(false));
+  }
+
+  @Test
   void decidingASuggestionDelegatesAndRejectsAnInvalidDecision() throws Exception {
     UUID id = UUID.randomUUID();
     when(evidenceClassificationService.decide(id, "ACCEPTED"))
