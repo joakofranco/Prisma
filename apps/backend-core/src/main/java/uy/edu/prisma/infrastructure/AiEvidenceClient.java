@@ -408,6 +408,25 @@ public class AiEvidenceClient {
     }
   }
 
+  /**
+   * Modelo de embedding con el que backend-ai indexa (para detectar un cambio de modelo y
+   * reindexar). Vacío si backend-ai no responde: el chequeo se reintenta más tarde.
+   */
+  @SuppressWarnings("unchecked")
+  public java.util.Optional<String> embeddingModel() {
+    try {
+      Map<String, Object> models =
+          restClient.get().uri("/api/v1/runtime/models").retrieve().body(Map.class);
+      Object name = models != null ? models.get("embedding") : null;
+      return name == null || name.toString().isBlank()
+          ? java.util.Optional.empty()
+          : java.util.Optional.of(name.toString());
+    } catch (Exception e) {
+      log.warn("No se pudo consultar el modelo de embedding de backend-ai: {}", e.getMessage());
+      return java.util.Optional.empty();
+    }
+  }
+
   /** Borra los fragmentos indexados de una evidencia (best-effort, p.ej. al eliminarla). */
   public void deleteEvidence(UUID organizationId, UUID evidenceId) {
     try {

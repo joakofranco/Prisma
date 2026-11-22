@@ -45,6 +45,18 @@ public interface EvidenceCitationResultRepository
       @Param("controlId") UUID controlId,
       @Param("pending") Status pending);
 
+  /** Cambio de modelo de embedding: ningún puntaje guardado vale. Las no decididas se descartan. */
+  @Modifying
+  @Query("DELETE FROM EvidenceCitationResult r WHERE r.status = :status")
+  int deleteAllByStatus(@Param("status") Status status);
+
+  /**
+   * ... y las decididas se marcan viejas: la próxima búsqueda las rehace conservando la decisión.
+   */
+  @Modifying
+  @Query("UPDATE EvidenceCitationResult r SET r.stale = true WHERE r.status <> :pending")
+  int markAllDecidedStale(@Param("pending") Status pending);
+
   boolean existsByEvaluationIdAndControlIdAndStaleTrue(UUID evaluationId, UUID controlId);
 
   @Query(
