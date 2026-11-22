@@ -126,6 +126,40 @@ public class EvidenceClassificationService {
             .build());
   }
 
+  /**
+   * Reintento a mano de la preclasificación de una evidencia global (3.6): con la evaluación en
+   * auditoría no se puede reindexar (exige IN_PROGRESS), así que una clasificación que se agotó no
+   * tenía salida sin devolver la evaluación. Solo PRISMA_ADMIN (lo exige el controlador). Devuelve
+   * {@code false} si ya hay un trabajo en cola o corriendo (no se duplica).
+   */
+  @Transactional
+  public boolean retry(UUID evidenceId) {
+    Evidence evidence =
+        evidenceRepo
+            .findById(evidenceId)
+            .orElseThrow(() -> new ResourceNotFoundException("Evidencia", evidenceId));
+    Evaluation eval = evidence.getEvaluation();
+    currentUser.assertOrganizationAccess(eval.getOrganization().getId());
+    if (eval.getStatus() != Evaluation.Status.IN_AUDIT) {
+      throw new ConflictException(
+          "La preclasificación solo se reintenta con la evaluación en auditoría (estado actual: "
+              + eval.getStatus()
+              + ")");
+    }
+    if (evidence.getControl() != null) {
+      throw new ConflictException("La evidencia ya tiene un control asignado: no hay nada que sugerir");
+    }
+    if (evidence.getIndexStatus() != Evidence.IndexStatus.INDEXED) {
+      throw new ConflictException(
+          "La evidencia todavía no está indexada (estado: " + evidence.getIndexStatus() + ")");
+    }
+    if (jobRepo.findFirstByDedupKeyAndStatusIn(dedupKey(evidenceId), ACTIVE).isPresent()) {
+      return false;
+    }
+    enqueue(evidence);
+    return true;
+  }
+
   /** Lo que se manda a backend-ai (calculado en una transacción corta). */
   public record ClassifyInput(
       UUID organizationId,
@@ -224,7 +258,7 @@ public class EvidenceClassificationService {
   public List<EvidenceSuggestionDto> list(UUID evaluationId) {
     assertAuditAccess(evaluationId);
     return suggestionRepo.findByEvaluationIdOrderByEvidenceIdAscRankAsc(evaluationId).stream()
-        .map(EvidenceClassificationService::toDto)
+        .map(this::toDto)
         .toList();
   }
 
@@ -274,7 +308,17 @@ public class EvidenceClassificationService {
     }
   }
 
-  private static EvidenceSuggestionDto toDto(EvidenceControlSuggestion s) {
+  // Mismo AI_CLASSIFY_MIN_SCORE que backend-ai: definido = el umbral está calibrado con datos
+  // reales; sin definir, las sugerencias se marcan «sin confianza calibrada» (3.4). Por setter y
+  // opcional (sin Spring queda en «sin calibrar»).
+  private boolean calibrated;
+
+  @org.springframework.beans.factory.annotation.Value("${prisma.ai.classify-min-score:}")
+  public void setClassifyMinScore(String value) {
+    this.calibrated = value != null && !value.isBlank();
+  }
+
+  private EvidenceSuggestionDto toDto(EvidenceControlSuggestion s) {
     return new EvidenceSuggestionDto(
         s.getId(),
         s.getEvidence().getId(),
@@ -284,7 +328,8 @@ public class EvidenceClassificationService {
         s.getControl().getDescription(),
         s.getScore(),
         s.getRank(),
-        s.getStatus().name());
+        s.getStatus().name(),
+        calibrated);
   }
 
   static String dedupKey(UUID evidenceId) {

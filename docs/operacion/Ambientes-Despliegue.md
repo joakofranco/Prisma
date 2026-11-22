@@ -404,6 +404,7 @@ sobrescribibles desde el `.env` (ver `.env.example`).
 | `AI_CITATION_MIN_SCORE` | sin definir | puntaje mínimo de una cita de evidencia (relevancia de Chroma); lo que puntúa menos no se devuelve. **Sin definir = no se filtra**: el valor se calibra con el feedback real de `ai_citation_feedback` (el banco de pruebas calcula uno sugerido; `[POR VERIFICAR]`) |
 | `AI_TRACE_RETENTION_DAYS` | `0` | días que se conservan las trazas del modo investigación; **0 = no se borran nunca**. `[POR VERIFICAR]` el plazo |
 | `OLLAMA_NUM_PARALLEL` (en `backend-ai`) | `2` | solo se informa en la traza; el valor real lo fija el servicio `ollama` |
+| `AI_CLASSIFY_READ_TIMEOUT` | `300s` | espera de `backend-core` a la preclasificación de evidencia global (`backend-ai` la cancela si se corta); aparte de `AI_READ_TIMEOUT` |
 | `AI_CLASSIFY_MIN_SCORE` | sin definir | puntaje mínimo para sugerir un control al preclasificar evidencia global; **sin definir = se sugieren siempre los 3 mejores**. Se calibra con el feedback real de `ai_evidence_classification_feedback` (`[POR VERIFICAR]`) |
 | `AI_THINK` | `false` | razonamiento; solo se aplica si el modelo declara la capability `thinking` (en `llama3`/`gemma3` Ollama responde 400) |
 | `AI_WARMUP` | `true` | precalentar LLM y embedding al arrancar |

@@ -74,6 +74,16 @@
             >
               <span class="font-medium">{{ ev.fileName }}</span>
               <span class="text-slate-500 dark:text-slate-400"> · {{ indexLabel(ev) }}</span>
+              <button
+                v-if="canRetryClassification(ev)"
+                type="button"
+                class="ml-2 font-medium px-2 py-0.5 rounded border text-indigo-700 border-indigo-300 hover:bg-indigo-100 dark:text-indigo-300 dark:border-indigo-700 dark:hover:bg-indigo-900"
+                title="Si la IA no llegó a sugerir controles (por ejemplo por un corte), pedila de nuevo"
+                data-testid="retry-classification"
+                @click="retryClassification(ev)"
+              >
+                Reintentar sugerencias
+              </button>
               <div
                 v-for="sug in visibleSuggestions(ev.id)"
                 :key="sug.id"
@@ -83,6 +93,14 @@
                 <span>
                   Podría pertenecer a <strong>{{ sug.controlCode }}</strong> (confianza
                   {{ formatScore(sug.score) }})
+                </span>
+                <span
+                  v-if="sug.calibrated !== true"
+                  class="text-[11px] font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
+                  title="Todavía no hay un umbral calibrado con datos reales: el puntaje orienta, pero no garantiza que el control sea el correcto. Revisá el contenido antes de aceptar."
+                  data-testid="suggestion-uncalibrated"
+                >
+                  Sin confianza calibrada
                 </span>
                 <template v-if="sug.status === 'PENDING' && canWriteObservations">
                   <button
@@ -732,6 +750,29 @@
       suggestions.value = data;
     } catch {
       // sin sugerencias todavía (la IA las calcula en segundo plano): no es un error
+    }
+  }
+
+  // Solo PRISMA_ADMIN, en auditoría, con la evidencia ya indexada y sin sugerencias (3.6).
+  function canRetryClassification(ev: Evidence) {
+    return (
+      authStore.hasAnyRole('PRISMA_ADMIN') &&
+      canWriteObservations.value &&
+      (ev.indexStatus === 'INDEXED' || (!ev.indexStatus && ev.aiIndexed)) &&
+      suggestions.value.every((s) => s.evidenceId !== ev.id)
+    );
+  }
+
+  async function retryClassification(ev: Evidence) {
+    try {
+      const { data } = await evidenceService.retryClassification(ev.id);
+      notification.success(
+        data.queued
+          ? 'Preclasificación en cola: las sugerencias aparecen en unos minutos'
+          : 'La preclasificación ya está en curso',
+      );
+    } catch (err) {
+      notification.error(getErrorMessage(err, 'No se pudo reintentar la preclasificación'));
     }
   }
 

@@ -15,6 +15,7 @@ const evidenceService = vi.hoisted(() => ({
   getSavedCitations: vi.fn(),
   getSuggestions: vi.fn(),
   decideSuggestion: vi.fn(),
+  retryClassification: vi.fn(),
   refreshCitations: vi.fn(),
   sendCitationFeedback: vi.fn(),
   download: vi.fn(),
@@ -1356,6 +1357,75 @@ describe('AuditView: evidencia sin control asignado y sugerencias (F4, hito 4)',
     // Ordenadas por posición.
     expect(items[0]).toContain('Podría pertenecer a CA.1-2 (confianza 0,81)');
     expect(items[1]).toContain('CA.1-3 (confianza 0,55)');
+  });
+
+  it('PRISMA_ADMIN puede reintentar la preclasificación si no hay sugerencias (3.6)', async () => {
+    evidenceService.retryClassification.mockResolvedValue({ data: { queued: true } });
+    const wrapper = await mountView('IN_AUDIT');
+
+    await wrapper.find('[data-testid="retry-classification"]').trigger('click');
+    await flushPromises();
+
+    expect(evidenceService.retryClassification).toHaveBeenCalledWith('g1');
+    expect(notification.success).toHaveBeenCalledWith(
+      'Preclasificación en cola: las sugerencias aparecen en unos minutos',
+    );
+  });
+
+  it('si ya hay un trabajo en curso lo avisa sin duplicarlo', async () => {
+    evidenceService.retryClassification.mockResolvedValue({ data: { queued: false } });
+    const wrapper = await mountView('IN_AUDIT');
+
+    await wrapper.find('[data-testid="retry-classification"]').trigger('click');
+    await flushPromises();
+
+    expect(notification.success).toHaveBeenCalledWith('La preclasificación ya está en curso');
+  });
+
+  it('con sugerencias, o fuera de auditoría, no ofrece reintentar', async () => {
+    evidenceService.getSuggestions.mockResolvedValue({ data: [suggestion('s1', 'g1', 'CA.1-2')] });
+    const withSuggestions = await mountView('IN_AUDIT');
+    expect(withSuggestions.find('[data-testid="retry-classification"]').exists()).toBe(false);
+
+    evidenceService.getSuggestions.mockResolvedValue({ data: [] });
+    const notInAudit = await mountView('RETURNED');
+    expect(notInAudit.find('[data-testid="retry-classification"]').exists()).toBe(false);
+  });
+
+  it('si el servidor rechaza el reintento muestra el motivo', async () => {
+    evidenceService.retryClassification.mockRejectedValue({
+      response: { data: { message: 'La evidencia todavía no está indexada' } },
+    });
+    const wrapper = await mountView('IN_AUDIT');
+
+    await wrapper.find('[data-testid="retry-classification"]').trigger('click');
+    await flushPromises();
+
+    expect(notification.error).toHaveBeenCalledWith('La evidencia todavía no está indexada');
+  });
+
+  it('marca la sugerencia «Sin confianza calibrada» mientras no haya umbral (3.4)', async () => {
+    evidenceService.getSuggestions.mockResolvedValue({
+      data: [
+        suggestion('s1', 'g1', 'CA.1-2'),
+        suggestion('s2', 'g1', 'CA.1-3', { calibrated: false }),
+      ],
+    });
+    const wrapper = await mountView('IN_AUDIT');
+
+    const badges = wrapper.findAll('[data-testid="suggestion-uncalibrated"]');
+    expect(badges).toHaveLength(2);
+    expect(badges[0].text()).toBe('Sin confianza calibrada');
+  });
+
+  it('con el umbral calibrado no muestra la marca', async () => {
+    evidenceService.getSuggestions.mockResolvedValue({
+      data: [suggestion('s1', 'g1', 'CA.1-2', { calibrated: true })],
+    });
+    const wrapper = await mountView('IN_AUDIT');
+
+    expect(wrapper.findAll('[data-testid="suggestion"]')).toHaveLength(1);
+    expect(wrapper.find('[data-testid="suggestion-uncalibrated"]').exists()).toBe(false);
   });
 
   it('aceptar una sugerencia la registra y suma el control a la lista de citas', async () => {

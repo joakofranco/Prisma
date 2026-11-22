@@ -44,7 +44,9 @@ class AiConfigTimeoutTest {
           String body =
               path.endsWith("remediation-tips")
                   ? "{\"summary\":\"Resumen\",\"tips\":[\"Paso 1\"]}"
-                  : "{\"chunks_indexed\":3,\"chunksIndexed\":3}";
+                  : path.endsWith("classify")
+                      ? "{\"suggestions\":[{\"control_id\":\"" + UUID.randomUUID() + "\",\"score\":0.8}]}"
+                      : "{\"chunks_indexed\":3,\"chunksIndexed\":3}";
           byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
           exchange.getResponseHeaders().add("Content-Type", "application/json");
           try {
@@ -66,17 +68,23 @@ class AiConfigTimeoutTest {
   }
 
   private AiEvidenceClient client(Duration read, Duration guideRead) {
+    return client(read, guideRead, null);
+  }
+
+  private AiEvidenceClient client(Duration read, Duration guideRead, Duration classifyRead) {
     AiProperties props =
         new AiProperties(
             "http://127.0.0.1:" + server.getAddress().getPort(),
             "",
             Duration.ofSeconds(1),
             read,
-            guideRead);
+            guideRead,
+            classifyRead);
     AiConfig config = new AiConfig();
     RestClient normal = config.aiRestClient(RestClient.builder(), props);
     RestClient guide = config.aiGuideRestClient(RestClient.builder(), props);
-    return new AiEvidenceClient(normal, guide);
+    RestClient classify = config.aiClassifyRestClient(RestClient.builder(), props);
+    return new AiEvidenceClient(normal, guide, classify);
   }
 
   @Test
@@ -86,6 +94,45 @@ class AiConfigTimeoutTest {
     assertEquals(Duration.ofSeconds(3), props.connectTimeout());
     assertEquals(Duration.ofSeconds(60), props.readTimeout());
     assertEquals(Duration.ofSeconds(120), props.guideReadTimeout());
+    // La preclasificación tiene su propia espera, aparte de la general de 60 s (3.3).
+    assertEquals(Duration.ofSeconds(300), props.classifyReadTimeout());
+  }
+
+  @Test
+  void classificationWaitsLongerThanTheGeneralTimeout() {
+    // 700 ms de demora: la espera general (300 ms) la cortaría; la de la clasificación no.
+    delayMs = 700;
+    AiEvidenceClient client = client(Duration.ofMillis(300), Duration.ofSeconds(2), Duration.ofSeconds(3));
+
+    var suggestions =
+        client.classify(
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            List.of(new AiEvidenceClient.ClassifyCandidate(UUID.randomUUID(), "CTL-1: acceso")),
+            3);
+
+    assertEquals(1, suggestions.size());
+  }
+
+  @Test
+  void classificationHasItsOwnTimeoutAndStillGivesUpIfBackendAiHangs() {
+    delayMs = 1_500;
+    AiEvidenceClient client = client(Duration.ofSeconds(5), Duration.ofSeconds(5), Duration.ofMillis(300));
+
+    long start = System.nanoTime();
+    assertThrows(
+        uy.edu.prisma.domain.exception.AiUnavailableException.class,
+        () ->
+            client.classify(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                List.of(new AiEvidenceClient.ClassifyCandidate(UUID.randomUUID(), "CTL-1")),
+                3));
+    long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+
+    assertTrue(elapsedMs < 1_200, "tardó " + elapsedMs + " ms: el timeout propio no se aplicó");
   }
 
   @Test

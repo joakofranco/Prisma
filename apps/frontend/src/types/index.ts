@@ -599,6 +599,8 @@ export interface EvidenceSuggestion {
   score: number;
   rank: number;
   status: 'PENDING' | 'ACCEPTED' | 'REJECTED';
+  /** false = el puntaje no tiene un umbral calibrado con datos reales (AI_CLASSIFY_MIN_SCORE). */
+  calibrated?: boolean;
 }
 
 export interface AiJobAccepted {

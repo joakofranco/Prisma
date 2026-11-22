@@ -315,6 +315,18 @@ de guías (D12): el lote se pide a mano.
    top_n}` → `{suggestions:[{control_id, score, fragment_id}]}`); `AI_CLASSIFY_MIN_SCORE` (sin definir = los 3
    mejores) filtra por puntaje.
 
+**Correcciones tras las pruebas en el servidor (3.3, 3.4, 3.6).**
+- *Espera propia:* backend-core llama a `/evidence/classify` con `AI_CLASSIFY_READ_TIMEOUT` (300 s por
+  defecto), aparte de `AI_READ_TIMEOUT` (60 s). Si backend-core corta, backend-ai **cancela** el cálculo
+  (como `/rag/remediation-tips`). Los vectores de los controles se calculan una vez y se guardan en
+  memoria; la similitud se calcula en memoria con la misma escala que las citas.
+- *Errores:* un fallo del índice o del embedding responde `503 {code, detail, retryable:true}`
+  (`INDEX_UNAVAILABLE` / `INDEX_INCONSISTENT`) en vez de una lista vacía; el trabajo reintenta.
+- *Sin confianza calibrada:* la respuesta de `/evidence/classify` y `EvidenceSuggestionDto` traen
+  `calibrated` (`false` mientras `AI_CLASSIFY_MIN_SCORE` no esté definido); la pantalla lo marca.
+- *Reintento:* `POST /api/evidence/{evidenceId}/classification/retry` (`PRISMA_ADMIN`): `202 {queued}`;
+  `409` si la evaluación no está en auditoría, la evidencia ya tiene control o no está indexada.
+
 ### Citas guardadas e indexación con estado (hito 3)
 
 **Citas guardadas (C2).** `GET /api/evidence/evaluation/{e}/control/{c}/citations` devuelve **primero lo guardado**

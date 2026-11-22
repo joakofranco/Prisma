@@ -328,4 +328,82 @@ class EvidenceClassificationServiceTest {
     assertEquals(0.81, list.get(0).score());
     assertEquals(2, list.get(0).rank());
   }
+
+  // ---- 3.6: reintento a mano con la evaluación en auditoría ----
+
+  private Evidence globalIndexed() {
+    Evidence e = Evidence.builder().id(UUID.randomUUID()).evaluation(eval).build();
+    e.setIndexStatus(Evidence.IndexStatus.INDEXED);
+    when(evidenceRepo.findById(e.getId())).thenReturn(Optional.of(e));
+    return e;
+  }
+
+  @Test
+  void retryQueuesTheClassificationOfAnIndexedGlobalEvidenceInAudit() {
+    eval.setStatus(Evaluation.Status.IN_AUDIT);
+    Evidence e = globalIndexed();
+    when(jobRepo.findFirstByDedupKeyAndStatusIn(any(), any())).thenReturn(Optional.empty());
+
+    assertTrue(service.retry(e.getId()));
+
+    verify(jobRepo).save(any(AiJob.class));
+  }
+
+  @Test
+  void retryDoesNotDuplicateARunningJob() {
+    eval.setStatus(Evaluation.Status.IN_AUDIT);
+    Evidence e = globalIndexed();
+    when(jobRepo.findFirstByDedupKeyAndStatusIn(any(), any()))
+        .thenReturn(Optional.of(AiJob.builder().build()));
+
+    assertFalse(service.retry(e.getId()));
+
+    verify(jobRepo, never()).save(any(AiJob.class));
+  }
+
+  @Test
+  void retryOutsideTheAuditOrOfANonGlobalOrNonIndexedEvidenceIsRejected() {
+    eval.setStatus(Evaluation.Status.IN_PROGRESS);
+    Evidence inProgress = globalIndexed();
+    assertThrows(ConflictException.class, () -> service.retry(inProgress.getId()));
+
+    eval.setStatus(Evaluation.Status.IN_AUDIT);
+    Evidence withControl = globalIndexed();
+    withControl.setControl(CatalogControl.builder().id(UUID.randomUUID()).build());
+    assertThrows(ConflictException.class, () -> service.retry(withControl.getId()));
+
+    Evidence queued = globalIndexed();
+    queued.setIndexStatus(Evidence.IndexStatus.QUEUED);
+    assertThrows(ConflictException.class, () -> service.retry(queued.getId()));
+  }
+
+  @Test
+  void retryOfAnUnknownEvidenceIsNotFound() {
+    UUID id = UUID.randomUUID();
+    when(evidenceRepo.findById(id)).thenReturn(Optional.empty());
+
+    assertThrows(ResourceNotFoundException.class, () -> service.retry(id));
+  }
+
+  @Test
+  void withoutAThresholdTheSuggestionsAreMarkedWithoutCalibratedConfidence() {
+    EvidenceControlSuggestion s = pending();
+    when(suggestionRepo.findByEvaluationIdOrderByEvidenceIdAscRankAsc(eval.getId()))
+        .thenReturn(List.of(s));
+
+    // AI_CLASSIFY_MIN_SCORE sin definir (o vacío): el puntaje no tiene umbral calibrado (3.4).
+    assertFalse(service.list(eval.getId()).get(0).calibrated());
+    service.setClassifyMinScore("");
+    assertFalse(service.list(eval.getId()).get(0).calibrated());
+  }
+
+  @Test
+  void withAThresholdTheSuggestionsAreCalibrated() {
+    EvidenceControlSuggestion s = pending();
+    when(suggestionRepo.findByEvaluationIdOrderByEvidenceIdAscRankAsc(eval.getId()))
+        .thenReturn(List.of(s));
+    service.setClassifyMinScore("0.52");
+
+    assertTrue(service.list(eval.getId()).get(0).calibrated());
+  }
 }

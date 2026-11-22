@@ -8,8 +8,11 @@ request antes de llegar acá.
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from app.api.v1.rag import run_until_disconnect
+from app.core.config import get_settings
 from app.core.security import verify_internal_key
 from app.rag.evidence_store import EvidenceStore
 
@@ -77,6 +80,9 @@ class ClassifySuggestion(BaseModel):
 
 class EvidenceClassifyResponse(BaseModel):
     suggestions: list[ClassifySuggestion]
+    # False = AI_CLASSIFY_MIN_SCORE sin definir: los puntajes no tienen un umbral calibrado con
+    # datos reales y las sugerencias son «sin confianza calibrada» (3.4).
+    calibrated: bool = False
 
 
 def _store(request: Request) -> EvidenceStore:
@@ -117,16 +123,25 @@ async def evidence_citations(
 @evidence_router.post("/classify", response_model=EvidenceClassifyResponse)
 async def classify_evidence(
     request: Request, body: EvidenceClassifyRequest
-) -> EvidenceClassifyResponse:
+) -> EvidenceClassifyResponse | JSONResponse:
     """Sugiere a que controles podria pertenecer una evidencia sin control asignado (D7)."""
-    results = await _store(request).classify(
-        organization_id=body.organization_id,
-        evaluation_id=body.evaluation_id,
-        evidence_id=body.evidence_id,
-        candidates=[c.model_dump() for c in body.candidates],
-        top_n=body.top_n,
+    # Si backend-core corta por timeout, el cálculo se cancela (antes seguía y saturaba la CPU).
+    results = await run_until_disconnect(
+        request,
+        _store(request).classify(
+            organization_id=body.organization_id,
+            evaluation_id=body.evaluation_id,
+            evidence_id=body.evidence_id,
+            candidates=[c.model_dump() for c in body.candidates],
+            top_n=body.top_n,
+        ),
     )
-    return EvidenceClassifyResponse(suggestions=[ClassifySuggestion(**r) for r in results])
+    if isinstance(results, JSONResponse):
+        return results
+    return EvidenceClassifyResponse(
+        suggestions=[ClassifySuggestion(**r) for r in results],
+        calibrated=get_settings().ai_classify_min_score is not None,
+    )
 
 
 @evidence_router.delete("/{organization_id}/{evidence_id}")

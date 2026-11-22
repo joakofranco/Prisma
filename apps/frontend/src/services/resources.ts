@@ -316,6 +316,10 @@ export const evidenceService = {
   getSuggestions(evaluationId: string) {
     return apiClient.get<EvidenceSuggestion[]>(`/evidence/evaluation/${evaluationId}/suggestions`);
   },
+  /** Reintenta la preclasificación de una evidencia global (solo PRISMA_ADMIN, en auditoría). */
+  retryClassification(evidenceId: string) {
+    return apiClient.post<{ queued: boolean }>(`/evidence/${evidenceId}/classification/retry`);
+  },
   /** Acepta o rechaza una sugerencia: NO asigna la evidencia; deja feedback anónimo. */
   decideSuggestion(suggestionId: string, decision: 'ACCEPTED' | 'REJECTED') {
     return apiClient.post<EvidenceSuggestion>(`/evidence/suggestions/${suggestionId}/decision`, {
