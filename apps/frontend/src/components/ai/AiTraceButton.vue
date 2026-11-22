@@ -24,6 +24,16 @@
       {{ error }}
     </p>
     <div v-else-if="trace" class="space-y-4 text-sm" data-testid="trace-detail">
+      <p
+        v-if="trace.kind === 'GUIDE' && trace.config.temperature_fixed === false"
+        class="text-xs p-2 rounded bg-amber-50 text-amber-900 dark:bg-amber-950 dark:text-amber-200"
+        data-testid="trace-temperature-warning"
+      >
+        La temperatura no estaba fija ({{ trace.config.temperature }}, según
+        {{ trace.config.temperature_source }}):
+        <strong>la semilla no reproduce el mismo texto</strong>. Para que lo reproduzca hay que
+        definir <code>AI_TEMPERATURE</code>.
+      </p>
       <dl class="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
         <dt class="text-slate-500">Tipo</dt>
         <dd data-testid="trace-kind">{{ kindLabel }}</dd>

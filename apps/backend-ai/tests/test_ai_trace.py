@@ -105,6 +105,11 @@ def test_con_trace_guarda_semilla_prompt_respuesta_y_recuperacion(tmp_path: Path
 def test_trace_config_se_cachea_y_no_lanza(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = {"n": 0}
 
+    async def no_show(settings: Settings) -> float | None:
+        return None
+
+    monkeypatch.setattr(ollama_runtime, "_model_default_temperature", no_show)
+
     async def info(settings: Settings, warmup: Any = None) -> dict[str, Any]:
         calls["n"] += 1
         return {
@@ -125,4 +130,62 @@ def test_trace_config_se_cachea_y_no_lanza(monkeypatch: pytest.MonkeyPatch) -> N
     assert first == second and calls["n"] == 1
     assert first["model_digest"] == "d1" and first["ollama_version"] == "0.9.0"
     assert first["num_ctx"] == 8192 and first["num_parallel"] == 2 and first["think"] is False
+    ollama_runtime._trace_config_cache.update(at=0.0, value=None)
+
+
+def _runtime_info(temperature: float | None) -> Any:
+    async def info(settings: Settings, warmup: Any = None) -> dict[str, Any]:
+        return {
+            "options": {"temperature": temperature, "keep_alive": -1},
+            "context": {"llm": {"used_for_limit": 16384}},
+            "ollama": {"reachable": True, "version": "0.9.0"},
+            "models": {"llm": {"name": "m", "digest": "d1"}, "embedding": {}},
+        }
+
+    return info
+
+
+def test_la_traza_guarda_la_temperatura_fija_y_su_origen(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(ollama_runtime, "runtime_info", _runtime_info(0.1))
+    ollama_runtime._trace_config_cache.update(at=0.0, value=None)
+
+    config = asyncio.run(_REAL_TRACE_CONFIG(_settings()))
+
+    assert config["temperature"] == 0.1
+    assert config["temperature_source"] == "AI_TEMPERATURE"
+    assert config["temperature_fixed"] is True
+    ollama_runtime._trace_config_cache.update(at=0.0, value=None)
+
+
+def test_sin_temperatura_fija_la_traza_dice_que_la_semilla_no_reproduce(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def from_model(settings: Settings) -> float | None:
+        return 0.6
+
+    monkeypatch.setattr(ollama_runtime, "runtime_info", _runtime_info(None))
+    monkeypatch.setattr(ollama_runtime, "_model_default_temperature", from_model)
+    ollama_runtime._trace_config_cache.update(at=0.0, value=None)
+
+    config = asyncio.run(_REAL_TRACE_CONFIG(_settings(ai_temperature=None)))
+
+    assert config["temperature"] == 0.6 and config["temperature_source"] == "modelo"
+    assert config["temperature_fixed"] is False
+    ollama_runtime._trace_config_cache.update(at=0.0, value=None)
+
+
+def test_sin_temperatura_ni_parametro_del_modelo_se_informa_la_de_ollama(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def nothing(settings: Settings) -> float | None:
+        return None
+
+    monkeypatch.setattr(ollama_runtime, "runtime_info", _runtime_info(None))
+    monkeypatch.setattr(ollama_runtime, "_model_default_temperature", nothing)
+    ollama_runtime._trace_config_cache.update(at=0.0, value=None)
+
+    config = asyncio.run(_REAL_TRACE_CONFIG(_settings(ai_temperature=None)))
+
+    assert config["temperature"] == 0.8 and config["temperature_fixed"] is False
+    assert config["temperature_source"] == "ollama (por defecto)"
     ollama_runtime._trace_config_cache.update(at=0.0, value=None)

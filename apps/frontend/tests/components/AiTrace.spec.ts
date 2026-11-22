@@ -65,6 +65,44 @@ describe('AiTraceButton («Cómo razonó la IA»)', () => {
     expect(q('trace-retrieval')?.textContent).toContain('score: 0.4');
   });
 
+  it('avisa que la semilla no reproduce el texto si la temperatura no estaba fija (3.7)', async () => {
+    const load = vi.fn().mockResolvedValue({
+      data: {
+        ...guideTrace,
+        config: {
+          ...guideTrace.config,
+          temperature: 0.8,
+          temperature_source: 'ollama (por defecto)',
+          temperature_fixed: false,
+        },
+      },
+    });
+    const wrapper = mountButton(load);
+
+    await wrapper.find('[data-testid="ai-trace-button"]').trigger('click');
+    await flushPromises();
+
+    const warning = q('trace-temperature-warning');
+    expect(warning?.textContent).toContain('la semilla no reproduce el mismo texto');
+    expect(warning?.textContent).toContain('0.8');
+    expect(document.body.textContent).toContain('temperature_source');
+  });
+
+  it('con la temperatura fija no muestra el aviso de la semilla', async () => {
+    const load = vi.fn().mockResolvedValue({
+      data: {
+        ...guideTrace,
+        config: { ...guideTrace.config, temperature: 0.1, temperature_fixed: true },
+      },
+    });
+    const wrapper = mountButton(load);
+
+    await wrapper.find('[data-testid="ai-trace-button"]').trigger('click');
+    await flushPromises();
+
+    expect(q('trace-temperature-warning')).toBeNull();
+  });
+
   it('en tareas con evidencia no muestra consulta ni respuesta, solo ids y puntajes', async () => {
     const load = vi.fn().mockResolvedValue({
       data: {

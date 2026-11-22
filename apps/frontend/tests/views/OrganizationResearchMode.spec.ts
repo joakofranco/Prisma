@@ -60,6 +60,14 @@ describe('OrganizationDetailView: modo investigación (C8)', () => {
     expect(wrapper.find('[data-testid="research-mode-card"]').exists()).toBe(false);
   });
 
+  it('la tarjeta aclara que la semilla solo reproduce con la temperatura fija (3.7)', async () => {
+    const wrapper = await mountView();
+
+    expect(wrapper.find('[data-testid="research-mode-seed-note"]').text()).toContain(
+      'solo reproduce el mismo texto si la temperatura está fija',
+    );
+  });
+
   it('encender pide confirmación, llama al servicio y avisa', async () => {
     organizationsService.setResearchMode.mockResolvedValue({ data: org(true) });
     const wrapper = await mountView(false);

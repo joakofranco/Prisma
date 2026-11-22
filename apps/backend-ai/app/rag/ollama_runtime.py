@@ -438,6 +438,28 @@ _TRACE_CONFIG_TTL_SECONDS = 300.0
 _trace_config_cache: dict[str, Any] = {"at": 0.0, "value": None}
 
 
+# Temperatura con la que Ollama genera cuando ni el pedido ni el modelo la fijan.
+_OLLAMA_DEFAULT_TEMPERATURE = 0.8
+
+
+async def _model_default_temperature(settings: Settings) -> float | None:
+    """Temperatura por defecto del modelo según ``/api/show`` (línea ``temperature 0.6`` de los
+    parámetros del Modelfile), o ``None`` si no la declara o no se puede consultar."""
+    try:
+        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT_SECONDS) as client:
+            show = await fetch_show(client, settings.ollama_host, settings.ollama_model)
+    except Exception:
+        return None
+    for line in str(show.get("parameters") or "").splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[0] == "temperature":
+            try:
+                return float(parts[1])
+            except ValueError:
+                return None
+    return None
+
+
 async def trace_config(settings: Settings) -> dict[str, Any]:
     """Configuración efectiva para la traza del modo investigación (C8).
 
@@ -453,6 +475,17 @@ async def trace_config(settings: Settings) -> dict[str, Any]:
     options = info.get("options", {})
     llm = (info.get("models") or {}).get("llm") or {}
     embedding = (info.get("models") or {}).get("embedding") or {}
+    # Temperatura EFECTIVA (3.7): sin AI_TEMPERATURE rige la del modelo (o la de Ollama) y la misma
+    # semilla NO reproduce el texto. La traza dice cuál fue y de dónde sale.
+    configured = options.get("temperature")
+    if configured is not None:
+        temperature, temperature_source = float(configured), "AI_TEMPERATURE"
+    else:
+        from_model = await _model_default_temperature(settings)
+        if from_model is not None:
+            temperature, temperature_source = from_model, "modelo"
+        else:
+            temperature, temperature_source = _OLLAMA_DEFAULT_TEMPERATURE, "ollama (por defecto)"
     value = {
         "model": llm.get("name") or settings.ollama_model,
         "model_digest": llm.get("digest"),
@@ -463,7 +496,10 @@ async def trace_config(settings: Settings) -> dict[str, Any]:
         or options.get("num_ctx"),
         "keep_alive": options.get("keep_alive"),
         "num_parallel": settings.ollama_num_parallel,
-        "temperature": options.get("temperature"),
+        "temperature": temperature,
+        "temperature_source": temperature_source,
+        # False = la temperatura no está fija: la semilla NO hace reproducible el texto.
+        "temperature_fixed": configured is not None,
         "top_p": None,
         "top_k": None,
         "think": settings.ai_think,

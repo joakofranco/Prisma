@@ -157,6 +157,15 @@
             encendido.
           </p>
           <p
+            class="text-xs text-slate-500 dark:text-slate-400 mb-3"
+            data-testid="research-mode-seed-note"
+          >
+            La semilla guardada en la traza solo reproduce el mismo texto si la temperatura está
+            fija (<code>AI_TEMPERATURE</code>). Sin ella rige la del modelo y dos pedidos con la
+            misma semilla dan textos distintos; la traza guarda la temperatura efectiva y avisa
+            cuando no estaba fija.
+          </p>
+          <p
             v-if="organization.researchMode"
             class="text-xs font-medium text-violet-700 dark:text-violet-300 mb-3"
             data-testid="research-mode-on"
