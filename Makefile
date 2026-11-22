@@ -304,6 +304,10 @@ internal-ca: ## Generar la CA interna y los certificados TLS de cada servicio (p
 #> CERT_DAYS=...  validez en días    CERT_SERVICES="keycloak postgres ..."  servicios para los que se emite
 	./scripts/generate-internal-ca.sh
 
+report-signing-cert: ## Emitir el certificado de sellado de PDFs (RF-REP-06) con la CA interna y guardarlo en infra/tls/signing/report-signing.p12
+#> PDF_SIGNING_KEYSTORE_PASSWORD=...  contraseña del keystore (si falta se genera y se imprime)    CERT_DAYS=...  validez en días
+	./scripts/generate-report-signing-cert.sh
+
 restart-nginx: ## Reiniciar solo nginx, para que tome un certificado o una configuración nuevos
 	$(DC) restart nginx
 

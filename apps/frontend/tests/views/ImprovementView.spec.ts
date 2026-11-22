@@ -3,6 +3,7 @@ import { mount, flushPromises, type VueWrapper } from '@vue/test-utils';
 
 const improvementService = vi.hoisted(() => ({
   getByEvaluation: vi.fn(),
+  getBaseline: vi.fn(),
   getSuggestions: vi.fn(),
   getRemediationTips: vi.fn(),
   requestTipsAsync: vi.fn(),
@@ -62,7 +63,9 @@ const plan = (
 async function mountView() {
   const wrapper = mount(ImprovementView, {
     attachTo: document.body,
-    global: { stubs: { RouterLink: true } },
+    global: {
+      stubs: { RouterLink: true, BaselineComplianceChart: true, BaselineShiftChart: true },
+    },
   });
   await flushPromises();
   return wrapper;
@@ -85,6 +88,26 @@ beforeEach(() => {
     data: { highMonths: 3, mediumMonths: 6, lowMonths: 12 },
   });
   improvementService.getByEvaluation.mockResolvedValue({ data: [] });
+  improvementService.getBaseline.mockResolvedValue({
+    data: {
+      summary: {
+        total: 0,
+        replanned: 0,
+        averageShiftDays: null,
+        priorityChanged: 0,
+        responsibleChanged: 0,
+        onTime: 0,
+        late: 0,
+        delayed: 0,
+        plannedDue: 0,
+        completed: 0,
+        plannedPercent: null,
+        actualPercent: null,
+        deviationPoints: null,
+      },
+      items: [],
+    },
+  });
   evaluationsService.getResults.mockResolvedValue({ data: [] });
   improvementService.update.mockResolvedValue({ data: {} });
   improvementService.create.mockResolvedValue({ data: {} });
@@ -749,6 +772,108 @@ const gapResult = (extra: Record<string, unknown> = {}) => ({
 });
 
 describe('ImprovementView: brechas por subcategoría (RF-CALC-07)', () => {
+  it('las brechas arrancan colapsadas y cada una se expande y se contrae', async () => {
+    evaluationsService.getResults.mockResolvedValue({ data: [gapResult()] });
+    await mountView();
+
+    const toggle = document.body.querySelector('[data-test="gap-toggle"]') as HTMLElement;
+    const list = () => document.getElementById(toggle.getAttribute('aria-controls')!)!;
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(list().style.display).toBe('none');
+
+    toggle.click();
+    await flushPromises();
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(list().style.display).not.toBe('none');
+
+    toggle.click();
+    await flushPromises();
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(list().style.display).toBe('none');
+  });
+
+  it('agrupa las brechas por función, categoría y subcategoría, cada nivel colapsable', async () => {
+    evaluationsService.getResults.mockResolvedValue({
+      data: [
+        gapResult(),
+        gapResult({ subcategoryId: 's2', subcategoryName: 'PR.AA-06' }),
+        gapResult({
+          categoryId: 'c2',
+          categoryName: 'Seguridad de datos',
+          subcategoryId: 's3',
+          subcategoryName: 'PR.DS-01',
+        }),
+        gapResult({
+          functionId: 'f2',
+          functionName: 'Detectar',
+          categoryId: 'c3',
+          categoryName: 'Monitoreo',
+          subcategoryId: 's4',
+          subcategoryName: 'DE.CM-01',
+        }),
+      ],
+    });
+    await mountView();
+
+    const functions = document.body.querySelectorAll('[data-test="gap-function"]');
+    expect(functions).toHaveLength(2);
+    expect(functions[0].querySelectorAll('[data-test="gap-category"]')).toHaveLength(2);
+    expect(functions[0].querySelector('[data-test="gap-function-count"]')!.textContent).toContain(
+      '3 subcategorías',
+    );
+    expect(functions[0].querySelector('[data-test="gap-function-count"]')!.textContent).toContain(
+      '6 controles',
+    );
+
+    const fnToggle = functions[0].querySelector('[data-test="gap-function-toggle"]') as HTMLElement;
+    const catToggle = functions[0].querySelector(
+      '[data-test="gap-category-toggle"]',
+    ) as HTMLElement;
+    const panel = (toggle: HTMLElement) =>
+      document.getElementById(toggle.getAttribute('aria-controls')!)!;
+    expect(fnToggle.getAttribute('aria-expanded')).toBe('false');
+    expect(panel(fnToggle).style.display).toBe('none');
+
+    fnToggle.click();
+    await flushPromises();
+    expect(panel(fnToggle).style.display).not.toBe('none');
+    expect(panel(catToggle).style.display).toBe('none');
+
+    catToggle.click();
+    await flushPromises();
+    expect(catToggle.getAttribute('aria-expanded')).toBe('true');
+    expect(panel(catToggle).style.display).not.toBe('none');
+  });
+
+  it('«Expandir todas» abre todas las brechas y luego las contrae', async () => {
+    evaluationsService.getResults.mockResolvedValue({ data: [gapResult()] });
+    await mountView();
+
+    const all = document.body.querySelector('[data-test="gap-toggle-all"]') as HTMLElement;
+    expect(all.textContent).toContain('Expandir todas');
+    all.click();
+    await flushPromises();
+    expect(all.textContent).toContain('Contraer todas');
+    expect(
+      document.body.querySelector('[data-test="gap-toggle"]')!.getAttribute('aria-expanded'),
+    ).toBe('true');
+
+    all.click();
+    await flushPromises();
+    expect(
+      document.body.querySelector('[data-test="gap-toggle"]')!.getAttribute('aria-expanded'),
+    ).toBe('false');
+  });
+
+  it('la cabecera y las tarjetas de estado quedan fijas al desplazarse', async () => {
+    await mountView();
+
+    const sticky = document.body.querySelector('[data-test="plan-sticky"]')!;
+    expect(sticky.className).toContain('sm:sticky');
+    expect(sticky.querySelector('h1')!.textContent).toBe('Plan de Mejora');
+    expect(sticky.querySelector('[data-test="plan-stats"]')).not.toBeNull();
+  });
+
   it('lista nivel actual, próximo nivel y controles faltantes', async () => {
     evaluationsService.getResults.mockResolvedValue({ data: [gapResult()] });
     await mountView();
@@ -1323,5 +1448,92 @@ describe('ImprovementView: guías de IA asíncronas (cola de trabajos)', () => {
       'Calculá la madurez de la evaluación antes de generar sugerencias de mejora',
     );
     expect(document.body.textContent).not.toContain('Crear seleccionadas');
+  });
+});
+
+describe('ImprovementView — comparativa con la línea base (RF-PLN-07)', () => {
+  const comparison = (deviationPoints: number) => ({
+    summary: {
+      total: 1,
+      replanned: 1,
+      averageShiftDays: 15,
+      priorityChanged: 0,
+      responsibleChanged: 0,
+      onTime: 0,
+      late: 0,
+      delayed: 1,
+      plannedDue: 1,
+      completed: 0,
+      plannedPercent: 100,
+      actualPercent: 0,
+      deviationPoints,
+    },
+    items: [
+      {
+        id: '1',
+        controlCode: 'PS.1-1',
+        action: 'Acción 1',
+        status: 'PENDING',
+        baselineDueDate: '2026-11-01',
+        dueDate: '2026-11-16',
+        dueDateShiftDays: 15,
+        replanned: true,
+        baselinePriority: 'HIGH',
+        priority: 'HIGH',
+        priorityChanged: false,
+        baselineResponsible: 'Ana',
+        responsible: 'Ana',
+        responsibleChanged: false,
+        completedAt: null,
+        compliance: 'DELAYED',
+        delayDays: 8,
+      },
+    ],
+  });
+
+  it('carga la comparativa de la evaluación y la muestra', async () => {
+    improvementService.getByEvaluation.mockResolvedValue({ data: [plan('1', 'HIGH', 'PENDING')] });
+    improvementService.getBaseline.mockResolvedValue({ data: comparison(-100) });
+
+    await mountView();
+
+    expect(improvementService.getBaseline).toHaveBeenCalledWith('eval-1');
+    const section = document.body.querySelector('[data-test="baseline-section"]')!;
+    expect(section.textContent).toContain('Desvío -100 pts');
+    expect(section.textContent).toContain('+15 días');
+    expect(section.textContent).toContain('Atrasada (8 días)');
+  });
+
+  it('sin acciones muestra el estado vacío', async () => {
+    await mountView();
+
+    expect(document.body.querySelector('[data-test="baseline-empty"]')).not.toBeNull();
+  });
+
+  it('si la comparativa falla, el resto de la pantalla sigue funcionando', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    improvementService.getByEvaluation.mockResolvedValue({ data: [plan('1', 'HIGH', 'PENDING')] });
+    improvementService.getBaseline.mockRejectedValue(new Error('500'));
+
+    await mountView();
+
+    expect(document.body.querySelector('[data-test="baseline-empty"]')).not.toBeNull();
+    expect(document.body.querySelector('[data-test="plan-count"]')!.textContent).toContain('1');
+    error.mockRestore();
+  });
+
+  it('vuelve a pedir la comparativa después de cambiar una acción', async () => {
+    const pending = [plan('1', 'HIGH', 'PENDING')];
+    improvementService.getByEvaluation.mockResolvedValue({ data: pending });
+
+    await mountView();
+    expect(improvementService.getBaseline).toHaveBeenCalledTimes(1);
+    await openEditorFor(0);
+    setValue(editCommentsBox(), 'nuevo comentario');
+    buttonWithText('Guardar cambios')!.click();
+    await flushPromises();
+
+    expect(improvementService.update).toHaveBeenCalled();
+    expect(improvementService.getBaseline).toHaveBeenCalledTimes(2);
   });
 });

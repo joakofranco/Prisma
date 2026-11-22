@@ -115,6 +115,11 @@
             <artifactId>bcprov-jdk18on</artifactId>
             <version>1.85.2</version>
         </dependency>
+        <dependency>
+            <groupId>org.bouncycastle</groupId>
+            <artifactId>bcpkix-jdk18on</artifactId>
+            <version>1.85</version>
+        </dependency>
 
         <!-- ============ Almacenamiento de objetos S3-compatible (RustFS) ============ -->
         <dependency>

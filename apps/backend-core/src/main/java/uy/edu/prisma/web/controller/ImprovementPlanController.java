@@ -13,6 +13,7 @@ import uy.edu.prisma.web.dto.Dto.AiSuggestionFeedbackBatchDto;
 import uy.edu.prisma.web.dto.Dto.CreateImprovementPlanDto;
 import uy.edu.prisma.web.dto.Dto.GuideJobRequestDto;
 import uy.edu.prisma.web.dto.Dto.ImprovementPlanDto;
+import uy.edu.prisma.web.dto.Dto.PlanBaselineDto;
 import uy.edu.prisma.web.dto.Dto.RemediationTipsDto;
 import uy.edu.prisma.web.dto.Dto.RemediationTipsRequestDto;
 import uy.edu.prisma.web.dto.Dto.SuggestedImprovementDto;
@@ -40,6 +41,11 @@ public class ImprovementPlanController {
   public ResponseEntity<List<SuggestedImprovementDto>> suggestions(
       @PathVariable UUID evaluationId) {
     return ResponseEntity.ok(service.suggest(evaluationId));
+  }
+
+  @GetMapping("/{evaluationId}/baseline")
+  public ResponseEntity<PlanBaselineDto> baseline(@PathVariable UUID evaluationId) {
+    return ResponseEntity.ok(service.baseline(evaluationId));
   }
 
   @PostMapping("/suggestions/tips")
