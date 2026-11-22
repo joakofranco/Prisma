@@ -10,6 +10,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -42,6 +43,9 @@ class AuditObservationServiceTest {
   @Mock private uy.edu.prisma.domain.repository.EvidenceRepository evidenceRepo;
   @Mock private CurrentUserService currentUser;
 
+  @Mock
+  private uy.edu.prisma.domain.repository.AiCitationValidationFeedbackRepository validationRepo;
+
   private AuditObservationService service;
   private Evaluation eval;
 
@@ -53,7 +57,13 @@ class AuditObservationServiceTest {
     when(currentUser.isPrismaAdmin()).thenReturn(true);
     service =
         new AuditObservationService(
-            repo, evaluationRepo, controlRepo, subcategoryRepo, evidenceRepo, currentUser);
+            repo,
+            evaluationRepo,
+            controlRepo,
+            subcategoryRepo,
+            evidenceRepo,
+            currentUser,
+            validationRepo);
     eval =
         Evaluation.builder()
             .id(UUID.randomUUID())
@@ -660,5 +670,151 @@ class AuditObservationServiceTest {
     List<AuditObservationDto> result = service.listByEvaluation(eval.getId());
 
     assertEquals("politica.pdf", result.get(0).evidenceFileName());
+  }
+
+  // ---- C4b: «Registrar como observación» deja feedback de la diferencia ----
+
+  private uy.edu.prisma.web.dto.Dto.CitationSourceDto citation(String prefill) {
+    return new uy.edu.prisma.web.dto.Dto.CitationSourceDto(
+        "politica.pdf", "Página 2", "texto citado", 0.71, prefill);
+  }
+
+  private uy.edu.prisma.domain.entity.CatalogControl stubControl() {
+    var control =
+        uy.edu.prisma.domain.entity.CatalogControl.builder()
+            .id(UUID.randomUUID())
+            .code("CA.1-11")
+            .build();
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(controlRepo.findById(control.getId())).thenReturn(Optional.of(control));
+    when(repo.save(any(AuditObservation.class)))
+        .thenAnswer(
+            inv -> {
+              AuditObservation o = inv.getArgument(0);
+              o.setId(UUID.randomUUID());
+              return o;
+            });
+    return control;
+  }
+
+  private uy.edu.prisma.domain.entity.AiCitationValidationFeedback savedValidation() {
+    ArgumentCaptor<uy.edu.prisma.domain.entity.AiCitationValidationFeedback> captor =
+        ArgumentCaptor.forClass(uy.edu.prisma.domain.entity.AiCitationValidationFeedback.class);
+    verify(validationRepo).save(captor.capture());
+    return captor.getValue();
+  }
+
+  @Test
+  void savingTheObservationAsPrefilledRecordsUnedited() {
+    var control = stubControl();
+
+    service.create(
+        new CreateAuditObservationDto(
+            eval.getId(),
+            control.getId(),
+            null,
+            "OBSERVATION",
+            "texto precargado",
+            null,
+            null,
+            citation("texto precargado")));
+
+    var row = savedValidation();
+    assertEquals(
+        uy.edu.prisma.domain.entity.AiCitationValidationFeedback.Outcome.UNEDITED,
+        row.getOutcome());
+    assertEquals("texto precargado", row.getFinalText());
+    assertEquals("OBSERVATION", row.getFinalType());
+    assertEquals(control, row.getControl());
+    assertEquals("politica.pdf", row.getFileName());
+    assertEquals("Página 2", row.getLocation());
+    assertEquals("texto citado", row.getSnippet());
+    assertEquals(0.71, row.getScore());
+  }
+
+  @Test
+  void rewritingTheTextAndChoosingAnotherTypeRecordsEdited() {
+    var control = stubControl();
+
+    service.create(
+        new CreateAuditObservationDto(
+            eval.getId(),
+            control.getId(),
+            null,
+            "NON_CONFORMITY",
+            "texto reescrito",
+            null,
+            null,
+            citation("texto precargado")));
+
+    var row = savedValidation();
+    assertEquals(
+        uy.edu.prisma.domain.entity.AiCitationValidationFeedback.Outcome.EDITED, row.getOutcome());
+    assertEquals("texto precargado", row.getPrefillText());
+    assertEquals("texto reescrito", row.getFinalText());
+    assertEquals("NON_CONFORMITY", row.getFinalType());
+  }
+
+  @Test
+  void surroundingWhitespaceDoesNotCountAsAnEdit() {
+    var control = stubControl();
+
+    service.create(
+        new CreateAuditObservationDto(
+            eval.getId(),
+            control.getId(),
+            null,
+            "OBSERVATION",
+            "  texto  ",
+            null,
+            null,
+            citation("texto")));
+
+    assertEquals(
+        uy.edu.prisma.domain.entity.AiCitationValidationFeedback.Outcome.UNEDITED,
+        savedValidation().getOutcome());
+  }
+
+  @Test
+  void anObservationNotCreatedFromACitationRecordsNothing() {
+    var control = stubControl();
+
+    service.create(
+        new CreateAuditObservationDto(
+            eval.getId(), control.getId(), null, "OBSERVATION", "texto libre", null));
+
+    verifyNoInteractions(validationRepo);
+  }
+
+  @Test
+  void aCitationObservationWithoutControlIsRejected() {
+    stubControl();
+
+    assertThrows(
+        InvalidRequestException.class,
+        () ->
+            service.create(
+                new CreateAuditObservationDto(
+                    eval.getId(),
+                    null,
+                    null,
+                    "OBSERVATION",
+                    "texto",
+                    null,
+                    null,
+                    citation("texto"))));
+    verifyNoInteractions(validationRepo);
+  }
+
+  @Test
+  void theValidationFeedbackNeverCarriesOrganizationEvaluationOrUser() {
+    // Dataset anónimo (V32/V33).
+    for (var field :
+        uy.edu.prisma.domain.entity.AiCitationValidationFeedback.class.getDeclaredFields()) {
+      String name = field.getName().toLowerCase();
+      assertFalse(
+          name.contains("organization") || name.contains("evaluation") || name.contains("user"),
+          name);
+    }
   }
 }

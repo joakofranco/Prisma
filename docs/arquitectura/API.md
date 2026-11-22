@@ -26,10 +26,12 @@ Los endpoints de `backend-ai` (`/api/v1/rag/*`, `/api/v1/evidence/*`) no los lla
 Llamarlos sin ese header da `401`.
 
 `backend-core` no espera para siempre a `backend-ai` (RF-EVI-13): conexión 3 s (`AI_CONNECT_TIMEOUT`),
-lectura 60 s para la ingesta y las citas (`AI_READ_TIMEOUT`) y 120 s para la guía de mejora, que
-genera con el LLM y tarda cerca de un minuto con Ollama local (`AI_GUIDE_READ_TIMEOUT`). Si se
-agotan o `backend-ai` está caído, la evidencia se guarda igual con `aiIndexed = false` y se puede
-reintentar con `POST /api/evidence/{id}/index` («Analizar con IA»), sin volver a subirla.
+lectura 60 s para la ingesta y las citas (`AI_READ_TIMEOUT`) y 300 s para la guía de mejora, que
+genera con el LLM y con documentos largos en CPU puede tardar minutos (`AI_GUIDE_READ_TIMEOUT`).
+La guía corre como **trabajo asíncrono** (ver [`/api/ai/jobs`](#trabajos-de-ia--apiaijobs)), así que
+ese timeout no depende del frontend, de nginx ni de Cloudflare. Si se agotan o `backend-ai` está
+caído, la evidencia se guarda igual con `aiIndexed = false` y se puede reintentar con
+`POST /api/evidence/{id}/index` («Analizar con IA»), sin volver a subirla.
 
 ## Convención de errores
 
@@ -173,22 +175,22 @@ importar el rol que normalmente le correspondería.
 | GET | `/{id}/download` | `PRISMA_ADMIN`, `ORG_RESPONSIBLE`, `AUDITOR` | sirve el archivo por streaming con el JWT, la organización y el rol validados en cada descarga |
 | POST | `/{id}/index` | `PRISMA_ADMIN`, `INTERNAL_EVALUATOR`, `ORG_RESPONSIBLE` | reintenta la indexación RAG; mismo bloqueo por estado; no hace nada con ZIP e imágenes |
 | GET | `/evaluation/{evaluationId}/control/{controlId}/citations` | `PRISMA_ADMIN`, `AUDITOR` | fragmentos relevantes de la evidencia YA cargada para ese control, vía `backend-ai` (RF-EVI-14). **Solo con la evaluación `IN_AUDIT`**: en otro estado responde `409` con el estado actual. Si `backend-ai` no responde (caído, colgado o con error) responde `503` con `code: AI_UNAVAILABLE`; una lista vacía significa «sin resultados» |
-| POST | `/citations/feedback` | `PRISMA_ADMIN`, `AUDITOR` | el auditor acepta o rechaza citas de la IA: `{evaluationId, items:[{controlId, fileName?, location?, snippet, score?, decision}]}` (hasta 100). `decision` ∈ `ACCEPTED`/`REJECTED`. La evaluación solo valida acceso y estado (`409` fuera de `IN_AUDIT`) y **no se guarda**: se registra el control y el fragmento, para medir la búsqueda y un futuro fine-tuning. Cada decisión es una fila nueva (vale la más reciente). Responde `204`; `404` si un control no existe
+| POST | `/citations/feedback` | `PRISMA_ADMIN`, `AUDITOR` | el auditor acepta o rechaza citas de la IA: `{evaluationId, items:[{controlId, fileName?, location?, snippet, score?, decision, evidenceId?}], confirmVerdictOverride?}` (hasta 100). `decision` ∈ `ACCEPTED`/`REJECTED`. **Aceptar una cita significa que el fragmento es relevante y respalda el control** (D5): en la **misma transacción** el control pasa a `VALIDATED` con origen `CITATION` y la cita como respaldo (`evidenceId`, archivo, ubicación, puntaje y el fragmento recortado). Reglas: sin dictamen → `VALIDATED`; ya `VALIDATED` → sin cambios (la cita es un respaldo adicional y se conserva el origen); `NOT_VALIDATED` o `NEEDS_MORE_EVIDENCE` puesto a mano → **`409` `VERDICT_OVERRIDE_REQUIRED`** (con `details.currentVerdict`, `controlCode` y `controlId`) salvo que se repita el pedido con `confirmVerdictOverride=true`; no se escribe nada si falta la confirmación. **Rechazar una cita (una o todas) nunca cambia el dictamen** (D1). Pasar de aceptada a rechazada no revierte el dictamen: eso llega con la persistencia de citas (hito 3). Cada cambio de dictamen queda en la bitácora como `SET_CONTROL_VERDICT` con `source` y la cita. Responde `200` `{verdicts:[{controlId, verdict, source, changed}]}` (vacío si solo hubo rechazos); `404` si un control no existe; `409` fuera de `IN_AUDIT`. La evaluación solo valida acceso y estado y **no se guarda** en el dataset (`ai_citation_feedback` sigue siendo anónimo): se registra el control y el fragmento, para medir la búsqueda y un futuro fine-tuning |
 
 ## Auditoría — `/api/audit/observations`
 
 | Método | Path | Rol | Notas |
 |---|---|---|---|
 | GET | `/{evaluationId}` | `PRISMA_ADMIN`, `AUDITOR`, `ORG_RESPONSIBLE`, `INTERNAL_EVALUATOR` | el administrador y el auditor las ven siempre; la **organización** (responsable o evaluador interno, de esa organización) solo desde que la evaluación vuelve (`RETURNED`, `APPROVED` o `ARCHIVED`) — antes responde `200` con lista vacía, no un error. El `VIEWER` recibe `403`. Cada una trae `controlCode` y `subcategoryCode` (`null` si no está atada a ninguno) |
-| POST | `/` | `PRISMA_ADMIN`, `AUDITOR` | `{evaluationId, controlId?, type, description, status?}` — `type` ∈ `OBSERVATION`/`NON_CONFORMITY`/`RECOMMENDATION`, `status` ∈ `OPEN`/`IN_PROGRESS`/`RESOLVED`/`CLOSED` (default `OPEN`) |
+| POST | `/` | `PRISMA_ADMIN`, `AUDITOR` | `{evaluationId, controlId?, type, description, status?, evidenceId?, citation?}` — `type` ∈ `OBSERVATION`/`NON_CONFORMITY`/`RECOMMENDATION`, `status` ∈ `OPEN`/`IN_PROGRESS`/`RESOLVED`/`CLOSED` (default `OPEN`). `citation` (`{fileName?, location?, snippet, score?, prefillText}`) se manda al guardar desde **«Registrar como observación»** de una cita: se registra el feedback de la diferencia (C4b) en `ai_citation_validation_feedback`, anónimo (control, archivo, ubicación, fragmento, puntaje, `prefill_text`, `final_text`, `final_type` y resultado `UNEDITED`/`EDITED`, sin organización, evaluación ni usuario). Se escribe solo al guardar; `400` si trae `citation` sin `controlId`. **No dictamina el control** (el tipo puede ser una no conformidad) |
 | PUT | `/{id}` | `PRISMA_ADMIN`, `AUDITOR` | actualización parcial (sólo los campos presentes); una `description` vacía responde `400` |
 
 ### Dictamen por control — `/api/audit/verdicts`
 
 | Método | Path | Rol | Notas |
 |---|---|---|---|
-| GET | `/{evaluationId}` | `PRISMA_ADMIN`, `AUDITOR` | dictámenes del auditor por control (`controlId`, `verdict`, quién lo fijó y cuándo) |
-| PUT | `/{evaluationId}/controls/{controlId}` | `PRISMA_ADMIN`, `AUDITOR` | `{verdict}` — fija el dictamen de un control. Solo con la evaluación `IN_AUDIT` |
+| GET | `/{evaluationId}` | `PRISMA_ADMIN`, `AUDITOR` | dictámenes del auditor por control (`controlId`, `verdict`, quién lo fijó y cuándo, `source` `MANUAL`/`CITATION` y, si vino de una cita, `sourceRef`) |
+| PUT | `/{evaluationId}/controls/{controlId}` | `PRISMA_ADMIN`, `AUDITOR` | `{verdict}` — fija el dictamen de un control **a mano** (origen `MANUAL`: borra el origen `CITATION` si lo tenía). Solo con la evaluación `IN_AUDIT` |
 
 **Evidencia citada (RF-EVI-15):** `POST` y `PUT` aceptan un `evidenceId` opcional, la evidencia de la que sale la observación (se manda al registrarla desde una cita de la IA). Tiene que ser de **la misma evaluación**: si es de otra responde `400`, y `404` si no existe. En `PUT`, si no se manda se conserva el vínculo. Las observaciones devuelven `evidenceId` y `evidenceFileName` (la organización ve de qué documento habla; son `null` si no viene de una cita o si la evidencia se borró). La ubicación y el fragmento citados siguen viajando en la descripción.
 
@@ -202,9 +204,43 @@ Regla de estado: crear (`POST`) y modificar (`PUT`, incluido el cambio de `statu
 | GET | `/{evaluationId}/baseline` | cualquiera autenticado con acceso a la organización (incluye `AUDITOR`) | **comparativa con la línea base** (RF-PLN-07): `{summary, items[]}`. Cada acción conserva sus valores originales (fecha límite, prioridad, responsable) desde que se creó. Por acción: fechas original y actual, `dueDateShiftDays` (corrimiento en días, negativo si se adelantó), `replanned`, `priorityChanged`, `responsibleChanged`, `completedAt` y `compliance` ∈ `ON_TIME` (cerrada hasta la fecha original), `LATE` (cerrada después, con `delayDays`), `DELAYED` (abierta y con la fecha original vencida, con `delayDays`), `IN_TERM`, `NO_CLOSE_DATE` (cerrada sin fecha de cierre registrada) y `NO_DATE`. El cumplimiento se mide siempre contra la fecha **original**: correr la fecha no lo oculta. `summary`: totales, replanificadas, corrimiento promedio, cambios de prioridad y responsable, en plazo / tarde / atrasadas, `plannedPercent` (acciones con fecha original ya cumplida sobre el total), `actualPercent` (realizadas sobre el total) y `deviationPoints` (real − planificado, en puntos). Sin acciones, los porcentajes y el desvío son `null`. También se incluye en el PDF del plan de mejora |
 | GET | `/{evaluationId}/suggestions` | cualquiera autenticado | sugerencias generadas por reglas a partir de las brechas — no persistidas hasta que se confirman con POST. **Precondición (RF-PLN-01):** la madurez tiene que estar calculada (`globalMaturity` no nulo) y la evaluación no puede estar en `DRAFT`; si no, `409` «Calculá la madurez de la evaluación antes de generar sugerencias de mejora». Devuelve **una sugerencia por control** (no una por subcategoría): `subcategoryId`/`subcategoryName` son la subcategoría principal (la primera por nombre) y `subcategoryNames` lista todas las subcategorías donde el control cuenta |
 | POST | `/suggestions/tips` | `PRISMA_ADMIN`, `ORG_RESPONSIBLE` | guía práctica con IA para una brecha: `{controlCode, description, functionName?, categoryName?, subcategoryName?, currentLevel, targetLevel}` → `{summary, tips[], generated}`. Con la IA caída responde `200` con un texto de reemplazo y `generated=false` (la pantalla no lo ofrece para usar ni lo registra). Con Ollama local puede tardar ~1 min |
+| POST | `/suggestions/tips/async` | `PRISMA_ADMIN`, `ORG_RESPONSIBLE` | versión asíncrona de la guía: `{controlId, evaluationId?, functionName?, categoryName?, subcategoryName?, currentLevel, targetLevel}` → **`202`** `{jobId, status}` en menos de 1 s. El código y la descripción del control los resuelve el servidor. El resultado se consulta en `GET /api/ai/jobs/{jobId}`. Pedir lo mismo mientras hay un trabajo activo (misma organización, control y niveles) devuelve ese trabajo, no crea otro. `404` control o evaluación inexistente; `403` si la evaluación es de otra organización; `429` si la organización ya tiene demasiados trabajos activos (`AI_JOBS_MAX_PENDING_PER_ORG`, 20). Convive con el endpoint síncrono |
 | POST | `/suggestions/feedback` | `PRISMA_ADMIN`, `ORG_RESPONSIBLE` | registra qué se hizo con las guías de IA, para un futuro fine-tuning: `{items:[{controlId, currentLevel, targetLevel, originalSummary, originalTips[], outcome, editedText?}]}` (hasta 200). `outcome` ∈ `ACCEPTED_UNEDITED` (usada y creada sin cambios), `ACCEPTED_EDITED` (usada, creada y modificada; `editedText` obligatorio con el texto final) y `REJECTED` (generada pero no usada, deseleccionada, regenerada o con el modal cerrado). Responde `204`; `404` si un control no existe. Se guarda el **control** del catálogo, sin evaluación, organización ni usuario. Lo que la IA no llegó a generar no se registra |
-| POST | `/` | `PRISMA_ADMIN`, `ORG_RESPONSIBLE` | `{evaluationId, controlId?, action, responsible?, priority?, dueDate?, comments?}` — `priority` ∈ `HIGH`/`MEDIUM`/`LOW` (inglés, no `ALTA`/`MEDIA`/`BAJA`); `comments` hasta 2000 caracteres (400 si lo supera) |
+| POST | `/` | `PRISMA_ADMIN`, `ORG_RESPONSIBLE` | `{evaluationId, controlId?, action, responsible?, priority?, dueDate?, comments?, guideId?, guideEdited?}` — `guideId` es la guía de IA (trabajo asíncrono) con la que se armó la acción: en la **misma transacción** se la marca `USED` y se registra el feedback (`ACCEPTED_UNEDITED`, o `ACCEPTED_EDITED` con `action` como texto final si `guideEdited=true`); `400` si la guía ya se usó, venció o es de otro control; `403` si es de otra organización. `priority` ∈ `HIGH`/`MEDIUM`/`LOW` (inglés, no `ALTA`/`MEDIA`/`BAJA`); `comments` hasta 2000 caracteres (400 si lo supera) |
 | PUT | `/{id}` | `PRISMA_ADMIN`, `ORG_RESPONSIBLE` | también actualiza `status` (`PENDING`/`IN_PROGRESS`/`COMPLETED`/`OVERDUE`). `comments`: ausente (`null`) = sin cambios; cadena vacía = borra el comentario |
+
+## Trabajos de IA — `/api/ai/jobs`
+
+Cola de trabajos de IA (hoy solo `GUIDE`). Mismos roles que la función de origen: `PRISMA_ADMIN`,
+`ORG_RESPONSIBLE`. La organización del trabajo se **reverifica en cada consulta** (conocer el id no
+alcanza: otra organización recibe `403`).
+
+| Método | Path | Notas |
+|---|---|---|
+| GET | `/{id}` | estado del trabajo: `{id, type, status, queuePosition, attempts, maxAttempts, errorCode, errorMessage, createdAt, startedAt, finishedAt, guide}`. `status` ∈ `QUEUED`, `RUNNING`, `SUCCEEDED`, `FAILED`, `CANCELLED`, `EXPIRED`. `queuePosition` solo en cola (1 = el próximo). `guide` (`{id, controlId, summary, tips[], model}`) solo con `SUCCEEDED`; la primera vez que quien la pidió la consulta, la guía pasa de `GENERATED` a `SHOWN` |
+| GET | `/?mine=true` | los últimos 50 trabajos de quien consulta (sin el cuerpo de la guía): alimenta el indicador «Tareas de IA» |
+| DELETE | `/{id}` | cancela un trabajo **en cola**. `409` si ya se está ejecutando o ya terminó. Cancelar uno ya cancelado es idempotente |
+
+Códigos de error de un trabajo fallido (`errorCode`): `AI_UNAVAILABLE` (no se pudo conectar con
+backend-ai, o respondió 502/503/504) y `AI_ERROR` (5xx) se reintentan hasta `AI_JOBS_MAX_ATTEMPTS` (2)
+con espera creciente (`AI_JOBS_RETRY_BACKOFF_SECONDS`, 30 s, el doble en cada reintento);
+`AI_TIMEOUT` (backend-ai aceptó el pedido pero no contestó dentro de `AI_GUIDE_READ_TIMEOUT`),
+`PROMPT_TOO_LARGE` (el prompt no entra en el contexto del modelo), `AI_REJECTED` (4xx) e
+`INTERNAL_ERROR` no se reintentan; `WORKER_LOST` (la réplica murió a mitad de camino) se reencola.
+
+Cómo funciona: cada réplica de `backend-core` mira la cola cada `AI_JOBS_POLL_INTERVAL_MS` (2 s). El
+reclamo corre bajo ShedLock y usa `SELECT … FOR UPDATE SKIP LOCKED`: un trabajo nunca se ejecuta dos
+veces aunque haya varias réplicas, y el tope **global** de trabajos corriendo contra Ollama es
+`AI_JOBS_CONCURRENCY` (2). Los resultados se conservan `AI_JOBS_RESULT_TTL_DAYS` (30) días. Una
+limpieza diaria (03:15) vence los resultados viejos y cierra las guías: una guía **mostrada y no
+usada** a los 30 días (`AI_GUIDE_FEEDBACK_DAYS`) pasa a `EXPIRED` y se registra como `REJECTED`; una
+nunca mostrada solo vence. El feedback sigue sin organización ni usuario (V32).
+
+Métricas (Prometheus, `/actuator/prometheus`): `prisma_ai_job_queue_wait_seconds`,
+`prisma_ai_job_run_seconds`, `prisma_ai_jobs_finished_total{type,outcome,error}`,
+`prisma_ai_job_retries_total`, `prisma_ai_jobs{status="queued|running"}`,
+`prisma_ai_ollama_tokens_total{kind="prompt|completion"}` y
+`prisma_ai_ollama_seconds_total{phase="prompt_eval|generation|load"}`.
 
 ## Reportes — `/api/reports`
 
@@ -319,6 +355,8 @@ tipo nuevo, sumarlo en los dos lados.
 | GET | `/rag/status` | estado del índice del catálogo MCU 5.0 (`ready`, `collection`, `documents`) |
 | POST | `/rag/query` | `{question, k?}` — pregunta libre sobre el catálogo (Llama 3 vía Ollama) |
 | POST | `/rag/ingest` | agrega texto a la colección del catálogo |
+| POST | `/rag/remediation-tips` | guía de remediación: `{control_code, control_description, function_name?, category_name?, subcategory_name?, current_level, target_level}` → `{summary, tips[], generated, model, metrics}`. `generated=false` = el LLM no respondió y `tips` es un texto de reemplazo (la cola de backend-core lo trata como falla reintentable). `metrics` trae los tiempos (ns) y tokens que informa Ollama. Si el cliente corta la conexión mientras el LLM genera, se **aborta** la generación (log «Cliente desconectado…»). Con un prompt que no entra en el contexto **efectivo** del modelo (`min(AI_NUM_CTX, contexto de /api/ps)`) responde **`413`** `{code: "PROMPT_TOO_LARGE", detail, estimated_tokens, limit_tokens}` sin llamar a Ollama (Ollama lo recortaría en silencio) |
+| GET | `/runtime` | modelo (con `digest`), versión de Ollama, opciones realmente enviadas (`num_ctx`, `keep_alive`, `num_predict`, `temperature`, `seed`, `num_thread`, límite del prompt), estado de carga de LLM y embedding (`/api/ps`), estado del precalentamiento y `context`: contexto **pedido** vs **efectivo** de cada modelo (`requested_num_ctx`, `llm.effective`, `embedding.effective`, `prompt_max_tokens`, `mismatch`). Nunca falla: con Ollama caído informa `ollama.reachable=false` y no trae `models` |
 | POST | `/evaluate/evidence` | `{control_id?, control_description, evidence_text}` — juicio automático sobre si una evidencia satisface un control |
 | POST | `/evidence/ingest` | indexa una evidencia recién subida (llamado por `EvidenceService.upload`) |
 | POST | `/evidence/citations` | fragmentos relevantes de evidencia ya indexada, acotados a organización/evaluación/control |

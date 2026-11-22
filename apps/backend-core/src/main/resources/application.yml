@@ -163,7 +163,21 @@ prisma:
     # de mejora (la guía genera con el LLM y tarda cerca de un minuto con Ollama local).
     connect-timeout: ${AI_CONNECT_TIMEOUT:3s}
     read-timeout: ${AI_READ_TIMEOUT:60s}
-    guide-read-timeout: ${AI_GUIDE_READ_TIMEOUT:120s}
+    # 300 s: la guía corre como trabajo asíncrono (cola de IA) y con prompts largos en CPU puede
+    # pasar de los 120 s. No afecta al frontend, nginx ni Cloudflare: el pedido de encolado
+    # responde enseguida y el resultado se consulta por separado.
+    guide-read-timeout: ${AI_GUIDE_READ_TIMEOUT:300s}
+    # Cola de trabajos de IA (ver AiJobProperties). Todo opcional.
+    jobs:
+      enabled: ${AI_JOBS_ENABLED:true}
+      # Tope GLOBAL (suma de réplicas) de trabajos corriendo contra Ollama.
+      concurrency: ${AI_JOBS_CONCURRENCY:2}
+      max-pending-per-org: ${AI_JOBS_MAX_PENDING_PER_ORG:20}
+      result-ttl-days: ${AI_JOBS_RESULT_TTL_DAYS:30}
+      max-attempts: ${AI_JOBS_MAX_ATTEMPTS:2}
+      retry-backoff-seconds: ${AI_JOBS_RETRY_BACKOFF_SECONDS:30}
+      poll-interval-ms: ${AI_JOBS_POLL_INTERVAL_MS:2000}
+      guide-feedback-days: ${AI_GUIDE_FEEDBACK_DAYS:30}
   # RF-USR-05 (PRI-240): adónde vuelve quien acepta una invitación, después de crear su contraseña
   # en Keycloak (la URL pública del frontend). client-id = el client público del frontend.
   invitations:

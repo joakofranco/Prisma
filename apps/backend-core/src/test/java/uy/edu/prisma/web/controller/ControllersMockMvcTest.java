@@ -38,6 +38,7 @@ class ControllersMockMvcTest {
   @Mock private AuditVerdictService auditVerdictService;
   @Mock private EvaluationFlagService evaluationFlagService;
   @Mock private ImprovementPlanService improvementPlanService;
+  @Mock private uy.edu.prisma.application.AiJobService aiJobService;
   @Mock private AiCitationFeedbackService aiCitationFeedbackService;
   @Mock private ReportService reportService;
   @Mock private uy.edu.prisma.application.TechnicalReportService technicalReportService;
@@ -96,7 +97,8 @@ class ControllersMockMvcTest {
     verdicts =
         MockMvcBuilders.standaloneSetup(new AuditVerdictController(auditVerdictService)).build();
     improvement =
-        MockMvcBuilders.standaloneSetup(new ImprovementPlanController(improvementPlanService))
+        MockMvcBuilders.standaloneSetup(
+                new ImprovementPlanController(improvementPlanService, aiJobService))
             .build();
     lenient()
         .when(reportSealingService.seal(any(), any(), any()))
@@ -922,7 +924,7 @@ class ControllersMockMvcTest {
     // La guía de IA y su retroalimentación se usan al crear acciones del plan: mismos roles que
     // POST /api/improvement.
     String expected = "hasAnyRole('PRISMA_ADMIN','ORG_RESPONSIBLE')";
-    for (var name : List.of("suggestionTips", "suggestionFeedback")) {
+    for (var name : List.of("suggestionTips", "suggestionTipsAsync", "suggestionFeedback")) {
       var method =
           java.util.Arrays.stream(ImprovementPlanController.class.getMethods())
               .filter(m -> m.getName().equals(name))
@@ -1018,7 +1020,14 @@ class ControllersMockMvcTest {
   }
 
   @Test
-  void citationFeedbackReturnsNoContent() throws Exception {
+  void citationFeedbackReturnsTheVerdictChanges() throws Exception {
+    UUID controlId = UUID.randomUUID();
+    when(aiCitationFeedbackService.record(any()))
+        .thenReturn(
+            new uy.edu.prisma.web.dto.Dto.CitationFeedbackResultDto(
+                List.of(
+                    new uy.edu.prisma.web.dto.Dto.VerdictChangeDto(
+                        controlId, "VALIDATED", "CITATION", true))));
     citationFeedback
         .perform(
             post("/api/evidence/citations/feedback")
@@ -1030,7 +1039,10 @@ class ControllersMockMvcTest {
                         + UUID.randomUUID()
                         + "\",\"fileName\":\"a.pdf\",\"location\":\"Página 1\","
                         + "\"snippet\":\"texto\",\"score\":0.7,\"decision\":\"ACCEPTED\"}]}"))
-        .andExpect(status().isNoContent());
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.verdicts[0].controlId").value(controlId.toString()))
+        .andExpect(jsonPath("$.verdicts[0].verdict").value("VALIDATED"))
+        .andExpect(jsonPath("$.verdicts[0].source").value("CITATION"));
     verify(aiCitationFeedbackService).record(any());
   }
 
@@ -1205,6 +1217,36 @@ class ControllersMockMvcTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.summary").value("Resumen"))
         .andExpect(jsonPath("$.tips[0]").value("Paso 1"));
+  }
+
+  @Test
+  void improvementSuggestionTipsAsyncReturnsAcceptedWithTheJobId() throws Exception {
+    UUID jobId = UUID.randomUUID();
+    when(aiJobService.enqueueGuide(any()))
+        .thenReturn(new uy.edu.prisma.web.dto.Dto.AiJobAcceptedDto(jobId, "QUEUED"));
+
+    improvement
+        .perform(
+            post("/api/improvement/suggestions/tips/async")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"controlId\":\""
+                        + UUID.randomUUID()
+                        + "\","
+                        + "\"currentLevel\":0,\"targetLevel\":1}"))
+        .andExpect(status().isAccepted())
+        .andExpect(jsonPath("$.jobId").value(jobId.toString()))
+        .andExpect(jsonPath("$.status").value("QUEUED"));
+  }
+
+  @Test
+  void improvementSuggestionTipsAsyncRequiresTheControl() throws Exception {
+    improvement
+        .perform(
+            post("/api/improvement/suggestions/tips/async")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"currentLevel\":0,\"targetLevel\":1}"))
+        .andExpect(status().isBadRequest());
   }
 
   @Test

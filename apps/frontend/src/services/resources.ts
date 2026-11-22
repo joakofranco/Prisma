@@ -13,6 +13,7 @@ import type {
   Evidence,
   EvidenceCitation,
   CitationFeedbackItem,
+  CitationFeedbackResult,
   EvidenceRules,
   AuditObservation,
   AuditLog,
@@ -21,6 +22,9 @@ import type {
   ReportVerification,
   SuggestedImprovement,
   RemediationTips,
+  AiJob,
+  AiJobAccepted,
+  CitationSource,
   AiSuggestionFeedback,
   MaturityResult,
   DashboardStats,
@@ -284,9 +288,22 @@ export const evidenceService = {
       `/evidence/evaluation/${evaluationId}/control/${controlId}/citations`,
     );
   },
-  /** El auditor acepta o rechaza las citas de la IA (la evaluación solo valida acceso y estado). */
-  sendCitationFeedback(evaluationId: string, items: CitationFeedbackItem[]) {
-    return apiClient.post<void>('/evidence/citations/feedback', { evaluationId, items });
+  /**
+   * El auditor acepta o rechaza las citas de la IA. Aceptar una cita valida el control (C4a): la
+   * respuesta dice qué pasó con el dictamen. Si habría que pisar un dictamen puesto a mano, el
+   * servidor responde 409 `VERDICT_OVERRIDE_REQUIRED` y hay que repetir con
+   * `confirmVerdictOverride = true`.
+   */
+  sendCitationFeedback(
+    evaluationId: string,
+    items: CitationFeedbackItem[],
+    confirmVerdictOverride = false,
+  ) {
+    return apiClient.post<CitationFeedbackResult>('/evidence/citations/feedback', {
+      evaluationId,
+      items,
+      ...(confirmVerdictOverride ? { confirmVerdictOverride: true } : {}),
+    });
   },
 };
 
@@ -294,7 +311,7 @@ export const auditService = {
   getObservations(evaluationId: string) {
     return apiClient.get<AuditObservation[]>(`/audit/observations/${evaluationId}`);
   },
-  createObservation(data: Partial<AuditObservation>) {
+  createObservation(data: Partial<AuditObservation> & { citation?: CitationSource }) {
     return apiClient.post<AuditObservation>('/audit/observations', data);
   },
   updateObservation(id: string, data: Partial<AuditObservation>) {
@@ -346,11 +363,24 @@ export const improvementService = {
   }) {
     return apiClient.post<RemediationTips>('/improvement/suggestions/tips', data);
   },
+  /** Versión asíncrona de la guía: encola un trabajo (202) y se consulta con aiJobsService. El
+   * código y la descripción del control los resuelve el servidor a partir de controlId. */
+  requestTipsAsync(data: {
+    controlId: string;
+    evaluationId?: string;
+    functionName?: string;
+    categoryName?: string;
+    subcategoryName?: string;
+    currentLevel: number;
+    targetLevel: number;
+  }) {
+    return apiClient.post<AiJobAccepted>('/improvement/suggestions/tips/async', data);
+  },
   /** Registra qué se hizo con las guías de IA (usada, editada o descartada). */
   sendSuggestionFeedback(items: AiSuggestionFeedback[]) {
     return apiClient.post<void>('/improvement/suggestions/feedback', { items });
   },
-  create(data: Partial<ImprovementPlan>) {
+  create(data: Partial<ImprovementPlan> & { guideId?: string; guideEdited?: boolean }) {
     return apiClient.post<ImprovementPlan>('/improvement', data);
   },
   update(id: string, data: Partial<ImprovementPlan>) {
@@ -483,5 +513,19 @@ export const emailSettingsService = {
   },
   test(recipientEmail: string) {
     return apiClient.post<void>('/admin/email-settings/test', { recipientEmail });
+  },
+};
+
+/** Trabajos de IA asíncronos (cola): consultar, listar los propios y cancelar. */
+export const aiJobsService = {
+  get(id: string) {
+    return apiClient.get<AiJob>(`/ai/jobs/${id}`);
+  },
+  listMine() {
+    return apiClient.get<AiJob[]>('/ai/jobs', { params: { mine: true } });
+  },
+  /** Solo cancela si sigue en cola. */
+  cancel(id: string) {
+    return apiClient.delete<AiJob>(`/ai/jobs/${id}`);
   },
 };

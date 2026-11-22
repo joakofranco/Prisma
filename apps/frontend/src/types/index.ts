@@ -393,6 +393,30 @@ export interface CitationFeedbackItem {
   snippet: string;
   score: number | null;
   decision: 'ACCEPTED' | 'REJECTED';
+  /** Evidencia de la que sale la cita: queda como respaldo del dictamen. */
+  evidenceId?: string | null;
+}
+
+/** Qué pasó con el dictamen de un control al aceptar una cita (C4a). */
+export interface VerdictChange {
+  controlId: string;
+  verdict: AuditVerdict;
+  source: 'MANUAL' | 'CITATION';
+  /** false = ya estaba Validado: la cita queda como respaldo adicional. */
+  changed: boolean;
+}
+
+export interface CitationFeedbackResult {
+  verdicts: VerdictChange[];
+}
+
+/** La cita de la que sale una observación y el texto que la app precargó (C4b). */
+export interface CitationSource {
+  fileName: string | null;
+  location: string | null;
+  snippet: string;
+  score: number | null;
+  prefillText: string;
 }
 
 export interface AuditObservation {
@@ -433,6 +457,14 @@ export interface ControlVerdict {
   setBy: string | null;
   setByName: string | null;
   updatedAt: string | null;
+  /** MANUAL (lo fijó el auditor) o CITATION (se aceptó una cita de la IA). */
+  source?: 'MANUAL' | 'CITATION';
+  /** La cita que respalda el dictamen cuando source = CITATION. */
+  sourceRef?: {
+    evidenceId?: string | null;
+    fileName?: string | null;
+    location?: string | null;
+  } | null;
 }
 
 export interface ImprovementPlan {
@@ -517,6 +549,44 @@ export interface RemediationTips {
   tips: string[];
   /** false = texto de reemplazo porque la IA falló: no se ofrece para usar ni se registra. */
   generated?: boolean;
+  /** Id de la guía persistida (trabajo asíncrono): se manda al crear la acción para registrar
+   * el feedback en el servidor. */
+  guideId?: string;
+}
+
+/** Estados de un trabajo de IA (cola asíncrona). */
+export type AiJobStatus = 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED' | 'EXPIRED';
+
+/** Guía ya generada y guardada por el servidor. */
+export interface GeneratedGuide {
+  id: string;
+  controlId: string;
+  summary: string;
+  tips: string[];
+  model?: string | null;
+}
+
+/** Trabajo de IA: se consulta por id hasta que termina. */
+export interface AiJob {
+  id: string;
+  type: 'GUIDE';
+  status: AiJobStatus;
+  /** Solo en cola: 1 = el próximo. */
+  queuePosition: number | null;
+  attempts: number;
+  maxAttempts: number;
+  errorCode: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  /** Solo cuando terminó bien. */
+  guide: GeneratedGuide | null;
+}
+
+export interface AiJobAccepted {
+  jobId: string;
+  status: AiJobStatus;
 }
 
 /** Qué se hizo con una guía de IA (PRI-370): alimenta el dataset de fine-tuning. */

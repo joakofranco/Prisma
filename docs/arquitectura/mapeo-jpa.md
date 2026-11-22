@@ -50,7 +50,10 @@
 | [`Evidence`](#evidence) | `evidence` | `prisma` |
 | [`ImprovementPlan`](#improvementplan) | `improvement_plans` | `prisma` |
 | [`AiSuggestionFeedback`](#aisuggestionfeedback) | `ai_suggestion_feedback` | `prisma` |
+| [`AiJob`](#aijob-y-aigeneratedguide) | `ai_job` | `prisma` |
+| [`AiGeneratedGuide`](#aijob-y-aigeneratedguide) | `ai_generated_guide` | `prisma` |
 | [`AiCitationFeedback`](#aicitationfeedback) | `ai_citation_feedback` | `prisma` |
+| `AiCitationValidationFeedback` | `ai_citation_validation_feedback` | `prisma` |
 | [`AuditObservation`](#auditobservation) | `audit_observations` | `prisma` |
 | [`AuditLog`](#auditlog) | `audit_logs` | `audit` |
 | `AuditControlVerdict` | `audit_control_verdicts` | `prisma` |
@@ -343,6 +346,22 @@ cambio a `COMPLETED` y queda `null` si la bitácora no lo registra. La comparaci
 
 ---
 
+### `AiJob` y `AiGeneratedGuide`
+
+Migración V41. `AiJob` (`ai_job`) es un trabajo de la cola de IA: `type` (`GUIDE`), `status`
+(`QUEUED`, `RUNNING`, `SUCCEEDED`, `FAILED`, `CANCELLED`, `EXPIRED`), `organization_id` y
+`requested_by` (UUID planos, sin relación JPA), `priority` (10 interactivo, 0 lote), `params` y
+`metrics` (`jsonb` como `Map<String,Object>`), `dedup_key` (SHA-256), `result_ref` (id de la guía),
+`attempts`/`max_attempts`, `next_attempt_at`, `locked_until` (vence el reclamo si la réplica muere),
+`error_code`/`error_message` y la medición (`queue_wait_ms`, `run_ms`). Un **índice único parcial**
+sobre `dedup_key` para `QUEUED`/`RUNNING` impide duplicar un pedido activo bajo concurrencia; el
+reclamo es la consulta nativa `AiJobRepository.lockQueued` (`FOR UPDATE SKIP LOCKED`).
+
+`AiGeneratedGuide` (`ai_generated_guide`) guarda la guía devuelta por la IA: `control` (`@ManyToOne`
+LAZY), niveles, `model`, `prompt_version`, `summary`, `tips` (`jsonb`), `status` (`GENERATED`,
+`SHOWN`, `USED`, `DISCARDED` reservado, `EXPIRED`) y fechas. Lleva `organization_id` solo para
+autorizar el acceso: `AiSuggestionFeedback` sigue sin organización ni usuario.
+
 ### `AiSuggestionFeedback`
 
 ```java
@@ -425,7 +444,7 @@ Entidades simples, sin colecciones, agregadas después de las anteriores:
 
 | Entidad | Qué representa | Relaciones |
 |---|---|---|
-| `AuditControlVerdict` | Dictamen del auditor sobre un control de una evaluación (`VALIDATED`, `NOT_VALIDATED`, `NEEDS_MORE_EVIDENCE`). Único por evaluación y control. | `@ManyToOne` a `Evaluation`, `CatalogControl` y `User` (quien lo fijó) |
+| `AuditControlVerdict` | Dictamen del auditor sobre un control de una evaluación (`VALIDATED`, `NOT_VALIDATED`, `NEEDS_MORE_EVIDENCE`). Único por evaluación y control. Desde V42 lleva `source` (`MANUAL`/`CITATION`) y `source_ref` (`jsonb`, la cita que lo respalda; un CHECK exige uno si y solo si el otro). | `@ManyToOne` a `Evaluation`, `CatalogControl` y `User` (quien lo fijó) |
 | `EvaluationControlFlag` | Control marcado para revisar dentro de una evaluación. Único por evaluación y control. | `@ManyToOne` a `Evaluation`, `CatalogControl` y `User` |
 | `EvaluationSubcategoryComment` | Comentario por subcategoría de una evaluación. Único por evaluación y subcategoría. | `@ManyToOne` a `Evaluation`, `CatalogSubcategory` y `User` |
 | `PlanDefaultDeadline` | Plazo por defecto, en meses, de las acciones del plan de mejora para cada prioridad. La clave es la prioridad. | — |

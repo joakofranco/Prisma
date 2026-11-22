@@ -9,9 +9,11 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
+import uy.edu.prisma.domain.exception.AiGuideException;
 import uy.edu.prisma.web.dto.Dto.EvidenceCitationDto;
 
 /**
@@ -199,5 +201,169 @@ class AiEvidenceClientTest {
     assertEquals("", result.summary());
     assertEquals(1, result.tips().size());
     assertFalse(result.generated());
+  }
+
+  // ---- generateGuide: la variante estricta que usa la cola de trabajos de IA ----
+
+  private AiGuideException guideFailure() {
+    return assertThrows(
+        AiGuideException.class,
+        () -> client.generateGuide("PR.AC-1", "descripción", null, null, null, 0, 1));
+  }
+
+  @Test
+  void generateGuideReturnsGuideWithModelAndOllamaMetrics() {
+    server
+        .expect(requestTo(BASE_URL + "/api/v1/rag/remediation-tips"))
+        .andRespond(
+            withSuccess(
+                "{\"summary\":\"Definir\",\"tips\":[\"A\",\"B\"],\"generated\":true,"
+                    + "\"model\":\"llama3:8b\",\"metrics\":{\"eval_count\":42}}",
+                MediaType.APPLICATION_JSON));
+
+    var result = client.generateGuide("PR.AC-1", "descripción", "F", "C", "S", 0, 1);
+
+    assertEquals("Definir", result.summary());
+    assertEquals(List.of("A", "B"), result.tips());
+    assertEquals("llama3:8b", result.model());
+    assertEquals(42, ((Number) result.metrics().get("eval_count")).intValue());
+  }
+
+  @Test
+  void generateGuideAcceptsAnOlderBackendAiWithoutTheNewFields() {
+    server
+        .expect(requestTo(BASE_URL + "/api/v1/rag/remediation-tips"))
+        .andRespond(
+            withSuccess("{\"summary\":\"S\",\"tips\":[\"A\"]}", MediaType.APPLICATION_JSON));
+
+    var result = client.generateGuide("PR.AC-1", "descripción", null, null, null, 0, 1);
+
+    assertEquals(List.of("A"), result.tips());
+    assertTrue(result.metrics().isEmpty());
+  }
+
+  @Test
+  void generateGuideTreatsAFallbackTextAsARetryableFailure() {
+    server
+        .expect(requestTo(BASE_URL + "/api/v1/rag/remediation-tips"))
+        .andRespond(
+            withSuccess(
+                "{\"summary\":\"\",\"tips\":[\"No se pudo generar\"],\"generated\":false}",
+                MediaType.APPLICATION_JSON));
+
+    AiGuideException ex = guideFailure();
+
+    assertEquals(AiGuideException.AI_UNAVAILABLE, ex.getCode());
+    assertTrue(ex.isRetryable());
+  }
+
+  @Test
+  void generateGuideClassifiesPromptTooLargeAsNotRetryable() {
+    server
+        .expect(requestTo(BASE_URL + "/api/v1/rag/remediation-tips"))
+        .andRespond(
+            withStatus(HttpStatus.PAYLOAD_TOO_LARGE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body("{\"code\":\"PROMPT_TOO_LARGE\",\"estimated_tokens\":9000}"));
+
+    AiGuideException ex = guideFailure();
+
+    assertEquals(AiGuideException.PROMPT_TOO_LARGE, ex.getCode());
+    assertFalse(ex.isRetryable());
+  }
+
+  @Test
+  void generateGuideClassifiesServiceUnavailableAsRetryable() {
+    server
+        .expect(requestTo(BASE_URL + "/api/v1/rag/remediation-tips"))
+        .andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE));
+
+    AiGuideException ex = guideFailure();
+
+    assertEquals(AiGuideException.AI_UNAVAILABLE, ex.getCode());
+    assertTrue(ex.isRetryable());
+  }
+
+  @Test
+  void generateGuideClassifiesOtherServerErrorsAsRetryable() {
+    server
+        .expect(requestTo(BASE_URL + "/api/v1/rag/remediation-tips"))
+        .andRespond(withServerError());
+
+    AiGuideException ex = guideFailure();
+
+    assertEquals(AiGuideException.AI_ERROR, ex.getCode());
+    assertTrue(ex.isRetryable());
+  }
+
+  @Test
+  void generateGuideClassifiesClientErrorsAsNotRetryable() {
+    server
+        .expect(requestTo(BASE_URL + "/api/v1/rag/remediation-tips"))
+        .andRespond(withStatus(HttpStatus.UNPROCESSABLE_ENTITY));
+
+    AiGuideException ex = guideFailure();
+
+    assertEquals(AiGuideException.AI_REJECTED, ex.getCode());
+    assertFalse(ex.isRetryable());
+  }
+
+  @Test
+  void generateGuideClassifiesAReadTimeoutAsAiTimeoutAndNotRetryable() {
+    server
+        .expect(requestTo(BASE_URL + "/api/v1/rag/remediation-tips"))
+        .andRespond(
+            request -> {
+              throw new java.net.SocketTimeoutException("Read timed out");
+            });
+
+    AiGuideException ex = guideFailure();
+
+    assertEquals(AiGuideException.AI_TIMEOUT, ex.getCode());
+    assertFalse(ex.isRetryable());
+    assertTrue(ex.getMessage().contains("tardó más de lo permitido"));
+    assertNotEquals(AiGuideException.AI_UNAVAILABLE, ex.getCode());
+  }
+
+  @Test
+  void aConnectTimeoutIsStillUnavailableNotATimeoutOfTheGeneration() {
+    server
+        .expect(requestTo(BASE_URL + "/api/v1/rag/remediation-tips"))
+        .andRespond(
+            request -> {
+              throw new java.net.SocketTimeoutException("Connect timed out");
+            });
+
+    AiGuideException ex = guideFailure();
+
+    assertEquals(AiGuideException.AI_UNAVAILABLE, ex.getCode());
+    assertTrue(ex.isRetryable());
+  }
+
+  @Test
+  void readTimeoutIsDetectedEvenWhenNestedInsideAnotherException() {
+    Throwable nested =
+        new IllegalStateException(
+            "envoltorio",
+            new java.io.IOException("x", new java.net.SocketTimeoutException("Read timed out")));
+
+    assertTrue(AiEvidenceClient.isReadTimeout(nested));
+    assertFalse(AiEvidenceClient.isReadTimeout(new java.io.IOException("connection refused")));
+    assertFalse(AiEvidenceClient.isReadTimeout(null));
+  }
+
+  @Test
+  void generateGuideTreatsAConnectionFailureAsRetryable() {
+    server
+        .expect(requestTo(BASE_URL + "/api/v1/rag/remediation-tips"))
+        .andRespond(
+            request -> {
+              throw new java.io.IOException("connection refused");
+            });
+
+    AiGuideException ex = guideFailure();
+
+    assertEquals(AiGuideException.AI_UNAVAILABLE, ex.getCode());
+    assertTrue(ex.isRetryable());
   }
 }

@@ -44,8 +44,11 @@
         </div>
         <p class="text-sm text-slate-500 dark:text-slate-400 mb-4">
           Busca en la evidencia cargada por esta organización los fragmentos que podrían respaldar
-          cada control (documento, página y texto exacto). Es sólo una guía de dónde mirar: la
-          validación final siempre la registra el auditor como Observación.
+          cada control (documento, página y texto exacto), con su puntaje de relevancia.
+          <strong>Aceptar una cita</strong> indica que el fragmento es relevante y respalda el
+          control: lo pasa a «Validado» (podés cambiarlo en el dictamen). Si el fragmento sirve pero
+          no alcanza, no lo rechaces: usá <strong>Registrar como observación</strong> y agregá tus
+          notas. Rechazar una cita no cambia el dictamen.
         </p>
 
         <div
@@ -109,6 +112,22 @@
                   <p class="text-xs font-medium text-slate-700 dark:text-slate-200 truncate">
                     {{ cit.fileName }} <span v-if="cit.location">· {{ cit.location }}</span>
                   </p>
+                  <span class="flex items-center gap-2 shrink-0">
+                    <span
+                      v-if="isBestCitation(c.controlId, i)"
+                      class="text-[11px] font-medium px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300"
+                      data-testid="best-citation"
+                    >
+                      Mejor coincidencia
+                    </span>
+                    <span
+                      class="text-[11px] text-slate-500 dark:text-slate-400"
+                      data-testid="citation-score"
+                      title="Puntaje de relevancia de la búsqueda"
+                    >
+                      Relevancia {{ formatScore(cit.score) }}
+                    </span>
+                  </span>
                   <button
                     v-if="canViewDocument"
                     class="text-xs text-blue-600 hover:underline shrink-0 dark:text-blue-400"
@@ -128,6 +147,7 @@
                         : 'text-green-700 border-green-300 hover:bg-green-50 dark:text-green-400 dark:border-green-700 dark:hover:bg-green-950'
                     "
                     :aria-pressed="citationDecision[citationKey(c, i)] === 'ACCEPTED'"
+                    title="El fragmento es relevante y respalda el control: lo pasa a Validado"
                     data-testid="accept-citation"
                     @click="decideCitation(c, cit, i, 'ACCEPTED')"
                   >
@@ -142,6 +162,7 @@
                         : 'text-red-700 border-red-300 hover:bg-red-50 dark:text-red-400 dark:border-red-700 dark:hover:bg-red-950'
                     "
                     :aria-pressed="citationDecision[citationKey(c, i)] === 'REJECTED'"
+                    title="El fragmento no sirve: no cambia el dictamen del control"
                     data-testid="reject-citation"
                     @click="decideCitation(c, cit, i, 'REJECTED')"
                   >
@@ -150,9 +171,11 @@
                   <button
                     type="button"
                     class="text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400"
+                    title="Crea una observación de auditoría con el texto de la cita; no dictamina el control"
+                    data-testid="register-observation"
                     @click="openObservationForCitation(c, cit)"
                   >
-                    Registrar validación
+                    Registrar como observación
                   </button>
                 </div>
               </div>
@@ -254,6 +277,13 @@
               <p class="text-sm font-medium text-slate-900 dark:text-white">{{ c.code }}</p>
               <p class="text-xs text-slate-500 dark:text-slate-400 truncate">
                 {{ c.description }}
+              </p>
+              <p
+                v-if="verdictSources[c.id]"
+                class="text-xs text-green-700 dark:text-green-400 truncate"
+                data-testid="verdict-source"
+              >
+                Validado por cita ({{ citationLabel(verdictSources[c.id]!) }})
               </p>
             </div>
             <select
@@ -432,6 +462,22 @@
         </BaseButton>
       </template>
     </BaseModal>
+
+    <BaseModal v-model="showOverrideModal" title="Reemplazar el dictamen" size="sm">
+      <p class="text-sm text-slate-700 dark:text-slate-200" data-testid="override-message">
+        El control <strong>{{ pendingOverride?.control.code }}</strong> ya tiene el dictamen
+        <strong>«{{ pendingOverride ? verdictLabel(pendingOverride.currentVerdict) : '' }}»</strong>
+        puesto a mano. Aceptar esta cita lo reemplaza por <strong>«Validado»</strong>.
+      </p>
+      <template #footer>
+        <BaseButton variant="secondary" data-testid="override-cancel" @click="cancelOverride">
+          Cancelar
+        </BaseButton>
+        <BaseButton variant="primary" data-testid="override-confirm" @click="confirmOverride">
+          Reemplazar por Validado
+        </BaseButton>
+      </template>
+    </BaseModal>
   </div>
 </template>
 
@@ -474,8 +520,10 @@
     AuditObservation,
     Evaluation,
     AuditVerdict,
+    CitationFeedbackResult,
     Evidence,
     EvidenceCitation,
+    CitationSource,
     MaturityCatalog,
   } from '@/types';
 
@@ -510,6 +558,8 @@
     subcategoryId: '',
     // Evidencia citada de la que sale la observación (RF-EVI-15): solo al registrarla desde una cita.
     evidenceId: undefined as string | undefined,
+    // La cita y el texto precargado (C4b): al guardar, el servidor registra la diferencia.
+    citation: undefined as CitationSource | undefined,
   });
 
   // RF-AUD-05: además de por control, el auditor puede atar una observación a una subcategoría
@@ -546,29 +596,131 @@
     return `${control.controlId}:${index}`;
   }
 
+  // Puntaje de relevancia con dos decimales; las citas viejas pueden no traerlo.
+  function formatScore(score: number | null | undefined) {
+    return typeof score === 'number' ? score.toFixed(2).replace('.', ',') : '—';
+  }
+
+  // «Mejor coincidencia»: la cita de mayor puntaje del control (solo si hay más de una).
+  function isBestCitation(controlId: string, index: number) {
+    const list = citationsByControl[controlId] ?? [];
+    if (list.length < 2) return false;
+    const scores = list.map((c) => (typeof c.score === 'number' ? c.score : -Infinity));
+    return scores.indexOf(Math.max(...scores)) === index;
+  }
+
+  // Dictamen que salió de aceptar una cita: se muestra «Validado por cita (archivo, página)».
+  interface VerdictSource {
+    fileName?: string | null;
+    location?: string | null;
+  }
+  const verdictSources = reactive<Record<string, VerdictSource | undefined>>({});
+
+  function citationLabel(src: VerdictSource) {
+    return [src.fileName, src.location].filter(Boolean).join(', ') || 'sin detalle';
+  }
+
+  function verdictLabel(verdict: string) {
+    return VERDICT_LABELS[verdict as AuditVerdict] ?? verdict;
+  }
+
+  // Aceptar una cita valida el control (C4a). Si habría que pisar un dictamen puesto a mano, el
+  // servidor pide confirmación (409 VERDICT_OVERRIDE_REQUIRED): se muestra un aviso y, si el
+  // auditor confirma, se repite el pedido.
+  const showOverrideModal = ref(false);
+  const pendingOverride = ref<{
+    control: ControlWithEvidence;
+    citation: EvidenceCitation;
+    index: number;
+    currentVerdict: string;
+  } | null>(null);
+
+  function applyVerdictChanges(
+    result: CitationFeedbackResult | undefined,
+    citation: EvidenceCitation,
+  ) {
+    for (const change of result?.verdicts ?? []) {
+      verdicts[change.controlId] = change.verdict;
+      if (change.changed && change.source === 'CITATION') {
+        verdictSources[change.controlId] = {
+          fileName: citation.fileName,
+          location: citation.location,
+        };
+      }
+    }
+  }
+
+  async function sendDecision(
+    control: ControlWithEvidence,
+    citation: EvidenceCitation,
+    index: number,
+    decision: 'ACCEPTED' | 'REJECTED',
+    confirmOverride: boolean,
+  ) {
+    const key = citationKey(control, index);
+    try {
+      const { data } = await evidenceService.sendCitationFeedback(
+        evaluationId,
+        [
+          {
+            controlId: control.controlId,
+            fileName: citation.fileName,
+            location: citation.location,
+            snippet: citation.snippet,
+            score: citation.score ?? null,
+            decision,
+            evidenceId: citation.evidenceId ?? null,
+          },
+        ],
+        confirmOverride,
+      );
+      citationDecision[key] = decision;
+      applyVerdictChanges(data, citation);
+    } catch (err) {
+      const response = (
+        err as {
+          response?: {
+            status?: number;
+            data?: { code?: string; details?: Record<string, string[]> };
+          };
+        }
+      ).response;
+      if (response?.status === 409 && response.data?.code === 'VERDICT_OVERRIDE_REQUIRED') {
+        pendingOverride.value = {
+          control,
+          citation,
+          index,
+          currentVerdict: response.data.details?.currentVerdict?.[0] ?? '',
+        };
+        showOverrideModal.value = true;
+        return;
+      }
+      notification.error(getErrorMessage(err, 'No se pudo registrar la decisión sobre la cita'));
+    }
+  }
+
   async function decideCitation(
     control: ControlWithEvidence,
     citation: EvidenceCitation,
     index: number,
     decision: 'ACCEPTED' | 'REJECTED',
   ) {
-    const key = citationKey(control, index);
-    if (citationDecision[key] === decision) return;
-    try {
-      await evidenceService.sendCitationFeedback(evaluationId, [
-        {
-          controlId: control.controlId,
-          fileName: citation.fileName,
-          location: citation.location,
-          snippet: citation.snippet,
-          score: citation.score ?? null,
-          decision,
-        },
-      ]);
-      citationDecision[key] = decision;
-    } catch (err) {
-      notification.error(getErrorMessage(err, 'No se pudo registrar la decisión sobre la cita'));
+    if (citationDecision[citationKey(control, index)] === decision) return;
+    await sendDecision(control, citation, index, decision, false);
+  }
+
+  async function confirmOverride() {
+    const pending = pendingOverride.value;
+    showOverrideModal.value = false;
+    pendingOverride.value = null;
+    if (pending) {
+      await sendDecision(pending.control, pending.citation, pending.index, 'ACCEPTED', true);
     }
+  }
+
+  function cancelOverride() {
+    showOverrideModal.value = false;
+    pendingOverride.value = null;
   }
 
   async function loadControlsWithEvidence() {
@@ -679,6 +831,15 @@
     newObs.description =
       `Revisión de evidencia para ${control.code} — "${citation.fileName ?? 'evidencia'}"` +
       `${citation.location ? ` (${citation.location})` : ''}: ${citation.snippet}`;
+    // El texto precargado queda guardado: al guardar la observación el servidor registra si el
+    // auditor lo conservó o lo reescribió (C4b). Si cierra el formulario sin guardar, no se envía.
+    newObs.citation = {
+      fileName: citation.fileName,
+      location: citation.location,
+      snippet: citation.snippet,
+      score: citation.score ?? null,
+      prefillText: newObs.description,
+    };
     showCreateModal.value = true;
   }
 
@@ -690,6 +851,7 @@
     newObs.controlId = undefined;
     newObs.subcategoryId = '';
     newObs.evidenceId = undefined;
+    newObs.citation = undefined;
     newObs.description = '';
     showCreateModal.value = true;
   }
@@ -766,6 +928,7 @@
     obsError.value = '';
     newObs.type = obs.type;
     newObs.description = obs.description;
+    newObs.citation = undefined;
     showCreateModal.value = true;
   }
 
@@ -811,6 +974,7 @@
         evidenceId: newObs.evidenceId,
         type: newObs.type,
         description: newObs.description,
+        ...(newObs.citation ? { citation: newObs.citation } : {}),
       });
       notification.success('Observación creada');
       showCreateModal.value = false;
@@ -818,6 +982,7 @@
       newObs.controlId = undefined;
       newObs.subcategoryId = '';
       newObs.evidenceId = undefined;
+      newObs.citation = undefined;
       newObs.description = '';
       await fetchObservations();
     } catch (err) {
@@ -886,7 +1051,15 @@
         if (fl.flaggedByName) flagAuthors[fl.controlId] = fl.flaggedByName;
       }
       verdictControls.value = flattenControls(catalog as MaturityCatalog);
-      for (const v of saved) verdicts[v.controlId] = v.verdict;
+      for (const v of saved) {
+        verdicts[v.controlId] = v.verdict;
+        if (v.source === 'CITATION') {
+          verdictSources[v.controlId] = {
+            fileName: v.sourceRef?.fileName,
+            location: v.sourceRef?.location,
+          };
+        }
+      }
     } catch (err) {
       console.error(err);
     }
@@ -898,6 +1071,8 @@
     savingVerdictId.value = controlId;
     try {
       await auditService.setVerdict(evaluationId, controlId, value as AuditVerdict);
+      // Lo fijó el auditor a mano: ya no es un dictamen «por cita».
+      delete verdictSources[controlId];
     } catch (err) {
       if (previous) verdicts[controlId] = previous;
       else delete verdicts[controlId];

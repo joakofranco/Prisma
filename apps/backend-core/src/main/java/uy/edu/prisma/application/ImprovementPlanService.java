@@ -59,6 +59,7 @@ public class ImprovementPlanService {
   private final AuditLogService auditLog;
   private final PlanDeadlineSettingsService deadlines;
   private final AiSuggestionFeedbackRepository feedbackRepo;
+  private final AiGuideService guideService;
 
   public ImprovementPlanService(
       ImprovementPlanRepository repo,
@@ -69,7 +70,8 @@ public class ImprovementPlanService {
       CurrentUserService currentUser,
       AuditLogService auditLog,
       PlanDeadlineSettingsService deadlines,
-      AiSuggestionFeedbackRepository feedbackRepo) {
+      AiSuggestionFeedbackRepository feedbackRepo,
+      AiGuideService guideService) {
     this.repo = repo;
     this.evaluationRepo = evaluationRepo;
     this.controlRepo = controlRepo;
@@ -79,6 +81,7 @@ public class ImprovementPlanService {
     this.auditLog = auditLog;
     this.deadlines = deadlines;
     this.feedbackRepo = feedbackRepo;
+    this.guideService = guideService;
   }
 
   // On-demand (un control a la vez, ver AiEvidenceClient.suggestRemediation): no necesita
@@ -201,7 +204,14 @@ public class ImprovementPlanService {
             .baselineResponsible(dto.responsible())
             .comments(normalizeComments(dto.comments()))
             .build();
-    return toDto(repo.save(plan));
+    ImprovementPlan saved = repo.save(plan);
+    // Guía de IA asíncrona (C5): en la misma transacción que crea la acción se la marca como
+    // usada y se registra el feedback (sin organización ni usuario, V32).
+    if (dto.guideId() != null) {
+      guideService.markUsed(
+          dto.guideId(), dto.controlId(), Boolean.TRUE.equals(dto.guideEdited()), dto.action());
+    }
+    return toDto(saved);
   }
 
   /**
