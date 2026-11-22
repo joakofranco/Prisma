@@ -18,6 +18,8 @@ import type {
   AuditObservation,
   AuditLog,
   ImprovementPlan,
+  PlanBaselineComparison,
+  ReportVerification,
   SuggestedImprovement,
   RemediationTips,
   AiJob,
@@ -374,6 +376,9 @@ export const improvementService = {
   getByEvaluation(evaluationId: string) {
     return apiClient.get<ImprovementPlan[]>(`/improvement/${evaluationId}`);
   },
+  getBaseline(evaluationId: string) {
+    return apiClient.get<PlanBaselineComparison>(`/improvement/${evaluationId}/baseline`);
+  },
   getSuggestions(evaluationId: string) {
     return apiClient.get<SuggestedImprovement[]>(`/improvement/${evaluationId}/suggestions`);
   },
@@ -433,6 +438,13 @@ export const improvementService = {
 };
 
 export const reportsService = {
+  verify(file: File) {
+    const data = new FormData();
+    data.append('file', file);
+    return apiClient.post<ReportVerification>('/reports/verify', data, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
   generatePDF(evaluationId: string) {
     return apiClient.get(`/reports/${evaluationId}/pdf`, { responseType: 'blob' });
   },

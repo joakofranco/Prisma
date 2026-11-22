@@ -204,6 +204,10 @@ services:
       S3_BUCKET: ${S3_BUCKET_EVIDENCES}
       EVIDENCE_ALLOWED_EXTENSIONS: ${EVIDENCE_ALLOWED_EXTENSIONS:-pdf,zip,docx,txt,md,markdown,png,jpg,jpeg}
       EVIDENCE_MAX_SIZE: ${EVIDENCE_MAX_SIZE:-100MB}
+      PDF_SIGNING_ENABLED: ${PDF_SIGNING_ENABLED:-false}
+      PDF_SIGNING_KEYSTORE: /etc/prisma/signing/report-signing.p12
+      PDF_SIGNING_KEYSTORE_PASSWORD: ${PDF_SIGNING_KEYSTORE_PASSWORD:-}
+      PDF_SIGNING_KEY_ALIAS: ${PDF_SIGNING_KEY_ALIAS:-prisma-report-seal}
       CLAMAV_HOST: clamav
       CLAMAV_PORT: 3310
       AI_SERVICE_URL: http://backend-ai:8000
@@ -240,6 +244,7 @@ services:
       - evidences-data:/var/prisma/evidences
       - alertmanager-config:/var/prisma/alerting
       - ./infra/tls/ca.crt:/etc/prisma/tls/ca.crt:ro
+      - ./infra/tls/signing:/etc/prisma/signing:ro
     command:
       - sh
       - -c

@@ -18,6 +18,9 @@ spring:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
         jdbc.batch_size: 20
+        default_batch_fetch_size: 200
+        order_inserts: true
+        order_updates: true
         format_sql: true
   flyway:
     enabled: true
@@ -87,6 +90,12 @@ springdoc:
     tryItOutEnabled: true
 
 prisma:
+  reports:
+    signing:
+      enabled: ${PDF_SIGNING_ENABLED:false}
+      keystore: ${PDF_SIGNING_KEYSTORE:}
+      keystore-password: ${PDF_SIGNING_KEYSTORE_PASSWORD:}
+      key-alias: ${PDF_SIGNING_KEY_ALIAS:prisma-report-seal}
   # Lanzador de servicios: redes desde las que se permite (VPN). Loopback y rangos privados por
   # defecto; en producción, la subred exacta de WireGuard (SERVICES_ALLOWED_CIDRS, separadas por coma).
   services:

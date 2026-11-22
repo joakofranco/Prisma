@@ -6,11 +6,19 @@ import java.util.UUID;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import uy.edu.prisma.domain.entity.EvaluationResponse;
 
 public interface EvaluationResponseRepository extends JpaRepository<EvaluationResponse, UUID> {
 
   List<EvaluationResponse> findByEvaluationId(UUID evaluationId);
+
+  @Query(
+      "SELECT r.control.id FROM EvaluationResponse r"
+          + " WHERE r.evaluation.id = :evaluationId AND r.compliant = true")
+  List<UUID> findCompliantControlIds(@Param("evaluationId") UUID evaluationId);
+
+  boolean existsByEvaluationId(UUID evaluationId);
 
   Optional<EvaluationResponse> findByEvaluationIdAndControlId(UUID evaluationId, UUID controlId);
 

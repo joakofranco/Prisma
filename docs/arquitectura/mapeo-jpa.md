@@ -338,6 +338,15 @@ Enums anidados `Priority` (`LOW`/`MEDIUM`/`HIGH`) y `PlanStatus`
 `comments` (`TEXT`, nullable, hasta 2000 caracteres validados en el DTO) guarda los comentarios
 libres del ítem (RF-PLN-02, migración `V27`); los ítems anteriores quedan con `null`.
 
+Línea base (RF-PLN-07, migración `V41`): `baselineDueDate`, `baselinePriority` (enum `Priority`,
+obligatoria) y `baselineResponsible` guardan los valores que tenía la acción al crearse y
+`ImprovementPlanService.update` nunca los modifica. `completedAt` (`timestamptz`, nullable) se fija
+al pasar a `COMPLETED` y se borra al reabrir la acción. En las acciones anteriores a la migración
+la línea base se reconstruyó con el primer valor «anterior» de cada campo en la bitácora
+(`UPDATE_IMPROVEMENT_PLAN`), o con el valor actual si nunca se editó; `completedAt` salió del último
+cambio a `COMPLETED` y queda `null` si la bitácora no lo registra. La comparación la calcula
+`PlanBaseline`, compartida por `GET /api/improvement/{evaluationId}/baseline` y el PDF del plan.
+
 ---
 
 ### `AiJob` y `AiGeneratedGuide`

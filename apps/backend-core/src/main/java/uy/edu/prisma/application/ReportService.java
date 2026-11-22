@@ -4,6 +4,7 @@ import com.lowagie.text.Document;
 import com.lowagie.text.DocumentException;
 import com.lowagie.text.Element;
 import com.lowagie.text.Font;
+import com.lowagie.text.Image;
 import com.lowagie.text.PageSize;
 import com.lowagie.text.Paragraph;
 import com.lowagie.text.Phrase;
@@ -16,6 +17,7 @@ import com.lowagie.text.pdf.PdfPageEventHelper;
 import com.lowagie.text.pdf.PdfWriter;
 import java.awt.Color;
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
@@ -60,6 +62,9 @@ import uy.edu.prisma.domain.repository.EvaluationRepository;
 import uy.edu.prisma.domain.repository.EvidenceRepository;
 import uy.edu.prisma.domain.repository.ImprovementPlanRepository;
 import uy.edu.prisma.domain.repository.MaturityResultRepository;
+import uy.edu.prisma.web.dto.Dto.PlanBaselineDto;
+import uy.edu.prisma.web.dto.Dto.PlanBaselineItemDto;
+import uy.edu.prisma.web.dto.Dto.PlanBaselineSummaryDto;
 
 /**
  * Genera reportes (PDF/XLSX) de madurez para una evaluacion. El estilo (colores, tipografia,
@@ -305,7 +310,7 @@ public class ReportService {
    */
   private void addCategoryMaturity(
       Document document, PdfWriter writer, List<MaturityResult> results)
-      throws DocumentException, java.io.IOException {
+      throws DocumentException, IOException {
     Paragraph heading = new Paragraph("Madurez por Categoría", PdfA.font(true, 12, SLATE_900));
     heading.setSpacingAfter(4);
 
@@ -965,7 +970,7 @@ public class ReportService {
 
   private void addFunctionMaturity(
       Document document, PdfWriter writer, List<MaturityResult> results)
-      throws DocumentException, java.io.IOException {
+      throws DocumentException, IOException {
     Paragraph heading = new Paragraph("Madurez por Función", PdfA.font(true, 12, SLATE_900));
     heading.setSpacingAfter(6);
     document.add(heading);
@@ -1137,6 +1142,7 @@ public class ReportService {
       addPlanInfoLine(document, eval);
       addPlanSummary(document, stats);
       addPlanTable(document, plans);
+      addBaselineSection(writer, document, PlanBaseline.compare(plans, LocalDate.now()));
 
       document.close();
       return out.toByteArray();
@@ -1371,6 +1377,148 @@ public class ReportService {
       shaded = !shaded;
     }
     document.add(table);
+  }
+
+  private void addBaselineSection(PdfWriter writer, Document document, PlanBaselineDto baseline)
+      throws DocumentException, IOException {
+    PlanBaselineSummaryDto summary = baseline.summary();
+    Paragraph title =
+        new Paragraph("Comparativa con la línea base", PdfA.font(true, 12, SLATE_900));
+    title.setSpacingBefore(18);
+    document.add(title);
+    Paragraph legend =
+        new Paragraph(
+            "La línea base es el valor que tenía cada acción al crearse. El cumplimiento se mide"
+                + " contra la fecha límite original.",
+            PdfA.font(false, 8, SLATE_500));
+    legend.setSpacingAfter(8);
+    document.add(legend);
+
+    PdfPTable kpis = new PdfPTable(4);
+    kpis.setWidthPercentage(100);
+    kpis.setSpacingAfter(10);
+    kpis.addCell(kpiCard("AVANCE PLANIFICADO", summary.plannedPercent() + " %", SLATE_900));
+    kpis.addCell(kpiCard("AVANCE REAL", summary.actualPercent() + " %", BRAND));
+    kpis.addCell(
+        kpiCard(
+            "DESVÍO",
+            signed(summary.deviationPoints()) + " pts",
+            summary.deviationPoints() < 0 ? DANGER : STATUS_DONE));
+    PdfPCell replanned =
+        kpiCard("REPLANIFICADAS", summary.replanned() + " de " + summary.total(), SLATE_900);
+    if (summary.averageShiftDays() != null) {
+      replanned.addElement(
+          new Paragraph(
+              "Corrimiento promedio: " + signed(summary.averageShiftDays()) + " días",
+              PdfA.font(false, 8, SLATE_500)));
+    }
+    kpis.addCell(replanned);
+    document.add(kpis);
+
+    Paragraph counts =
+        new Paragraph(
+            "Prioridad cambiada "
+                + summary.priorityChanged()
+                + "   ·   Responsable cambiado "
+                + summary.responsibleChanged(),
+            PdfA.font(false, 8, SLATE_500));
+    counts.setSpacingAfter(8);
+    document.add(counts);
+
+    if (BaselineChart.canRender(baseline)) {
+      Image chart = BaselineChart.render(writer, baseline, document.right() - document.left());
+      chart.setSpacingAfter(10);
+      document.add(chart);
+    }
+
+    PdfPTable table = new PdfPTable(8);
+    table.setWidthPercentage(100);
+    table.setWidths(new float[] {3.6f, 1.2f, 1.3f, 1.3f, 1.2f, 1.6f, 2.2f, 1.8f});
+    table.setHeaderRows(1);
+    addTableHeader(
+        table,
+        "Acción",
+        "Control",
+        "Fecha original",
+        "Fecha actual",
+        "Corrimiento",
+        "Prioridad",
+        "Responsable",
+        "Cumplimiento");
+    boolean shaded = false;
+    for (PlanBaselineItemDto item : baseline.items()) {
+      boolean bad =
+          PlanBaseline.LATE.equals(item.compliance())
+              || PlanBaseline.DELAYED.equals(item.compliance());
+      Color bg = bad ? OVERDUE_ROW : (shaded ? SLATE_50 : Color.WHITE);
+      addBodyCell(table, limit(item.action()), bg, Element.ALIGN_LEFT, SLATE_900);
+      addBodyCell(
+          table,
+          item.controlCode() != null ? item.controlCode() : "—",
+          bg,
+          Element.ALIGN_CENTER,
+          SLATE_900);
+      addBodyCell(table, isoDateLabel(item.baselineDueDate()), bg, Element.ALIGN_CENTER, SLATE_900);
+      addBodyCell(table, isoDateLabel(item.dueDate()), bg, Element.ALIGN_CENTER, SLATE_900);
+      addBodyCell(table, shiftLabel(item), bg, Element.ALIGN_CENTER, SLATE_900);
+      addBodyCell(
+          table,
+          changeLabel(
+              priorityLabel(ImprovementPlan.Priority.valueOf(item.priority())),
+              priorityLabel(ImprovementPlan.Priority.valueOf(item.baselinePriority())),
+              item.priorityChanged()),
+          bg,
+          Element.ALIGN_CENTER,
+          SLATE_900);
+      addBodyCell(
+          table,
+          changeLabel(
+              orDash(item.responsible()),
+              orDash(item.baselineResponsible()),
+              item.responsibleChanged()),
+          bg,
+          Element.ALIGN_LEFT,
+          SLATE_900);
+      addBodyCell(table, complianceLabel(item), bg, Element.ALIGN_CENTER, bad ? DANGER : SLATE_900);
+      shaded = !shaded;
+    }
+    document.add(table);
+  }
+
+  private static String signed(int value) {
+    return value > 0 ? "+" + value : String.valueOf(value);
+  }
+
+  private static String isoDateLabel(String isoDate) {
+    return isoDate == null ? "—" : LocalDate.parse(isoDate).format(DATE_ONLY);
+  }
+
+  private static String shiftLabel(PlanBaselineItemDto item) {
+    if (!item.replanned()) {
+      return "Sin cambios";
+    }
+    return item.dueDateShiftDays() == null
+        ? "Replanificada"
+        : signed(item.dueDateShiftDays()) + " días";
+  }
+
+  private static String changeLabel(String current, String original, boolean changed) {
+    return changed ? current + " (antes: " + original + ")" : current;
+  }
+
+  private static String orDash(String value) {
+    return value == null || value.isBlank() ? "—" : value;
+  }
+
+  private static String complianceLabel(PlanBaselineItemDto item) {
+    return switch (item.compliance()) {
+      case PlanBaseline.ON_TIME -> "En plazo";
+      case PlanBaseline.LATE -> "Tarde (" + item.delayDays() + " días)";
+      case PlanBaseline.DELAYED -> "Atrasada (" + item.delayDays() + " días)";
+      case PlanBaseline.IN_TERM -> "En curso";
+      case PlanBaseline.NO_CLOSE_DATE -> "Sin fecha de cierre";
+      default -> "Sin fecha";
+    };
   }
 
   private void addPlanSheet(XSSFWorkbook workbook, Sheet sheet, List<ImprovementPlan> plans) {

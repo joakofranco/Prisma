@@ -46,6 +46,7 @@ class ControllersMockMvcTest {
   @Mock private AiCitationFeedbackService aiCitationFeedbackService;
   @Mock private ReportService reportService;
   @Mock private uy.edu.prisma.application.TechnicalReportService technicalReportService;
+  @Mock private uy.edu.prisma.application.ReportSealingService reportSealingService;
   @Mock private EmailSettingsService emailSettingsService;
   @Mock private PlanDeadlineSettingsService planDeadlineSettingsService;
   @Mock private SessionSettingsService sessionSettingsService;
@@ -106,9 +107,12 @@ class ControllersMockMvcTest {
         MockMvcBuilders.standaloneSetup(
                 new ImprovementPlanController(improvementPlanService, aiJobService))
             .build();
+    lenient()
+        .when(reportSealingService.seal(any(), any(), any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
     reports =
         MockMvcBuilders.standaloneSetup(
-                new ReportsController(reportService, technicalReportService))
+                new ReportsController(reportService, technicalReportService, reportSealingService))
             .build();
     emailSettings =
         MockMvcBuilders.standaloneSetup(new EmailSettingsController(emailSettingsService)).build();
@@ -1328,6 +1332,50 @@ class ControllersMockMvcTest {
   }
 
   @Test
+  void improvementBaselineReturnsTheComparison() throws Exception {
+    UUID evalId = UUID.randomUUID();
+    when(improvementPlanService.baseline(evalId))
+        .thenReturn(
+            new uy.edu.prisma.web.dto.Dto.PlanBaselineDto(
+                new uy.edu.prisma.web.dto.Dto.PlanBaselineSummaryDto(
+                    1, 1, 15, 0, 0, 0, 0, 1, 1, 0, 100, 0, -100),
+                List.of(
+                    new uy.edu.prisma.web.dto.Dto.PlanBaselineItemDto(
+                        UUID.randomUUID(),
+                        "PS.1-1",
+                        "Acción",
+                        "PENDING",
+                        "2026-11-01",
+                        "2026-11-16",
+                        15,
+                        true,
+                        "HIGH",
+                        "HIGH",
+                        false,
+                        "Ana",
+                        "Ana",
+                        false,
+                        null,
+                        "DELAYED",
+                        4))));
+
+    improvement
+        .perform(get("/api/improvement/{evaluationId}/baseline", evalId))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.summary.deviationPoints").value(-100))
+        .andExpect(jsonPath("$.items[0].dueDateShiftDays").value(15))
+        .andExpect(jsonPath("$.items[0].compliance").value("DELAYED"));
+  }
+
+  @Test
+  void improvementBaselineIsOpenToEveryRoleWithAccessToTheOrganization() throws Exception {
+    assertNull(
+        ImprovementPlanController.class
+            .getMethod("baseline", UUID.class)
+            .getAnnotation(org.springframework.security.access.prepost.PreAuthorize.class));
+  }
+
+  @Test
   void improvementSuggestionTips() throws Exception {
     when(improvementPlanService.tips(any()))
         .thenReturn(new RemediationTipsDto("Resumen", List.of("Paso 1", "Paso 2")));
@@ -1613,6 +1661,51 @@ class ControllersMockMvcTest {
         .perform(get("/api/reports/{id}/pdf", id))
         .andExpect(status().isOk())
         .andExpect(content().contentType(MediaType.APPLICATION_PDF));
+  }
+
+  @Test
+  void verifyReportReturnsTheVerificationOfTheUploadedPdf() throws Exception {
+    var dto =
+        new uy.edu.prisma.web.dto.Dto.ReportVerificationDto(
+            true, true, true, true, true, true, null, null, true, true, "abc", "ok", List.of());
+    when(reportSealingService.verify(any())).thenReturn(dto);
+
+    reports
+        .perform(
+            org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart(
+                    "/api/reports/verify")
+                .file(
+                    new org.springframework.mock.web.MockMultipartFile(
+                        "file", "reporte.pdf", "application/pdf", "%PDF-1.4".getBytes())))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.valid").value(true))
+        .andExpect(jsonPath("$.sha256").value("abc"));
+  }
+
+  @Test
+  void verifyReportRejectsAnEmptyFile() {
+    var error =
+        assertThrows(
+            jakarta.servlet.ServletException.class,
+            () ->
+                reports.perform(
+                    org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart(
+                            "/api/reports/verify")
+                        .file(
+                            new org.springframework.mock.web.MockMultipartFile(
+                                "file", "reporte.pdf", "application/pdf", new byte[0]))));
+
+    assertInstanceOf(
+        uy.edu.prisma.domain.exception.InvalidRequestException.class, error.getCause());
+  }
+
+  @Test
+  void verifyReportIsOpenToAdminOrgResponsibleAndAuditor() throws Exception {
+    var annotation =
+        ReportsController.class
+            .getMethod("verify", org.springframework.web.multipart.MultipartFile.class)
+            .getAnnotation(org.springframework.security.access.prepost.PreAuthorize.class);
+    assertEquals("hasAnyRole('PRISMA_ADMIN','ORG_RESPONSIBLE','AUDITOR')", annotation.value());
   }
 
   @Test

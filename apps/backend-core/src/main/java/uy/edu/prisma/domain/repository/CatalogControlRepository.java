@@ -16,7 +16,7 @@ public interface CatalogControlRepository extends JpaRepository<CatalogControl, 
   // reordena despues por prioridad), asi que alcanza con ordenar por Requisito y Control.
   @Query(
       "SELECT c FROM CatalogControl c "
-          + "JOIN c.requirement r "
+          + "JOIN FETCH c.requirement r "
           + "JOIN r.version v "
           + "WHERE v.version = :version "
           + "ORDER BY r.sortOrder, c.sortOrder")

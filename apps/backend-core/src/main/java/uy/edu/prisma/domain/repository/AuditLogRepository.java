@@ -2,6 +2,7 @@ package uy.edu.prisma.domain.repository;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -17,6 +18,9 @@ public interface AuditLogRepository extends JpaRepository<AuditLog, UUID> {
   // volumen de transiciones de una sola evaluación es acotado) y va en orden cronológico
   // ascendente para poder numerar los ciclos en el mismo recorrido.
   List<AuditLog> findByResourceAndActionInOrderByCreatedAtAsc(String resource, List<String> action);
+
+  Optional<AuditLog> findFirstByActionAndResourceOrderByCreatedAtDesc(
+      String action, String resource);
 
   // Plegado de tildes y mayúsculas para comparar «lo que se ve» con lo que escribe quien busca.
   String FOLD_FROM = "'áéíóúüñÁÉÍÓÚÜÑ'";
