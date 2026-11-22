@@ -15,4 +15,12 @@
         <Package name="~uy\.edu\.prisma\.(web\.controller|application|infrastructure)"/>
         <Bug pattern="EI_EXPOSE_REP2"/>
     </Match>
+    <!--
+    EvidenceCitationStore.Decided lleva la entidad JPA de la cita ya decidida (como domain.entity,
+    sin copia defensiva) junto al estado anterior; es un valor interno de la capa de aplicacion.
+    -->
+    <Match>
+        <Class name="uy.edu.prisma.application.EvidenceCitationStore$Decided"/>
+        <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
+    </Match>
 </FindBugsFilter>
