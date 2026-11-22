@@ -1418,7 +1418,18 @@ public class Dto {
 
   // Guía ya generada y guardada (C5). Para usarla en una acción se manda guideId al crearla.
   public record GeneratedGuideDto(
-      UUID id, UUID controlId, String summary, List<String> tips, String model) {}
+      UUID id, UUID controlId, String summary, List<String> tips, String model) {
+
+    public GeneratedGuideDto {
+      tips =
+          tips == null ? List.of() : Collections.unmodifiableList(new java.util.ArrayList<>(tips));
+    }
+
+    @Override
+    public List<String> tips() {
+      return Collections.unmodifiableList(tips);
+    }
+  }
 
   // Estado de un trabajo de IA. queuePosition solo mientras está en cola (1 = el próximo); guide
   // solo cuando terminó bien; errorCode/errorMessage cuando falló (o en el último reintento).

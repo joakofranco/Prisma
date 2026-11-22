@@ -183,7 +183,30 @@ public class AiEvidenceClient {
 
   /** Guía generada por el LLM, con lo que Ollama informó (tiempos en ns y tokens). */
   public record GuideResult(
-      String summary, List<String> tips, String model, Map<String, Object> metrics) {}
+      String summary, List<String> tips, String model, Map<String, Object> metrics) {
+
+    // Copias defensivas (SpotBugs EI_EXPOSE_REP): sin elementos nulos que rompan List.copyOf.
+    public GuideResult {
+      tips =
+          tips == null
+              ? List.of()
+              : java.util.Collections.unmodifiableList(new java.util.ArrayList<>(tips));
+      metrics =
+          metrics == null
+              ? Map.of()
+              : java.util.Collections.unmodifiableMap(new java.util.HashMap<>(metrics));
+    }
+
+    @Override
+    public List<String> tips() {
+      return java.util.Collections.unmodifiableList(tips);
+    }
+
+    @Override
+    public Map<String, Object> metrics() {
+      return java.util.Collections.unmodifiableMap(metrics);
+    }
+  }
 
   /**
    * Igual que {@link #suggestRemediation} pero para la cola de trabajos: NO devuelve un texto de
