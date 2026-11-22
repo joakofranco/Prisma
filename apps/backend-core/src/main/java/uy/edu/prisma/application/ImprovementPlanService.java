@@ -1,6 +1,7 @@
 package uy.edu.prisma.application;
 
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -34,6 +35,7 @@ import uy.edu.prisma.web.dto.Dto.AiSuggestionFeedbackBatchDto;
 import uy.edu.prisma.web.dto.Dto.AiSuggestionFeedbackDto;
 import uy.edu.prisma.web.dto.Dto.CreateImprovementPlanDto;
 import uy.edu.prisma.web.dto.Dto.ImprovementPlanDto;
+import uy.edu.prisma.web.dto.Dto.PlanBaselineDto;
 import uy.edu.prisma.web.dto.Dto.RemediationTipsDto;
 import uy.edu.prisma.web.dto.Dto.RemediationTipsRequestDto;
 import uy.edu.prisma.web.dto.Dto.SuggestedImprovementDto;
@@ -147,6 +149,17 @@ public class ImprovementPlanService {
         .toList();
   }
 
+  public PlanBaselineDto baseline(UUID evaluationId) {
+    Evaluation eval =
+        evaluationRepo
+            .findById(evaluationId)
+            .orElseThrow(() -> new ResourceNotFoundException("Evaluación", evaluationId));
+    currentUser.assertOrganizationAccess(eval.getOrganization().getId());
+    repo.markOverdue();
+    return PlanBaseline.compare(
+        repo.findByEvaluationIdOrderByCreatedAtDesc(evaluationId), LocalDate.now());
+  }
+
   public ImprovementPlanDto create(CreateImprovementPlanDto dto) {
     Evaluation eval =
         evaluationRepo
@@ -183,6 +196,9 @@ public class ImprovementPlanService {
             .priority(priority)
             .status(PlanStatus.PENDING)
             .dueDate(dueDate)
+            .baselineDueDate(dueDate)
+            .baselinePriority(priority)
+            .baselineResponsible(dto.responsible())
             .comments(normalizeComments(dto.comments()))
             .build();
     return toDto(repo.save(plan));
@@ -269,6 +285,13 @@ public class ImprovementPlanService {
     plan.setResponsible(responsible);
     plan.setPriority(priority);
     plan.setDueDate(dueDate);
+    if (status == PlanStatus.COMPLETED) {
+      if (plan.getStatus() != PlanStatus.COMPLETED) {
+        plan.setCompletedAt(OffsetDateTime.now());
+      }
+    } else {
+      plan.setCompletedAt(null);
+    }
     plan.setStatus(status);
     plan.setComments(comments);
     ImprovementPlan saved = repo.save(plan);

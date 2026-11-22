@@ -4,6 +4,52 @@ export function gapRows(results: MaturityResult[]): MaturityResult[] {
   return results.filter((r) => r.nextLevel !== null && (r.missingControls ?? []).length > 0);
 }
 
+export interface GapCategoryGroup {
+  id: string;
+  name: string;
+  rows: MaturityResult[];
+  controlCount: number;
+}
+
+export interface GapFunctionGroup {
+  id: string;
+  name: string;
+  categories: GapCategoryGroup[];
+  subcategoryCount: number;
+  controlCount: number;
+}
+
+export function gapTree(rows: MaturityResult[]): GapFunctionGroup[] {
+  const functions = new Map<string, GapFunctionGroup>();
+  const categories = new Map<string, GapCategoryGroup>();
+  for (const row of rows) {
+    let fn = functions.get(row.functionId);
+    if (!fn) {
+      fn = {
+        id: row.functionId,
+        name: row.functionName,
+        categories: [],
+        subcategoryCount: 0,
+        controlCount: 0,
+      };
+      functions.set(row.functionId, fn);
+    }
+    const key = `${row.functionId}/${row.categoryId}`;
+    let category = categories.get(key);
+    if (!category) {
+      category = { id: key, name: row.categoryName, rows: [], controlCount: 0 };
+      categories.set(key, category);
+      fn.categories.push(category);
+    }
+    const controls = (row.missingControls ?? []).length;
+    category.rows.push(row);
+    category.controlCount += controls;
+    fn.subcategoryCount += 1;
+    fn.controlCount += controls;
+  }
+  return [...functions.values()];
+}
+
 export function withoutGapCount(results: MaturityResult[]): number {
   return results.length - gapRows(results).length;
 }

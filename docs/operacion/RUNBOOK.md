@@ -525,6 +525,35 @@ de `infra/keycloak/themes/`.
 2. `make restart`
 3. Todos los usuarios deben re-loguearse.
 
+## Sellado de los PDF (RF-REP-06, PRI-314)
+
+Los PDF de los reportes salen firmados por PRISMA y por el usuario que los descarga (ver
+[`API.md`](../arquitectura/API.md)). Operación:
+
+- **Activarlo.** `make report-signing-cert` emite el certificado intermedio «PRISMA – Sellado de
+  reportes» con la CA interna y lo guarda, con su cadena, en `infra/tls/signing/report-signing.p12`
+  (ignorado por git; solo contiene la clave del certificado intermedio, nunca la de la CA raíz). El
+  comando imprime una contraseña si no se le da `PDF_SIGNING_KEYSTORE_PASSWORD`. Poner en el `.env`
+  `PDF_SIGNING_ENABLED=true` y esa contraseña, y recrear: `docker compose up -d --force-recreate
+  backend-core`. Requiere haber corrido antes `make certs` (necesita `infra/tls/ca.key`).
+- **Producción.** `docker-compose.prod.yml` fija `PDF_SIGNING_ENABLED=true`: si el keystore falta o
+  la contraseña no es la correcta, `backend-core` no arranca (se prefiere no arrancar a emitir
+  reportes sin firma sin que nadie lo note). En desarrollo, sin la variable, los reportes salen sin
+  firmar y el log avisa.
+- **Verificar un PDF.** En **Reportes → Verificar documento** se sube el PDF y se ve si fue sellado
+  por PRISMA, firmado por el usuario, no se modificó y la emisión figura en la bitácora. Lo mismo
+  por API: `POST /api/reports/verify`.
+- **Los lectores de PDF** (Adobe Reader, etc.) mostrarán «firma válida, identidad desconocida»
+  hasta que se importe `infra/tls/ca.crt` como raíz de confianza; la verificación de PRISMA no
+  depende de eso.
+- **Rotación y vencimiento.** El certificado dura 5 años (`CERT_DAYS`). Para renovarlo se repite
+  `make report-signing-cert` (pide confirmación) y se recrea `backend-core`. Los PDF firmados antes
+  siguen verificándose mientras la CA raíz sea la misma. **Regenerar la CA** (`make certs-force`)
+  obliga a emitir de nuevo el certificado de sellado, y los PDF anteriores dejan de verificarse
+  como de confianza.
+- **El PDF verificado debe ser el descargado tal cual.** Abrirlo y volver a guardarlo, imprimirlo a
+  PDF o editarlo cambia su contenido y la verificación lo marca como modificado.
+
 ## SLOs objetivo
 
 - Disponibilidad: 99.5%

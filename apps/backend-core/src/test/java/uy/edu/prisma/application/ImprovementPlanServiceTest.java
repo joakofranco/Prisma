@@ -903,4 +903,125 @@ class ImprovementPlanServiceTest {
                 new uy.edu.prisma.web.dto.Dto.AiSuggestionFeedbackBatchDto(
                     List.of(feedback(UUID.randomUUID(), "REJECTED", null)))));
   }
+
+  // ---- RF-PLN-07 (PRI-308): línea base ----
+
+  @Test
+  void createStampsTheBaselineWithTheInitialValues() {
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(repo.save(any(ImprovementPlan.class))).thenAnswer(inv -> inv.getArgument(0));
+    LocalDate due = LocalDate.now().plusDays(20);
+
+    service.create(
+        new CreateImprovementPlanDto(
+            eval.getId(), null, "Definir la política", "Ana", "HIGH", due.toString(), null));
+
+    org.mockito.ArgumentCaptor<ImprovementPlan> saved =
+        org.mockito.ArgumentCaptor.forClass(ImprovementPlan.class);
+    verify(repo).save(saved.capture());
+    assertEquals(due, saved.getValue().getBaselineDueDate());
+    assertEquals(ImprovementPlan.Priority.HIGH, saved.getValue().getBaselinePriority());
+    assertEquals("Ana", saved.getValue().getBaselineResponsible());
+    assertNull(saved.getValue().getCompletedAt());
+  }
+
+  @Test
+  void createWithoutADueDateUsesTheDefaultDeadlineAsBaseline() {
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(repo.save(any(ImprovementPlan.class))).thenAnswer(inv -> inv.getArgument(0));
+
+    service.create(
+        new CreateImprovementPlanDto(eval.getId(), null, "Acción", null, null, null, null));
+
+    org.mockito.ArgumentCaptor<ImprovementPlan> saved =
+        org.mockito.ArgumentCaptor.forClass(ImprovementPlan.class);
+    verify(repo).save(saved.capture());
+    assertEquals(LocalDate.now().plusMonths(6), saved.getValue().getBaselineDueDate());
+    assertEquals(ImprovementPlan.Priority.MEDIUM, saved.getValue().getBaselinePriority());
+  }
+
+  @Test
+  void updateNeverTouchesTheBaseline() {
+    LocalDate original = LocalDate.now().plusDays(10);
+    ImprovementPlan plan = existingPlan(ImprovementPlan.PlanStatus.PENDING, original);
+    plan.setBaselineDueDate(original);
+    plan.setBaselinePriority(ImprovementPlan.Priority.HIGH);
+    plan.setBaselineResponsible("Ana");
+
+    service.update(
+        plan.getId(),
+        new UpdateImprovementPlanDto(
+            null, "Bruno", "LOW", LocalDate.now().plusDays(40).toString(), null, null));
+
+    assertEquals(original, plan.getBaselineDueDate());
+    assertEquals(ImprovementPlan.Priority.HIGH, plan.getBaselinePriority());
+    assertEquals("Ana", plan.getBaselineResponsible());
+    assertEquals(LocalDate.now().plusDays(40), plan.getDueDate());
+  }
+
+  @Test
+  void completingAnActionStampsTheCloseDateAndReopeningClearsIt() {
+    ImprovementPlan plan =
+        existingPlan(ImprovementPlan.PlanStatus.IN_PROGRESS, LocalDate.now().plusDays(10));
+
+    service.update(plan.getId(), statusOnly("COMPLETED"));
+    assertNotNull(plan.getCompletedAt());
+
+    service.update(plan.getId(), statusOnly("IN_PROGRESS"));
+    assertNull(plan.getCompletedAt());
+  }
+
+  @Test
+  void editingACompletedActionKeepsItsCloseDate() {
+    ImprovementPlan plan =
+        existingPlan(ImprovementPlan.PlanStatus.COMPLETED, LocalDate.now().plusDays(10));
+    java.time.OffsetDateTime closed = java.time.OffsetDateTime.now().minusDays(3);
+    plan.setCompletedAt(closed);
+
+    service.update(
+        plan.getId(), new UpdateImprovementPlanDto(null, null, null, null, null, "revisado"));
+
+    assertEquals(closed, plan.getCompletedAt());
+  }
+
+  @Test
+  void editingALegacyCompletedActionDoesNotInventACloseDate() {
+    ImprovementPlan plan =
+        existingPlan(ImprovementPlan.PlanStatus.COMPLETED, LocalDate.now().plusDays(10));
+
+    service.update(
+        plan.getId(), new UpdateImprovementPlanDto(null, null, null, null, null, "revisado"));
+
+    assertNull(plan.getCompletedAt());
+  }
+
+  @Test
+  void baselineChecksAccessMarksOverdueAndComparesThePlan() {
+    LocalDate original = LocalDate.now().plusDays(10);
+    ImprovementPlan plan =
+        ImprovementPlan.builder()
+            .id(UUID.randomUUID())
+            .evaluation(eval)
+            .action("Acción")
+            .dueDate(original.plusDays(5))
+            .baselineDueDate(original)
+            .build();
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(repo.findByEvaluationIdOrderByCreatedAtDesc(eval.getId())).thenReturn(List.of(plan));
+
+    uy.edu.prisma.web.dto.Dto.PlanBaselineDto result = service.baseline(eval.getId());
+
+    verify(currentUser).assertOrganizationAccess(eval.getOrganization().getId());
+    verify(repo).markOverdue();
+    assertEquals(1, result.summary().total());
+    assertEquals(5, result.items().get(0).dueDateShiftDays());
+  }
+
+  @Test
+  void baselineThrowsWhenEvaluationMissing() {
+    UUID id = UUID.randomUUID();
+    when(evaluationRepo.findById(id)).thenReturn(Optional.empty());
+
+    assertThrows(ResourceNotFoundException.class, () -> service.baseline(id));
+  }
 }

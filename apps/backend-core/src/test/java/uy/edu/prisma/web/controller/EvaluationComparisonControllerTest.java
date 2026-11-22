@@ -15,6 +15,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import uy.edu.prisma.application.ComparisonPdfService;
 import uy.edu.prisma.application.EvaluationComparisonService;
+import uy.edu.prisma.application.ReportSealingService;
 import uy.edu.prisma.web.dto.Dto.ComparisonCandidateDto;
 import uy.edu.prisma.web.dto.Dto.EvaluationComparisonDto;
 
@@ -23,11 +24,14 @@ class EvaluationComparisonControllerTest {
 
   @Mock private EvaluationComparisonService service;
   @Mock private ComparisonPdfService pdf;
+  @Mock private ReportSealingService sealing;
   private MockMvc mvc;
 
   @BeforeEach
   void setUp() {
-    mvc = MockMvcBuilders.standaloneSetup(new EvaluationComparisonController(service, pdf)).build();
+    mvc =
+        MockMvcBuilders.standaloneSetup(new EvaluationComparisonController(service, pdf, sealing))
+            .build();
   }
 
   @Test
@@ -62,12 +66,16 @@ class EvaluationComparisonControllerTest {
   void downloadsThePdf() throws Exception {
     UUID a = UUID.randomUUID();
     UUID b = UUID.randomUUID();
-    when(pdf.generate(a, b)).thenReturn(new byte[] {37, 80, 68, 70});
+    byte[] generated = new byte[] {37, 80, 68, 70};
+    byte[] sealed = new byte[] {37, 80, 68, 70, 1, 2, 3};
+    when(pdf.generate(a, b)).thenReturn(generated);
+    when(sealing.seal(generated, "comparativo", a)).thenReturn(sealed);
 
     mvc.perform(
             get("/api/evaluations/compare/pdf").param("a", a.toString()).param("b", b.toString()))
         .andExpect(status().isOk())
         .andExpect(content().contentType("application/pdf"))
+        .andExpect(content().bytes(sealed))
         .andExpect(
             header()
                 .string(
