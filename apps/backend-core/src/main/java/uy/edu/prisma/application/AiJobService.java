@@ -46,8 +46,7 @@ import uy.edu.prisma.web.dto.Dto.GuideJobRequestDto;
 @Service
 public class AiJobService {
 
-  private static final org.slf4j.Logger log =
-      org.slf4j.LoggerFactory.getLogger(AiJobService.class);
+  private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(AiJobService.class);
 
   private static final Set<Status> ACTIVE = Set.of(Status.QUEUED, Status.RUNNING);
   private static final int LIST_LIMIT = 50;
