@@ -242,6 +242,57 @@ Métricas (Prometheus, `/actuator/prometheus`): `prisma_ai_job_queue_wait_second
 `prisma_ai_ollama_tokens_total{kind="prompt|completion"}` y
 `prisma_ai_ollama_seconds_total{phase="prompt_eval|generation|load"}`.
 
+### Lote de guías y evidencia global (hito 4)
+
+**Lote de guías (F3).** `POST /api/improvement/suggestions/tips/batch` (`PRISMA_ADMIN`, `ORG_RESPONSIBLE`):
+`{items:[{controlId, evaluationId?, functionName?, categoryName?, subcategoryName?, currentLevel, targetLevel}]}`
+(1 a 100 ítems; el tope efectivo es `AI_JOBS_MAX_BATCH_SIZE`, 20) → **`202`** `{batchId, jobs:[{controlId, jobId, status}]}`.
+Crea **un trabajo `GUIDE` por control** con **prioridad de lote** (0): un pedido interactivo suelto pasa
+siempre antes. Un control que ya tiene un trabajo activo (misma organización, control y niveles) **reutiliza
+ese trabajo** y no se duplica (incluido el mismo control repetido en el lote). Topes: `400` si el lote supera
+`AI_JOBS_MAX_BATCH_SIZE`; `429` si sumaría más de `AI_JOBS_MAX_PENDING_BATCH_PER_ORG` (60) trabajos de lote
+activos en la organización. Los trabajos de lote **no cuentan** contra el tope de pedidos sueltos
+(`AI_JOBS_MAX_PENDING_PER_ORG`), que ahora cuenta solo guías sueltas (los trabajos del sistema —indexar,
+precalcular, clasificar— tampoco lo agotan).
+
+Avance: `GET /api/ai/jobs?ids=<id>,<id>,…` (hasta 100) devuelve el estado de varios trabajos de una vez,
+con la guía de los que terminaron (el mismo `AiJobDto`, que ahora trae `controlId` y `batchId`); los ids que ya
+no existen se omiten y la organización de cada trabajo se verifica. `DELETE /api/ai/jobs/batches/{batchId}` →
+`{cancelled}`: cancela de un lote lo que **sigue en cola** (lo que ya corre termina). No hay pregeneración
+de guías (D12): el lote se pide a mano.
+
+**Evidencia global (F4).** Una evidencia subida **sin control** se indexa con `control_id = ""`.
+1. *Citas:* la búsqueda de citas de un control incluye ahora también los fragmentos de la evidencia global de
+   la misma evaluación (D7); cada cita trae `unassigned` (`true` = «sin control asignado») y se guarda con esa
+   marca. Aceptarla valida el control como cualquier cita.
+2. *Preclasificación:* cuando una evidencia global termina de indexarse se encola un trabajo
+   `EVIDENCE_CLASSIFY` (lote, del sistema) que compara cada control de la evaluación (acotados a su perfil
+   comunitario, si lo tiene) con los fragmentos de esa evidencia y guarda los **3 más probables** como
+   sugerencias con su puntaje. `GET /api/evidence/evaluation/{evaluationId}/suggestions` (`PRISMA_ADMIN`,
+   `AUDITOR`, evaluación `IN_AUDIT`, `409` si no) las lista: `{id, evidenceId, fileName, controlId,
+   controlCode, controlDescription, score, rank, status}`. `POST /api/evidence/suggestions/{id}/decision`
+   `{decision: ACCEPTED|REJECTED}` las decide. **Son solo sugerencias (D7): aceptar una NO asigna la
+   evidencia a ese control** (una política típica respalda varios); el control pasa a la lista de la
+   auditoría y los fragmentos de la evidencia global ya entran en sus citas. Cada decisión deja una fila
+   anónima y mínima en `ai_evidence_classification_feedback` (control, puntaje, posición, decisión: sin
+   organización, evaluación, usuario, archivo ni texto, D15). Al volver a clasificar se conservan las
+   decididas (y no se vuelven a sugerir) y se rehacen las pendientes. `backend-ai`: `POST
+   /api/v1/evidence/classify` (`{organization_id, evaluation_id, evidence_id, candidates:[{control_id, query}],
+   top_n}` → `{suggestions:[{control_id, score, fragment_id}]}`); `AI_CLASSIFY_MIN_SCORE` (sin definir = los 3
+   mejores) filtra por puntaje.
+
+**Correcciones tras las pruebas en el servidor (3.3, 3.4, 3.6).**
+- *Espera propia:* backend-core llama a `/evidence/classify` con `AI_CLASSIFY_READ_TIMEOUT` (300 s por
+  defecto), aparte de `AI_READ_TIMEOUT` (60 s). Si backend-core corta, backend-ai **cancela** el cálculo
+  (como `/rag/remediation-tips`). Los vectores de los controles se calculan una vez y se guardan en
+  memoria; la similitud se calcula en memoria con la misma escala que las citas.
+- *Errores:* un fallo del índice o del embedding responde `503 {code, detail, retryable:true}`
+  (`INDEX_UNAVAILABLE` / `INDEX_INCONSISTENT`) en vez de una lista vacía; el trabajo reintenta.
+- *Sin confianza calibrada:* la respuesta de `/evidence/classify` y `EvidenceSuggestionDto` traen
+  `calibrated` (`false` mientras `AI_CLASSIFY_MIN_SCORE` no esté definido); la pantalla lo marca.
+- *Reintento:* `POST /api/evidence/{evidenceId}/classification/retry` (`PRISMA_ADMIN`): `202 {queued}`;
+  `409` si la evaluación no está en auditoría, la evidencia ya tiene control o no está indexada.
+
 ### Citas guardadas e indexación con estado (hito 3)
 
 **Citas guardadas (C2).** `GET /api/evidence/evaluation/{e}/control/{c}/citations` devuelve **primero lo guardado**

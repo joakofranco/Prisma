@@ -8,8 +8,11 @@ request antes de llegar acá.
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from app.api.v1.rag import run_until_disconnect
+from app.core.config import get_settings
 from app.core.security import verify_internal_key
 from app.rag.evidence_store import EvidenceStore
 
@@ -35,6 +38,8 @@ class EvidenceIngestResponse(BaseModel):
 class EvidenceCitation(BaseModel):
     # Id estable del fragmento (evidencia + posicion): permite conservar la decision del auditor.
     fragment_id: str | None = None
+    # True = viene de evidencia sin control asignado (global): se muestra como tal.
+    unassigned: bool = False
     evidence_id: str | None
     file_name: str | None
     location: str | None
@@ -52,6 +57,32 @@ class EvidenceCitationsRequest(BaseModel):
 
 class EvidenceCitationsResponse(BaseModel):
     citations: list[EvidenceCitation]
+
+
+class ClassifyCandidate(BaseModel):
+    control_id: str = Field(min_length=1)
+    query: str = Field(min_length=1, max_length=4000)
+
+
+class EvidenceClassifyRequest(BaseModel):
+    organization_id: str = Field(min_length=1)
+    evaluation_id: str = Field(min_length=1)
+    evidence_id: str = Field(min_length=1)
+    candidates: list[ClassifyCandidate] = Field(min_length=1, max_length=1500)
+    top_n: int = Field(default=3, ge=1, le=10)
+
+
+class ClassifySuggestion(BaseModel):
+    control_id: str
+    score: float
+    fragment_id: str | None = None
+
+
+class EvidenceClassifyResponse(BaseModel):
+    suggestions: list[ClassifySuggestion]
+    # False = AI_CLASSIFY_MIN_SCORE sin definir: los puntajes no tienen un umbral calibrado con
+    # datos reales y las sugerencias son «sin confianza calibrada» (3.4).
+    calibrated: bool = False
 
 
 def _store(request: Request) -> EvidenceStore:
@@ -87,6 +118,30 @@ async def evidence_citations(
         top_k=body.top_k,
     )
     return EvidenceCitationsResponse(citations=[EvidenceCitation(**r) for r in results])
+
+
+@evidence_router.post("/classify", response_model=EvidenceClassifyResponse)
+async def classify_evidence(
+    request: Request, body: EvidenceClassifyRequest
+) -> EvidenceClassifyResponse | JSONResponse:
+    """Sugiere a que controles podria pertenecer una evidencia sin control asignado (D7)."""
+    # Si backend-core corta por timeout, el cálculo se cancela (antes seguía y saturaba la CPU).
+    results = await run_until_disconnect(
+        request,
+        _store(request).classify(
+            organization_id=body.organization_id,
+            evaluation_id=body.evaluation_id,
+            evidence_id=body.evidence_id,
+            candidates=[c.model_dump() for c in body.candidates],
+            top_n=body.top_n,
+        ),
+    )
+    if isinstance(results, JSONResponse):
+        return results
+    return EvidenceClassifyResponse(
+        suggestions=[ClassifySuggestion(**r) for r in results],
+        calibrated=get_settings().ai_classify_min_score is not None,
+    )
 
 
 @evidence_router.delete("/{organization_id}/{evidence_id}")

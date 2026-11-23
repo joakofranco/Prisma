@@ -428,6 +428,40 @@
         <p>No hay brechas pendientes para sugerir. Complete la evaluación o revise el catálogo.</p>
       </div>
       <div v-else class="max-h-[60vh] overflow-y-auto space-y-3 -mr-2 pr-2">
+        <div
+          class="flex flex-wrap items-center gap-3 p-3 rounded-lg bg-indigo-50 border border-indigo-100 dark:bg-indigo-950 dark:border-indigo-900"
+          data-testid="batch-bar"
+        >
+          <BaseButton
+            variant="secondary"
+            :disabled="selectedForBatch.length === 0 || batchRunning"
+            data-testid="generate-batch"
+            @click="generateSelected"
+          >
+            <SparklesIcon class="w-4 h-4" />
+            Generar con IA para las seleccionadas ({{ selectedForBatch.length }})
+          </BaseButton>
+          <span
+            v-if="batchProgress.total > 0"
+            class="text-xs text-indigo-800 dark:text-indigo-300"
+            role="status"
+            data-testid="batch-progress"
+          >
+            {{ batchProgress.done }} de {{ batchProgress.total }} listas<template
+              v-if="batchProgress.failed > 0"
+              >, {{ batchProgress.failed }} con error</template
+            >
+          </span>
+          <button
+            v-if="batchProgress.queued > 0"
+            type="button"
+            class="text-xs text-slate-600 underline hover:text-slate-800 dark:text-slate-300"
+            data-testid="cancel-batch"
+            @click="cancelBatch"
+          >
+            Cancelar lote
+          </button>
+        </div>
         <p class="text-xs text-slate-500 dark:text-slate-400">
           Generadas a partir de las respuestas por debajo del nivel objetivo, ordenadas por
           prioridad. Revise, edite y seleccione las que quiera crear como acciones del plan.
@@ -685,6 +719,8 @@
     status: AiJobStatus;
     queuePosition: number | null;
     error: string | null;
+    /** Lote al que pertenece (si se pidió como lote). */
+    batchId?: string | null;
   }
   const jobsByKey = reactive<Record<string, GuideJobState>>({});
   // Texto que «Usar en la acción» copió a la acción de cada sugerencia: sirve de referencia para
@@ -730,6 +766,7 @@
   function stopPolling() {
     pollTimers.forEach((timer) => clearTimeout(timer));
     pollTimers.clear();
+    stopBatchPolling();
   }
 
   function dropJob(key: string) {
@@ -750,6 +787,7 @@
       jobId: job.id,
       status: job.status,
       queuePosition: job.queuePosition,
+      batchId: job.batchId ?? jobsByKey[key]?.batchId ?? null,
       error:
         job.status === 'FAILED'
           ? jobErrorMessage(job)
@@ -841,7 +879,11 @@
         .map(async ([key, jobId]) => {
           try {
             const { data } = await aiJobsService.get(jobId);
-            if (applyJob(key, data)) schedulePoll(key, 0);
+            if (applyJob(key, data)) {
+              // Un trabajo de lote se consulta junto con los demás del lote.
+              if (data.batchId) scheduleBatchPoll(0);
+              else schedulePoll(key, 0);
+            }
           } catch {
             // venció, se borró o no es accesible: se olvida
             delete jobsByKey[key];
@@ -849,6 +891,117 @@
           }
         }),
     );
+  }
+
+  // ---- Lote de guías (F3) ----------------------------------------------------------------
+  // «Generar con IA para las seleccionadas»: una guía por control, con prioridad de lote (una guía
+  // pedida suelta pasa antes). El avance se consulta de una vez para todos los trabajos del lote.
+  // Las filas que ya tienen guía o un trabajo activo se saltean.
+  const selectedForBatch = computed(() =>
+    suggestions.value.filter((s) => s.selected && !isJobActive(s) && !tipsByKey[sKey(s)]),
+  );
+
+  // Avance del lote: los trabajos de las filas que se pidieron como lote.
+  const batchProgress = computed(() => {
+    const batched = Object.values(jobsByKey).filter((j) => j.batchId);
+    return {
+      total: batched.length,
+      done: batched.filter((j) => j.status === 'SUCCEEDED').length,
+      failed: batched.filter((j) => j.status === 'FAILED' || j.status === 'EXPIRED').length,
+      queued: batched.filter((j) => j.status === 'QUEUED').length,
+      active: batched.filter((j) => isActive(j.status)).length,
+    };
+  });
+  const batchRunning = computed(() => batchProgress.value.active > 0);
+
+  let batchTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function stopBatchPolling() {
+    if (batchTimer) clearTimeout(batchTimer);
+    batchTimer = null;
+  }
+
+  function scheduleBatchPoll(attempt: number) {
+    stopBatchPolling();
+    batchTimer = setTimeout(async () => {
+      batchTimer = null;
+      const active = Object.entries(jobsByKey).filter(([, j]) => j.batchId && isActive(j.status));
+      if (active.length === 0) return;
+      try {
+        const { data } = await aiJobsService.getMany([...new Set(active.map(([, j]) => j.jobId))]);
+        for (const [key, state] of active) {
+          const job = data.find((j) => j.id === state.jobId);
+          if (job) applyJob(key, job);
+        }
+      } catch {
+        // falla transitoria: se sigue intentando
+      } finally {
+        void refreshActiveCount();
+      }
+      if (Object.values(jobsByKey).some((j) => j.batchId && isActive(j.status))) {
+        scheduleBatchPoll(attempt + 1);
+      }
+    }, nextPollDelay(attempt));
+  }
+
+  async function generateSelected() {
+    const rows = selectedForBatch.value;
+    if (rows.length === 0) return;
+    try {
+      const { data } = await improvementService.requestTipsBatch(
+        rows.map((s) => ({
+          controlId: s.controlId,
+          evaluationId,
+          functionName: s.functionName,
+          categoryName: s.categoryName,
+          subcategoryName: s.subcategoryName,
+          currentLevel: s.currentLevel,
+          targetLevel: s.targetLevel,
+        })),
+      );
+      // Un control puede aparecer en varias filas (una por subcategoría): comparten el trabajo.
+      for (const row of rows) {
+        const item = data.jobs.find((j) => j.controlId === row.controlId);
+        if (!item) continue;
+        jobsByKey[sKey(row)] = {
+          jobId: item.jobId,
+          status: item.status,
+          queuePosition: null,
+          error: null,
+          batchId: data.batchId,
+        };
+      }
+      persistJobs();
+      scheduleBatchPoll(0);
+      void refreshActiveCount();
+    } catch (err) {
+      notification.error(getErrorMessage(err, 'No se pudo generar el lote de sugerencias'));
+    }
+  }
+
+  async function cancelBatch() {
+    const batchId = Object.values(jobsByKey).find((j) => j.batchId)?.batchId;
+    if (!batchId) return;
+    try {
+      await aiJobsService.cancelBatch(batchId);
+      // Lo que seguía en cola queda cancelado; lo que ya corría termina: se refresca el estado.
+      const ids = [
+        ...new Set(
+          Object.values(jobsByKey)
+            .filter((j) => j.batchId)
+            .map((j) => j.jobId),
+        ),
+      ];
+      const { data } = await aiJobsService.getMany(ids);
+      for (const [key, state] of Object.entries(jobsByKey)) {
+        const job = data.find((j) => j.id === state.jobId);
+        if (job) applyJob(key, job);
+        else if (state.batchId) dropJob(key);
+      }
+      void refreshActiveCount();
+    } catch (err) {
+      notification.error(getErrorMessage(err, 'No se pudo cancelar el lote'));
+    }
   }
 
   function useTips(s: EditableSuggestion) {

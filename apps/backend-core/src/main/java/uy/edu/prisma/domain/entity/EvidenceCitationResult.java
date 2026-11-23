@@ -65,6 +65,11 @@ public class EvidenceCitationResult {
   @Builder.Default
   private Status status = Status.PENDING;
 
+  /** El fragmento sale de evidencia sin control asignado (global): «sin control asignado». */
+  @Column(nullable = false)
+  @Builder.Default
+  private boolean unassigned = false;
+
   /** La evidencia del control cambió: la próxima consulta vuelve a buscar y fusiona. */
   @Column(nullable = false)
   @Builder.Default

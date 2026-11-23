@@ -393,6 +393,8 @@ export interface EvidenceCitation {
   controlId?: string | null;
   /** La evidencia del control cambió: la próxima búsqueda actualiza (conserva las decisiones). */
   stale?: boolean;
+  /** El fragmento sale de evidencia sin control asignado (global). */
+  unassigned?: boolean;
   evidenceId: string | null;
   fileName: string | null;
   location: string | null;
@@ -600,6 +602,31 @@ export interface AiJob {
   finishedAt: string | null;
   /** Solo cuando terminó bien. */
   guide: GeneratedGuide | null;
+  /** Control de la guía y lote al que pertenece (si se pidió como lote). */
+  controlId?: string | null;
+  batchId?: string | null;
+}
+
+/** Lote de guías: un trabajo por control (los que ya tenían uno lo reutilizan). */
+export interface GuideBatchAccepted {
+  batchId: string;
+  jobs: { controlId: string; jobId: string; status: AiJobStatus }[];
+}
+
+/** Sugerencia de la IA de a qué control podría pertenecer una evidencia sin control (D7). */
+export interface EvidenceSuggestion {
+  id: string;
+  evidenceId: string;
+  fileName: string;
+  controlId: string;
+  controlCode: string;
+  controlDescription: string;
+  /** Puntaje de relevancia (0-1 aprox.): «confianza». */
+  score: number;
+  rank: number;
+  status: 'PENDING' | 'ACCEPTED' | 'REJECTED';
+  /** false = el puntaje no tiene un umbral calibrado con datos reales (AI_CLASSIFY_MIN_SCORE). */
+  calibrated?: boolean;
 }
 
 export interface AiJobAccepted {

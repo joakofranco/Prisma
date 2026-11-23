@@ -402,6 +402,8 @@ sobrescribibles desde el `.env` (ver `.env.example`).
 | `AI_NUM_PREDICT` | `1024` | tope de tokens de la respuesta. **Provisional**: definirlo con las guías reales |
 | `AI_TEMPERATURE`, `AI_SEED`, `AI_NUM_THREAD` | sin definir | si están definidos se envían; si no, rige el valor del modelo. `AI_NUM_THREAD` depende del servidor (12 hilos dio 9,4 tok/s contra 6,7 por defecto en el VPS de pruebas) |
 | `AI_CITATION_MIN_SCORE` | sin definir | puntaje mínimo de una cita de evidencia (relevancia de Chroma); lo que puntúa menos no se devuelve. **Sin definir = no se filtra**: el valor se calibra con el feedback real de `ai_citation_feedback` (el banco de pruebas calcula uno sugerido; `[POR VERIFICAR]`) |
+| `AI_CLASSIFY_READ_TIMEOUT` | `300s` | espera de `backend-core` a la preclasificación de evidencia global (`backend-ai` la cancela si se corta); aparte de `AI_READ_TIMEOUT` |
+| `AI_CLASSIFY_MIN_SCORE` | sin definir | puntaje mínimo para sugerir un control al preclasificar evidencia global; **sin definir = se sugieren siempre los 3 mejores**. Se calibra con el feedback real de `ai_evidence_classification_feedback` (`[POR VERIFICAR]`) |
 | `AI_THINK` | `false` | razonamiento; solo se aplica si el modelo declara la capability `thinking` (en `llama3`/`gemma3` Ollama responde 400) |
 | `AI_WARMUP` | `true` | precalentar LLM y embedding al arrancar |
 | `AI_WARMUP_CHECK_SECONDS` | `60` | cada cuánto revisar que los modelos sigan cargados y recargarlos si no (`0` = desactivado) |
@@ -451,6 +453,8 @@ solo precalentar al arrancar) y, si LLM o embedding ya no están cargados (por e
 | `AI_JOBS_MAX_ATTEMPTS` | `2` | intentos por trabajo |
 | `AI_JOBS_RETRY_BACKOFF_SECONDS` | `30` | espera base entre intentos (se duplica) |
 | `AI_JOBS_POLL_INTERVAL_MS` | `2000` | cada cuánto mira la cola cada réplica |
+| `AI_JOBS_MAX_BATCH_SIZE` | `20` | controles por lote de guías (`400` si se supera) |
+| `AI_JOBS_MAX_PENDING_BATCH_PER_ORG` | `60` | trabajos de lote activos por organización (`429`); aparte del tope de pedidos sueltos |
 | `AI_GUIDE_FEEDBACK_DAYS` | `30` | a los cuántos días una guía mostrada y no usada cuenta como rechazada |
 | `AI_GUIDE_READ_TIMEOUT` | `300s` | espera de `backend-core` a `backend-ai` por una guía. Es también el valor por defecto de `docker-compose.yml` y `docker-stack.yml` (antes 120 s: con 2 guías en paralelo varias lo superaban y se cortaban). Si se supera el trabajo falla con `AI_TIMEOUT` |
 
@@ -500,6 +504,30 @@ Las citas de la IA se guardan en `evidence_citation_result` (por evaluación y c
 encola un trabajo `CITATIONS_PRECOMPUTE`; al salir de auditoría se descartan las guardadas (el dictamen queda).
 `backend-ai` devuelve un id estable por fragmento (`<evidenceId>::<posición>`): **reindexar el mismo archivo da los
 mismos ids**, así las decisiones del auditor sobreviven a un reindexado.
+
+## Lote de guías y evidencia global (hito 4)
+
+**Lote.** «Generar con IA para las seleccionadas» pide una guía por control como trabajos de **lote**
+(prioridad 0): comparten el tope global de `AI_JOBS_CONCURRENCY` con todo lo demás y **un pedido interactivo
+(una guía suelta, una indexación) pasa antes**. Con 2 en paralelo y ~60-80 s por guía, 10 guías tardan
+~6 a 7 minutos en vaciarse. Consulta de solo lectura:
+
+```sql
+SELECT batch_id, status, count(*) FROM prisma.ai_job WHERE batch_id IS NOT NULL GROUP BY 1, 2;
+SELECT type, priority, status, count(*) FROM prisma.ai_job GROUP BY 1, 2, 3 ORDER BY 1, 2;
+```
+
+**Evidencia global.** Los fragmentos de la evidencia subida sin control entran en las citas de cualquier
+control de la evaluación (marcados `unassigned`). Al indexarse, un trabajo `EVIDENCE_CLASSIFY` compara cada
+control candidato con la evidencia (una consulta de embedding por control: ~165 a ~670 por evidencia) y guarda
+las 3 sugerencias:
+
+```sql
+SELECT e.file_name, c.code, s.score, s.rank, s.status
+FROM prisma.evidence_control_suggestion s
+JOIN prisma.evidence e ON e.id = s.evidence_id JOIN prisma.catalog_controls c ON c.id = s.control_id
+ORDER BY e.file_name, s.rank;
+```
 
 ## Después de recrear contenedores: nginx y Watchtower
 

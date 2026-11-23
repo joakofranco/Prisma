@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     # valor se calibra con el feedback real de ai_citation_feedback (hoy [POR VERIFICAR]; el banco
     # de pruebas calcula uno sugerido). Un puntaje menor que el umbral no se devuelve.
     ai_citation_min_score: float | None = None
+    # Puntaje minimo para sugerir un control al preclasificar evidencia global (D7). Sin definir =
+    # se sugieren siempre los 3 mejores; el valor se calibra con el feedback real ([POR VERIFICAR]).
+    ai_classify_min_score: float | None = None
     chroma_persist_dir: str = "/data/chroma"
     rag_docs_dir: str = "/data/knowledge-base"
     rag_chunk_size: int = 1000
@@ -61,6 +64,7 @@ class Settings(BaseSettings):
         "ai_num_thread",
         "ai_prompt_max_tokens",
         "ai_citation_min_score",
+        "ai_classify_min_score",
         mode="before",
     )
     @classmethod

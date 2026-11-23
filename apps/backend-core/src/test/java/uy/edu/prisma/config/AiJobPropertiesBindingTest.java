@@ -32,6 +32,8 @@ class AiJobPropertiesBindingTest {
           assertEquals(30, p.retryBackoffSeconds());
           assertEquals(2000L, p.pollIntervalMs());
           assertEquals(30, p.guideFeedbackDays());
+          assertEquals(20, p.maxBatchSize());
+          assertEquals(60, p.maxPendingBatchPerOrg());
         });
   }
 
@@ -46,7 +48,9 @@ class AiJobPropertiesBindingTest {
             "prisma.ai.jobs.max-attempts=3",
             "prisma.ai.jobs.retry-backoff-seconds=0",
             "prisma.ai.jobs.poll-interval-ms=250",
-            "prisma.ai.jobs.guide-feedback-days=15")
+            "prisma.ai.jobs.guide-feedback-days=15",
+            "prisma.ai.jobs.max-batch-size=5",
+            "prisma.ai.jobs.max-pending-batch-per-org=12")
         .run(
             ctx -> {
               AiJobProperties p = ctx.getBean(AiJobProperties.class);
@@ -58,6 +62,8 @@ class AiJobPropertiesBindingTest {
               assertEquals(0, p.retryBackoffSeconds());
               assertEquals(250L, p.pollIntervalMs());
               assertEquals(15, p.guideFeedbackDays());
+              assertEquals(5, p.maxBatchSize());
+              assertEquals(12, p.maxPendingBatchPerOrg());
             });
   }
 

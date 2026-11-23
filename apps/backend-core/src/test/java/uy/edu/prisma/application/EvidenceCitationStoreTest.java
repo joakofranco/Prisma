@@ -200,6 +200,36 @@ class EvidenceCitationStoreTest {
   }
 
   @Test
+  void theUnassignedFlagOfAGlobalFragmentIsSavedAndExposed() {
+    savedAre();
+    EvidenceCitationDto global =
+        new EvidenceCitationDto(
+            null, "politica.pdf", "p1", "t", 0.7, "e::1", null, null, null, null, false, true);
+
+    List<EvidenceCitationResult> result = store.merge(eval, control, List.of(global));
+
+    assertTrue(result.get(0).isUnassigned());
+    assertTrue(EvidenceCitationStore.toDto(result.get(0)).unassigned());
+  }
+
+  @Test
+  void aFragmentThatBecameAssignedLosesTheUnassignedMark() {
+    EvidenceCitationResult before = existing("e::1", Status.ACCEPTED, 0);
+    before.setUnassigned(true);
+    savedAre(before);
+
+    store.merge(
+        eval,
+        control,
+        List.of(
+            new EvidenceCitationDto(
+                null, "a.pdf", "p", "t", 0.9, "e::1", null, null, null, null, false, false)));
+
+    assertFalse(before.isUnassigned());
+    assertEquals(Status.ACCEPTED, before.getStatus());
+  }
+
+  @Test
   void invalidatingAControlDropsTheUndecidedAndMarksTheDecidedStale() {
     store.invalidateControl(eval.getId(), control.getId());
 

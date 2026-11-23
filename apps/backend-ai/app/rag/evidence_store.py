@@ -12,13 +12,16 @@ de citas a la evaluacion/control puntual dentro de esa organizacion.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import math
 import os
 import tempfile
 from pathlib import Path
 from typing import Any
 
 import httpx
+import numpy as np
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
 
@@ -29,6 +32,22 @@ from app.rag.chroma_client import build_chroma_client
 logger = logging.getLogger(__name__)
 
 _DOWNLOAD_TIMEOUT_SECONDS = 30.0
+# Textos por llamada de embedding al calcular los vectores de los controles: cada lote es un punto
+# donde se puede cancelar el cálculo si el cliente se desconectó.
+_EMBED_BATCH = 64
+
+
+def _relevance_scores(queries: Any, fragments: Any) -> Any:
+    """Puntaje de relevancia de cada consulta contra cada fragmento (matriz C x F).
+
+    Misma escala que ``similarity_search_with_relevance_scores`` con la colección por defecto de
+    Chroma (espacio L2: distancia al cuadrado) y la función de langchain ``1 - d / sqrt(2)``:
+    los puntajes de la preclasificación son comparables con los de las citas.
+    """
+    q = np.asarray(queries, dtype=float)
+    f = np.asarray(fragments, dtype=float)
+    squared = (q**2).sum(axis=1)[:, None] - 2.0 * (q @ f.T) + (f**2).sum(axis=1)[None, :]
+    return 1.0 - np.maximum(squared, 0.0) / math.sqrt(2.0)
 
 
 class IndexSearchError(Exception):
@@ -74,6 +93,8 @@ class EvidenceStore:
         # UN solo cliente Chroma para indexar, borrar y buscar: antes el borrado abría otro cliente
         # distinto del que usaba la búsqueda (3.5). Se recrea si el índice queda inconsistente.
         self._client: Any | None = None
+        # Vectores de las consultas de los controles (siempre los mismos), por (modelo, texto).
+        self._query_cache: dict[tuple[str, str], Any] = {}
 
     def _chroma_client(self) -> Any:
         if self._client is None:
@@ -215,8 +236,16 @@ class EvidenceStore:
     ) -> list[dict[str, Any]]:
         """Busca los fragmentos mas relevantes de evidencia DE ESTA ORGANIZACION unicamente,
         acotado a la evaluacion (y control, si se especifica)."""
+        # D7: ademas de la evidencia del control, entran los fragmentos de la evidencia GLOBAL
+        # (control_id = "") de la misma evaluacion: una politica sin control asignado puede
+        # respaldar cualquier control. Se marcan "unassigned" para mostrarlos como tales.
         where: dict[str, Any] = (
-            {"$and": [{"evaluation_id": evaluation_id}, {"control_id": control_id}]}
+            {
+                "$and": [
+                    {"evaluation_id": evaluation_id},
+                    {"control_id": {"$in": [control_id, ""]}},
+                ]
+            }
             if control_id
             else {"evaluation_id": evaluation_id}
         )
@@ -231,6 +260,7 @@ class EvidenceStore:
         return [
             {
                 "fragment_id": getattr(doc, "id", None),
+                "unassigned": not (doc.metadata.get("control_id") or ""),
                 "evidence_id": doc.metadata.get("evidence_id"),
                 "file_name": doc.metadata.get("file_name"),
                 "location": doc.metadata.get("location"),
@@ -266,6 +296,88 @@ class EvidenceStore:
                 "El índice de evidencia sigue fallando tras reabrirlo (org %s)", organization_id
             )
             raise _search_error(exc) from exc
+
+    async def classify(
+        self,
+        *,
+        organization_id: str,
+        evaluation_id: str,
+        evidence_id: str,
+        candidates: list[dict[str, str]],
+        top_n: int = 3,
+    ) -> list[dict[str, Any]]:
+        """Preclasifica una evidencia global: devuelve los ``top_n`` controles candidatos cuya
+        consulta ("codigo: descripcion") mas se parece a algun fragmento de ESA evidencia.
+
+        Es solo una SUGERENCIA (D7): no asigna nada. Si el indice o el embedding fallan lanza
+        ``IndexSearchError`` (503, recuperable): una lista vacia pareceria «ninguna sugerencia».
+
+        Costo (3.3): antes era una consulta a Chroma por cada control (671) y un embed de las 671
+        consultas EN CADA llamada (55 a 68 s). Ahora:
+
+        1. los vectores de los fragmentos de la evidencia se traen una sola vez (``get``);
+        2. los vectores de las consultas de los controles se calculan una sola vez y se guardan en
+           memoria (son siempre los mismos); solo se embeben los que faltan, por lotes;
+        3. la similitud se calcula en memoria con la MISMA escala que las citas (distancia L2 al
+           cuadrado de Chroma -> ``1 - d / sqrt(2)`` de langchain).
+
+        Cada lote es un ``await``: si el cliente se desconecta y la tarea se cancela, el siguiente
+        lote ya no se calcula (ver ``run_until_disconnect``).
+        """
+        if not candidates:
+            return []
+        try:
+            fragment_ids, fragment_vectors = await asyncio.to_thread(
+                self._fragment_vectors, organization_id, evaluation_id, evidence_id
+            )
+            if not fragment_ids:
+                return []
+            query_vectors = await self._query_vectors_for([c["query"] for c in candidates])
+        except IndexSearchError:
+            raise
+        except Exception as exc:
+            logger.exception("Falla la preclasificacion de la evidencia %s", evidence_id)
+            raise _search_error(exc) from exc
+
+        scores = _relevance_scores(query_vectors, fragment_vectors)  # candidatos x fragmentos
+        scored: list[dict[str, Any]] = []
+        for index, candidate in enumerate(candidates):
+            best = int(scores[index].argmax())
+            scored.append(
+                {
+                    "control_id": candidate["control_id"],
+                    "score": float(scores[index][best]),
+                    "fragment_id": fragment_ids[best],
+                }
+            )
+        minimum = self.settings.ai_classify_min_score
+        scored = [s for s in scored if minimum is None or s["score"] >= minimum]
+        scored.sort(key=lambda s: s["score"], reverse=True)
+        return scored[:top_n]
+
+    def _fragment_vectors(
+        self, organization_id: str, evaluation_id: str, evidence_id: str
+    ) -> tuple[list[str], Any]:
+        """Ids y vectores de los fragmentos de UNA evidencia (con recuperación ante índice roto)."""
+        where = {"$and": [{"evidence_id": evidence_id}, {"evaluation_id": evaluation_id}]}
+        data = self._search_with_recovery(
+            organization_id, lambda store: store.get(where=where, include=["embeddings"])
+        )
+        ids = list(data.get("ids") or [])
+        embeddings = data.get("embeddings")
+        vectors = np.asarray(embeddings if embeddings is not None else [], dtype=float)
+        return ids, vectors
+
+    async def _query_vectors_for(self, texts: list[str]) -> Any:
+        """Vectores de las consultas, con caché en memoria por (modelo de embedding, texto)."""
+        model = self.settings.ollama_embedding_model
+        missing = [t for t in dict.fromkeys(texts) if (model, t) not in self._query_cache]
+        for start in range(0, len(missing), _EMBED_BATCH):
+            batch = missing[start : start + _EMBED_BATCH]
+            vectors = await asyncio.to_thread(self.embeddings.embed_documents, batch)
+            for text, vector in zip(batch, vectors, strict=True):
+                self._query_cache[(model, text)] = np.asarray(vector, dtype=float)
+        return np.vstack([self._query_cache[(model, t)] for t in texts])
 
     # ------------------------------------------------------------------
     # Mantenimiento

@@ -27,7 +27,9 @@ public class AiJob {
     /** Indexar una evidencia en backend-ai (C7). Trabajo del sistema: sin usuario solicitante. */
     EVIDENCE_INDEX,
     /** Buscar y guardar las citas de los controles con evidencia al pasar a auditoría (C2). */
-    CITATIONS_PRECOMPUTE
+    CITATIONS_PRECOMPUTE,
+    /** Sugerir controles para una evidencia global ya indexada (C1 / D7). Del sistema. */
+    EVIDENCE_CLASSIFY
   }
 
   public enum Status {
@@ -79,6 +81,10 @@ public class AiJob {
 
   @Column(name = "dedup_key", nullable = false, length = 64)
   private String dedupKey;
+
+  /** Agrupa los GUIDE de un mismo pedido de lote (prioridad de lote); null = pedido suelto. */
+  @Column(name = "batch_id")
+  private UUID batchId;
 
   @Column(name = "result_ref")
   private UUID resultRef;

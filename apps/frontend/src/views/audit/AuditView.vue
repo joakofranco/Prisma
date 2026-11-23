@@ -52,7 +52,88 @@
         </p>
 
         <div
-          v-if="controlsWithEvidence.length === 0"
+          v-if="globalEvidences.length > 0"
+          class="mb-4 p-3 rounded-lg bg-indigo-50 border border-indigo-100 dark:bg-indigo-950 dark:border-indigo-900"
+          data-testid="global-evidence"
+        >
+          <p class="text-sm font-medium text-indigo-900 dark:text-indigo-200">
+            Evidencia sin control asignado
+          </p>
+          <p class="text-xs text-indigo-800 dark:text-indigo-300 mt-1">
+            Sus fragmentos entran en las citas de <strong>cualquier</strong> control, marcados «Sin
+            control asignado». La IA sugiere a qué controles podría pertenecer: aceptar una
+            sugerencia <strong>no asigna</strong> el archivo, solo suma ese control a la lista para
+            buscar sus citas.
+          </p>
+          <ul class="mt-2 space-y-2">
+            <li
+              v-for="ev in globalEvidences"
+              :key="ev.id"
+              class="text-xs text-slate-700 dark:text-slate-200"
+              data-testid="global-evidence-item"
+            >
+              <span class="font-medium">{{ ev.fileName }}</span>
+              <span class="text-slate-500 dark:text-slate-400"> · {{ indexLabel(ev) }}</span>
+              <button
+                v-if="canRetryClassification(ev)"
+                type="button"
+                class="ml-2 font-medium px-2 py-0.5 rounded border text-indigo-700 border-indigo-300 hover:bg-indigo-100 dark:text-indigo-300 dark:border-indigo-700 dark:hover:bg-indigo-900"
+                title="Si la IA no llegó a sugerir controles (por ejemplo por un corte), pedila de nuevo"
+                data-testid="retry-classification"
+                @click="retryClassification(ev)"
+              >
+                Reintentar sugerencias
+              </button>
+              <div
+                v-for="sug in visibleSuggestions(ev.id)"
+                :key="sug.id"
+                class="mt-1 ml-3 flex flex-wrap items-center gap-2"
+                data-testid="suggestion"
+              >
+                <span>
+                  Podría pertenecer a <strong>{{ sug.controlCode }}</strong> (confianza
+                  {{ formatScore(sug.score) }})
+                </span>
+                <span
+                  v-if="sug.calibrated !== true"
+                  class="text-[11px] font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
+                  title="Todavía no hay un umbral calibrado con datos reales: el puntaje orienta, pero no garantiza que el control sea el correcto. Revisá el contenido antes de aceptar."
+                  data-testid="suggestion-uncalibrated"
+                >
+                  Sin confianza calibrada
+                </span>
+                <template v-if="sug.status === 'PENDING' && canWriteObservations">
+                  <button
+                    type="button"
+                    class="font-medium px-2 py-0.5 rounded border text-green-700 border-green-300 hover:bg-green-50 dark:text-green-400 dark:border-green-700 dark:hover:bg-green-950"
+                    data-testid="accept-suggestion"
+                    @click="decideSuggestion(sug, 'ACCEPTED')"
+                  >
+                    Aceptar
+                  </button>
+                  <button
+                    type="button"
+                    class="font-medium px-2 py-0.5 rounded border text-red-700 border-red-300 hover:bg-red-50 dark:text-red-400 dark:border-red-700 dark:hover:bg-red-950"
+                    data-testid="reject-suggestion"
+                    @click="decideSuggestion(sug, 'REJECTED')"
+                  >
+                    Rechazar
+                  </button>
+                </template>
+                <span
+                  v-else-if="sug.status === 'ACCEPTED'"
+                  class="text-green-700 dark:text-green-400"
+                  data-testid="suggestion-accepted"
+                >
+                  Aceptada: buscá sus citas abajo
+                </span>
+              </div>
+            </li>
+          </ul>
+        </div>
+
+        <div
+          v-if="citationControls.length === 0 && globalEvidences.length === 0"
           class="text-center py-6 text-slate-500 dark:text-slate-400 text-sm"
         >
           Aún no hay evidencia cargada para esta evaluación.
@@ -60,7 +141,7 @@
 
         <div v-else class="space-y-3">
           <div
-            v-for="c in controlsWithEvidence"
+            v-for="c in citationControls"
             :key="c.controlId"
             class="border border-slate-200 dark:border-slate-700 rounded-lg p-4"
           >
@@ -113,6 +194,14 @@
                     {{ cit.fileName }} <span v-if="cit.location">· {{ cit.location }}</span>
                   </p>
                   <span class="flex items-center gap-2 shrink-0">
+                    <span
+                      v-if="cit.unassigned"
+                      class="text-[11px] font-medium px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200"
+                      title="Viene de evidencia sin control asignado"
+                      data-testid="citation-unassigned"
+                    >
+                      Sin control asignado
+                    </span>
                     <span
                       v-if="isBestCitation(c.controlId, i)"
                       class="text-[11px] font-medium px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300"
@@ -534,6 +623,7 @@
     CitationFeedbackResult,
     Evidence,
     EvidenceCitation,
+    EvidenceSuggestion,
     CitationSource,
     MaturityCatalog,
   } from '@/types';
@@ -596,6 +686,95 @@
 
   const evidences = ref<Evidence[]>([]);
   const controlsWithEvidence = ref<ControlWithEvidence[]>([]);
+
+  // Evidencia sin control asignado (global) y las sugerencias de la IA sobre a qué controles podría
+  // pertenecer (D7): solo sugerencias, aceptar una no asigna el archivo.
+  const globalEvidences = computed(() =>
+    evidences.value.filter((e) => !e.controlId && (e.scanStatus ?? 'CLEAN') === 'CLEAN'),
+  );
+  const suggestions = ref<EvidenceSuggestion[]>([]);
+
+  function visibleSuggestions(evidenceId: string) {
+    return suggestions.value
+      .filter((s) => s.evidenceId === evidenceId && s.status !== 'REJECTED')
+      .sort((a, b) => a.rank - b.rank);
+  }
+
+  function indexLabel(ev: Evidence) {
+    const labels: Record<string, string> = {
+      INDEXED: 'indexada',
+      QUEUED: 'en cola para indexar',
+      INDEXING: 'indexando…',
+      ERROR: 'error al indexar',
+      NOT_INDEXABLE: 'no se indexa',
+    };
+    return ev.indexStatus
+      ? (labels[ev.indexStatus] ?? ev.indexStatus)
+      : ev.aiIndexed
+        ? 'indexada'
+        : '—';
+  }
+
+  // Controles para buscar citas: los que tienen evidencia propia y los de sugerencias aceptadas
+  // sobre evidencia global (la evidencia global ya entra en las citas de cualquier control).
+  const citationControls = computed<ControlWithEvidence[]>(() => {
+    const known = new Set(controlsWithEvidence.value.map((c) => c.controlId));
+    const extra = suggestions.value
+      .filter((s) => s.status === 'ACCEPTED' && !known.has(s.controlId))
+      .filter((s, i, all) => all.findIndex((o) => o.controlId === s.controlId) === i)
+      .map((s) => ({
+        controlId: s.controlId,
+        code: s.controlCode,
+        description: s.controlDescription,
+      }));
+    return [...controlsWithEvidence.value, ...extra];
+  });
+
+  async function loadSuggestions() {
+    if (evaluation.value?.status !== 'IN_AUDIT' || globalEvidences.value.length === 0) return;
+    try {
+      const { data } = await evidenceService.getSuggestions(evaluationId);
+      suggestions.value = data;
+    } catch {
+      // sin sugerencias todavía (la IA las calcula en segundo plano): no es un error
+    }
+  }
+
+  // Solo PRISMA_ADMIN, en auditoría, con la evidencia ya indexada y sin sugerencias (3.6).
+  function canRetryClassification(ev: Evidence) {
+    return (
+      authStore.hasAnyRole('PRISMA_ADMIN') &&
+      canWriteObservations.value &&
+      (ev.indexStatus === 'INDEXED' || (!ev.indexStatus && ev.aiIndexed)) &&
+      suggestions.value.every((s) => s.evidenceId !== ev.id)
+    );
+  }
+
+  async function retryClassification(ev: Evidence) {
+    try {
+      const { data } = await evidenceService.retryClassification(ev.id);
+      notification.success(
+        data.queued
+          ? 'Preclasificación en cola: las sugerencias aparecen en unos minutos'
+          : 'La preclasificación ya está en curso',
+      );
+    } catch (err) {
+      notification.error(getErrorMessage(err, 'No se pudo reintentar la preclasificación'));
+    }
+  }
+
+  async function decideSuggestion(sug: EvidenceSuggestion, decision: 'ACCEPTED' | 'REJECTED') {
+    try {
+      const { data } = await evidenceService.decideSuggestion(sug.id, decision);
+      const idx = suggestions.value.findIndex((s) => s.id === sug.id);
+      if (idx !== -1)
+        suggestions.value[idx] = { ...suggestions.value[idx], ...(data ?? {}), status: decision };
+    } catch (err) {
+      notification.error(
+        getErrorMessage(err, 'No se pudo registrar la decisión sobre la sugerencia'),
+      );
+    }
+  }
   const searchingControlId = ref<string | null>(null);
   const citationsByControl = reactive<Record<string, EvidenceCitation[]>>({});
   // «La IA no está disponible» es distinto de «sin resultados» (PRI-359).
@@ -1158,7 +1337,7 @@
 
   onMounted(() => {
     fetchObservations();
-    loadControlsWithEvidence().then(loadSavedCitations);
+    loadControlsWithEvidence().then(() => Promise.all([loadSavedCitations(), loadSuggestions()]));
     loadVerdicts();
   });
 </script>

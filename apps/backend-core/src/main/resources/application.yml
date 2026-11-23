@@ -167,12 +167,20 @@ prisma:
     # pasar de los 120 s. No afecta al frontend, nginx ni Cloudflare: el pedido de encolado
     # responde enseguida y el resultado se consulta por separado.
     guide-read-timeout: ${AI_GUIDE_READ_TIMEOUT:300s}
+    # Preclasificación de evidencia global: compara ~670 controles con la evidencia (55 a 68 s a
+    # solas, más de 2 min con dos a la vez en el VPS). Aparte de la espera general de 60 s.
+    classify-read-timeout: ${AI_CLASSIFY_READ_TIMEOUT:300s}
+    # Mismo valor que en backend-ai: solo para saber si el umbral está calibrado (vacío = sin calibrar).
+    classify-min-score: ${AI_CLASSIFY_MIN_SCORE:}
     # Cola de trabajos de IA (ver AiJobProperties). Todo opcional.
     jobs:
       enabled: ${AI_JOBS_ENABLED:true}
       # Tope GLOBAL (suma de réplicas) de trabajos corriendo contra Ollama.
       concurrency: ${AI_JOBS_CONCURRENCY:2}
       max-pending-per-org: ${AI_JOBS_MAX_PENDING_PER_ORG:20}
+      # Lote de guías: controles por lote y trabajos de lote activos por organización.
+      max-batch-size: ${AI_JOBS_MAX_BATCH_SIZE:20}
+      max-pending-batch-per-org: ${AI_JOBS_MAX_PENDING_BATCH_PER_ORG:60}
       result-ttl-days: ${AI_JOBS_RESULT_TTL_DAYS:30}
       max-attempts: ${AI_JOBS_MAX_ATTEMPTS:2}
       retry-backoff-seconds: ${AI_JOBS_RETRY_BACKOFF_SECONDS:30}

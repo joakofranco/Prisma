@@ -116,6 +116,7 @@ public class EvidenceCitationStore {
       current.setLocation(f.location());
       current.setSnippet(f.snippet());
       current.setScore(f.score());
+      current.setUnassigned(f.unassigned());
       current.setPosition(position++);
       current.setStale(false);
       current.setUpdatedAt(now);
@@ -197,6 +198,7 @@ public class EvidenceCitationStore {
         r.getStatus().name(),
         r.getPosition(),
         r.getControl().getId(),
-        r.isStale());
+        r.isStale(),
+        r.isUnassigned());
   }
 }

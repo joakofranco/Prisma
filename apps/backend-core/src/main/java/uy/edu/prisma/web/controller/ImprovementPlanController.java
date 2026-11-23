@@ -11,6 +11,8 @@ import uy.edu.prisma.application.ImprovementPlanService;
 import uy.edu.prisma.web.dto.Dto.AiJobAcceptedDto;
 import uy.edu.prisma.web.dto.Dto.AiSuggestionFeedbackBatchDto;
 import uy.edu.prisma.web.dto.Dto.CreateImprovementPlanDto;
+import uy.edu.prisma.web.dto.Dto.GuideBatchAcceptedDto;
+import uy.edu.prisma.web.dto.Dto.GuideBatchRequestDto;
 import uy.edu.prisma.web.dto.Dto.GuideJobRequestDto;
 import uy.edu.prisma.web.dto.Dto.ImprovementPlanDto;
 import uy.edu.prisma.web.dto.Dto.PlanBaselineDto;
@@ -64,6 +66,18 @@ public class ImprovementPlanController {
   public ResponseEntity<AiJobAcceptedDto> suggestionTipsAsync(
       @Valid @RequestBody GuideJobRequestDto dto) {
     return ResponseEntity.accepted().body(aiJobService.enqueueGuide(dto));
+  }
+
+  /**
+   * Lote de guías: una guía por control, en segundo plano y con prioridad de lote. Responde {@code
+   * 202} con el id del lote y el trabajo de cada control; el avance se consulta con {@code GET
+   * /api/ai/jobs?ids=…} y se cancela con {@code DELETE /api/ai/jobs/batches/{batchId}}.
+   */
+  @PostMapping("/suggestions/tips/batch")
+  @PreAuthorize("hasAnyRole('PRISMA_ADMIN','ORG_RESPONSIBLE')")
+  public ResponseEntity<GuideBatchAcceptedDto> suggestionTipsBatch(
+      @Valid @RequestBody GuideBatchRequestDto dto) {
+    return ResponseEntity.accepted().body(aiJobService.enqueueGuideBatch(dto));
   }
 
   @PostMapping("/suggestions/feedback")

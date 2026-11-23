@@ -108,7 +108,10 @@ def test_citations_filters_by_evaluation_and_control(tmp_path: Path) -> None:
         )
     )
 
-    assert fake.last_filter == {"$and": [{"evaluation_id": "eval-1"}, {"control_id": "control-9"}]}
+    # D7: la evidencia del control Y la global (control_id vacio) de la misma evaluacion.
+    assert fake.last_filter == {
+        "$and": [{"evaluation_id": "eval-1"}, {"control_id": {"$in": ["control-9", ""]}}]
+    }
 
 
 def test_citations_without_control_filters_only_by_evaluation(tmp_path: Path) -> None:
@@ -427,6 +430,13 @@ class FakeApiEvidenceStore:
         self.ingested.append(kwargs)
         return 3
 
+    async def classify(self, **kwargs) -> list[dict]:
+        self.classified = kwargs
+        return [
+            {"control_id": "c-9", "score": 0.81, "fragment_id": "ev-1::2"},
+            {"control_id": "c-2", "score": 0.55, "fragment_id": "ev-1::0"},
+        ]
+
     async def citations(self, **kwargs) -> list[dict]:
         return [
             {
@@ -683,3 +693,336 @@ def test_the_citations_endpoint_exposes_fragment_id(client: TestClient) -> None:
         ).model_dump()["fragment_id"]
         == "ev::1"
     )
+
+
+# ----------------------------------------------------------------------------------
+# D7 — evidencia global en las citas y preclasificación
+# ----------------------------------------------------------------------------------
+
+
+def test_citations_mark_fragments_of_global_evidence_as_unassigned(tmp_path: Path) -> None:
+    store = EvidenceStore(settings=_settings(tmp_path))
+    store._stores["org-a"] = FakeCitationStore(
+        [
+            (Document(id="a::0", page_content="del control", metadata={"control_id": "c1"}), 0.9),
+            (Document(id="g::1", page_content="global", metadata={"control_id": ""}), 0.7),
+            (Document(id="h::2", page_content="sin clave", metadata={}), 0.6),
+        ]
+    )
+
+    result = asyncio.run(
+        store.citations(organization_id="org-a", evaluation_id="e", control_id="c1", query="q")
+    )
+
+    assert [r["unassigned"] for r in result] == [False, True, True]
+
+
+VOCAB = ["acceso", "contraseña", "respaldo", "copia", "incidente", "red"]
+
+
+class TopicEmbeddings:
+    """Vector = cuántas veces aparece cada palabra del vocabulario: el puntaje depende del tema.
+    Cuenta las llamadas para verificar la caché de los vectores de los controles."""
+
+    def __init__(self) -> None:
+        self.embedded: list[str] = []
+
+    def _vec(self, text: str) -> list[float]:
+        low = text.lower()
+        return [float(low.count(w)) + 0.01 for w in VOCAB]
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        self.embedded.extend(texts)
+        return [self._vec(t) for t in texts]
+
+    def embed_query(self, text: str) -> list[float]:
+        return self._vec(text)
+
+
+def _topic_store(tmp_path: Path, **settings: object) -> tuple[EvidenceStore, TopicEmbeddings]:
+    emb = TopicEmbeddings()
+    store = EvidenceStore(
+        settings=_settings(tmp_path, rag_chunk_size=400, rag_chunk_overlap=0, **settings),
+        embeddings=emb,
+    )
+
+    async def fake_load(url: str, name: str) -> list[Document]:
+        text = {
+            "accesos.txt": "gestion de acceso y contraseña de los usuarios. acceso minimo.",
+            "copias.txt": "copia de respaldo diaria, respaldo fuera del sitio y copia mensual.",
+        }[name]
+        return [Document(page_content=text, metadata={"source": name})]
+
+    store._download_and_load = fake_load  # type: ignore[method-assign]
+    return store, emb
+
+
+def _ingest(store: EvidenceStore, evidence_id: str, name: str, evaluation: str = "eval-1") -> None:
+    asyncio.run(
+        store.ingest(
+            organization_id="org-a",
+            evaluation_id=evaluation,
+            evidence_id=evidence_id,
+            control_id=None,
+            file_name=name,
+            file_url="u",
+        )
+    )
+
+
+def _candidates(*queries: str) -> list[dict[str, str]]:
+    return [{"control_id": f"c{i}", "query": q} for i, q in enumerate(queries)]
+
+
+def _classify(store: EvidenceStore, evidence_id: str, candidates: list[dict[str, str]], **kw):
+    return asyncio.run(
+        store.classify(
+            organization_id="org-a",
+            evaluation_id=kw.pop("evaluation_id", "eval-1"),
+            evidence_id=evidence_id,
+            candidates=candidates,
+            **kw,
+        )
+    )
+
+
+def test_classify_returns_the_controls_closest_to_the_evidence(tmp_path: Path) -> None:
+    store, _ = _topic_store(tmp_path)
+    _ingest(store, "ev-acc", "accesos.txt")
+    _ingest(store, "ev-cop", "copias.txt")
+    candidates = _candidates(
+        "AC-1: control de acceso y contraseña",
+        "BK-1: copia de respaldo",
+        "NW-1: seguridad de la red",
+    )
+
+    accesos = _classify(store, "ev-acc", candidates, top_n=2)
+    copias = _classify(store, "ev-cop", candidates, top_n=2)
+
+    assert accesos[0]["control_id"] == "c0" and copias[0]["control_id"] == "c1"
+    assert accesos[0]["score"] > accesos[1]["score"]
+    assert accesos[0]["fragment_id"] == "ev-acc::0"
+
+
+def test_classify_scores_match_what_chroma_gives_for_the_citations(tmp_path: Path) -> None:
+    """La preclasificación calcula en memoria, pero con LA MISMA escala que las citas."""
+    store, _ = _topic_store(tmp_path)
+    _ingest(store, "ev-acc", "accesos.txt")
+    query = "AC-1: control de acceso y contraseña"
+
+    mine = _classify(store, "ev-acc", _candidates(query))[0]["score"]
+
+    # Ojo: ``similarity_search_by_vector_with_relevance_scores`` devuelve la DISTANCIA cruda (no un
+    # puntaje de relevancia); la de texto sí aplica ``1 - d / sqrt(2)``, la que usan las citas.
+    chroma = store._connect("org-a").similarity_search_with_relevance_scores(
+        query, k=1, filter={"evidence_id": "ev-acc"}
+    )[0][1]
+    assert mine == pytest.approx(chroma, abs=1e-6)  # Chroma guarda float32
+
+
+def test_classify_only_looks_at_that_evidence_of_that_evaluation(tmp_path: Path) -> None:
+    store, _ = _topic_store(tmp_path)
+    _ingest(store, "ev-acc", "accesos.txt", evaluation="eval-1")
+    _ingest(store, "ev-cop", "copias.txt", evaluation="eval-1")
+    _ingest(store, "ev-other", "copias.txt", evaluation="eval-2")
+    candidates = _candidates("BK-1: copia de respaldo")
+
+    # La evidencia de accesos no tiene nada de respaldo: el fragmento que se elige es el suyo.
+    result = _classify(store, "ev-acc", candidates)
+    assert result[0]["fragment_id"] == "ev-acc::0"
+    # Con otra evaluación no hay fragmentos de esa evidencia: sin sugerencias.
+    assert _classify(store, "ev-acc", candidates, evaluation_id="eval-2") == []
+
+
+def test_classify_applies_the_optional_minimum_score(tmp_path: Path) -> None:
+    store, _ = _topic_store(tmp_path)
+    _ingest(store, "ev-acc", "accesos.txt")
+    candidates = _candidates("AC-1: acceso contraseña", "NW-1: red red red")
+    all_scores = _classify(store, "ev-acc", candidates, top_n=5)
+    threshold = (all_scores[0]["score"] + all_scores[1]["score"]) / 2
+
+    store2, _ = _topic_store(tmp_path / "otro", ai_classify_min_score=threshold)
+    _ingest(store2, "ev-acc", "accesos.txt")
+    filtered = _classify(store2, "ev-acc", candidates, top_n=5)
+
+    assert [r["control_id"] for r in filtered] == [all_scores[0]["control_id"]]
+
+
+def test_the_control_vectors_are_computed_once_and_reused(tmp_path: Path) -> None:
+    store, emb = _topic_store(tmp_path)
+    _ingest(store, "ev-acc", "accesos.txt")
+    _ingest(store, "ev-cop", "copias.txt")
+    candidates = _candidates(*[f"CTL-{i}: acceso respaldo {i}" for i in range(200)])
+    emb.embedded.clear()  # lo que se embebió al indexar los fragmentos no cuenta
+
+    _classify(store, "ev-acc", candidates)
+    first = len(emb.embedded)
+    _classify(store, "ev-cop", candidates)
+    _classify(store, "ev-acc", candidates)
+
+    assert first == 200, "la primera vez se embeben las 200 consultas"
+    assert len(emb.embedded) == 200, "después no se vuelve a embeber ninguna"
+
+
+def test_only_the_missing_control_vectors_are_embedded_in_batches(tmp_path: Path) -> None:
+    store, emb = _topic_store(tmp_path)
+    _ingest(store, "ev-acc", "accesos.txt")
+    emb.embedded.clear()
+    calls: list[int] = []
+    real = emb.embed_documents
+
+    def spy(texts: list[str]) -> list[list[float]]:
+        calls.append(len(texts))
+        return real(texts)
+
+    emb.embed_documents = spy  # type: ignore[method-assign]
+
+    _classify(store, "ev-acc", _candidates(*[f"c {i} acceso" for i in range(150)]))
+
+    assert calls == [64, 64, 22], "lotes de 64: cada uno es un punto de cancelación"
+
+
+def test_cancelling_between_batches_stops_the_calculation(tmp_path: Path) -> None:
+    store, emb = _topic_store(tmp_path)
+    _ingest(store, "ev-acc", "accesos.txt")
+    emb.embedded.clear()
+    calls: list[int] = []
+    real = emb.embed_documents
+
+    async def run() -> None:
+        task = asyncio.ensure_future(
+            store.classify(
+                organization_id="org-a",
+                evaluation_id="eval-1",
+                evidence_id="ev-acc",
+                candidates=_candidates(*[f"c {i} acceso" for i in range(300)]),
+            )
+        )
+
+        def spy(texts: list[str]) -> list[list[float]]:
+            calls.append(len(texts))
+            if len(calls) == 1:
+                task.cancel()  # el cliente se desconectó durante el primer lote
+            return real(texts)
+
+        emb.embed_documents = spy  # type: ignore[method-assign]
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(run())
+
+    assert len(calls) == 1, "tras cancelar no se calculan más lotes"
+
+
+def test_classify_without_candidates_returns_nothing(tmp_path: Path) -> None:
+    store = EvidenceStore(settings=_settings(tmp_path), embeddings=TopicEmbeddings())
+    assert _classify(store, "ev", []) == []
+
+
+def test_classify_raises_a_recoverable_error_if_the_index_or_the_embedding_fails(
+    tmp_path: Path,
+) -> None:
+    store, emb = _topic_store(tmp_path)
+    _ingest(store, "ev-acc", "accesos.txt")
+
+    def boom(texts: list[str]) -> list[list[float]]:
+        raise RuntimeError("ollama caído")
+
+    emb.embed_documents = boom  # type: ignore[method-assign]
+    with pytest.raises(IndexSearchError):
+        _classify(store, "ev-acc", _candidates("AC-1: acceso"))
+
+    class BrokenIndex:
+        def get(self, **kwargs):  # noqa: ANN003, ANN201
+            raise RuntimeError("chroma caido")
+
+    store2 = EvidenceStore(settings=_settings(tmp_path / "b"), embeddings=TopicEmbeddings())
+    store2._stores["org-a"] = BrokenIndex()
+    with pytest.raises(IndexSearchError):
+        _classify(store2, "ev", _candidates("AC-1: acceso"))
+
+
+def test_classify_time_with_671_controls_is_now_in_memory(tmp_path: Path) -> None:
+    """Medición local (CPU, sin Ollama): 671 controles contra una evidencia de 40 fragmentos."""
+    import time
+
+    store, emb = _topic_store(tmp_path)
+
+    async def fake_load(url: str, name: str) -> list[Document]:
+        return [
+            Document(page_content=f"acceso respaldo red incidente {i}. " * 4, metadata={})
+            for i in range(40)
+        ]
+
+    store._download_and_load = fake_load  # type: ignore[method-assign]
+    _ingest(store, "ev-big", "accesos.txt")
+    candidates = _candidates(*[f"CTL-{i}: acceso respaldo red {i}" for i in range(671)])
+
+    t0 = time.perf_counter()
+    _classify(store, "ev-big", candidates)
+    cold = time.perf_counter() - t0
+    t0 = time.perf_counter()
+    _classify(store, "ev-big", candidates)
+    warm = time.perf_counter() - t0
+
+    # Sin una consulta a Chroma por control, la segunda vez (vectores en caché) es casi instantánea.
+    assert warm < 1.0
+    print(
+        f"\n[medición] 671 controles: {cold * 1000:.0f} ms (1.ª vez), {warm * 1000:.0f} ms (caché)"
+    )
+
+
+def test_classify_endpoint(client: TestClient) -> None:
+    response = client.post(
+        "/api/v1/evidence/classify",
+        json={
+            "organization_id": "org-a",
+            "evaluation_id": "eval-1",
+            "evidence_id": "ev-1",
+            "candidates": [{"control_id": "c-9", "query": "PR.AA-01: cuentas"}],
+            "top_n": 2,
+        },
+    )
+
+    assert response.status_code == 200
+    suggestions = response.json()["suggestions"]
+    assert [s["control_id"] for s in suggestions] == ["c-9", "c-2"]
+    assert suggestions[0]["fragment_id"] == "ev-1::2"
+    assert app.state.evidence_store.classified["top_n"] == 2
+    # Sin AI_CLASSIFY_MIN_SCORE las sugerencias son «sin confianza calibrada» (3.4).
+    assert response.json()["calibrated"] is False
+
+
+def test_classify_endpoint_reports_calibrated_when_a_threshold_is_defined(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AI_CLASSIFY_MIN_SCORE", "0.52")
+    from app.core.config import get_settings
+
+    get_settings.cache_clear()
+    response = client.post(
+        "/api/v1/evidence/classify",
+        json={
+            "organization_id": "org-a",
+            "evaluation_id": "eval-1",
+            "evidence_id": "ev-1",
+            "candidates": [{"control_id": "c-9", "query": "PR.AA-01: cuentas"}],
+        },
+    )
+    get_settings.cache_clear()
+
+    assert response.json()["calibrated"] is True
+
+
+def test_classify_endpoint_rejects_an_empty_candidate_list(client: TestClient) -> None:
+    response = client.post(
+        "/api/v1/evidence/classify",
+        json={
+            "organization_id": "org-a",
+            "evaluation_id": "e",
+            "evidence_id": "ev",
+            "candidates": [],
+        },
+    )
+
+    assert response.status_code == 422
