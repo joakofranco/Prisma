@@ -375,9 +375,242 @@ make prod-secrets   # solo genera y muestra, sin levantar nada
 
 El script es `scripts/generate-prod-secrets.sh`.
 
+## Ollama: configuración y precalentamiento
+
+Hay **un solo Ollama por entorno** (servicio `ollama` de `docker-compose.yml` y de
+`docker-stack.yml`). Se configura por variables de entorno, todas con valor por defecto y
+sobrescribibles desde el `.env` (ver `.env.example`).
+
+**Servicio `ollama`:**
+
+| Variable | Por defecto | Para qué |
+|---|---|---|
+| `OLLAMA_KEEP_ALIVE` | `-1` | no descargar el modelo (sin esto se descarga a los 5 min y el siguiente pedido paga la carga en frío) |
+| `OLLAMA_NUM_PARALLEL` | `2` | pedidos simultáneos |
+| `OLLAMA_CONTEXT_LENGTH` | `16384` | contexto **por ranura**: la memoria crece con `CONTEXT_LENGTH × NUM_PARALLEL` |
+| `OLLAMA_MAX_LOADED_MODELS` | `2` | LLM y embedding cargados a la vez |
+| `OLLAMA_MAX_QUEUE` | `64` | cola interna de Ollama |
+
+**Servicio `backend-ai`** (opciones que envía en cada pedido):
+
+| Variable | Por defecto | Para qué |
+|---|---|---|
+| `OLLAMA_MODEL` | `llama3:8b` | modelo de LLM; cambiarlo es solo configuración |
+| `OLLAMA_EMBEDDING_MODEL` | `nomic-embed-text` | modelo de embedding. **Cambiarlo exige reindexar todas las colecciones** (`evidence-<org>` y la del marco): cambian las dimensiones (768 → 1024 con `bge-m3`) |
+| `AI_NUM_CTX` | `16384` | `num_ctx` que se **pide** en cada pedido. **Tiene que valer lo mismo que `OLLAMA_CONTEXT_LENGTH`**; si no, Ollama recarga el modelo. Ojo: el modelo puede tener un máximo menor (`llama3:8b` carga con **8192**, `nomic-embed-text` con **2048**); ver «Contexto efectivo» más abajo |
+| `AI_KEEP_ALIVE` | `-1` | `keep_alive` de cada pedido (igual que `OLLAMA_KEEP_ALIVE`) |
+| `AI_NUM_PREDICT` | `1024` | tope de tokens de la respuesta. **Provisional**: definirlo con las guías reales |
+| `AI_TEMPERATURE`, `AI_SEED`, `AI_NUM_THREAD` | sin definir | si están definidos se envían; si no, rige el valor del modelo. `AI_NUM_THREAD` depende del servidor (12 hilos dio 9,4 tok/s contra 6,7 por defecto en el VPS de pruebas) |
+| `AI_CITATION_MIN_SCORE` | sin definir | puntaje mínimo de una cita de evidencia (relevancia de Chroma); lo que puntúa menos no se devuelve. **Sin definir = no se filtra**: el valor se calibra con el feedback real de `ai_citation_feedback` (el banco de pruebas calcula uno sugerido; `[POR VERIFICAR]`) |
+| `AI_TRACE_RETENTION_DAYS` | `0` | días que se conservan las trazas del modo investigación; **0 = no se borran nunca**. `[POR VERIFICAR]` el plazo |
+| `OLLAMA_NUM_PARALLEL` (en `backend-ai`) | `2` | solo se informa en la traza; el valor real lo fija el servicio `ollama` |
+| `AI_CLASSIFY_READ_TIMEOUT` | `300s` | espera de `backend-core` a la preclasificación de evidencia global (`backend-ai` la cancela si se corta); aparte de `AI_READ_TIMEOUT` |
+| `AI_CLASSIFY_MIN_SCORE` | sin definir | puntaje mínimo para sugerir un control al preclasificar evidencia global; **sin definir = se sugieren siempre los 3 mejores**. Se calibra con el feedback real de `ai_evidence_classification_feedback` (`[POR VERIFICAR]`) |
+| `AI_THINK` | `false` | razonamiento; solo se aplica si el modelo declara la capability `thinking` (en `llama3`/`gemma3` Ollama responde 400) |
+| `AI_WARMUP` | `true` | precalentar LLM y embedding al arrancar |
+| `AI_WARMUP_CHECK_SECONDS` | `60` | cada cuánto revisar que los modelos sigan cargados y recargarlos si no (`0` = desactivado) |
+| `AI_PROMPT_MAX_TOKENS` | `min(AI_NUM_CTX, contexto efectivo) − AI_NUM_PREDICT − 256` | límite del prompt: si lo supera, `backend-ai` responde `413 PROMPT_TOO_LARGE` sin llamar a Ollama (Ollama lo recortaría a la mitad sin avisar). Definido a mano solo puede **achicar** el límite, nunca pasar el que permite el contexto efectivo |
+
+**Contexto efectivo.** `AI_NUM_CTX` es lo que se pide; Ollama carga cada modelo con `min(pedido,
+máximo del modelo)`. `backend-ai` toma el contexto real de `/api/ps` (`context_length`) al arrancar y
+cada vez que el vigilante revisa; si el modelo todavía no está cargado usa el máximo del modelo de
+`/api/show`. El límite del prompt se calcula con ese valor, así un prompt de 9 000 tokens no pasa el
+control con `llama3:8b` (8192) y no lo recorta Ollama en silencio. `GET /api/v1/runtime` lo muestra en
+`context`: `requested_num_ctx`, `llm.effective` (y su `source`: `ps` o `show`), `llm.used_for_limit`,
+`embedding.effective`, `embedding.input_max_tokens`, `prompt_max_tokens` y `mismatch` (`true` = el
+modelo carga con menos contexto que el pedido; conviene bajar `AI_NUM_CTX` y `OLLAMA_CONTEXT_LENGTH`
+al valor del modelo para no reservar memoria de más). En el log de arranque aparece un aviso si
+`RAG_CHUNK_SIZE` no entra en el contexto del embedding. Con Ollama caído `/api/v1/runtime` no trae
+`models.llm` ni `models.embedding` (solo las opciones configuradas y `ollama.reachable=false`).
+
+**Precalentamiento.** Al arrancar, `backend-ai` envía un pedido vacío al LLM y uno de `embed` al
+embedding, con las mismas opciones que usará la app, y reintenta cada 5 s (hasta ~10 min) mientras
+Ollama no responda. Corre en segundo plano: no demora el arranque ni el `healthcheck`. Si
+`backend-ai` corre con más de un proceso (`--workers 2` en el stack) cada uno lo hace; es idempotente.
+
+**Verificar** (en el servidor, sin credenciales):
+
+```bash
+docker compose exec ollama ollama ps          # ambos modelos cargados, "UNTIL: Forever"
+curl -s http://localhost:11434/api/ps          # lo mismo por API
+# opciones efectivas, digest, versión de Ollama y estado del precalentamiento:
+curl -s -H "X-Internal-Api-Key: $AI_INTERNAL_API_KEY" http://localhost:8000/api/v1/runtime
+```
+
+**Reinicio de Ollama.** Un vigilante revisa `/api/ps` cada `AI_WARMUP_CHECK_SECONDS` (60 s; `0` =
+solo precalentar al arrancar) y, si LLM o embedding ya no están cargados (por ejemplo tras
+`docker compose restart ollama`), los vuelve a precalentar. El contador `warmup.reloads` de
+`GET /api/v1/runtime` dice cuántas veces lo hizo.
+
+## Cola de trabajos de IA
+
+`backend-core` ejecuta las guías de IA como trabajos asíncronos. Variables (todas opcionales):
+
+| Variable | Por defecto | Para qué |
+|---|---|---|
+| `AI_JOBS_ENABLED` | `true` | enciende el trabajador (la API de encolado sigue funcionando) |
+| `AI_JOBS_CONCURRENCY` | `2` | tope **global** (suma de réplicas) de trabajos corriendo contra Ollama |
+| `AI_JOBS_MAX_PENDING_PER_ORG` | `20` | trabajos activos por organización (`429` si se supera) |
+| `AI_JOBS_RESULT_TTL_DAYS` | `30` | cuánto se conserva un resultado |
+| `AI_JOBS_MAX_ATTEMPTS` | `2` | intentos por trabajo |
+| `AI_JOBS_RETRY_BACKOFF_SECONDS` | `30` | espera base entre intentos (se duplica) |
+| `AI_JOBS_POLL_INTERVAL_MS` | `2000` | cada cuánto mira la cola cada réplica |
+| `AI_JOBS_MAX_BATCH_SIZE` | `20` | controles por lote de guías (`400` si se supera) |
+| `AI_JOBS_MAX_PENDING_BATCH_PER_ORG` | `60` | trabajos de lote activos por organización (`429`); aparte del tope de pedidos sueltos |
+| `AI_GUIDE_FEEDBACK_DAYS` | `30` | a los cuántos días una guía mostrada y no usada cuenta como rechazada |
+| `AI_GUIDE_READ_TIMEOUT` | `300s` | espera de `backend-core` a `backend-ai` por una guía. Es también el valor por defecto de `docker-compose.yml` y `docker-stack.yml` (antes 120 s: con 2 guías en paralelo varias lo superaban y se cortaban). Si se supera el trabajo falla con `AI_TIMEOUT` |
+
+`docker-compose.yml` y `docker-stack.yml` pasan todas estas variables a `backend-core` con su valor por
+defecto (`AI_CONNECT_TIMEOUT`, `AI_READ_TIMEOUT` y `AI_GUIDE_READ_TIMEOUT` también), así que alcanza con
+definirlas en el `.env` para cambiarlas; no hace falta tocar el compose. Las `AI_*` de Ollama
+(`AI_NUM_CTX`, `AI_NUM_PREDICT`, `AI_THINK`, etc.) van a `backend-ai`: ver la sección anterior.
+
+**Errores de un trabajo fallido** (`error_code`): `AI_UNAVAILABLE` (no se pudo conectar con `backend-ai`
+o respondió 502/503/504; se reintenta), `AI_TIMEOUT` (`backend-ai` aceptó el pedido pero no contestó
+dentro de `AI_GUIDE_READ_TIMEOUT`; **no se reintenta**: repetirlo ocuparía a Ollama otros minutos con la
+misma probabilidad de cortarse), `AI_ERROR` (5xx; se reintenta), `AI_REJECTED` (4xx), `PROMPT_TOO_LARGE`,
+`WORKER_LOST` e `INTERNAL_ERROR`.
+
+**Generación abandonada.** Cuando `backend-core` corta por timeout, `backend-ai` detecta que el cliente
+cerró la conexión (revisa cada segundo) y cancela el pedido al LLM; al cerrarse la conexión con Ollama,
+este aborta la generación y libera la ranura. En el log de `backend-ai` queda «Cliente desconectado: se
+abortó la generación en curso» (respuesta interna `499`). Antes la generación seguía hasta el final
+aunque nadie la leyera, y con la cola eso acumulaba trabajo inútil.
+
+Es seguro con las 2 réplicas de `backend-core` del stack. Estado en vivo (solo lectura):
+
+```sql
+SELECT status, count(*) FROM prisma.ai_job GROUP BY status;
+SELECT id, status, attempts, queue_wait_ms, run_ms, error_code FROM prisma.ai_job ORDER BY created_at DESC LIMIT 20;
+```
+
+## Indexación de evidencia y citas guardadas (hito 3)
+
+La indexación de evidencia ya no ocurre dentro de la subida: es un trabajo `EVIDENCE_INDEX` de la cola de IA
+(la misma de las guías, con el mismo tope global de `AI_JOBS_CONCURRENCY`, prioridad 5). Estado visible por
+evidencia: `QUEUED`, `INDEXING`, `INDEXED`, `ERROR`, `NOT_INDEXABLE`. Si `backend-ai` falla, la cola reintenta
+(`AI_JOBS_MAX_ATTEMPTS`, `AI_JOBS_RETRY_BACKOFF_SECONDS`) y, agotados los intentos, la evidencia queda en `ERROR`
+con el motivo y se puede reintentar. Consulta de solo lectura:
+
+```sql
+SELECT index_status, count(*) FROM prisma.evidence GROUP BY 1;
+SELECT file_name, index_status, index_error FROM prisma.evidence WHERE index_status = 'ERROR';
+SELECT type, status, count(*) FROM prisma.ai_job GROUP BY 1, 2;
+```
+
+Si `backend-core` **se apaga con evidencia en cola**, los trabajos siguen en la base y se retoman al arrancar (los
+`RUNNING` sin latido se reencolan). Con `AI_JOBS_ENABLED=false` la evidencia nueva queda `QUEUED` y no se indexa
+hasta encender el trabajador. Para volver a indexar a mano una evidencia: `POST /api/evidence/{id}/index`.
+
+Las citas de la IA se guardan en `evidence_citation_result` (por evaluación y control). Al entrar a auditoría se
+encola un trabajo `CITATIONS_PRECOMPUTE`; al salir de auditoría se descartan las guardadas (el dictamen queda).
+`backend-ai` devuelve un id estable por fragmento (`<evidenceId>::<posición>`): **reindexar el mismo archivo da los
+mismos ids**, así las decisiones del auditor sobreviven a un reindexado.
+
+## Diagnóstico de tiempos de un lote de guías (hallazgo 3.8)
+
+El lote de 10 guías con `evaluationId` tardó casi el doble que el de la prueba B8. Revisado en el código:
+**`evaluationId` solo sirve para saber de qué organización es el pedido** (`AiJobService.resolveOrganization`):
+no entra en los parámetros del trabajo ni en el prompt, y el contexto del marco que se agrega al prompt
+(los 3 fragmentos más parecidos del MCU) no depende de la evaluación. Es decir que el contexto de la
+evaluación **no agrega tokens**. La causa más probable es otra: la prueba corrió mientras la preclasificación
+de evidencia seguía calculando en `backend-ai` después del corte (hallazgo 3.3: varios pedidos de 1,5 a 4
+minutos saturando las 18 vCPU), que se corrige con la cancelación al desconectarse. Sin arreglo de código
+para este hallazgo; para confirmarlo hay que medir de nuevo sin otra actividad y comparar tokens y tiempos:
+
+```sql
+-- Tokens de entrada y de salida y tiempo de ejecución por lote (solo lectura)
+SELECT batch_id,
+       count(*)                                         AS guias,
+       round(avg(run_ms))                               AS run_ms_prom,
+       round(avg((metrics->>'prompt_eval_count')::int)) AS tokens_prompt_prom,
+       round(avg((metrics->>'eval_count')::int))        AS tokens_salida_prom
+FROM prisma.ai_job
+WHERE type = 'GUIDE' AND status = 'SUCCEEDED'
+GROUP BY batch_id ORDER BY max(finished_at) DESC LIMIT 10;
+```
+
+Si con el servidor quieto `tokens_prompt_prom` es parecido al del lote B8 y el tiempo vuelve a ser el de
+B8, la diferencia era carga ajena. Si el prompt es más largo, comparar las descripciones de los controles
+elegidos (hay controles con descripciones de varias líneas). `[POR VERIFICAR]` en el servidor.
+
+## Modo investigación (hito 5)
+
+Se enciende por organización desde el detalle de la organización (solo `PRISMA_ADMIN`): «Encender modo
+investigación». Mientras esté encendido, la IA guarda la traza de cada guía (con semilla aleatoria por pedido),
+de cada búsqueda de citas y de cada preclasificación; apagado no guarda nada. Quienes usan la organización ven
+un aviso violeta arriba. Las trazas se miran con «Cómo razonó la IA» (solo admin) en el plan de mejora, las
+citas y las observaciones, y se exportan en JSONL desde el mismo detalle. Consulta de solo lectura:
+
+```sql
+SELECT o.name, o.research_mode FROM prisma.organizations o WHERE o.research_mode;
+SELECT kind, count(*), min(created_at), max(created_at) FROM prisma.ai_trace GROUP BY kind;
+```
+
+Sin plazo de retención definido (`AI_TRACE_RETENTION_DAYS=0`) las trazas se acumulan: en la guía, `prompt` +
+`response` + `thinking` pesan unos pocos KB por traza. **Para apagar de golpe**: `UPDATE prisma.organizations SET
+research_mode = false` (no borra lo guardado).
+
+## Lote de guías y evidencia global (hito 4)
+
+**Lote.** «Generar con IA para las seleccionadas» pide una guía por control como trabajos de **lote**
+(prioridad 0): comparten el tope global de `AI_JOBS_CONCURRENCY` con todo lo demás y **un pedido interactivo
+(una guía suelta, una indexación) pasa antes**. Con 2 en paralelo y ~60-80 s por guía, 10 guías tardan
+~6 a 7 minutos en vaciarse. Consulta de solo lectura:
+
+```sql
+SELECT batch_id, status, count(*) FROM prisma.ai_job WHERE batch_id IS NOT NULL GROUP BY 1, 2;
+SELECT type, priority, status, count(*) FROM prisma.ai_job GROUP BY 1, 2, 3 ORDER BY 1, 2;
+```
+
+**Evidencia global.** Los fragmentos de la evidencia subida sin control entran en las citas de cualquier
+control de la evaluación (marcados `unassigned`). Al indexarse, un trabajo `EVIDENCE_CLASSIFY` compara cada
+control candidato con la evidencia (una consulta de embedding por control: ~165 a ~670 por evidencia) y guarda
+las 3 sugerencias:
+
+```sql
+SELECT e.file_name, c.code, s.score, s.rank, s.status
+FROM prisma.evidence_control_suggestion s
+JOIN prisma.evidence e ON e.id = s.evidence_id JOIN prisma.catalog_controls c ON c.id = s.control_id
+ORDER BY e.file_name, s.rank;
+```
+
+## Después de recrear contenedores: nginx y Watchtower
+
+**nginx cachea la dirección de los contenedores.** nginx resuelve `frontend`, `backend-core` y los demás
+upstreams **una sola vez al arrancar**. Cuando un contenedor se recrea (`docker compose up -d` con una
+imagen nueva, `--force-recreate`, un `build` seguido de `up`) recibe otra IP y nginx sigue enviando a la
+vieja: todo el sitio responde `502 Bad Gateway` (en las pruebas del hito 1 duró unas dos horas). Después
+de recrear cualquier contenedor que nginx use como upstream hay que **recargar nginx**:
+
+```bash
+docker exec prisma-nginx nginx -t && docker exec prisma-nginx nginx -s reload
+```
+
+Un `502` generalizado justo después de un despliegue casi siempre es esto (distinto del `502` de
+`/auth/*` que se describe en [`RUNBOOK.md`](RUNBOOK.md), que es de Keycloak arrancando). El despliegue
+automático de `dev` (`deploy.yml`) y los de staging y producción recrean contenedores: si el sitio
+queda con `502` después de un deploy, recargar nginx es lo primero que hay que probar.
+
+**Watchtower pisa las imágenes compiladas en local.** `watchtower` (perfil `management`) revisa cada
+`WATCHTOWER_POLL_INTERVAL` segundos (300 por defecto) si hay una imagen nueva en el registro para los
+contenedores con la label `com.centurylinklabs.watchtower.enable=true` (`backend-core`, `backend-ai` y
+`frontend`) y los reemplaza. Si en un servidor de pruebas se compiló código local
+(`docker compose build backend-ai`), Watchtower lo reemplaza por la imagen `:latest` del registro y el
+servidor vuelve al código viejo sin aviso (pasó en las pruebas del hito 1, a los pocos minutos). Para
+probar con código local:
+
+```bash
+docker stop prisma-watchtower          # antes de compilar; al terminar: docker start prisma-watchtower
+```
+
+o excluir esos contenedores quitando la label `com.centurylinklabs.watchtower.enable` en un override
+local del compose. **No dejar Watchtower detenido** en dev, staging ni producción: ahí es lo que
+mantiene actualizadas las imágenes.
+
 ## Versión y entorno
 
-**Versión.** PRISMA tiene una sola versión (SemVer `MAJOR.MINOR.PATCH`, hoy `0.6.0`) compartida por la
+**Versión.** PRISMA tiene una sola versión (SemVer `MAJOR.MINOR.PATCH`, hoy `0.7.0`) compartida por la
 API, el servicio de IA y la web. Vive en cuatro archivos que tienen que coincidir
 (`apps/backend-core/pom.xml`, `apps/frontend/package.json`, `apps/backend-ai/app/version.py` y
 `sonar-project.properties`); el CI lo verifica (`version-sync`). Para cambiarla:

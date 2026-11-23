@@ -52,6 +52,26 @@ Endpoints:
 - `POST /api/v1/rag/query` — Pregunta sobre un requisito MCU
 - `POST /api/v1/rag/ingest` — Ingesta un nuevo documento
 - `POST /api/v1/evaluate/evidence` — Evalúa si una evidencia satisface un control
+- `POST /api/v1/rag/remediation-tips` — Guía de remediación de una brecha
+- `GET /api/v1/runtime` — Modelo, `digest`, opciones efectivas y estado de carga de Ollama
+
+**Ollama configurado, no por defecto.** Un solo Ollama por entorno. Se levanta con el modelo cargado
+de forma permanente (`OLLAMA_KEEP_ALIVE=-1`), 2 pedidos en paralelo (`OLLAMA_NUM_PARALLEL=2`), 16k de
+contexto por ranura, LLM y embedding cargados a la vez y una cola interna de 64. `backend-ai` envía
+en **cada** pedido las mismas opciones (`num_ctx`, `keep_alive`, `num_predict` y, si se definen,
+`temperature`, `seed`, `num_thread`), porque si cambian entre pedidos Ollama recarga el modelo. Al
+arrancar precalienta el LLM y el embedding sin pedido de usuario, reintentando mientras Ollama no
+responda. Si el prompt estimado no entra en `num_ctx`, devuelve `PROMPT_TOO_LARGE` en vez de dejar
+que Ollama lo recorte en silencio. Cambiar el modelo de LLM es solo configuración; **cambiar el de
+embedding exige reindexar todas las colecciones** (cambian las dimensiones: 768 → 1024 con `bge-m3`).
+Detalle de variables en [`Ambientes-Despliegue.md`](../operacion/Ambientes-Despliegue.md#ollama-configuración-y-precalentamiento).
+
+**IA asíncrona.** La guía de mejora ya no bloquea el pedido HTTP: `backend-core` encola un trabajo
+(`ai_job`, migración V41) y responde `202`. Un trabajador por réplica (`AiJobWorker`) reclama
+trabajos con `SELECT … FOR UPDATE SKIP LOCKED` bajo ShedLock, respeta un tope global de 2 contra
+Ollama, reintenta ante caídas y guarda el resultado en `ai_generated_guide` (con modelo y versión del
+prompt). El frontend consulta el trabajo cada 3-8 s y lo retoma si se cierra el modal o se recarga.
+Ver [`API.md`](API.md#trabajos-de-ia--apiaijobs).
 
 ### 4. Base de datos (PostgreSQL 17)
 

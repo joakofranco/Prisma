@@ -3,11 +3,21 @@ import { mount, flushPromises, type VueWrapper } from '@vue/test-utils';
 
 const improvementService = vi.hoisted(() => ({
   getByEvaluation: vi.fn(),
+  getBaseline: vi.fn(),
   getSuggestions: vi.fn(),
   getRemediationTips: vi.fn(),
+  requestTipsAsync: vi.fn(),
+  requestTipsBatch: vi.fn(),
   sendSuggestionFeedback: vi.fn(),
   create: vi.fn(),
   update: vi.fn(),
+}));
+const aiJobsService = vi.hoisted(() => ({
+  get: vi.fn(),
+  listMine: vi.fn(),
+  cancel: vi.fn(),
+  getMany: vi.fn(),
+  cancelBatch: vi.fn(),
 }));
 const evaluationsService = vi.hoisted(() => ({ getById: vi.fn(), getResults: vi.fn() }));
 const planDeadlinesService = vi.hoisted(() => ({ get: vi.fn() }));
@@ -25,6 +35,7 @@ vi.mock('@/services/resources', () => ({
   evaluationsService,
   planDeadlinesService,
   reportsService,
+  aiJobsService,
 }));
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => auth }));
 vi.mock('@/utils/files', async (importOriginal) => ({
@@ -35,6 +46,7 @@ vi.mock('@/composables/useUtils', () => ({ useNotification: () => notification }
 vi.mock('vue-router', () => ({ useRoute: () => ({ params: { evaluationId: 'eval-1' } }) }));
 
 import ImprovementView from '@/views/improvement/ImprovementView.vue';
+import { installMemoryStorage } from '../helpers/memoryStorage';
 
 const plan = (
   id: string,
@@ -58,7 +70,9 @@ const plan = (
 async function mountView() {
   const wrapper = mount(ImprovementView, {
     attachTo: document.body,
-    global: { stubs: { RouterLink: true } },
+    global: {
+      stubs: { RouterLink: true, BaselineComplianceChart: true, BaselineShiftChart: true },
+    },
   });
   await flushPromises();
   return wrapper;
@@ -81,10 +95,33 @@ beforeEach(() => {
     data: { highMonths: 3, mediumMonths: 6, lowMonths: 12 },
   });
   improvementService.getByEvaluation.mockResolvedValue({ data: [] });
+  improvementService.getBaseline.mockResolvedValue({
+    data: {
+      summary: {
+        total: 0,
+        replanned: 0,
+        averageShiftDays: null,
+        priorityChanged: 0,
+        responsibleChanged: 0,
+        onTime: 0,
+        late: 0,
+        delayed: 0,
+        plannedDue: 0,
+        completed: 0,
+        plannedPercent: null,
+        actualPercent: null,
+        deviationPoints: null,
+      },
+      items: [],
+    },
+  });
   evaluationsService.getResults.mockResolvedValue({ data: [] });
   improvementService.update.mockResolvedValue({ data: {} });
   improvementService.create.mockResolvedValue({ data: {} });
   improvementService.sendSuggestionFeedback.mockResolvedValue({ data: undefined });
+  aiJobsService.listMine.mockResolvedValue({ data: [] });
+  aiJobsService.get.mockReset();
+  installMemoryStorage();
 });
 
 afterEach(() => {
@@ -742,6 +779,108 @@ const gapResult = (extra: Record<string, unknown> = {}) => ({
 });
 
 describe('ImprovementView: brechas por subcategoría (RF-CALC-07)', () => {
+  it('las brechas arrancan colapsadas y cada una se expande y se contrae', async () => {
+    evaluationsService.getResults.mockResolvedValue({ data: [gapResult()] });
+    await mountView();
+
+    const toggle = document.body.querySelector('[data-test="gap-toggle"]') as HTMLElement;
+    const list = () => document.getElementById(toggle.getAttribute('aria-controls')!)!;
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(list().style.display).toBe('none');
+
+    toggle.click();
+    await flushPromises();
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(list().style.display).not.toBe('none');
+
+    toggle.click();
+    await flushPromises();
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(list().style.display).toBe('none');
+  });
+
+  it('agrupa las brechas por función, categoría y subcategoría, cada nivel colapsable', async () => {
+    evaluationsService.getResults.mockResolvedValue({
+      data: [
+        gapResult(),
+        gapResult({ subcategoryId: 's2', subcategoryName: 'PR.AA-06' }),
+        gapResult({
+          categoryId: 'c2',
+          categoryName: 'Seguridad de datos',
+          subcategoryId: 's3',
+          subcategoryName: 'PR.DS-01',
+        }),
+        gapResult({
+          functionId: 'f2',
+          functionName: 'Detectar',
+          categoryId: 'c3',
+          categoryName: 'Monitoreo',
+          subcategoryId: 's4',
+          subcategoryName: 'DE.CM-01',
+        }),
+      ],
+    });
+    await mountView();
+
+    const functions = document.body.querySelectorAll('[data-test="gap-function"]');
+    expect(functions).toHaveLength(2);
+    expect(functions[0].querySelectorAll('[data-test="gap-category"]')).toHaveLength(2);
+    expect(functions[0].querySelector('[data-test="gap-function-count"]')!.textContent).toContain(
+      '3 subcategorías',
+    );
+    expect(functions[0].querySelector('[data-test="gap-function-count"]')!.textContent).toContain(
+      '6 controles',
+    );
+
+    const fnToggle = functions[0].querySelector('[data-test="gap-function-toggle"]') as HTMLElement;
+    const catToggle = functions[0].querySelector(
+      '[data-test="gap-category-toggle"]',
+    ) as HTMLElement;
+    const panel = (toggle: HTMLElement) =>
+      document.getElementById(toggle.getAttribute('aria-controls')!)!;
+    expect(fnToggle.getAttribute('aria-expanded')).toBe('false');
+    expect(panel(fnToggle).style.display).toBe('none');
+
+    fnToggle.click();
+    await flushPromises();
+    expect(panel(fnToggle).style.display).not.toBe('none');
+    expect(panel(catToggle).style.display).toBe('none');
+
+    catToggle.click();
+    await flushPromises();
+    expect(catToggle.getAttribute('aria-expanded')).toBe('true');
+    expect(panel(catToggle).style.display).not.toBe('none');
+  });
+
+  it('«Expandir todas» abre todas las brechas y luego las contrae', async () => {
+    evaluationsService.getResults.mockResolvedValue({ data: [gapResult()] });
+    await mountView();
+
+    const all = document.body.querySelector('[data-test="gap-toggle-all"]') as HTMLElement;
+    expect(all.textContent).toContain('Expandir todas');
+    all.click();
+    await flushPromises();
+    expect(all.textContent).toContain('Contraer todas');
+    expect(
+      document.body.querySelector('[data-test="gap-toggle"]')!.getAttribute('aria-expanded'),
+    ).toBe('true');
+
+    all.click();
+    await flushPromises();
+    expect(
+      document.body.querySelector('[data-test="gap-toggle"]')!.getAttribute('aria-expanded'),
+    ).toBe('false');
+  });
+
+  it('la cabecera y las tarjetas de estado quedan fijas al desplazarse', async () => {
+    await mountView();
+
+    const sticky = document.body.querySelector('[data-test="plan-sticky"]')!;
+    expect(sticky.className).toContain('sm:sticky');
+    expect(sticky.querySelector('h1')!.textContent).toBe('Plan de Mejora');
+    expect(sticky.querySelector('[data-test="plan-stats"]')).not.toBeNull();
+  });
+
   it('lista nivel actual, próximo nivel y controles faltantes', async () => {
     evaluationsService.getResults.mockResolvedValue({ data: [gapResult()] });
     await mountView();
@@ -843,7 +982,7 @@ describe('ImprovementView: brechas por subcategoría (RF-CALC-07)', () => {
   });
 });
 
-describe('ImprovementView: guías de IA en las sugerencias (PRI-370)', () => {
+describe('ImprovementView: guías de IA asíncronas (cola de trabajos)', () => {
   const suggestion = (controlId: string, subcategoryId: string, extra = {}) => ({
     controlId,
     subcategoryId,
@@ -859,13 +998,39 @@ describe('ImprovementView: guías de IA en las sugerencias (PRI-370)', () => {
     suggestedDueDate: '2026-12-31',
     ...extra,
   });
-  const tips = { summary: 'Definir una política', tips: ['Paso A', 'Paso B'], generated: true };
   const GUIDE_TEXT = 'Definir una política\n1. Paso A\n2. Paso B';
+  const job = (status: string, extra: Record<string, unknown> = {}) => ({
+    id: 'job-1',
+    type: 'GUIDE',
+    status,
+    queuePosition: null,
+    attempts: 1,
+    maxAttempts: 2,
+    errorCode: null,
+    errorMessage: null,
+    createdAt: '2026-11-09T12:00:00Z',
+    startedAt: null,
+    finishedAt: null,
+    guide: null,
+    ...extra,
+  });
+  const succeeded = () =>
+    job('SUCCEEDED', {
+      guide: {
+        id: 'guide-1',
+        controlId: 'c1',
+        summary: 'Definir una política',
+        tips: ['Paso A', 'Paso B'],
+        model: 'llama3:8b',
+      },
+    });
 
   const byText = (text: string) =>
     Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find((b) =>
       b.textContent?.includes(text),
     )!;
+  const hasButton = (text: string) =>
+    Array.from(document.body.querySelectorAll('button')).some((b) => b.textContent?.includes(text));
   const actionBoxes = () =>
     Array.from(document.body.querySelectorAll<HTMLTextAreaElement>('textarea'));
   const typeInto = async (el: HTMLTextAreaElement, value: string) => {
@@ -873,154 +1038,374 @@ describe('ImprovementView: guías de IA en las sugerencias (PRI-370)', () => {
     el.dispatchEvent(new Event('input'));
     await flushPromises();
   };
+  const requestButtons = () =>
+    Array.from(document.body.querySelectorAll<HTMLButtonElement>('[data-testid="request-tips"]'));
+  const advance = async (ms: number) => {
+    await vi.advanceTimersByTimeAsync(ms);
+    await flushPromises();
+  };
+
+  beforeEach(() => {
+    // Los trabajos se consultan con timers: se los controla a mano (los reales siguen para
+    // flushPromises, que usa setImmediate).
+    // Hay que resetear antes: Vitest ignora un segundo useFakeTimers si ya hay timers falsos (el
+    // beforeEach global solo finge Date).
+    vi.useRealTimers();
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    vi.setSystemTime(new Date(2026, 10, 9, 12, 0, 0));
+    installMemoryStorage();
+    aiJobsService.listMine.mockResolvedValue({ data: [] });
+    improvementService.requestTipsAsync.mockResolvedValue({
+      data: { jobId: 'job-1', status: 'QUEUED' },
+    });
+  });
 
   async function openSuggestions(items = [suggestion('c1', 's1')]) {
     improvementService.getSuggestions.mockResolvedValue({ data: items });
-    improvementService.getRemediationTips.mockResolvedValue({ data: tips });
     const wrapper = await mountView();
     byText('Generar Sugerencias').click();
     await flushPromises();
     return wrapper;
   }
-  async function generate(index = 0) {
-    const buttons = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).filter(
-      (b) => /sugerencia con IA|Regenerar/.test(b.textContent ?? ''),
-    );
-    buttons[index].click();
+  async function request(index = 0) {
+    requestButtons()[index].click();
     await flushPromises();
   }
-  const sent = () => improvementService.sendSuggestionFeedback.mock.calls.flatMap((c) => c[0]);
+  /** Pide la guía y la deja lista (el primer sondeo ya devuelve SUCCEEDED). */
+  async function generateReady(index = 0) {
+    aiJobsService.get.mockResolvedValue({ data: succeeded() });
+    await request(index);
+    await advance(3000);
+  }
+
+  it('pide la guía por control y responde sin esperar: la fila pasa a «En cola»', async () => {
+    await openSuggestions();
+    await request();
+
+    expect(improvementService.requestTipsAsync).toHaveBeenCalledWith({
+      controlId: 'c1',
+      evaluationId: 'eval-1',
+      functionName: 'Proteger',
+      categoryName: 'Acceso',
+      subcategoryName: 'Sub s1',
+      currentLevel: 0,
+      targetLevel: 2,
+    });
+    expect(requestButtons()[0].textContent).toContain('En cola…');
+    expect(requestButtons()[0].disabled).toBe(true);
+    // No se usa más el pedido síncrono (que el frontend cortaba a los 30 s).
+    expect(improvementService.getRemediationTips).not.toHaveBeenCalled();
+  });
+
+  it('la fila avanza de «en cola» a «generando» a «lista» consultando el trabajo', async () => {
+    aiJobsService.get
+      .mockResolvedValueOnce({ data: job('QUEUED', { queuePosition: 3 }) })
+      .mockResolvedValueOnce({ data: job('RUNNING') })
+      .mockResolvedValue({ data: succeeded() });
+    await openSuggestions();
+    await request();
+
+    await advance(3000);
+    expect(requestButtons()[0].textContent).toContain('En cola (posición 3)…');
+
+    await advance(4000);
+    expect(requestButtons()[0].textContent).toContain('Generando sugerencia…');
+
+    await advance(6000);
+    expect(document.body.textContent).toContain('Definir una política');
+    expect(document.body.textContent).toContain('Paso A');
+    expect(requestButtons()[0].textContent).toContain('Regenerar sugerencia con IA');
+    expect(requestButtons()[0].disabled).toBe(false);
+    expect(aiJobsService.get).toHaveBeenCalledWith('job-1');
+  });
+
+  it('una guía que tarda más de 30 s se obtiene igual (ya no hay corte a los 30 s)', async () => {
+    aiJobsService.get
+      .mockResolvedValueOnce({ data: job('RUNNING') })
+      .mockResolvedValueOnce({ data: job('RUNNING') })
+      .mockResolvedValueOnce({ data: job('RUNNING') })
+      .mockResolvedValue({ data: succeeded() });
+    await openSuggestions();
+    await request();
+
+    await advance(40_000);
+
+    expect(document.body.textContent).toContain('Definir una política');
+    expect(notification.error).not.toHaveBeenCalled();
+  });
 
   it('«Usar en la acción» copia el resumen y los pasos al texto de la acción', async () => {
     await openSuggestions();
-    await generate();
+    await generateReady();
     byText('Usar en la acción').click();
     await flushPromises();
 
     expect(actionBoxes()[0].value).toBe(GUIDE_TEXT);
   });
 
-  it('usada sin editar y creada: queda registrada como aceptada sin editar', async () => {
+  it('usada sin editar: la acción lleva guideId y el servidor registra el feedback', async () => {
     await openSuggestions();
-    await generate();
+    await generateReady();
     byText('Usar en la acción').click();
     await flushPromises();
     byText('Crear seleccionadas').click();
     await flushPromises();
 
     expect(improvementService.create).toHaveBeenCalledWith(
-      expect.objectContaining({ controlId: 'c1', action: GUIDE_TEXT }),
-    );
-    expect(sent()).toEqual([
-      {
+      expect.objectContaining({
         controlId: 'c1',
-        currentLevel: 0,
-        targetLevel: 2,
-        originalSummary: 'Definir una política',
-        originalTips: ['Paso A', 'Paso B'],
-        outcome: 'ACCEPTED_UNEDITED',
-      },
-    ]);
+        action: GUIDE_TEXT,
+        guideId: 'guide-1',
+        guideEdited: false,
+      }),
+    );
+    // El feedback lo registra el servidor al crear la acción: el frontend ya no lo manda.
+    expect(improvementService.sendSuggestionFeedback).not.toHaveBeenCalled();
   });
 
-  it('usada y editada: registra la original y el texto final', async () => {
+  it('usada y editada: guideEdited viaja en true con el texto final como acción', async () => {
     await openSuggestions();
-    await generate();
+    await generateReady();
     byText('Usar en la acción').click();
     await flushPromises();
     await typeInto(actionBoxes()[0], 'Texto corregido por la persona');
     byText('Crear seleccionadas').click();
     await flushPromises();
 
-    expect(sent()).toHaveLength(1);
-    expect(sent()[0]).toMatchObject({
-      outcome: 'ACCEPTED_EDITED',
-      originalSummary: 'Definir una política',
-      originalTips: ['Paso A', 'Paso B'],
-      editedText: 'Texto corregido por la persona',
-    });
+    expect(improvementService.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'Texto corregido por la persona',
+        guideId: 'guide-1',
+        guideEdited: true,
+      }),
+    );
   });
 
-  it('generada pero no usada: se registra como rechazada al crear', async () => {
+  it('generada pero no usada: la acción se crea sin guideId', async () => {
     await openSuggestions();
-    await generate();
+    await generateReady();
     byText('Crear seleccionadas').click();
     await flushPromises();
 
-    expect(sent().map((f) => f.outcome)).toEqual(['REJECTED']);
+    const sentDto = improvementService.create.mock.calls[0][0];
+    expect(sentDto).not.toHaveProperty('guideId');
+    expect(sentDto).not.toHaveProperty('guideEdited');
   });
 
-  it('generada y con el modal cerrado sin crear: se registra como rechazada', async () => {
+  it('al crear la acción se olvida el trabajo guardado', async () => {
     await openSuggestions();
-    await generate();
-    byText('Cerrar').click();
-    await flushPromises();
-
-    expect(sent().map((f) => f.outcome)).toEqual(['REJECTED']);
-    expect(improvementService.create).not.toHaveBeenCalled();
-  });
-
-  it('usada pero deseleccionada: se registra como rechazada', async () => {
-    await openSuggestions();
-    await generate();
-    byText('Usar en la acción').click();
-    await flushPromises();
-    const check = document.body.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
-    check.checked = false;
-    check.dispatchEvent(new Event('change'));
-    await flushPromises();
-    byText('Cerrar').click();
-    await flushPromises();
-
-    expect(sent().map((f) => f.outcome)).toEqual(['REJECTED']);
-  });
-
-  it('regenerar registra la anterior como rechazada y la nueva sigue su camino', async () => {
-    await openSuggestions();
-    await generate();
-    improvementService.getRemediationTips.mockResolvedValue({
-      data: { summary: 'Otra guía', tips: ['Otro paso'], generated: true },
-    });
-    await generate();
+    await generateReady();
+    expect(window.localStorage.getItem('prisma.aiGuideJobs.eval-1')).not.toBeNull();
     byText('Usar en la acción').click();
     await flushPromises();
     byText('Crear seleccionadas').click();
     await flushPromises();
 
-    expect(sent().map((f) => [f.outcome, f.originalSummary])).toEqual([
-      ['REJECTED', 'Definir una política'],
-      ['ACCEPTED_UNEDITED', 'Otra guía'],
-    ]);
+    expect(window.localStorage.getItem('prisma.aiGuideJobs.eval-1')).toBeNull();
   });
 
-  it('si la IA no generó la guía (texto de reemplazo) no se ofrece usarla ni se registra nada', async () => {
-    await openSuggestions();
-    improvementService.getRemediationTips.mockResolvedValue({
-      data: { summary: '', tips: ['No se pudo generar'], generated: false },
+  it('si el trabajo falla muestra qué pasó y cómo seguir, y se puede volver a pedir', async () => {
+    aiJobsService.get.mockResolvedValue({
+      data: job('FAILED', { errorCode: 'AI_UNAVAILABLE', errorMessage: 'caído' }),
     });
-    await generate();
+    await openSuggestions();
+    await request();
+    await advance(3000);
 
-    expect(
-      Array.from(document.body.querySelectorAll('button')).some((b) =>
-        b.textContent?.includes('Usar en la acción'),
-      ),
-    ).toBe(false);
+    const error = document.body.querySelector('[data-testid="tips-error"]')!;
+    expect(error.textContent).toContain('no está disponible');
+    expect(error.textContent).toContain('Probá de nuevo');
+    expect(hasButton('Usar en la acción')).toBe(false);
+    expect(requestButtons()[0].disabled).toBe(false);
+    expect(window.localStorage.getItem('prisma.aiGuideJobs.eval-1')).toBeNull();
+  });
+
+  it('un prompt demasiado largo sugiere redactar la acción a mano', async () => {
+    aiJobsService.get.mockResolvedValue({
+      data: job('FAILED', { errorCode: 'PROMPT_TOO_LARGE', errorMessage: 'x' }),
+    });
+    await openSuggestions();
+    await request();
+    await advance(3000);
+
+    expect(document.body.querySelector('[data-testid="tips-error"]')!.textContent).toContain(
+      'Redactá la acción a mano',
+    );
+  });
+
+  it('si no se pudo encolar (límite de pendientes) avisa con el mensaje del servidor', async () => {
+    improvementService.requestTipsAsync.mockRejectedValue({
+      response: { data: { message: 'Hay demasiadas guías de IA en proceso (20).' } },
+    });
+    await openSuggestions();
+    await request();
+
+    expect(notification.error).toHaveBeenCalledWith('Hay demasiadas guías de IA en proceso (20).');
+    expect(requestButtons()[0].disabled).toBe(false);
+  });
+
+  it('un trabajo en cola se puede cancelar', async () => {
+    aiJobsService.get.mockResolvedValue({ data: job('QUEUED', { queuePosition: 2 }) });
+    aiJobsService.cancel.mockResolvedValue({ data: job('CANCELLED') });
+    await openSuggestions();
+    await request();
+
+    (document.body.querySelector('[data-testid="cancel-tips"]') as HTMLButtonElement).click();
+    await flushPromises();
+
+    expect(aiJobsService.cancel).toHaveBeenCalledWith('job-1');
+    expect(requestButtons()[0].textContent).toContain('¿Cómo puedo solucionar esto?');
+    expect(window.localStorage.getItem('prisma.aiGuideJobs.eval-1')).toBeNull();
+  });
+
+  it('uno que ya corre no ofrece cancelar', async () => {
+    aiJobsService.get.mockResolvedValue({ data: job('RUNNING') });
+    await openSuggestions();
+    await request();
+    await advance(3000);
+
+    expect(document.body.querySelector('[data-testid="cancel-tips"]')).toBeNull();
+  });
+
+  it('si no se puede cancelar (ya lo tomaron) avisa y sigue consultando', async () => {
+    aiJobsService.get.mockResolvedValue({ data: job('QUEUED') });
+    aiJobsService.cancel.mockRejectedValue({
+      response: { data: { message: 'El trabajo ya se está ejecutando y no se puede cancelar' } },
+    });
+    await openSuggestions();
+    await request();
+
+    (document.body.querySelector('[data-testid="cancel-tips"]') as HTMLButtonElement).click();
+    await flushPromises();
+
+    expect(notification.error).toHaveBeenCalledWith(
+      'El trabajo ya se está ejecutando y no se puede cancelar',
+    );
+    expect(requestButtons()[0].disabled).toBe(true);
+  });
+
+  it('cerrar el modal corta el sondeo pero el trabajo se retoma al volver a abrirlo', async () => {
+    aiJobsService.get.mockResolvedValue({ data: job('RUNNING') });
+    await openSuggestions();
+    await request();
     byText('Cerrar').click();
     await flushPromises();
-    expect(improvementService.sendSuggestionFeedback).not.toHaveBeenCalled();
-  });
+    aiJobsService.get.mockClear();
 
-  it('si la guía no se pidió, no se registra nada', async () => {
-    await openSuggestions();
-    byText('Crear seleccionadas').click();
+    await advance(30_000);
+    expect(aiJobsService.get).not.toHaveBeenCalled();
+
+    // Vuelve: el trabajo terminó mientras tanto.
+    aiJobsService.get.mockResolvedValue({ data: succeeded() });
+    byText('Generar Sugerencias').click();
     await flushPromises();
 
-    expect(improvementService.sendSuggestionFeedback).not.toHaveBeenCalled();
+    expect(aiJobsService.get).toHaveBeenCalledWith('job-1');
+    expect(document.body.textContent).toContain('Definir una política');
+  });
+
+  it('sobrevive a recargar la página: el trabajo guardado se retoma al abrir las sugerencias', async () => {
+    window.localStorage.setItem('prisma.aiGuideJobs.eval-1', JSON.stringify({ 'c1:s1': 'job-1' }));
+    aiJobsService.get.mockResolvedValue({ data: succeeded() });
+    await openSuggestions();
+
+    expect(aiJobsService.get).toHaveBeenCalledWith('job-1');
+    expect(document.body.textContent).toContain('Paso B');
+    expect(improvementService.requestTipsAsync).not.toHaveBeenCalled();
+  });
+
+  it('al recargar, un trabajo todavía activo sigue consultándose', async () => {
+    window.localStorage.setItem('prisma.aiGuideJobs.eval-1', JSON.stringify({ 'c1:s1': 'job-1' }));
+    aiJobsService.get
+      .mockResolvedValueOnce({ data: job('RUNNING') })
+      .mockResolvedValue({ data: succeeded() });
+    await openSuggestions();
+    expect(requestButtons()[0].textContent).toContain('Generando sugerencia…');
+
+    await advance(3000);
+
+    expect(document.body.textContent).toContain('Definir una política');
+  });
+
+  it('un trabajo guardado que ya no existe se olvida sin molestar', async () => {
+    window.localStorage.setItem('prisma.aiGuideJobs.eval-1', JSON.stringify({ 'c1:s1': 'viejo' }));
+    aiJobsService.get.mockRejectedValue({ response: { status: 404 } });
+    await openSuggestions();
+
+    expect(notification.error).not.toHaveBeenCalled();
+    expect(requestButtons()[0].disabled).toBe(false);
+    expect(window.localStorage.getItem('prisma.aiGuideJobs.eval-1')).toBeNull();
+  });
+
+  it('una falla de red al consultar no pierde el trabajo: reintenta', async () => {
+    aiJobsService.get
+      .mockRejectedValueOnce(new Error('network'))
+      .mockResolvedValue({ data: succeeded() });
+    await openSuggestions();
+    await request();
+
+    await advance(3000);
+    expect(requestButtons()[0].textContent).toContain('En cola…');
+    await advance(5000);
+
+    expect(document.body.textContent).toContain('Definir una política');
+  });
+
+  it('la consulta pierde acceso (403): se descarta y se puede volver a pedir', async () => {
+    aiJobsService.get.mockRejectedValue({ response: { status: 403 } });
+    await openSuggestions();
+    await request();
+    await advance(3000);
+
+    expect(requestButtons()[0].disabled).toBe(false);
+  });
+
+  it('el indicador «Tareas de IA» cuenta los trabajos propios en curso', async () => {
+    aiJobsService.listMine.mockResolvedValue({
+      data: [job('RUNNING'), job('QUEUED'), job('SUCCEEDED'), job('FAILED')],
+    });
+    await mountView();
+
+    expect(document.body.querySelector('[data-testid="ai-tasks"]')!.textContent).toContain(
+      'Tareas de IA: 2 en curso',
+    );
+  });
+
+  it('sin trabajos en curso no muestra el indicador', async () => {
+    await mountView();
+
+    expect(document.body.querySelector('[data-testid="ai-tasks"]')).toBeNull();
+  });
+
+  it('regenerar pide un trabajo nuevo y reemplaza la guía al terminar', async () => {
+    await openSuggestions();
+    await generateReady();
+    improvementService.requestTipsAsync.mockResolvedValue({
+      data: { jobId: 'job-2', status: 'QUEUED' },
+    });
+    aiJobsService.get.mockResolvedValue({
+      data: job('SUCCEEDED', {
+        id: 'job-2',
+        guide: { id: 'guide-2', controlId: 'c1', summary: 'Otra guía', tips: ['Otro paso'] },
+      }),
+    });
+    await request();
+    await advance(3000);
+
+    expect(improvementService.requestTipsAsync).toHaveBeenCalledTimes(2);
+    expect(document.body.textContent).toContain('Otra guía');
+    byText('Usar en la acción').click();
+    await flushPromises();
+    byText('Crear seleccionadas').click();
+    await flushPromises();
+    expect(improvementService.create).toHaveBeenCalledWith(
+      expect.objectContaining({ guideId: 'guide-2' }),
+    );
   });
 
   it('dos sugerencias del mismo control no mezclan su guía', async () => {
     await openSuggestions([suggestion('c1', 's1'), suggestion('c1', 's2')]);
-    await generate(0);
+    await generateReady(0);
 
     const useButtons = Array.from(document.body.querySelectorAll('button')).filter((b) =>
       b.textContent?.includes('Usar en la acción'),
@@ -1029,15 +1414,15 @@ describe('ImprovementView: guías de IA en las sugerencias (PRI-370)', () => {
     expect(document.body.textContent?.match(/Definir una política/g)).toHaveLength(1);
   });
 
-  it('si falla el registro no molesta a la persona', async () => {
-    improvementService.sendSuggestionFeedback.mockRejectedValue(new Error('boom'));
+  it('si la guía no se pidió no se consulta ningún trabajo', async () => {
     await openSuggestions();
-    await generate();
-    byText('Cerrar').click();
+    byText('Crear seleccionadas').click();
     await flushPromises();
 
-    expect(notification.error).not.toHaveBeenCalled();
+    expect(aiJobsService.get).not.toHaveBeenCalled();
+    expect(improvementService.sendSuggestionFeedback).not.toHaveBeenCalled();
   });
+
   it('muestra «También cuenta en» cuando el control pertenece a más de una subcategoría', async () => {
     await openSuggestions([
       suggestion('c1', 's1', { subcategoryNames: ['Sub s1', 'Sub s2', 'Sub s3'] }),
@@ -1070,5 +1455,404 @@ describe('ImprovementView: guías de IA en las sugerencias (PRI-370)', () => {
       'Calculá la madurez de la evaluación antes de generar sugerencias de mejora',
     );
     expect(document.body.textContent).not.toContain('Crear seleccionadas');
+  });
+});
+
+describe('ImprovementView: lote de guías (F3, hito 4)', () => {
+  const suggestion = (controlId: string, subcategoryId: string, extra = {}) => ({
+    controlId,
+    subcategoryId,
+    functionName: 'Proteger',
+    categoryName: 'Acceso',
+    subcategoryName: `Sub ${subcategoryId}`,
+    subcategoryNames: [`Sub ${subcategoryId}`],
+    controlCode: `PR.${controlId}`,
+    action: `Implementar ${controlId}/${subcategoryId}`,
+    currentLevel: 0,
+    targetLevel: 2,
+    priority: 'HIGH',
+    suggestedDueDate: '2026-12-31',
+    ...extra,
+  });
+  const job = (
+    id: string,
+    controlId: string,
+    status: string,
+    extra: Record<string, unknown> = {},
+  ) => ({
+    id,
+    type: 'GUIDE',
+    status,
+    queuePosition: null,
+    attempts: 1,
+    maxAttempts: 2,
+    errorCode: null,
+    errorMessage: null,
+    createdAt: '2026-11-09T12:00:00Z',
+    startedAt: null,
+    finishedAt: null,
+    guide: null,
+    controlId,
+    batchId: 'batch-1',
+    ...extra,
+  });
+  const done = (id: string, controlId: string) =>
+    job(id, controlId, 'SUCCEEDED', {
+      guide: { id: `guide-${id}`, controlId, summary: `Guía de ${controlId}`, tips: ['Paso'] },
+    });
+  const accepted = (...controlIds: string[]) => ({
+    data: {
+      batchId: 'batch-1',
+      jobs: controlIds.map((c, i) => ({ controlId: c, jobId: `job-${i + 1}`, status: 'QUEUED' })),
+    },
+  });
+
+  const byText = (text: string) =>
+    Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find((b) =>
+      b.textContent?.includes(text),
+    )!;
+  const q = (testid: string) => document.body.querySelector(`[data-testid="${testid}"]`);
+  const advance = async (ms: number) => {
+    await vi.advanceTimersByTimeAsync(ms);
+    await flushPromises();
+  };
+
+  beforeEach(() => {
+    vi.useRealTimers();
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    vi.setSystemTime(new Date(2026, 10, 9, 12, 0, 0));
+    installMemoryStorage();
+    aiJobsService.listMine.mockResolvedValue({ data: [] });
+  });
+
+  async function open(
+    items = [suggestion('c1', 's1'), suggestion('c2', 's2'), suggestion('c3', 's3')],
+  ) {
+    improvementService.getSuggestions.mockResolvedValue({ data: items });
+    const wrapper = await mountView();
+    byText('Generar Sugerencias').click();
+    await flushPromises();
+    return wrapper;
+  }
+  const generate = async () => {
+    (q('generate-batch') as HTMLButtonElement).click();
+    await flushPromises();
+  };
+
+  it('el botón cuenta las seleccionadas y se deshabilita sin ninguna', async () => {
+    await open();
+    expect((q('generate-batch') as HTMLButtonElement).textContent).toContain('(3)');
+
+    for (const box of document.body.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')) {
+      box.checked = false;
+      box.dispatchEvent(new Event('change'));
+    }
+    await flushPromises();
+
+    expect((q('generate-batch') as HTMLButtonElement).disabled).toBe(true);
+    expect((q('generate-batch') as HTMLButtonElement).textContent).toContain('(0)');
+  });
+
+  it('pide un lote con una entrada por control seleccionado y marca las filas en cola', async () => {
+    improvementService.requestTipsBatch.mockResolvedValue(accepted('c1', 'c2', 'c3'));
+    await open();
+
+    await generate();
+
+    expect(improvementService.requestTipsBatch).toHaveBeenCalledTimes(1);
+    const items = improvementService.requestTipsBatch.mock.calls[0][0];
+    expect(items.map((i: { controlId: string }) => i.controlId)).toEqual(['c1', 'c2', 'c3']);
+    expect(items[0]).toMatchObject({ evaluationId: 'eval-1', currentLevel: 0, targetLevel: 2 });
+    const rows = Array.from(document.body.querySelectorAll('[data-testid="request-tips"]'));
+    expect(rows.map((r) => r.textContent?.trim())).toEqual(['En cola…', 'En cola…', 'En cola…']);
+    expect(q('batch-progress')!.textContent).toContain('0 de 3 listas');
+    expect((q('generate-batch') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('solo incluye las seleccionadas', async () => {
+    improvementService.requestTipsBatch.mockResolvedValue(accepted('c1', 'c3'));
+    await open();
+    const boxes = document.body.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
+    boxes[1].checked = false;
+    boxes[1].dispatchEvent(new Event('change'));
+    await flushPromises();
+
+    await generate();
+
+    expect(
+      improvementService.requestTipsBatch.mock.calls[0][0].map(
+        (i: { controlId: string }) => i.controlId,
+      ),
+    ).toEqual(['c1', 'c3']);
+  });
+
+  it('el avance se consulta de una vez para todo el lote y las filas pasan a «lista»', async () => {
+    improvementService.requestTipsBatch.mockResolvedValue(accepted('c1', 'c2', 'c3'));
+    aiJobsService.getMany
+      .mockResolvedValueOnce({
+        data: [
+          done('job-1', 'c1'),
+          job('job-2', 'c2', 'RUNNING'),
+          job('job-3', 'c3', 'QUEUED', { queuePosition: 1 }),
+        ],
+      })
+      .mockResolvedValue({
+        data: [done('job-1', 'c1'), done('job-2', 'c2'), done('job-3', 'c3')],
+      });
+    await open();
+    await generate();
+
+    await advance(3000);
+    expect(aiJobsService.getMany).toHaveBeenCalledTimes(1);
+    expect(aiJobsService.getMany.mock.calls[0][0]).toEqual(['job-1', 'job-2', 'job-3']);
+    expect(q('batch-progress')!.textContent).toContain('1 de 3 listas');
+    expect(document.body.textContent).toContain('Guía de c1');
+    expect(aiJobsService.get).not.toHaveBeenCalled(); // no un pedido por trabajo
+
+    await advance(4000);
+    expect(q('batch-progress')!.textContent).toContain('3 de 3 listas');
+    expect(document.body.textContent).toContain('Guía de c3');
+    expect((q('generate-batch') as HTMLButtonElement).disabled).toBe(true); // ya no quedan sin guía
+  });
+
+  it('una guía del lote se puede usar en la acción y viaja con su guideId', async () => {
+    improvementService.requestTipsBatch.mockResolvedValue(accepted('c1'));
+    aiJobsService.getMany.mockResolvedValue({ data: [done('job-1', 'c1')] });
+    await open([suggestion('c1', 's1')]);
+    await generate();
+    await advance(3000);
+
+    byText('Usar en la acción').click();
+    await flushPromises();
+    byText('Crear seleccionadas').click();
+    await flushPromises();
+
+    expect(improvementService.create).toHaveBeenCalledWith(
+      expect.objectContaining({ controlId: 'c1', guideId: 'guide-job-1', guideEdited: false }),
+    );
+  });
+
+  it('las filas con error muestran el motivo y el lote sigue con el resto', async () => {
+    improvementService.requestTipsBatch.mockResolvedValue(accepted('c1', 'c2'));
+    aiJobsService.getMany.mockResolvedValue({
+      data: [
+        done('job-1', 'c1'),
+        job('job-2', 'c2', 'FAILED', { errorCode: 'AI_TIMEOUT', errorMessage: 'x' }),
+      ],
+    });
+    await open([suggestion('c1', 's1'), suggestion('c2', 's2')]);
+    await generate();
+
+    await advance(3000);
+
+    expect(q('batch-progress')!.textContent).toContain('1 de 2 listas');
+    expect(q('batch-progress')!.textContent).toContain('1 con error');
+    expect(q('tips-error')!.textContent).toContain('tardó más de lo permitido');
+  });
+
+  it('deja de consultar cuando el lote termina', async () => {
+    improvementService.requestTipsBatch.mockResolvedValue(accepted('c1'));
+    aiJobsService.getMany.mockResolvedValue({ data: [done('job-1', 'c1')] });
+    await open([suggestion('c1', 's1')]);
+    await generate();
+    await advance(3000);
+    aiJobsService.getMany.mockClear();
+
+    await advance(60_000);
+
+    expect(aiJobsService.getMany).not.toHaveBeenCalled();
+  });
+
+  it('cancelar el lote cancela lo que sigue en cola y refresca el estado', async () => {
+    improvementService.requestTipsBatch.mockResolvedValue(accepted('c1', 'c2', 'c3'));
+    aiJobsService.getMany.mockResolvedValue({
+      data: [
+        job('job-1', 'c1', 'RUNNING'),
+        job('job-2', 'c2', 'CANCELLED'),
+        job('job-3', 'c3', 'CANCELLED'),
+      ],
+    });
+    aiJobsService.cancelBatch.mockResolvedValue({ data: { cancelled: 2 } });
+    await open();
+    await generate();
+    // Hay trabajos en cola: aparece «Cancelar lote».
+    expect(q('cancel-batch')).not.toBeNull();
+
+    (q('cancel-batch') as HTMLButtonElement).click();
+    await flushPromises();
+
+    expect(aiJobsService.cancelBatch).toHaveBeenCalledWith('batch-1');
+    const rows = Array.from(document.body.querySelectorAll('[data-testid="request-tips"]'));
+    // La fila que ya corría sigue; las canceladas vuelven a poder pedirse.
+    expect(rows[0].textContent).toContain('Generando');
+    expect(rows[1].textContent).toContain('¿Cómo puedo solucionar esto?');
+    expect(rows[2].textContent).toContain('¿Cómo puedo solucionar esto?');
+  });
+
+  it('si no se puede pedir el lote (límite) avisa con el mensaje del servidor', async () => {
+    improvementService.requestTipsBatch.mockRejectedValue({
+      response: { data: { message: 'Hay demasiadas guías de lote en proceso (55).' } },
+    });
+    await open();
+
+    await generate();
+
+    expect(notification.error).toHaveBeenCalledWith(
+      'Hay demasiadas guías de lote en proceso (55).',
+    );
+    expect((q('generate-batch') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('las filas que ya tienen un trabajo activo no se vuelven a pedir en el lote', async () => {
+    improvementService.requestTipsAsync.mockResolvedValue({
+      data: { jobId: 'job-9', status: 'QUEUED' },
+    });
+    improvementService.requestTipsBatch.mockResolvedValue(accepted('c2', 'c3'));
+    await open();
+    (
+      document.body.querySelectorAll('[data-testid="request-tips"]')[0] as HTMLButtonElement
+    ).click();
+    await flushPromises();
+
+    await generate();
+
+    expect(
+      improvementService.requestTipsBatch.mock.calls[0][0].map(
+        (i: { controlId: string }) => i.controlId,
+      ),
+    ).toEqual(['c2', 'c3']);
+  });
+
+  it('un control en dos filas comparte el trabajo del lote', async () => {
+    improvementService.requestTipsBatch.mockResolvedValue(accepted('c1'));
+    aiJobsService.getMany.mockResolvedValue({ data: [done('job-1', 'c1')] });
+    await open([suggestion('c1', 's1'), suggestion('c1', 's2')]);
+
+    await generate();
+    await advance(3000);
+
+    expect(aiJobsService.getMany.mock.calls[0][0]).toEqual(['job-1']);
+    expect(document.body.textContent?.match(/Guía de c1/g)).toHaveLength(2);
+  });
+
+  it('al reabrir tras recargar, los trabajos de lote guardados se consultan juntos', async () => {
+    window.localStorage.setItem(
+      'prisma.aiGuideJobs.eval-1',
+      JSON.stringify({ 'c1:s1': 'job-1', 'c2:s2': 'job-2' }),
+    );
+    aiJobsService.get
+      .mockResolvedValueOnce({ data: job('job-1', 'c1', 'RUNNING') })
+      .mockResolvedValueOnce({ data: job('job-2', 'c2', 'QUEUED') });
+    aiJobsService.getMany.mockResolvedValue({
+      data: [done('job-1', 'c1'), done('job-2', 'c2')],
+    });
+    await open([suggestion('c1', 's1'), suggestion('c2', 's2')]);
+    expect(q('batch-progress')!.textContent).toContain('0 de 2 listas');
+
+    await advance(3000);
+
+    expect(aiJobsService.getMany).toHaveBeenCalledTimes(1);
+    expect(q('batch-progress')!.textContent).toContain('2 de 2 listas');
+  });
+
+  it('cerrar el modal corta la consulta del lote', async () => {
+    improvementService.requestTipsBatch.mockResolvedValue(accepted('c1'));
+    aiJobsService.getMany.mockResolvedValue({ data: [job('job-1', 'c1', 'RUNNING')] });
+    await open([suggestion('c1', 's1')]);
+    await generate();
+    byText('Cerrar').click();
+    await flushPromises();
+    aiJobsService.getMany.mockClear();
+
+    await advance(60_000);
+
+    expect(aiJobsService.getMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('ImprovementView — comparativa con la línea base (RF-PLN-07)', () => {
+  const comparison = (deviationPoints: number) => ({
+    summary: {
+      total: 1,
+      replanned: 1,
+      averageShiftDays: 15,
+      priorityChanged: 0,
+      responsibleChanged: 0,
+      onTime: 0,
+      late: 0,
+      delayed: 1,
+      plannedDue: 1,
+      completed: 0,
+      plannedPercent: 100,
+      actualPercent: 0,
+      deviationPoints,
+    },
+    items: [
+      {
+        id: '1',
+        controlCode: 'PS.1-1',
+        action: 'Acción 1',
+        status: 'PENDING',
+        baselineDueDate: '2026-11-01',
+        dueDate: '2026-11-16',
+        dueDateShiftDays: 15,
+        replanned: true,
+        baselinePriority: 'HIGH',
+        priority: 'HIGH',
+        priorityChanged: false,
+        baselineResponsible: 'Ana',
+        responsible: 'Ana',
+        responsibleChanged: false,
+        completedAt: null,
+        compliance: 'DELAYED',
+        delayDays: 8,
+      },
+    ],
+  });
+
+  it('carga la comparativa de la evaluación y la muestra', async () => {
+    improvementService.getByEvaluation.mockResolvedValue({ data: [plan('1', 'HIGH', 'PENDING')] });
+    improvementService.getBaseline.mockResolvedValue({ data: comparison(-100) });
+
+    await mountView();
+
+    expect(improvementService.getBaseline).toHaveBeenCalledWith('eval-1');
+    const section = document.body.querySelector('[data-test="baseline-section"]')!;
+    expect(section.textContent).toContain('Desvío -100 pts');
+    expect(section.textContent).toContain('+15 días');
+    expect(section.textContent).toContain('Atrasada (8 días)');
+  });
+
+  it('sin acciones muestra el estado vacío', async () => {
+    await mountView();
+
+    expect(document.body.querySelector('[data-test="baseline-empty"]')).not.toBeNull();
+  });
+
+  it('si la comparativa falla, el resto de la pantalla sigue funcionando', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    improvementService.getByEvaluation.mockResolvedValue({ data: [plan('1', 'HIGH', 'PENDING')] });
+    improvementService.getBaseline.mockRejectedValue(new Error('500'));
+
+    await mountView();
+
+    expect(document.body.querySelector('[data-test="baseline-empty"]')).not.toBeNull();
+    expect(document.body.querySelector('[data-test="plan-count"]')!.textContent).toContain('1');
+    error.mockRestore();
+  });
+
+  it('vuelve a pedir la comparativa después de cambiar una acción', async () => {
+    const pending = [plan('1', 'HIGH', 'PENDING')];
+    improvementService.getByEvaluation.mockResolvedValue({ data: pending });
+
+    await mountView();
+    expect(improvementService.getBaseline).toHaveBeenCalledTimes(1);
+    await openEditorFor(0);
+    setValue(editCommentsBox(), 'nuevo comentario');
+    buttonWithText('Guardar cambios')!.click();
+    await flushPromises();
+
+    expect(improvementService.update).toHaveBeenCalled();
+    expect(improvementService.getBaseline).toHaveBeenCalledTimes(2);
   });
 });

@@ -27,7 +27,12 @@ uy.edu.prisma
 | `CommunityProfileService` | CRUD de perfiles comunitarios (subconjuntos curados de controles). Catálogo de referencia compartido entre organizaciones — solo `PRISMA_ADMIN` puede escribir. El perfil no se asigna a la organización: se elige **por evaluación** (`Evaluation.communityProfile`), de modo que una misma organización puede tener evaluaciones con perfiles distintos. |
 | `EvaluationService` | El servicio más grande: ciclo de vida completo de una evaluación (crear, cambiar estado con una tabla de transiciones válidas + rol autorizado por transición, responder controles) y `calculateMaturity()` — el motor de cálculo de madurez acumulativa por subcategoría y del promedio global de la evaluación. Las respuestas sólo se pueden editar mientras `Evaluation.isSelfAssessmentEditable()` es verdadero (`DRAFT`/`IN_PROGRESS`/`RETURNED`). |
 | `EvidenceService` | Valida la evidencia (`EvidenceFileValidator`: extensión, firma real y tamaño), la analiza con ClamAV (`ClamAvClient`), la sube a RustFS (S3), dispara indexado best-effort en `backend-ai` (RAG) y expone la búsqueda de citas relevantes por control. La descarga la sirve por streaming; el presigner interno se usa para que `backend-ai` baje el archivo a indexar (ver `ObjectStorageConfig`). Igual que las respuestas, subir/borrar/reindexar evidencia respeta `isSelfAssessmentEditable()`. |
-| `ImprovementPlanService` | CRUD del plan de mejora (acciones correctivas por control) + motor de sugerencias automáticas por reglas: una por control no cumplido (con todas sus subcategorías), solo con la madurez calculada y fuera de `DRAFT` (si no, 409). También pide guías prácticas a la IA (`tips`) y registra qué se hizo con ellas (`recordFeedback`, tabla `ai_suggestion_feedback`) para un futuro fine-tuning. |
+| `ImprovementPlanService` | CRUD del plan de mejora (acciones correctivas por control) + motor de sugerencias automáticas por reglas: una por control no cumplido (con todas sus subcategorías), solo con la madurez calculada y fuera de `DRAFT` (si no, 409). También pide guías prácticas a la IA (`tips`, síncrono) y registra qué se hizo con ellas (`recordFeedback`, tabla `ai_suggestion_feedback`) para un futuro fine-tuning. Al crear una acción con `guideId` marca la guía como usada y registra el feedback en la misma transacción (`AiGuideService.markUsed`). |
+| `AiJobService` | Lado API de la cola de IA: encolar la guía (idempotente por organización + control + niveles, con tope de trabajos activos por organización), consultar, listar los propios y cancelar. Reverifica el acceso a la organización en cada consulta. |
+| `AiJobQueue` | Máquina de estados del trabajador: reclamo con `FOR UPDATE SKIP LOCKED` y tope global de concurrencia, `complete`/`fail` con reintentos y espera creciente, recuperación de trabajos cuya réplica murió y limpieza. |
+| `AiJobWorker` / `AiJobRunner` | Sondeo de la cola bajo ShedLock y ejecución de cada trabajo contra backend-ai, fuera de transacción. Se apaga con `AI_JOBS_ENABLED=false`. |
+| `AiGuideService` | Guías de IA persistidas (`GENERATED` → `SHOWN` → `USED`/`EXPIRED`) y su feedback anónimo en el servidor; vencimiento a los 30 días. |
+| `AiJobMetrics` | Métricas Prometheus de la cola (espera, ejecución, resultado, reintentos, tokens y tiempos de Ollama). |
 | `AuditObservationService` | Observaciones/no conformidades/recomendaciones que un `AUDITOR` registra sobre una evaluación en estado `IN_AUDIT`. |
 | `DashboardService` | Agregados de solo lectura para el panel: totales, madurez promedio, distribución por estado/función — acotados por organización salvo rol global. |
 | `ReportService` | Genera el reporte de una evaluación en PDF (OpenPDF) y Excel (Apache POI). Sus cuatro PDF (final, preliminar, ejecutivo y plan de mejora) cumplen **PDF/A-1b** (RNF-12) gracias a `PdfA` — ver [PDF/A-1b](#pdfa-1b-rnf-12) más abajo. |
@@ -38,7 +43,14 @@ uy.edu.prisma
 | `EvaluationOverviewService` | Estructura de la evaluación (función, categoría, subcategoría, controles por nivel) podada al perfil comunitario, con la prioridad de cada subcategoría. |
 | `ControlGuideService` | Guía de interpretación de los controles (interpretación, ejemplo y evidencia esperada): edición, importación y exportación en CSV (`ControlGuideParser`, `ControlGuideCsv`). |
 | `TechnicalReportService` | Reporte técnico detallado en PDF: el desglose control por control que respalda el nivel de madurez de cada subcategoría. |
-| `AiCitationFeedbackService` | Registra si el auditor aceptó o rechazó cada cita de la IA (tabla `ai_citation_feedback`). |
+| `AiCitationFeedbackService` | Registra si el auditor aceptó o rechazó cada cita de la IA (tabla `ai_citation_feedback`, anónima). Aceptar una cita valida el control en la misma transacción (`AuditVerdictService.applyCitation`): reglas de D1, D5 y D10 (rechazar nunca cambia el dictamen; pisar uno manual pide confirmación). |
+| `EvidenceCitationStore` | Citas de la IA guardadas por evaluación y control (C2): `merge` conserva la decisión de los fragmentos que siguen apareciendo (por `fragmentId`), descarta los que no, invalida al cambiar la evidencia y al salir de auditoría. |
+| `AiTraceService` | Modo investigación (C8): decide si registrar (solo con el modo encendido, D2), guarda trazas de guías, citas y preclasificación (ids y puntajes en evidencia, D15), las enlaza a su recurso, las consulta con control de acceso, exporta JSONL desde `ai_trace` y purga por retención. Se inyecta por setter y es opcional en los servicios que lo usan. |
+| `EvidenceClassificationService` | Preclasificación de evidencia global (C1 / D7): trabajo `EVIDENCE_CLASSIFY` que sugiere los 3 controles más probables; lista y decide sugerencias (aceptar NO asigna la evidencia) y deja feedback anónimo y mínimo. |
+| `AiJobService` (lote) | `enqueueGuideBatch` (un `GUIDE` por control con prioridad de lote y `batch_id`), `getMany` (avance de varios trabajos) y `cancelBatch`. |
+| `EvidenceIndexService` | Indexación de evidencia con estado (C7): encola el trabajo `EVIDENCE_INDEX`, y fija `QUEUED`/`INDEXING`/`INDEXED`/`ERROR`/`NOT_INDEXABLE`. Trabajo del sistema (sin usuario). |
+| `CitationPrecomputeService` / `CitationLifecycleListener` | `CITATIONS_PRECOMPUTE` al entrar a auditoría y descarte de las citas guardadas al salir (evento `EvaluationStatusChangedEvent`, después de confirmar la transacción). |
+| `AuditVerdictService` (`applyCitation`) | Dictamen por control con origen `MANUAL`/`CITATION`; aplica la regla de «aceptar una cita» y deja el origen y la cita en la bitácora (`SET_CONTROL_VERDICT`). |
 | `EvidenceRescanScheduler` | Tarea programada que reanaliza con ClamAV las evidencias en cuarentena y las libera o las elimina. |
 | `EmailSettingsService` | Configuración del servidor SMTP de Keycloak (recuperación de contraseña, invitaciones) y envío de un correo de prueba. |
 | `AlertSettingsService` | Configuración del correo de alertas de Alertmanager: valida, guarda en `alert_settings`, reescribe la configuración de Alertmanager y envía una alerta de prueba. |
@@ -141,7 +153,7 @@ punta a punta.
 app/
  ├── api/v1/       # Routers FastAPI: evidence.py (ingesta/citas), rag.py (consulta/estado/tips)
  ├── core/         # config.py (Settings), security.py (X-Internal-Api-Key), logging.py
- ├── rag/          # vector_store.py, evidence_store.py, loaders.py, chroma_client.py
+ ├── rag/          # vector_store.py, evidence_store.py, loaders.py, chroma_client.py, ollama_runtime.py
  └── main.py       # App FastAPI, CORS, healthcheck, montaje de routers
 ```
 
@@ -154,6 +166,12 @@ app/
   metadata que se pueda olvidar en una query) — nunca puede devolver fragmentos de otra
   organización. Cada chunk además lleva `evaluation_id`/`control_id` en la metadata para acotar
   las citas a la evaluación/control puntual.
+- **`rag/ollama_runtime.py`** — opciones de Ollama por pedido (`num_ctx`, `keep_alive`, `num_predict`,
+  `temperature`, `seed`, `num_thread`; `reasoning` solo si el modelo declara `thinking`), estimación de
+  tokens y `PromptTooLargeError` (el prompt que no entra no llega a Ollama; el límite usa el contexto
+  **efectivo** del modelo según `/api/ps`, no solo `AI_NUM_CTX`), precalentamiento de LLM y
+  embedding al arrancar (reintenta mientras Ollama no responda) e información de runtime para
+  `GET /api/v1/runtime`.
 - **`rag/loaders.py`** — extracción de texto por tipo de archivo (`.pdf` vía `PyPDFLoader`,
   `.docx`, `.txt`/`.md`).
 - **`rag/chroma_client.py`** — fábrica del cliente ChromaDB subyacente: `PersistentClient` local

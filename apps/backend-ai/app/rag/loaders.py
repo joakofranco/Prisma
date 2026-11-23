@@ -135,3 +135,46 @@ def split_with_sections(doc: Document, splitter: RecursiveCharacterTextSplitter)
             Document(page_content=chunk_text, metadata={**doc.metadata, "section": section})
         )
     return chunks
+
+
+# --- Troceo del marco MCU por requisito (req_ctx) ----------------------------------------------
+# «### Requisito PS.1» abre un requisito; lo cierra el siguiente requisito o un encabezado de nivel
+# 1 o 2 («## 2.2 ...»), para no arrastrar la categoría siguiente al último requisito de la anterior.
+_REQUIREMENT_RE = re.compile(
+    r"^###[ \t]+Requisito[ \t]+([A-Z]{1,3}\.\d{1,2})[ \t]*\r?$", re.MULTILINE
+)
+_SECTION_END_RE = re.compile(r"^#{1,2}[ \t]+\S", re.MULTILINE)
+_BOLD_TITLE_RE = re.compile(r"^\*\*(.+?)\*\*[ \t]*\r?$", re.MULTILINE)
+
+
+def split_by_requirement(doc: Document) -> list[Document]:
+    """Un fragmento por requisito del marco, con «Requisito XX.N — título» antepuesto.
+
+    El título es la primera línea en negrita bajo el encabezado. Cada fragmento lleva
+    ``metadata['requirement']`` (el código, p. ej. ``PS.1``): con él se arma un id estable
+    (``<fuente>::req-PS.1``) que no depende de la posición ni del tamaño de los fragmentos.
+    Devuelve una lista vacía si el documento no tiene requisitos (se trocea de la forma genérica).
+    """
+    text = doc.page_content
+    matches = list(_REQUIREMENT_RE.finditer(text))
+    fragments: list[Document] = []
+    for i, match in enumerate(matches):
+        code = match.group(1)
+        body_start = match.end()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        section_end = _SECTION_END_RE.search(text, body_start, end)
+        if section_end:
+            end = section_end.start()
+        body = text[body_start:end].strip()
+        if not body:
+            continue
+        title_match = _BOLD_TITLE_RE.search(body)
+        title = title_match.group(1).strip() if title_match else ""
+        header = f"Requisito {code} — {title}" if title else f"Requisito {code}"
+        fragments.append(
+            Document(
+                page_content=f"{header}\n\n{body}",
+                metadata={**doc.metadata, "requirement": code},
+            )
+        )
+    return fragments

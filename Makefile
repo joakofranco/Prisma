@@ -224,10 +224,10 @@ restore: ## Restaurar PostgreSQL y las evidencias desde el respaldo MÁS RECIENT
 	$(DC) exec -T backup-runner /usr/local/bin/restore.sh
 
 # ---------- IA / OLLAMA ----------
-pull-llm: ## Descargar en Ollama los modelos llama3:8b (~4.7 GB) y nomic-embed-text. Solo la primera vez; necesita el contenedor ollama levantado
+pull-llm: ## Descargar en Ollama los modelos nemotron-3-nano:30b (LLM, ~24 GB) y bge-m3 (embedding, ~1,2 GB). Solo la primera vez; necesita el contenedor ollama levantado
 	@echo "$(CYAN)Descargando los modelos de Ollama...$(RESET)"
-	$(DC) exec ollama ollama pull llama3:8b
-	$(DC) exec ollama ollama pull nomic-embed-text
+	$(DC) exec ollama ollama pull nemotron-3-nano:30b
+	$(DC) exec ollama ollama pull bge-m3
 	@echo "$(GREEN)Modelos descargados$(RESET)"
 
 # ---------- CALIDAD & SEGURIDAD ----------
@@ -303,6 +303,10 @@ internal-ca: ## Generar la CA interna y los certificados TLS de cada servicio (p
 #> CERT_EXTRA_SAN=DNS:otro.host,IP:10.0.0.5  nombres o IP adicionales en los certificados
 #> CERT_DAYS=...  validez en días    CERT_SERVICES="keycloak postgres ..."  servicios para los que se emite
 	./scripts/generate-internal-ca.sh
+
+report-signing-cert: ## Emitir el certificado de sellado de PDFs (RF-REP-06) con la CA interna y guardarlo en infra/tls/signing/report-signing.p12
+#> PDF_SIGNING_KEYSTORE_PASSWORD=...  contraseña del keystore (si falta se genera y se imprime)    CERT_DAYS=...  validez en días
+	./scripts/generate-report-signing-cert.sh
 
 restart-nginx: ## Reiniciar solo nginx, para que tome un certificado o una configuración nuevos
 	$(DC) restart nginx

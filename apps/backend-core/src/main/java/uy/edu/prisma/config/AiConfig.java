@@ -10,7 +10,7 @@ import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 
 @Configuration
-@EnableConfigurationProperties(AiConfig.AiProperties.class)
+@EnableConfigurationProperties({AiConfig.AiProperties.class, AiJobProperties.class})
 public class AiConfig {
 
   /**
@@ -18,7 +18,9 @@ public class AiConfig {
    * dejaba la subida de evidencias esperando para siempre. {@code connectTimeout}: establecer la
    * conexión; {@code readTimeout}: esperar la respuesta de la ingesta y de las citas; {@code
    * guideReadTimeout}: la guía de mejora, que genera con el LLM y tarda cerca de un minuto con
-   * Ollama local. Si no se configuran: 3 s, 60 s y 120 s.
+   * Ollama local. {@code classifyReadTimeout}: la preclasificación de evidencia global (compara
+   * ~670 controles con la evidencia: 55 a 68 s a solas y más de 2 minutos con dos a la vez), que
+   * tiene su propia espera para no subir la general. Si no se configuran: 3 s, 60 s, 120 s y 300 s.
    */
   @ConfigurationProperties(prefix = "prisma.ai")
   public record AiProperties(
@@ -26,11 +28,13 @@ public class AiConfig {
       String internalApiKey,
       Duration connectTimeout,
       Duration readTimeout,
-      Duration guideReadTimeout) {
+      Duration guideReadTimeout,
+      Duration classifyReadTimeout) {
 
     public static final Duration DEFAULT_CONNECT_TIMEOUT = Duration.ofSeconds(3);
     public static final Duration DEFAULT_READ_TIMEOUT = Duration.ofSeconds(60);
     public static final Duration DEFAULT_GUIDE_READ_TIMEOUT = Duration.ofSeconds(120);
+    public static final Duration DEFAULT_CLASSIFY_READ_TIMEOUT = Duration.ofSeconds(300);
 
     // Con más de un constructor, Spring Boot necesita saber cuál usar para enlazar las propiedades:
     // sin esta anotación intenta el enlace por setters y el backend no arranca.
@@ -39,10 +43,22 @@ public class AiConfig {
       connectTimeout = connectTimeout != null ? connectTimeout : DEFAULT_CONNECT_TIMEOUT;
       readTimeout = readTimeout != null ? readTimeout : DEFAULT_READ_TIMEOUT;
       guideReadTimeout = guideReadTimeout != null ? guideReadTimeout : DEFAULT_GUIDE_READ_TIMEOUT;
+      classifyReadTimeout =
+          classifyReadTimeout != null ? classifyReadTimeout : DEFAULT_CLASSIFY_READ_TIMEOUT;
+    }
+
+    /** Sin la espera de la clasificación (rige el valor por defecto). */
+    public AiProperties(
+        String baseUrl,
+        String internalApiKey,
+        Duration connectTimeout,
+        Duration readTimeout,
+        Duration guideReadTimeout) {
+      this(baseUrl, internalApiKey, connectTimeout, readTimeout, guideReadTimeout, null);
     }
 
     public AiProperties(String baseUrl, String internalApiKey) {
-      this(baseUrl, internalApiKey, null, null, null);
+      this(baseUrl, internalApiKey, null, null, null, null);
     }
   }
 
@@ -67,6 +83,12 @@ public class AiConfig {
   @Bean
   public RestClient aiGuideRestClient(RestClient.Builder builder, AiProperties properties) {
     return build(builder, properties, properties.guideReadTimeout());
+  }
+
+  /** Igual que {@link #aiRestClient} pero con la espera de la preclasificación de evidencia. */
+  @Bean
+  public RestClient aiClassifyRestClient(RestClient.Builder builder, AiProperties properties) {
+    return build(builder, properties, properties.classifyReadTimeout());
   }
 
   private static RestClient build(

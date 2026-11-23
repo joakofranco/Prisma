@@ -1,59 +1,49 @@
 <template>
   <div class="space-y-6">
-    <div class="flex items-center gap-3">
-      <router-link
-        :to="`/evaluations/${evaluationId}`"
-        class="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400"
-        title="Volver a la evaluación"
-      >
-        <ArrowLeftIcon class="w-5 h-5" />
-      </router-link>
-      <div class="flex-1">
-        <h1 class="text-2xl font-bold text-slate-900 dark:text-white">Plan de Mejora</h1>
-        <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">
-          Acciones correctivas basadas en las brechas detectadas
-        </p>
-      </div>
-      <div v-if="canManage" class="flex items-center gap-2">
-        <BaseButton
-          variant="secondary"
-          :loading="loadingSuggestions"
-          :disabled="!canEditFully"
-          @click="openSuggestModal"
+    <div
+      class="sm:sticky sm:top-16 z-20 -mx-4 lg:-mx-6 px-4 lg:px-6 pt-2 pb-3 space-y-4 bg-slate-50 dark:bg-slate-900"
+      data-test="plan-sticky"
+    >
+      <div class="flex items-center gap-3">
+        <router-link
+          :to="`/evaluations/${evaluationId}`"
+          class="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400"
+          title="Volver a la evaluación"
         >
-          <SparklesIcon class="w-4 h-4" />
-          Generar Sugerencias
-        </BaseButton>
-        <BaseButton variant="primary" :disabled="!canEditFully" @click="openCreateModal">
-          <PlusIcon class="w-4 h-4" />
-          Nueva Acción
-        </BaseButton>
+          <ArrowLeftIcon class="w-5 h-5" />
+        </router-link>
+        <div class="flex-1">
+          <h1 class="text-2xl font-bold text-slate-900 dark:text-white">Plan de Mejora</h1>
+          <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">
+            Acciones correctivas basadas en las brechas detectadas
+          </p>
+        </div>
+        <div v-if="canManage" class="flex items-center gap-2">
+          <span
+            v-if="aiActiveCount > 0"
+            class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-indigo-50 text-indigo-700 border border-indigo-100 dark:bg-indigo-950 dark:text-indigo-300 dark:border-indigo-900"
+            role="status"
+            data-testid="ai-tasks"
+          >
+            <SparklesIcon class="w-3.5 h-3.5" />
+            Tareas de IA: {{ aiActiveCount }} en curso
+          </span>
+          <BaseButton
+            variant="secondary"
+            :loading="loadingSuggestions"
+            :disabled="!canEditFully"
+            @click="openSuggestModal"
+          >
+            <SparklesIcon class="w-4 h-4" />
+            Generar Sugerencias
+          </BaseButton>
+          <BaseButton variant="primary" :disabled="!canEditFully" @click="openCreateModal">
+            <PlusIcon class="w-4 h-4" />
+            Nueva Acción
+          </BaseButton>
+        </div>
       </div>
-    </div>
-
-    <div
-      v-if="isApproved"
-      class="px-4 py-3 rounded-lg bg-amber-50 border border-amber-200 text-sm text-amber-900 dark:bg-amber-950 dark:border-amber-800 dark:text-amber-200"
-      role="status"
-      data-test="approved-banner"
-    >
-      Evaluación <strong>Aprobada</strong>: solo se puede actualizar el estado de cada acción.
-    </div>
-    <div
-      v-else-if="isClosed"
-      class="px-4 py-3 rounded-lg bg-slate-100 border border-slate-200 text-sm text-slate-700 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300"
-      role="status"
-      data-test="closed-banner"
-    >
-      El plan de mejora no está activo: la evaluación está en borrador o archivada.
-    </div>
-
-    <div v-if="loading" class="flex items-center justify-center py-12">
-      <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
-    </div>
-
-    <template v-else>
-      <div class="grid grid-cols-1 sm:grid-cols-4 gap-4">
+      <div v-if="!loading" class="grid grid-cols-1 sm:grid-cols-4 gap-4" data-test="plan-stats">
         <StatsCard
           title="Pendientes"
           :value="plansByStatus('PENDING')"
@@ -83,7 +73,30 @@
           icon-color-class="text-red-600 dark:text-red-400"
         />
       </div>
+    </div>
 
+    <div
+      v-if="isApproved"
+      class="px-4 py-3 rounded-lg bg-amber-50 border border-amber-200 text-sm text-amber-900 dark:bg-amber-950 dark:border-amber-800 dark:text-amber-200"
+      role="status"
+      data-test="approved-banner"
+    >
+      Evaluación <strong>Aprobada</strong>: solo se puede actualizar el estado de cada acción.
+    </div>
+    <div
+      v-else-if="isClosed"
+      class="px-4 py-3 rounded-lg bg-slate-100 border border-slate-200 text-sm text-slate-700 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300"
+      role="status"
+      data-test="closed-banner"
+    >
+      El plan de mejora no está activo: la evaluación está en borrador o archivada.
+    </div>
+
+    <div v-if="loading" class="flex items-center justify-center py-12">
+      <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
+    </div>
+
+    <template v-else>
       <section
         class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-5"
         aria-labelledby="remediation-progress-title"
@@ -126,6 +139,8 @@
           </div>
         </div>
       </section>
+
+      <BaselineComparisonSection :comparison="baseline" />
 
       <MaturityGapSection
         :results="results"
@@ -241,6 +256,9 @@
                 >
                   <span class="font-medium">Comentarios:</span> {{ plan.comments }}
                 </p>
+              </div>
+              <div class="flex items-center gap-1 shrink-0">
+                <AiTraceButton :load="() => aiTraceService.getPlanTrace(plan.id)" />
               </div>
               <div v-if="canEditStatus" class="flex items-center gap-1 shrink-0">
                 <button
@@ -413,6 +431,40 @@
         <p>No hay brechas pendientes para sugerir. Complete la evaluación o revise el catálogo.</p>
       </div>
       <div v-else class="max-h-[60vh] overflow-y-auto space-y-3 -mr-2 pr-2">
+        <div
+          class="flex flex-wrap items-center gap-3 p-3 rounded-lg bg-indigo-50 border border-indigo-100 dark:bg-indigo-950 dark:border-indigo-900"
+          data-testid="batch-bar"
+        >
+          <BaseButton
+            variant="secondary"
+            :disabled="selectedForBatch.length === 0 || batchRunning"
+            data-testid="generate-batch"
+            @click="generateSelected"
+          >
+            <SparklesIcon class="w-4 h-4" />
+            Generar con IA para las seleccionadas ({{ selectedForBatch.length }})
+          </BaseButton>
+          <span
+            v-if="batchProgress.total > 0"
+            class="text-xs text-indigo-800 dark:text-indigo-300"
+            role="status"
+            data-testid="batch-progress"
+          >
+            {{ batchProgress.done }} de {{ batchProgress.total }} listas<template
+              v-if="batchProgress.failed > 0"
+              >, {{ batchProgress.failed }} con error</template
+            >
+          </span>
+          <button
+            v-if="batchProgress.queued > 0"
+            type="button"
+            class="text-xs text-slate-600 underline hover:text-slate-800 dark:text-slate-300"
+            data-testid="cancel-batch"
+            @click="cancelBatch"
+          >
+            Cancelar lote
+          </button>
+        </div>
         <p class="text-xs text-slate-500 dark:text-slate-400">
           Generadas a partir de las respuestas por debajo del nivel objetivo, ordenadas por
           prioridad. Revise, edite y seleccione las que quiera crear como acciones del plan.
@@ -451,21 +503,41 @@
               </p>
               <BaseTextarea v-model="s.action" :rows="2" />
 
-              <button
-                type="button"
-                class="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-700 disabled:opacity-50 dark:text-indigo-400 dark:hover:text-indigo-300"
-                :disabled="loadingTipsFor === sKey(s)"
-                @click="loadTips(s)"
+              <div class="flex items-center gap-3 flex-wrap">
+                <button
+                  type="button"
+                  class="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-700 disabled:opacity-50 dark:text-indigo-400 dark:hover:text-indigo-300"
+                  :disabled="isJobActive(s)"
+                  data-testid="request-tips"
+                  @click="loadTips(s)"
+                >
+                  <SparklesIcon class="w-3.5 h-3.5" />
+                  {{
+                    isJobActive(s)
+                      ? jobProgressLabel(jobsByKey[sKey(s)])
+                      : tipsByKey[sKey(s)]
+                        ? 'Regenerar sugerencia con IA'
+                        : '¿Cómo puedo solucionar esto? (sugerencia con IA)'
+                  }}
+                </button>
+                <button
+                  v-if="jobsByKey[sKey(s)]?.status === 'QUEUED'"
+                  type="button"
+                  class="text-xs text-slate-500 underline hover:text-slate-700 dark:text-slate-400"
+                  data-testid="cancel-tips"
+                  @click="cancelJob(s)"
+                >
+                  Cancelar
+                </button>
+              </div>
+              <p
+                v-if="jobsByKey[sKey(s)]?.error"
+                class="text-xs text-red-700 dark:text-red-400"
+                role="alert"
+                data-testid="tips-error"
               >
-                <SparklesIcon class="w-3.5 h-3.5" />
-                {{
-                  loadingTipsFor === sKey(s)
-                    ? 'Generando sugerencia…'
-                    : tipsByKey[sKey(s)]
-                      ? 'Regenerar sugerencia con IA'
-                      : '¿Cómo puedo solucionar esto? (sugerencia con IA)'
-                }}
-              </button>
+                {{ jobsByKey[sKey(s)].error }}
+              </p>
               <div
                 v-if="tipsByKey[sKey(s)]"
                 class="p-3 rounded-lg bg-indigo-50 border border-indigo-100 space-y-1.5 dark:bg-indigo-950"
@@ -524,7 +596,7 @@
 </template>
 
 <script setup lang="ts">
-  import { ref, computed, reactive, onMounted, watch } from 'vue';
+  import { ref, computed, reactive, onMounted, onBeforeUnmount, watch } from 'vue';
   import { useRoute } from 'vue-router';
   import { format } from 'date-fns';
   import {
@@ -532,20 +604,32 @@
     evaluationsService,
     planDeadlinesService,
     reportsService,
+    aiJobsService,
+    aiTraceService,
   } from '@/services/resources';
   import { DEFAULT_PLAN_DEADLINES, defaultDueDate, monthsFor } from '@/utils/planDeadlines';
   import { useAuthStore } from '@/stores/auth';
   import { formatDate, getErrorMessage } from '@/utils/helpers';
   import { blobErrorMessage, saveBlob } from '@/utils/files';
+  import {
+    nextPollDelay,
+    isActive,
+    jobProgressLabel,
+    jobErrorMessage,
+    loadStoredJobs,
+    saveStoredJobs,
+  } from '@/utils/aiJobs';
   import { useNotification } from '@/composables/useUtils';
   import StatsCard from '@/components/common/StatsCard.vue';
   import ProgressBar from '@/components/common/ProgressBar.vue';
   import { planProgress, type Progress } from '@/utils/planProgress';
   import BaseButton from '@/components/common/BaseButton.vue';
+  import BaselineComparisonSection from '@/components/improvement/BaselineComparisonSection.vue';
   import MaturityGapSection, {
     type GapActionDraft,
   } from '@/components/improvement/MaturityGapSection.vue';
   import BaseModal from '@/components/common/BaseModal.vue';
+  import AiTraceButton from '@/components/ai/AiTraceButton.vue';
   import BaseInput from '@/components/common/BaseInput.vue';
   import BaseSelect from '@/components/common/BaseSelect.vue';
   import BaseTextarea from '@/components/common/BaseTextarea.vue';
@@ -563,11 +647,13 @@
   } from '@heroicons/vue/24/outline';
   import type {
     ImprovementPlan,
+    PlanBaselineComparison,
     PlanDeadlines,
     MaturityResult,
     SuggestedImprovement,
     RemediationTips,
-    AiSuggestionFeedback,
+    AiJob,
+    AiJobStatus,
   } from '@/types';
 
   interface EditableSuggestion extends SuggestedImprovement {
@@ -627,16 +713,35 @@
   // brechas junta (sería lento y cargaría a Ollama con generaciones que el usuario ni llegó a
   // pedir). Se indexa por sugerencia (control + subcategoría): un mismo control puede aparecer
   // varias veces, una por subcategoría, y cada tarjeta lleva su propia guía.
+  //
+  // La generación es un TRABAJO ASÍNCRONO (cola de IA): el pedido responde enseguida con el id del
+  // trabajo y acá se lo consulta cada 3-8 s hasta que termina. El servidor guarda la guía y el
+  // feedback (usada / editada / rechazada): el frontend ya no lo registra. El id del trabajo se
+  // guarda en localStorage para retomarlo si se cierra el modal o se recarga la página.
   const tipsByKey = reactive<Record<string, RemediationTips>>({});
-  const loadingTipsFor = ref<string | null>(null);
+  interface GuideJobState {
+    jobId: string;
+    status: AiJobStatus;
+    queuePosition: number | null;
+    error: string | null;
+    /** Lote al que pertenece (si se pidió como lote). */
+    batchId?: string | null;
+  }
+  const jobsByKey = reactive<Record<string, GuideJobState>>({});
   // Texto que «Usar en la acción» copió a la acción de cada sugerencia: sirve de referencia para
   // saber, al crearla, si la persona lo editó.
   const usedText = reactive<Record<string, string>>({});
-  // Guías generadas y descartadas al regenerar, pendientes de registrar como rechazadas.
-  const discarded: AiSuggestionFeedback[] = [];
+  // Trabajos de IA propios en curso (indicador «Tareas de IA»).
+  const aiActiveCount = ref(0);
+
+  const pollTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   function sKey(s: SuggestedImprovement) {
     return `${s.controlId}:${s.subcategoryId}`;
+  }
+
+  function isJobActive(s: SuggestedImprovement) {
+    return isActive(jobsByKey[sKey(s)]?.status);
   }
 
   function tipsToText(t: RemediationTips) {
@@ -644,47 +749,263 @@
     return [t.summary, steps].filter((p) => p && p.trim()).join('\n');
   }
 
-  function feedbackOf(
-    s: SuggestedImprovement,
-    t: RemediationTips,
-    outcome: AiSuggestionFeedback['outcome'],
-    editedText?: string,
-  ): AiSuggestionFeedback {
-    return {
-      controlId: s.controlId,
-      currentLevel: s.currentLevel,
-      targetLevel: s.targetLevel,
-      originalSummary: t.summary ?? '',
-      originalTips: t.tips,
-      outcome,
-      ...(editedText !== undefined ? { editedText } : {}),
+  function persistJobs() {
+    const stored: Record<string, string> = {};
+    for (const [key, job] of Object.entries(jobsByKey)) {
+      if (job.status === 'QUEUED' || job.status === 'RUNNING' || job.status === 'SUCCEEDED') {
+        stored[key] = job.jobId;
+      }
+    }
+    saveStoredJobs(evaluationId, stored);
+  }
+
+  async function refreshActiveCount() {
+    try {
+      const { data } = await aiJobsService.listMine();
+      aiActiveCount.value = data.filter((j) => isActive(j.status)).length;
+    } catch {
+      // el indicador es informativo: si falla no molesta
+    }
+  }
+
+  function stopPolling() {
+    pollTimers.forEach((timer) => clearTimeout(timer));
+    pollTimers.clear();
+    stopBatchPolling();
+  }
+
+  function dropJob(key: string) {
+    const timer = pollTimers.get(key);
+    if (timer) clearTimeout(timer);
+    pollTimers.delete(key);
+    delete jobsByKey[key];
+    persistJobs();
+  }
+
+  // Refleja el estado del trabajo en la tarjeta; devuelve true si sigue activo.
+  function applyJob(key: string, job: AiJob): boolean {
+    if (job.status === 'CANCELLED') {
+      dropJob(key);
+      return false;
+    }
+    jobsByKey[key] = {
+      jobId: job.id,
+      status: job.status,
+      queuePosition: job.queuePosition,
+      batchId: job.batchId ?? jobsByKey[key]?.batchId ?? null,
+      error:
+        job.status === 'FAILED'
+          ? jobErrorMessage(job)
+          : job.status === 'EXPIRED'
+            ? 'La sugerencia venció. Volvé a pedirla.'
+            : null,
     };
+    if (job.status === 'SUCCEEDED' && job.guide) {
+      tipsByKey[key] = {
+        summary: job.guide.summary,
+        tips: job.guide.tips,
+        generated: true,
+        guideId: job.guide.id,
+      };
+      delete usedText[key];
+    }
+    persistJobs();
+    return isActive(job.status);
+  }
+
+  function schedulePoll(key: string, attempt: number) {
+    const timer = setTimeout(async () => {
+      pollTimers.delete(key);
+      const state = jobsByKey[key];
+      if (!state) return;
+      try {
+        const { data } = await aiJobsService.get(state.jobId);
+        if (applyJob(key, data)) schedulePoll(key, attempt + 1);
+      } catch (err) {
+        const status = (err as { response?: { status?: number } }).response?.status;
+        if (status === 404 || status === 403) {
+          // El trabajo ya no existe o no es accesible: se descarta y se puede volver a pedir.
+          dropJob(key);
+        } else {
+          // Falla transitoria de red o del servidor: se sigue intentando.
+          schedulePoll(key, attempt + 1);
+        }
+      } finally {
+        void refreshActiveCount();
+      }
+    }, nextPollDelay(attempt));
+    pollTimers.set(key, timer);
   }
 
   async function loadTips(s: EditableSuggestion) {
     const key = sKey(s);
-    loadingTipsFor.value = key;
+    if (isJobActive(s)) return;
     try {
-      const { data } = await improvementService.getRemediationTips({
-        controlCode: s.controlCode,
-        description: s.action,
+      const { data } = await improvementService.requestTipsAsync({
+        controlId: s.controlId,
+        evaluationId,
         functionName: s.functionName,
         categoryName: s.categoryName,
         subcategoryName: s.subcategoryName,
         currentLevel: s.currentLevel,
         targetLevel: s.targetLevel,
       });
-      // Regenerar descarta la guía anterior: queda registrada como rechazada.
-      const previous = tipsByKey[key];
-      if (previous && previous.generated !== false) {
-        discarded.push(feedbackOf(s, previous, 'REJECTED'));
-      }
-      delete usedText[key];
-      tipsByKey[key] = data;
+      jobsByKey[key] = { jobId: data.jobId, status: data.status, queuePosition: null, error: null };
+      persistJobs();
+      schedulePoll(key, 0);
+      void refreshActiveCount();
     } catch (err) {
       notification.error(getErrorMessage(err, 'No se pudo generar la sugerencia'));
-    } finally {
-      loadingTipsFor.value = null;
+    }
+  }
+
+  async function cancelJob(s: EditableSuggestion) {
+    const key = sKey(s);
+    const state = jobsByKey[key];
+    if (!state) return;
+    try {
+      await aiJobsService.cancel(state.jobId);
+      dropJob(key);
+      void refreshActiveCount();
+    } catch (err) {
+      // Si otra réplica ya lo tomó no se puede cortar: sigue su camino y se lo sigue consultando.
+      notification.error(getErrorMessage(err, 'No se pudo cancelar la sugerencia'));
+    }
+  }
+
+  // Retoma los trabajos guardados de esta evaluación (modal cerrado y vuelto a abrir, o página
+  // recargada): los terminados muestran su guía, los activos siguen consultándose.
+  async function resumeJobs() {
+    const stored = loadStoredJobs(evaluationId);
+    const known = new Set(suggestions.value.map((s) => sKey(s)));
+    await Promise.all(
+      Object.entries(stored)
+        .filter(([key]) => known.has(key))
+        .map(async ([key, jobId]) => {
+          try {
+            const { data } = await aiJobsService.get(jobId);
+            if (applyJob(key, data)) {
+              // Un trabajo de lote se consulta junto con los demás del lote.
+              if (data.batchId) scheduleBatchPoll(0);
+              else schedulePoll(key, 0);
+            }
+          } catch {
+            // venció, se borró o no es accesible: se olvida
+            delete jobsByKey[key];
+            persistJobs();
+          }
+        }),
+    );
+  }
+
+  // ---- Lote de guías (F3) ----------------------------------------------------------------
+  // «Generar con IA para las seleccionadas»: una guía por control, con prioridad de lote (una guía
+  // pedida suelta pasa antes). El avance se consulta de una vez para todos los trabajos del lote.
+  // Las filas que ya tienen guía o un trabajo activo se saltean.
+  const selectedForBatch = computed(() =>
+    suggestions.value.filter((s) => s.selected && !isJobActive(s) && !tipsByKey[sKey(s)]),
+  );
+
+  // Avance del lote: los trabajos de las filas que se pidieron como lote.
+  const batchProgress = computed(() => {
+    const batched = Object.values(jobsByKey).filter((j) => j.batchId);
+    return {
+      total: batched.length,
+      done: batched.filter((j) => j.status === 'SUCCEEDED').length,
+      failed: batched.filter((j) => j.status === 'FAILED' || j.status === 'EXPIRED').length,
+      queued: batched.filter((j) => j.status === 'QUEUED').length,
+      active: batched.filter((j) => isActive(j.status)).length,
+    };
+  });
+  const batchRunning = computed(() => batchProgress.value.active > 0);
+
+  let batchTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function stopBatchPolling() {
+    if (batchTimer) clearTimeout(batchTimer);
+    batchTimer = null;
+  }
+
+  function scheduleBatchPoll(attempt: number) {
+    stopBatchPolling();
+    batchTimer = setTimeout(async () => {
+      batchTimer = null;
+      const active = Object.entries(jobsByKey).filter(([, j]) => j.batchId && isActive(j.status));
+      if (active.length === 0) return;
+      try {
+        const { data } = await aiJobsService.getMany([...new Set(active.map(([, j]) => j.jobId))]);
+        for (const [key, state] of active) {
+          const job = data.find((j) => j.id === state.jobId);
+          if (job) applyJob(key, job);
+        }
+      } catch {
+        // falla transitoria: se sigue intentando
+      } finally {
+        void refreshActiveCount();
+      }
+      if (Object.values(jobsByKey).some((j) => j.batchId && isActive(j.status))) {
+        scheduleBatchPoll(attempt + 1);
+      }
+    }, nextPollDelay(attempt));
+  }
+
+  async function generateSelected() {
+    const rows = selectedForBatch.value;
+    if (rows.length === 0) return;
+    try {
+      const { data } = await improvementService.requestTipsBatch(
+        rows.map((s) => ({
+          controlId: s.controlId,
+          evaluationId,
+          functionName: s.functionName,
+          categoryName: s.categoryName,
+          subcategoryName: s.subcategoryName,
+          currentLevel: s.currentLevel,
+          targetLevel: s.targetLevel,
+        })),
+      );
+      // Un control puede aparecer en varias filas (una por subcategoría): comparten el trabajo.
+      for (const row of rows) {
+        const item = data.jobs.find((j) => j.controlId === row.controlId);
+        if (!item) continue;
+        jobsByKey[sKey(row)] = {
+          jobId: item.jobId,
+          status: item.status,
+          queuePosition: null,
+          error: null,
+          batchId: data.batchId,
+        };
+      }
+      persistJobs();
+      scheduleBatchPoll(0);
+      void refreshActiveCount();
+    } catch (err) {
+      notification.error(getErrorMessage(err, 'No se pudo generar el lote de sugerencias'));
+    }
+  }
+
+  async function cancelBatch() {
+    const batchId = Object.values(jobsByKey).find((j) => j.batchId)?.batchId;
+    if (!batchId) return;
+    try {
+      await aiJobsService.cancelBatch(batchId);
+      // Lo que seguía en cola queda cancelado; lo que ya corría termina: se refresca el estado.
+      const ids = [
+        ...new Set(
+          Object.values(jobsByKey)
+            .filter((j) => j.batchId)
+            .map((j) => j.jobId),
+        ),
+      ];
+      const { data } = await aiJobsService.getMany(ids);
+      for (const [key, state] of Object.entries(jobsByKey)) {
+        const job = data.find((j) => j.id === state.jobId);
+        if (job) applyJob(key, job);
+        else if (state.batchId) dropJob(key);
+      }
+      void refreshActiveCount();
+    } catch (err) {
+      notification.error(getErrorMessage(err, 'No se pudo cancelar el lote'));
     }
   }
 
@@ -695,39 +1016,18 @@
     s.action = text;
   }
 
-  // Cierra el ciclo de las guías generadas en esta sesión del modal: las de las sugerencias
-  // creadas con «Usar en la acción» quedan aceptadas (con el texto final si se editó); el resto
-  // (no usadas, deseleccionadas, regeneradas o con el modal cerrado) quedan rechazadas. Lo que no
-  // se llegó a generar (error de la IA) no se registra. Es best-effort: un fallo al registrar no
-  // debe molestar a quien usa la pantalla.
-  function finalizeFeedback(createdKeys: Set<string>) {
-    const items: AiSuggestionFeedback[] = [...discarded];
-    discarded.length = 0;
-    for (const s of suggestions.value) {
-      const key = sKey(s);
-      const t = tipsByKey[key];
-      if (!t || t.generated === false) continue;
-      const used = usedText[key];
-      if (createdKeys.has(key) && used !== undefined) {
-        items.push(
-          s.action === used
-            ? feedbackOf(s, t, 'ACCEPTED_UNEDITED')
-            : feedbackOf(s, t, 'ACCEPTED_EDITED', s.action),
-        );
-      } else {
-        items.push(feedbackOf(s, t, 'REJECTED'));
-      }
-    }
+  // Al cerrar el modal se corta el sondeo (los trabajos siguen en el servidor y se retoman al
+  // volver a abrirlo) y se limpia el estado local.
+  watch(showSuggestModal, (open) => {
+    if (open) return;
+    stopPolling();
+    Object.keys(jobsByKey).forEach((k) => delete jobsByKey[k]);
     Object.keys(tipsByKey).forEach((k) => delete tipsByKey[k]);
     Object.keys(usedText).forEach((k) => delete usedText[k]);
-    if (items.length > 0) {
-      improvementService.sendSuggestionFeedback(items).catch(() => undefined);
-    }
-  }
-
-  watch(showSuggestModal, (open) => {
-    if (!open) finalizeFeedback(new Set());
+    void refreshActiveCount();
   });
+
+  onBeforeUnmount(stopPolling);
 
   const newPlan = reactive({
     action: '',
@@ -859,10 +1159,23 @@
     try {
       const { data } = await improvementService.getByEvaluation(evaluationId);
       plans.value = data;
+      fetchBaseline();
     } catch (err) {
       console.error(err);
     } finally {
       loading.value = false;
+    }
+  }
+
+  const baseline = ref<PlanBaselineComparison | null>(null);
+
+  async function fetchBaseline() {
+    try {
+      const { data } = await improvementService.getBaseline(evaluationId);
+      baseline.value = data;
+    } catch (err) {
+      console.error(err);
+      baseline.value = null;
     }
   }
 
@@ -1076,6 +1389,7 @@
     try {
       const { data } = await improvementService.getSuggestions(evaluationId);
       suggestions.value = data.map((s) => ({ ...s, selected: true, responsible: '' }));
+      await resumeJobs();
     } catch (err) {
       notification.error(getErrorMessage(err, 'Error al generar sugerencias'));
       showSuggestModal.value = false;
@@ -1095,21 +1409,24 @@
     creatingSuggestions.value = true;
     try {
       const results = await Promise.allSettled(
-        selected.map((s) =>
-          improvementService.create({
+        selected.map((s) => {
+          const key = sKey(s);
+          // Si la acción se armó con «Usar en la acción», el servidor marca la guía como usada y
+          // registra el feedback (sin editar / editada) en la misma operación.
+          const guideId = usedText[key] !== undefined ? tipsByKey[key]?.guideId : undefined;
+          return improvementService.create({
             evaluationId,
             controlId: s.controlId,
             action: s.action,
             responsible: s.responsible,
             priority: s.priority,
             dueDate: s.suggestedDueDate,
-          }),
-        ),
+            ...(guideId ? { guideId, guideEdited: s.action !== usedText[key] } : {}),
+          });
+        }),
       );
-      const createdKeys = new Set(
-        selected.filter((_, i) => results[i].status === 'fulfilled').map((s) => sKey(s)),
-      );
-      finalizeFeedback(createdKeys);
+      // Las guías de las acciones ya creadas no se vuelven a ofrecer.
+      selected.filter((_, i) => results[i].status === 'fulfilled').forEach((s) => dropJob(sKey(s)));
       const failed = results.filter((r) => r.status === 'rejected').length;
       const created = results.length - failed;
       if (created > 0) {
@@ -1127,6 +1444,7 @@
   }
 
   onMounted(() => {
+    void refreshActiveCount();
     fetchPlans();
     fetchEvaluationStatus();
     fetchPlanDeadlines();

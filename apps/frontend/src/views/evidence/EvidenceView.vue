@@ -104,14 +104,54 @@
           class="flex items-center justify-between mt-3 pt-3 border-t border-slate-100 dark:border-slate-700"
         >
           <span
-            v-if="ev.aiIndexed"
+            v-if="indexStatus(ev) === 'INDEXED'"
             class="inline-flex items-center gap-1 text-xs text-emerald-700 dark:text-emerald-400"
             title="El asistente de IA extrajo el contenido y puede citarlo para el auditor"
           >
             <SparklesIcon class="w-3.5 h-3.5" /> Indexado
           </span>
+          <span
+            v-else-if="indexStatus(ev) === 'QUEUED'"
+            class="inline-flex items-center gap-1 text-xs text-amber-700 dark:text-amber-400"
+            title="Está en la cola: se indexa en unos instantes"
+            data-testid="index-queued"
+          >
+            <SparklesIcon class="w-3.5 h-3.5" /> En cola para indexar
+          </span>
+          <span
+            v-else-if="indexStatus(ev) === 'INDEXING'"
+            class="inline-flex items-center gap-1 text-xs text-blue-700 dark:text-blue-300"
+            title="El asistente de IA está leyendo el archivo"
+            data-testid="index-indexing"
+          >
+            <SparklesIcon class="w-3.5 h-3.5" /> Indexando…
+          </span>
+          <span
+            v-else-if="indexStatus(ev) === 'ERROR' && isUsable(ev) && isAiAnalyzable(ev.fileType)"
+            class="inline-flex items-center gap-2"
+          >
+            <span
+              class="text-xs font-medium text-red-700 dark:text-red-400"
+              :title="ev.indexError ?? undefined"
+              data-testid="index-error"
+            >
+              Error al indexar
+            </span>
+            <button
+              class="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-blue-600 disabled:opacity-50 disabled:cursor-not-allowed dark:hover:text-blue-300 dark:text-slate-400"
+              :disabled="reindexingId === ev.id || !canModify"
+              :title="canModify ? 'Volver a intentar indexarla' : lockedReason"
+              data-testid="reindex-evidence"
+              @click="reindexEvidence(ev)"
+            >
+              <SparklesIcon class="w-3.5 h-3.5" />
+              {{ reindexingId === ev.id ? 'Reintentando…' : 'Reintentar' }}
+            </button>
+          </span>
           <button
-            v-else-if="isUsable(ev) && isAiAnalyzable(ev.fileType)"
+            v-else-if="
+              isUsable(ev) && isAiAnalyzable(ev.fileType) && indexStatus(ev) !== 'NOT_INDEXABLE'
+            "
             class="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-blue-600 disabled:opacity-50 disabled:cursor-not-allowed dark:hover:text-blue-300 dark:text-slate-400"
             :disabled="reindexingId === ev.id || !canModify"
             :title="canModify ? undefined : lockedReason"
@@ -124,7 +164,7 @@
           <span
             v-else
             class="text-xs text-slate-500 dark:text-slate-400"
-            title="El asistente de IA solo lee PDF, DOCX, TXT y Markdown"
+            :title="ev.indexError || 'El asistente de IA solo lee PDF, DOCX, TXT y Markdown'"
           >
             Sin análisis de IA
           </span>
@@ -301,7 +341,7 @@
     SparklesIcon,
   } from '@heroicons/vue/24/outline';
   import { isSelfAssessmentEditable, selfAssessmentLockedReason } from '@/utils/evaluationRules';
-  import type { Evidence, MaturityCatalog } from '@/types';
+  import type { Evidence, IndexStatus, MaturityCatalog } from '@/types';
 
   const route = useRoute();
   const notification = useNotification();
@@ -382,6 +422,40 @@
     return '';
   }
 
+  // Estado de indexación (C7). Sin el campo (servidor viejo) se deduce de aiIndexed.
+  function indexStatus(ev: Evidence): IndexStatus | undefined {
+    return ev.indexStatus ?? (ev.aiIndexed ? 'INDEXED' : undefined);
+  }
+
+  // Mientras alguna evidencia esté en cola o indexándose se consulta la lista con espera creciente
+  // (3 s hasta 10 s), sin el parpadeo de la carga inicial.
+  let indexPollTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function stopIndexPolling() {
+    if (indexPollTimer) clearTimeout(indexPollTimer);
+    indexPollTimer = null;
+  }
+
+  function scheduleIndexPolling(attempt = 0) {
+    stopIndexPolling();
+    const pending = evidences.value.some(
+      (e) => e.indexStatus === 'QUEUED' || e.indexStatus === 'INDEXING',
+    );
+    if (!pending) return;
+    indexPollTimer = setTimeout(
+      async () => {
+        try {
+          const { data } = await evidenceService.getByEvaluation(evaluationId);
+          evidences.value = data;
+        } catch (err) {
+          console.error(err);
+        }
+        scheduleIndexPolling(attempt + 1);
+      },
+      Math.min(3000 * Math.pow(1.25, attempt), 10000),
+    );
+  }
+
   function isUsable(ev: Evidence) {
     return !ev.scanStatus || ev.scanStatus === 'CLEAN';
   }
@@ -396,6 +470,7 @@
     try {
       const { data } = await evidenceService.getByEvaluation(evaluationId);
       evidences.value = data;
+      scheduleIndexPolling();
     } catch (err) {
       console.error(err);
     } finally {
@@ -454,7 +529,10 @@
       const { data } = await evidenceService.reindex(ev.id);
       const idx = evidences.value.findIndex((e) => e.id === ev.id);
       if (idx !== -1) evidences.value[idx] = data;
-      if (data.aiIndexed) {
+      if (data.indexStatus === 'QUEUED' || data.indexStatus === 'INDEXING') {
+        notification.success('La evidencia quedó en cola para indexar');
+        scheduleIndexPolling();
+      } else if (data.aiIndexed) {
         notification.success('Evidencia analizada: ya puede citarse al buscar evidencias');
       } else {
         notification.error('No se pudo extraer contenido de este archivo para el asistente de IA');
@@ -601,6 +679,7 @@
     }
   });
   onBeforeUnmount(releasePreviewUrl);
+  onBeforeUnmount(stopIndexPolling);
 
   function confirmDeleteEvidence(ev: Evidence) {
     if (confirm(`¿Eliminar la evidencia "${ev.fileName}"?`)) {

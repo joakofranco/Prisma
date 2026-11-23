@@ -9,9 +9,11 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
+import uy.edu.prisma.domain.exception.AiGuideException;
 import uy.edu.prisma.web.dto.Dto.EvidenceCitationDto;
 
 /**
@@ -199,5 +201,315 @@ class AiEvidenceClientTest {
     assertEquals("", result.summary());
     assertEquals(1, result.tips().size());
     assertFalse(result.generated());
+  }
+
+  // ---- generateGuide: la variante estricta que usa la cola de trabajos de IA ----
+
+  private AiGuideException guideFailure() {
+    return assertThrows(
+        AiGuideException.class,
+        () -> client.generateGuide("PR.AC-1", "descripción", null, null, null, 0, 1));
+  }
+
+  @Test
+  void generateGuideReturnsGuideWithModelAndOllamaMetrics() {
+    server
+        .expect(requestTo(BASE_URL + "/api/v1/rag/remediation-tips"))
+        .andRespond(
+            withSuccess(
+                "{\"summary\":\"Definir\",\"tips\":[\"A\",\"B\"],\"generated\":true,"
+                    + "\"model\":\"llama3:8b\",\"metrics\":{\"eval_count\":42}}",
+                MediaType.APPLICATION_JSON));
+
+    var result = client.generateGuide("PR.AC-1", "descripción", "F", "C", "S", 0, 1);
+
+    assertEquals("Definir", result.summary());
+    assertEquals(List.of("A", "B"), result.tips());
+    assertEquals("llama3:8b", result.model());
+    assertEquals(42, ((Number) result.metrics().get("eval_count")).intValue());
+  }
+
+  @Test
+  void generateGuideAcceptsAnOlderBackendAiWithoutTheNewFields() {
+    server
+        .expect(requestTo(BASE_URL + "/api/v1/rag/remediation-tips"))
+        .andRespond(
+            withSuccess("{\"summary\":\"S\",\"tips\":[\"A\"]}", MediaType.APPLICATION_JSON));
+
+    var result = client.generateGuide("PR.AC-1", "descripción", null, null, null, 0, 1);
+
+    assertEquals(List.of("A"), result.tips());
+    assertTrue(result.metrics().isEmpty());
+  }
+
+  @Test
+  void generateGuideSendsTraceAndSeedOnlyInResearchModeAndReturnsTheTrace() {
+    server
+        .expect(requestTo(BASE_URL + "/api/v1/rag/remediation-tips"))
+        .andExpect(
+            org.springframework.test.web.client.match.MockRestRequestMatchers.jsonPath("$.trace")
+                .value(true))
+        .andExpect(
+            org.springframework.test.web.client.match.MockRestRequestMatchers.jsonPath("$.seed")
+                .value(1234))
+        .andRespond(
+            withSuccess(
+                "{\"summary\":\"S\",\"tips\":[\"A\"],\"generated\":true,"
+                    + "\"trace\":{\"prompt\":\"P\",\"seed\":1234}}",
+                MediaType.APPLICATION_JSON));
+
+    var result = client.generateGuide("PR.AC-1", "d", null, null, null, 0, 1, true, 1234L);
+
+    assertEquals("P", result.trace().get("prompt"));
+  }
+
+  @Test
+  void generateGuideWithoutResearchModeSendsNeitherTraceNorSeed() {
+    server
+        .expect(requestTo(BASE_URL + "/api/v1/rag/remediation-tips"))
+        .andExpect(
+            org.springframework.test.web.client.match.MockRestRequestMatchers.jsonPath("$.trace")
+                .doesNotExist())
+        .andExpect(
+            org.springframework.test.web.client.match.MockRestRequestMatchers.jsonPath("$.seed")
+                .doesNotExist())
+        .andRespond(
+            withSuccess(
+                "{\"summary\":\"S\",\"tips\":[\"A\"],\"trace\":{\"prompt\":\"P\"}}",
+                MediaType.APPLICATION_JSON));
+
+    var result = client.generateGuide("PR.AC-1", "d", null, null, null, 0, 1);
+
+    assertNull(result.trace(), "aunque backend-ai la mande, sin modo investigación se descarta");
+  }
+
+  @Test
+  void traceConfigReturnsTheModelConfig() {
+    server
+        .expect(requestTo(BASE_URL + "/api/v1/runtime/trace-config"))
+        .andRespond(
+            withSuccess(
+                "{\"model\":\"llama3:8b\",\"model_digest\":\"abc\"}", MediaType.APPLICATION_JSON));
+    assertEquals("abc", client.traceConfig().get("model_digest"));
+  }
+
+  @Test
+  void traceConfigDoesNotThrowWhenBackendAiFails() {
+    server
+        .expect(requestTo(BASE_URL + "/api/v1/runtime/trace-config"))
+        .andRespond(withServerError());
+
+    assertEquals(true, client.traceConfig().get("unavailable"));
+  }
+
+  @Test
+  void generateGuideTreatsAFallbackTextAsARetryableFailure() {
+    server
+        .expect(requestTo(BASE_URL + "/api/v1/rag/remediation-tips"))
+        .andRespond(
+            withSuccess(
+                "{\"summary\":\"\",\"tips\":[\"No se pudo generar\"],\"generated\":false}",
+                MediaType.APPLICATION_JSON));
+
+    AiGuideException ex = guideFailure();
+
+    assertEquals(AiGuideException.AI_UNAVAILABLE, ex.getCode());
+    assertTrue(ex.isRetryable());
+  }
+
+  @Test
+  void generateGuideClassifiesPromptTooLargeAsNotRetryable() {
+    server
+        .expect(requestTo(BASE_URL + "/api/v1/rag/remediation-tips"))
+        .andRespond(
+            withStatus(HttpStatus.PAYLOAD_TOO_LARGE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body("{\"code\":\"PROMPT_TOO_LARGE\",\"estimated_tokens\":9000}"));
+
+    AiGuideException ex = guideFailure();
+
+    assertEquals(AiGuideException.PROMPT_TOO_LARGE, ex.getCode());
+    assertFalse(ex.isRetryable());
+  }
+
+  @Test
+  void generateGuideClassifiesServiceUnavailableAsRetryable() {
+    server
+        .expect(requestTo(BASE_URL + "/api/v1/rag/remediation-tips"))
+        .andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE));
+
+    AiGuideException ex = guideFailure();
+
+    assertEquals(AiGuideException.AI_UNAVAILABLE, ex.getCode());
+    assertTrue(ex.isRetryable());
+  }
+
+  @Test
+  void generateGuideClassifiesOtherServerErrorsAsRetryable() {
+    server
+        .expect(requestTo(BASE_URL + "/api/v1/rag/remediation-tips"))
+        .andRespond(withServerError());
+
+    AiGuideException ex = guideFailure();
+
+    assertEquals(AiGuideException.AI_ERROR, ex.getCode());
+    assertTrue(ex.isRetryable());
+  }
+
+  @Test
+  void generateGuideClassifiesClientErrorsAsNotRetryable() {
+    server
+        .expect(requestTo(BASE_URL + "/api/v1/rag/remediation-tips"))
+        .andRespond(withStatus(HttpStatus.UNPROCESSABLE_ENTITY));
+
+    AiGuideException ex = guideFailure();
+
+    assertEquals(AiGuideException.AI_REJECTED, ex.getCode());
+    assertFalse(ex.isRetryable());
+  }
+
+  @Test
+  void generateGuideClassifiesAReadTimeoutAsAiTimeoutAndNotRetryable() {
+    server
+        .expect(requestTo(BASE_URL + "/api/v1/rag/remediation-tips"))
+        .andRespond(
+            request -> {
+              throw new java.net.SocketTimeoutException("Read timed out");
+            });
+
+    AiGuideException ex = guideFailure();
+
+    assertEquals(AiGuideException.AI_TIMEOUT, ex.getCode());
+    assertFalse(ex.isRetryable());
+    assertTrue(ex.getMessage().contains("tardó más de lo permitido"));
+    assertNotEquals(AiGuideException.AI_UNAVAILABLE, ex.getCode());
+  }
+
+  @Test
+  void aConnectTimeoutIsStillUnavailableNotATimeoutOfTheGeneration() {
+    server
+        .expect(requestTo(BASE_URL + "/api/v1/rag/remediation-tips"))
+        .andRespond(
+            request -> {
+              throw new java.net.SocketTimeoutException("Connect timed out");
+            });
+
+    AiGuideException ex = guideFailure();
+
+    assertEquals(AiGuideException.AI_UNAVAILABLE, ex.getCode());
+    assertTrue(ex.isRetryable());
+  }
+
+  @Test
+  void readTimeoutIsDetectedEvenWhenNestedInsideAnotherException() {
+    Throwable nested =
+        new IllegalStateException(
+            "envoltorio",
+            new java.io.IOException("x", new java.net.SocketTimeoutException("Read timed out")));
+
+    assertTrue(AiEvidenceClient.isReadTimeout(nested));
+    assertFalse(AiEvidenceClient.isReadTimeout(new java.io.IOException("connection refused")));
+    assertFalse(AiEvidenceClient.isReadTimeout(null));
+  }
+
+  @Test
+  void generateGuideTreatsAConnectionFailureAsRetryable() {
+    server
+        .expect(requestTo(BASE_URL + "/api/v1/rag/remediation-tips"))
+        .andRespond(
+            request -> {
+              throw new java.io.IOException("connection refused");
+            });
+
+    AiGuideException ex = guideFailure();
+
+    assertEquals(AiGuideException.AI_UNAVAILABLE, ex.getCode());
+    assertTrue(ex.isRetryable());
+  }
+
+  // ---- evidencia global y preclasificación (hito 4) ----
+
+  @Test
+  void aCitationFromGlobalEvidenceIsMarkedUnassigned() {
+    server
+        .expect(requestTo(BASE_URL + "/api/v1/evidence/citations"))
+        .andRespond(
+            withSuccess(
+                "{\"citations\":[{\"fragment_id\":\"e::1\",\"unassigned\":true,"
+                    + "\"evidence_id\":null,\"file_name\":\"politica.pdf\",\"location\":\"p1\","
+                    + "\"snippet\":\"t\",\"score\":0.7},{\"fragment_id\":\"e::2\","
+                    + "\"evidence_id\":null,\"file_name\":\"a.pdf\",\"location\":\"p2\","
+                    + "\"snippet\":\"u\",\"score\":0.6}]}",
+                MediaType.APPLICATION_JSON));
+
+    var result = client.citations(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), "q");
+
+    assertTrue(result.get(0).unassigned());
+    assertFalse(result.get(1).unassigned(), "un backend-ai viejo sin el campo no marca nada");
+  }
+
+  @Test
+  void classifySendsTheCandidatesAndMapsTheSuggestions() {
+    UUID c1 = UUID.randomUUID();
+    UUID c2 = UUID.randomUUID();
+    server
+        .expect(requestTo(BASE_URL + "/api/v1/evidence/classify"))
+        .andExpect(method(HttpMethod.POST))
+        .andExpect(jsonPath("$.evidence_id").exists())
+        .andExpect(jsonPath("$.top_n").value(3))
+        .andExpect(jsonPath("$.candidates[0].control_id").value(c1.toString()))
+        .andExpect(jsonPath("$.candidates[0].query").value("CA.1-1: uno"))
+        .andRespond(
+            withSuccess(
+                "{\"suggestions\":[{\"control_id\":\""
+                    + c2
+                    + "\",\"score\":0.81,"
+                    + "\"fragment_id\":\"e::3\"}]}",
+                MediaType.APPLICATION_JSON));
+
+    var result =
+        client.classify(
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            List.of(new AiEvidenceClient.ClassifyCandidate(c1, "CA.1-1: uno")),
+            3);
+
+    assertEquals(1, result.size());
+    assertEquals(c2, result.get(0).controlId());
+    assertEquals(0.81, result.get(0).score());
+    server.verify();
+  }
+
+  @Test
+  void classifyThrowsAiUnavailableWhenBackendAiFailsSoTheJobRetries() {
+    server.expect(requestTo(BASE_URL + "/api/v1/evidence/classify")).andRespond(withServerError());
+
+    assertThrows(
+        uy.edu.prisma.domain.exception.AiUnavailableException.class,
+        () ->
+            client.classify(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                List.of(new AiEvidenceClient.ClassifyCandidate(UUID.randomUUID(), "q")),
+                3));
+  }
+
+  @Test
+  void classifyWithAnEmptyAnswerReturnsNoSuggestions() {
+    server
+        .expect(requestTo(BASE_URL + "/api/v1/evidence/classify"))
+        .andRespond(withSuccess("{\"suggestions\":[]}", MediaType.APPLICATION_JSON));
+
+    assertTrue(
+        client
+            .classify(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                List.of(new AiEvidenceClient.ClassifyCandidate(UUID.randomUUID(), "q")),
+                3)
+            .isEmpty());
   }
 }

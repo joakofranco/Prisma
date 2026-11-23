@@ -32,6 +32,7 @@ import uy.edu.prisma.domain.entity.CatalogControl;
 import uy.edu.prisma.domain.entity.Evaluation;
 import uy.edu.prisma.domain.entity.Evidence;
 import uy.edu.prisma.domain.entity.UserRole;
+import uy.edu.prisma.domain.exception.AiUnavailableException;
 import uy.edu.prisma.domain.exception.ConflictException;
 import uy.edu.prisma.domain.exception.InvalidRequestException;
 import uy.edu.prisma.domain.exception.MalwareDetectedException;
@@ -63,6 +64,8 @@ public class EvidenceService {
   private final EvidenceFileValidator fileValidator;
   private final ClamAvClient clamAv;
   private final AuditLogService auditLog;
+  private final EvidenceIndexService indexService;
+  private final EvidenceCitationStore citationStore;
 
   public EvidenceService(
       EvidenceRepository evidenceRepo,
@@ -75,7 +78,9 @@ public class EvidenceService {
       AiEvidenceClient aiClient,
       EvidenceFileValidator fileValidator,
       ClamAvClient clamAv,
-      AuditLogService auditLog) {
+      AuditLogService auditLog,
+      EvidenceIndexService indexService,
+      EvidenceCitationStore citationStore) {
     this.evidenceRepo = evidenceRepo;
     this.evaluationRepo = evaluationRepo;
     this.controlRepo = controlRepo;
@@ -87,6 +92,8 @@ public class EvidenceService {
     this.fileValidator = fileValidator;
     this.clamAv = clamAv;
     this.auditLog = auditLog;
+    this.indexService = indexService;
+    this.citationStore = citationStore;
   }
 
   @Transactional(readOnly = true)
@@ -193,9 +200,9 @@ public class EvidenceService {
     // por el EntityManager de esta transacción (Evidence no tiene @Version), así que un segundo
     // merge() sobre el mismo id revienta con StaleObjectStateException. El dirty-checking de JPA
     // ya persiste este cambio al hacer commit.
-    // ZIP e imágenes no se indexan (backend-ai no los lee): quedan con aiIndexed=false a propósito.
-    saved.setAiIndexed(
-        !quarantined && EvidenceFileValidator.isIndexable(detectedType) && indexInAi(saved));
+    // La indexación es un trabajo de la cola (C7): la subida ya no espera a backend-ai. ZIP e
+    // imágenes, y lo que está en cuarentena, quedan NOT_INDEXABLE (con el motivo).
+    indexService.enqueue(saved);
 
     return new UploadEvidenceResponseDto(
         saved.getId(), saved.getFileName(), saved.getFileSize(), saved.getScanStatus().name());
@@ -253,14 +260,13 @@ public class EvidenceService {
     switch (result.status()) {
       case CLEAN -> {
         evidence.setScanStatus(Evidence.ScanStatus.CLEAN);
-        evidence.setAiIndexed(
-            EvidenceFileValidator.isIndexable(evidence.getFileType()) && indexInAi(evidence));
+        indexService.enqueue(evidence);
         auditLog.recordSystemEvent(
             "EVIDENCE_QUARANTINE_RELEASED", resource, payload, uploaderId, organizationId);
       }
       case INFECTED -> {
         evidence.setScanStatus(Evidence.ScanStatus.INFECTED);
-        evidence.setAiIndexed(false);
+        indexService.enqueue(evidence);
         deleteStoredObject(evidence);
         auditLog.recordSystemEvent(
             "EVIDENCE_QUARANTINE_INFECTED", resource, payload, uploaderId, organizationId);
@@ -358,7 +364,8 @@ public class EvidenceService {
     if (!EvidenceFileValidator.isIndexable(evidence.getFileType())) {
       return toDto(evidence);
     }
-    evidence.setAiIndexed(indexInAi(evidence));
+    // Reintentar vuelve a encolar el trabajo (la respuesta ya trae el estado QUEUED).
+    indexService.enqueue(evidence);
     return toDto(evidence);
   }
 
@@ -377,35 +384,61 @@ public class EvidenceService {
     }
   }
 
-  private boolean indexInAi(Evidence evidence) {
-    // A diferencia de la URL que va al frontend, esta la consume backend-ai del lado del
-    // servidor (dentro de la misma red de contenedores) -- tiene que ser el endpoint INTERNO
-    // (presigner interno), no el público: "localhost:9001" no significa nada dentro del contenedor
-    // de
-    // backend-ai.
-    String fileUrl;
-    try {
-      fileUrl = presignedUrlOrThrow(evidence);
-    } catch (Exception e) {
-      return false;
-    }
-    UUID organizationId = evidence.getEvaluation().getOrganization().getId();
-    UUID controlId = evidence.getControl() != null ? evidence.getControl().getId() : null;
-    return aiClient.ingest(
-        organizationId,
-        evidence.getEvaluation().getId(),
-        evidence.getId(),
-        controlId,
-        evidence.getFileName(),
-        fileUrl);
-  }
-
   /**
    * Citas de evidencia relevantes para un control, dentro de una evaluación. Pura recuperación (sin
    * veredicto): el auditor decide qué hacer con cada fragmento devuelto.
+   *
+   * <p>C2: devuelve primero lo guardado (con la decisión del auditor). Solo busca de nuevo si no
+   * hay nada guardado o si la evidencia del control cambió; en ese caso conserva las decisiones de
+   * los fragmentos que siguen apareciendo. Si backend-ai está caído y hay citas guardadas, devuelve
+   * esas (marcadas {@code stale}) en vez de fallar.
+   */
+  @Transactional
+  public List<EvidenceCitationDto> getCitations(UUID evaluationId, UUID controlId) {
+    Evaluation eval = citationEvaluation(evaluationId);
+    CatalogControl control = citationControl(controlId);
+    var saved = citationStore.saved(evaluationId, controlId);
+    boolean stale = saved.stream().anyMatch(r -> r.isStale());
+    if (!saved.isEmpty() && !stale) {
+      return saved.stream().map(EvidenceCitationStore::toDto).toList();
+    }
+    try {
+      return searchAndSave(eval, control);
+    } catch (AiUnavailableException e) {
+      if (!saved.isEmpty()) {
+        return saved.stream().map(EvidenceCitationStore::toDto).toList();
+      }
+      throw e;
+    }
+  }
+
+  /** «Actualizar»: vuelve a buscar y conserva las decisiones de los fragmentos que siguen. */
+  @Transactional
+  public List<EvidenceCitationDto> refreshCitations(UUID evaluationId, UUID controlId) {
+    return searchAndSave(citationEvaluation(evaluationId), citationControl(controlId));
+  }
+
+  /**
+   * Todas las citas guardadas de la evaluación (sin buscar), para pintar la pantalla de una vez.
    */
   @Transactional(readOnly = true)
-  public List<EvidenceCitationDto> getCitations(UUID evaluationId, UUID controlId) {
+  public List<EvidenceCitationDto> savedCitations(UUID evaluationId) {
+    citationEvaluation(evaluationId);
+    return citationStore.savedOfEvaluation(evaluationId).stream()
+        .map(EvidenceCitationStore::toDto)
+        .toList();
+  }
+
+  private List<EvidenceCitationDto> searchAndSave(Evaluation eval, CatalogControl control) {
+    String query = control.getCode() + ": " + control.getDescription();
+    List<EvidenceCitationDto> fresh =
+        aiClient.citations(eval.getOrganization().getId(), eval.getId(), control.getId(), query);
+    return citationStore.merge(eval, control, fresh).stream()
+        .map(EvidenceCitationStore::toDto)
+        .toList();
+  }
+
+  private Evaluation citationEvaluation(UUID evaluationId) {
     Evaluation eval =
         evaluationRepo
             .findById(evaluationId)
@@ -420,12 +453,13 @@ public class EvidenceService {
               + eval.getStatus()
               + ")");
     }
-    CatalogControl control =
-        controlRepo
-            .findById(controlId)
-            .orElseThrow(() -> new ResourceNotFoundException("Control", controlId));
-    String query = control.getCode() + ": " + control.getDescription();
-    return aiClient.citations(eval.getOrganization().getId(), evaluationId, controlId, query);
+    return eval;
+  }
+
+  private CatalogControl citationControl(UUID controlId) {
+    return controlRepo
+        .findById(controlId)
+        .orElseThrow(() -> new ResourceNotFoundException("Control", controlId));
   }
 
   public void delete(UUID id) {
@@ -534,8 +568,11 @@ public class EvidenceService {
     }
   }
 
-  // Usada por indexInAi: URL interna, para que backend-ai (server-side) baje el archivo.
-  private String presignedUrlOrThrow(Evidence e) throws Exception {
+  /**
+   * URL interna, para que backend-ai (server-side, dentro de la red de contenedores) baje el
+   * archivo: tiene que ser el endpoint INTERNO (presigner interno), no el público.
+   */
+  public String internalFileUrl(Evidence e) {
     return presign(internalPresigner, e);
   }
 
@@ -567,6 +604,8 @@ public class EvidenceService {
         e.getUploadedBy() != null ? e.getUploadedBy().getId() : null,
         e.getUploadedAt(),
         e.isAiIndexed(),
-        e.getScanStatus().name());
+        e.getScanStatus().name(),
+        e.getIndexStatus().name(),
+        e.getIndexError());
   }
 }

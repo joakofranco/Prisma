@@ -1,7 +1,9 @@
 package uy.edu.prisma.infrastructure;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -9,7 +11,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientResponseException;
+import uy.edu.prisma.domain.exception.AiGuideException;
 import uy.edu.prisma.domain.exception.AiUnavailableException;
 import uy.edu.prisma.web.dto.Dto.EvidenceCitationDto;
 import uy.edu.prisma.web.dto.Dto.RemediationTipsDto;
@@ -32,12 +37,21 @@ public class AiEvidenceClient {
   // Con la espera larga de la guía de mejora (genera con el LLM, tarda cerca de un minuto).
   private final RestClient guideRestClient;
 
+  // Con la espera de la preclasificación de evidencia global (varios minutos, ver AiProperties).
+  private final RestClient classifyRestClient;
+
   @Autowired
   public AiEvidenceClient(
       @Qualifier("aiRestClient") RestClient aiRestClient,
-      @Qualifier("aiGuideRestClient") RestClient aiGuideRestClient) {
+      @Qualifier("aiGuideRestClient") RestClient aiGuideRestClient,
+      @Qualifier("aiClassifyRestClient") RestClient aiClassifyRestClient) {
     this.restClient = aiRestClient;
     this.guideRestClient = aiGuideRestClient;
+    this.classifyRestClient = aiClassifyRestClient;
+  }
+
+  public AiEvidenceClient(RestClient aiRestClient, RestClient aiGuideRestClient) {
+    this(aiRestClient, aiGuideRestClient, aiGuideRestClient);
   }
 
   public AiEvidenceClient(RestClient aiRestClient) {
@@ -151,7 +165,9 @@ public class AiEvidenceClient {
                       categoryName,
                       subcategoryName,
                       currentLevel,
-                      targetLevel))
+                      targetLevel,
+                      null,
+                      null))
               .retrieve()
               .body(RemediationTipsResponse.class);
       if (response == null) {
@@ -165,6 +181,280 @@ public class AiEvidenceClient {
           controlCode,
           e.getMessage());
       return FALLBACK_TIPS;
+    }
+  }
+
+  /** Guía generada por el LLM, con lo que Ollama informó (tiempos en ns y tokens). */
+  public record GuideResult(
+      String summary,
+      List<String> tips,
+      String model,
+      Map<String, Object> metrics,
+      // Traza del modo investigación (C8): solo viene si se pidió.
+      Map<String, Object> trace) {
+
+    public GuideResult(
+        String summary, List<String> tips, String model, Map<String, Object> metrics) {
+      this(summary, tips, model, metrics, null);
+    }
+
+    // Copias defensivas (SpotBugs EI_EXPOSE_REP).
+    public GuideResult {
+      tips =
+          tips == null
+              ? List.of()
+              : java.util.Collections.unmodifiableList(new java.util.ArrayList<>(tips));
+      metrics =
+          metrics == null
+              ? Map.of()
+              : java.util.Collections.unmodifiableMap(new java.util.HashMap<>(metrics));
+      trace =
+          trace == null
+              ? null
+              : java.util.Collections.unmodifiableMap(new java.util.HashMap<>(trace));
+    }
+
+    @Override
+    public List<String> tips() {
+      return java.util.Collections.unmodifiableList(tips);
+    }
+
+    @Override
+    public Map<String, Object> metrics() {
+      return java.util.Collections.unmodifiableMap(metrics);
+    }
+
+    @Override
+    public Map<String, Object> trace() {
+      return trace == null ? null : java.util.Collections.unmodifiableMap(trace);
+    }
+  }
+
+  /**
+   * Igual que {@link #suggestRemediation} pero para la cola de trabajos: NO devuelve un texto de
+   * reemplazo, lanza {@link AiGuideException} clasificada (reintentable o no) para que el trabajo
+   * termine en FAILED con un mensaje claro en vez de guardar un «no se pudo» como si fuera una
+   * guía.
+   */
+  public GuideResult generateGuide(
+      String controlCode,
+      String description,
+      String functionName,
+      String categoryName,
+      String subcategoryName,
+      int currentLevel,
+      int targetLevel) {
+    return generateGuide(
+        controlCode,
+        description,
+        functionName,
+        categoryName,
+        subcategoryName,
+        currentLevel,
+        targetLevel,
+        false,
+        null);
+  }
+
+  /**
+   * Con {@code trace} pide a backend-ai la traza del razonamiento y fija la {@code seed} (modo
+   * investigación, C8). Sin {@code trace} no viaja ninguna de las dos.
+   */
+  public GuideResult generateGuide(
+      String controlCode,
+      String description,
+      String functionName,
+      String categoryName,
+      String subcategoryName,
+      int currentLevel,
+      int targetLevel,
+      boolean trace,
+      Long seed) {
+    RemediationTipsResponse response;
+    try {
+      response =
+          guideRestClient
+              .post()
+              .uri("/api/v1/rag/remediation-tips")
+              .contentType(MediaType.APPLICATION_JSON)
+              .body(
+                  new RemediationTipsRequest(
+                      controlCode,
+                      description,
+                      functionName,
+                      categoryName,
+                      subcategoryName,
+                      currentLevel,
+                      targetLevel,
+                      trace ? Boolean.TRUE : null,
+                      trace ? seed : null))
+              .retrieve()
+              .body(RemediationTipsResponse.class);
+    } catch (RestClientResponseException e) {
+      throw classify(e);
+    } catch (ResourceAccessException e) {
+      if (isReadTimeout(e)) {
+        throw readTimeout(e);
+      }
+      throw new AiGuideException(
+          AiGuideException.AI_UNAVAILABLE,
+          "El asistente de IA no está disponible en este momento",
+          true,
+          e);
+    } catch (RuntimeException e) {
+      // El timeout de lectura a veces llega envuelto en otra excepción de RestClient.
+      if (isReadTimeout(e)) {
+        throw readTimeout(e);
+      }
+      throw new AiGuideException(
+          AiGuideException.AI_ERROR, "Error inesperado al consultar el asistente de IA", true, e);
+    }
+    if (response == null || Boolean.FALSE.equals(response.generated())) {
+      throw new AiGuideException(
+          AiGuideException.AI_UNAVAILABLE,
+          "El modelo de IA no pudo generar la guía en este momento",
+          true,
+          null);
+    }
+    return new GuideResult(
+        response.summary() != null ? response.summary() : "",
+        response.tips() != null ? response.tips() : List.of(),
+        response.model(),
+        response.metrics() != null ? response.metrics() : Map.of(),
+        trace ? response.trace() : null);
+  }
+
+  /**
+   * Configuración efectiva del modelo para la traza del modo investigación (C8). No lanza: si
+   * backend-ai no responde devuelve solo el aviso, la traza igual se guarda.
+   */
+  @SuppressWarnings("unchecked")
+  public Map<String, Object> traceConfig() {
+    try {
+      Map<String, Object> config =
+          restClient.get().uri("/api/v1/runtime/trace-config").retrieve().body(Map.class);
+      return config != null ? config : Map.of();
+    } catch (Exception e) {
+      log.warn("No se pudo obtener la configuración del modelo para la traza: {}", e.getMessage());
+      return Map.of("unavailable", true);
+    }
+  }
+
+  private static AiGuideException readTimeout(Throwable cause) {
+    return new AiGuideException(
+        AiGuideException.AI_TIMEOUT,
+        "La generación tardó más de lo permitido y se cortó. Probá de nuevo; si se repite, redactá"
+            + " la acción a mano.",
+        false,
+        cause);
+  }
+
+  /**
+   * Timeout de LECTURA (el servicio aceptó la conexión pero no contestó a tiempo). Un timeout de
+   * conexión ({@code "connect timed out"}) no cuenta: ahí el servicio no está disponible.
+   */
+  static boolean isReadTimeout(Throwable error) {
+    for (Throwable t = error; t != null; t = t.getCause()) {
+      String message =
+          t.getMessage() == null ? "" : t.getMessage().toLowerCase(java.util.Locale.ROOT);
+      boolean timeoutType =
+          t instanceof java.net.SocketTimeoutException
+              || t instanceof java.net.http.HttpTimeoutException;
+      if (timeoutType && !message.contains("connect")) {
+        return true;
+      }
+      if (t.getCause() == t) {
+        break;
+      }
+    }
+    return false;
+  }
+
+  private static AiGuideException classify(RestClientResponseException e) {
+    int status = e.getStatusCode().value();
+    if (status == 413 && e.getResponseBodyAsString().contains(AiGuideException.PROMPT_TOO_LARGE)) {
+      return new AiGuideException(
+          AiGuideException.PROMPT_TOO_LARGE,
+          "El contenido de la guía es demasiado largo para el contexto del modelo de IA",
+          false,
+          e);
+    }
+    if (status >= 500) {
+      boolean unavailable = status == 502 || status == 503 || status == 504;
+      return new AiGuideException(
+          unavailable ? AiGuideException.AI_UNAVAILABLE : AiGuideException.AI_ERROR,
+          unavailable
+              ? "El asistente de IA no está disponible en este momento"
+              : "El asistente de IA respondió con un error",
+          true,
+          e);
+    }
+    return new AiGuideException(
+        AiGuideException.AI_REJECTED, "El asistente de IA rechazó el pedido", false, e);
+  }
+
+  /** Control candidato para preclasificar una evidencia: id y la consulta «código: descripción». */
+  public record ClassifyCandidate(UUID controlId, String query) {}
+
+  /** Control sugerido para una evidencia, con el puntaje del fragmento que más se le parece. */
+  public record ControlSuggestion(UUID controlId, double score) {}
+
+  /**
+   * Preclasifica una evidencia sin control asignado: los {@code topN} controles candidatos cuya
+   * consulta más se parece a algún fragmento de esa evidencia (solo sugerencia, D7). Lanza {@link
+   * AiUnavailableException} si backend-ai no responde, para que el trabajo reintente.
+   */
+  public List<ControlSuggestion> classify(
+      UUID organizationId,
+      UUID evaluationId,
+      UUID evidenceId,
+      List<ClassifyCandidate> candidates,
+      int topN) {
+    try {
+      ClassifyResponse response =
+          classifyRestClient
+              .post()
+              .uri("/api/v1/evidence/classify")
+              .contentType(MediaType.APPLICATION_JSON)
+              .body(
+                  new ClassifyRequest(
+                      organizationId.toString(),
+                      evaluationId.toString(),
+                      evidenceId.toString(),
+                      candidates.stream()
+                          .map(c -> new ClassifyCandidateJson(c.controlId().toString(), c.query()))
+                          .toList(),
+                      topN))
+              .retrieve()
+              .body(ClassifyResponse.class);
+      if (response == null || response.suggestions() == null) {
+        return List.of();
+      }
+      return response.suggestions().stream()
+          .map(s -> new ControlSuggestion(UUID.fromString(s.controlId()), s.score()))
+          .toList();
+    } catch (Exception e) {
+      log.warn("No se pudo preclasificar la evidencia {}: {}", evidenceId, e.getMessage());
+      throw new AiUnavailableException("El asistente de IA no está disponible en este momento", e);
+    }
+  }
+
+  /**
+   * Modelo de embedding con el que backend-ai indexa (para detectar un cambio de modelo y
+   * reindexar). Vacío si backend-ai no responde: el chequeo se reintenta más tarde.
+   */
+  @SuppressWarnings("unchecked")
+  public java.util.Optional<String> embeddingModel() {
+    try {
+      Map<String, Object> models =
+          restClient.get().uri("/api/v1/runtime/models").retrieve().body(Map.class);
+      Object name = models != null ? models.get("embedding") : null;
+      return name == null || name.toString().isBlank()
+          ? java.util.Optional.empty()
+          : java.util.Optional.of(name.toString());
+    } catch (Exception e) {
+      log.warn("No se pudo consultar el modelo de embedding de backend-ai: {}", e.getMessage());
+      return java.util.Optional.empty();
     }
   }
 
@@ -189,7 +479,19 @@ public class AiEvidenceClient {
     } catch (IllegalArgumentException e) {
       evidenceId = null;
     }
-    return new EvidenceCitationDto(evidenceId, c.fileName(), c.location(), c.snippet(), c.score());
+    return new EvidenceCitationDto(
+        evidenceId,
+        c.fileName(),
+        c.location(),
+        c.snippet(),
+        c.score(),
+        c.fragmentId(),
+        null,
+        null,
+        null,
+        null,
+        false,
+        c.unassigned());
   }
 
   // El JSON de estos records tiene que matchear los BaseModel de Pydantic en backend-ai
@@ -213,6 +515,21 @@ public class AiEvidenceClient {
 
   private record CitationsResponse(List<Citation> citations) {}
 
+  private record ClassifyCandidateJson(
+      @JsonProperty("control_id") String controlId, String query) {}
+
+  private record ClassifyRequest(
+      @JsonProperty("organization_id") String organizationId,
+      @JsonProperty("evaluation_id") String evaluationId,
+      @JsonProperty("evidence_id") String evidenceId,
+      List<ClassifyCandidateJson> candidates,
+      @JsonProperty("top_n") int topN) {}
+
+  private record ClassifySuggestionJson(
+      @JsonProperty("control_id") String controlId, double score) {}
+
+  private record ClassifyResponse(List<ClassifySuggestionJson> suggestions) {}
+
   // Igual que arriba: JSON en snake_case para matchear el BaseModel de Pydantic
   // (app/api/v1/rag.py RemediationTipsRequest/Response).
   private record RemediationTipsRequest(
@@ -222,11 +539,24 @@ public class AiEvidenceClient {
       @JsonProperty("category_name") String categoryName,
       @JsonProperty("subcategory_name") String subcategoryName,
       @JsonProperty("current_level") int currentLevel,
-      @JsonProperty("target_level") int targetLevel) {}
+      @JsonProperty("target_level") int targetLevel,
+      // Modo investigación (C8): null = no se manda (backend-ai no arma ninguna traza).
+      @JsonInclude(JsonInclude.Include.NON_NULL) Boolean trace,
+      @JsonInclude(JsonInclude.Include.NON_NULL) Long seed) {}
 
-  private record RemediationTipsResponse(String summary, List<String> tips) {}
+  // generated/model/metrics los agrega backend-ai desde el hito 1 de la IA asíncrona; si falta
+  // alguno (backend-ai viejo) el record los deja en null y suggestRemediation sigue igual.
+  private record RemediationTipsResponse(
+      String summary,
+      List<String> tips,
+      Boolean generated,
+      String model,
+      Map<String, Object> metrics,
+      Map<String, Object> trace) {}
 
   private record Citation(
+      @JsonProperty("fragment_id") String fragmentId,
+      boolean unassigned,
       @JsonProperty("evidence_id") String evidenceId,
       @JsonProperty("file_name") String fileName,
       String location,

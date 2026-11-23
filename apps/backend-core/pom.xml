@@ -14,7 +14,7 @@
 
     <groupId>uy.edu.prisma</groupId>
     <artifactId>prisma-backend-core</artifactId>
-    <version>0.6.0</version>
+    <version>0.7.0</version>
     <name>PRISMA Backend Core</name>
     <description>API principal de la Plataforma PRISMA (MCU 5.0)</description>
 
@@ -114,6 +114,11 @@
             <groupId>org.bouncycastle</groupId>
             <artifactId>bcprov-jdk18on</artifactId>
             <version>1.85.2</version>
+        </dependency>
+        <dependency>
+            <groupId>org.bouncycastle</groupId>
+            <artifactId>bcpkix-jdk18on</artifactId>
+            <version>1.85</version>
         </dependency>
 
         <!-- ============ Almacenamiento de objetos S3-compatible (RustFS) ============ -->
