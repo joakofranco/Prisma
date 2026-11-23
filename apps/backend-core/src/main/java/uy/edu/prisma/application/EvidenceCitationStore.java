@@ -44,6 +44,14 @@ public class EvidenceCitationStore {
     this.evidenceRepo = evidenceRepo;
   }
 
+  // Modo investigación (C8). Por setter y opcional: el servicio funciona igual sin trazas.
+  private AiTraceService traceService;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  public void setTraceService(AiTraceService traceService) {
+    this.traceService = traceService;
+  }
+
   @Transactional(readOnly = true)
   public List<EvidenceCitationResult> saved(UUID evaluationId, UUID controlId) {
     return repo.findByEvaluationIdAndControlIdOrderByPositionAsc(evaluationId, controlId);
@@ -127,7 +135,12 @@ public class EvidenceCitationStore {
     List<EvidenceCitationResult> gone = existing.stream().filter(r -> !kept.contains(r)).toList();
     repo.deleteAll(gone);
     repo.flush();
-    return repo.saveAll(result);
+    List<EvidenceCitationResult> saved = repo.saveAll(result);
+    // Modo investigación (C8): solo ids y puntajes (D15); apagado no guarda nada (D2).
+    if (traceService != null) {
+      traceService.recordCitations(eval.getOrganization().getId(), saved);
+    }
+    return saved;
   }
 
   /** La evidencia del control cambió: ver la descripción de la clase. */

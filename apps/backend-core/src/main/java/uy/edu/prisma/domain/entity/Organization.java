@@ -46,6 +46,12 @@ public class Organization {
   @Builder.Default
   private Boolean enabled = true;
 
+  // Modo investigación (C8): mientras está encendido se guardan las trazas de la IA de esta
+  // organización. Solo lo cambia PRISMA_ADMIN. Ver V45.
+  @Column(name = "research_mode", nullable = false)
+  @Builder.Default
+  private boolean researchMode = false;
+
   @Column(name = "created_at", nullable = false, updatable = false)
   @Builder.Default
   private OffsetDateTime createdAt = OffsetDateTime.now();

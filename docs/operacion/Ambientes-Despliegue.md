@@ -402,6 +402,8 @@ sobrescribibles desde el `.env` (ver `.env.example`).
 | `AI_NUM_PREDICT` | `1024` | tope de tokens de la respuesta. **Provisional**: definirlo con las guías reales |
 | `AI_TEMPERATURE`, `AI_SEED`, `AI_NUM_THREAD` | sin definir | si están definidos se envían; si no, rige el valor del modelo. `AI_NUM_THREAD` depende del servidor (12 hilos dio 9,4 tok/s contra 6,7 por defecto en el VPS de pruebas) |
 | `AI_CITATION_MIN_SCORE` | sin definir | puntaje mínimo de una cita de evidencia (relevancia de Chroma); lo que puntúa menos no se devuelve. **Sin definir = no se filtra**: el valor se calibra con el feedback real de `ai_citation_feedback` (el banco de pruebas calcula uno sugerido; `[POR VERIFICAR]`) |
+| `AI_TRACE_RETENTION_DAYS` | `0` | días que se conservan las trazas del modo investigación; **0 = no se borran nunca**. `[POR VERIFICAR]` el plazo |
+| `OLLAMA_NUM_PARALLEL` (en `backend-ai`) | `2` | solo se informa en la traza; el valor real lo fija el servicio `ollama` |
 | `AI_CLASSIFY_READ_TIMEOUT` | `300s` | espera de `backend-core` a la preclasificación de evidencia global (`backend-ai` la cancela si se corta); aparte de `AI_READ_TIMEOUT` |
 | `AI_CLASSIFY_MIN_SCORE` | sin definir | puntaje mínimo para sugerir un control al preclasificar evidencia global; **sin definir = se sugieren siempre los 3 mejores**. Se calibra con el feedback real de `ai_evidence_classification_feedback` (`[POR VERIFICAR]`) |
 | `AI_THINK` | `false` | razonamiento; solo se aplica si el modelo declara la capability `thinking` (en `llama3`/`gemma3` Ollama responde 400) |
@@ -504,6 +506,50 @@ Las citas de la IA se guardan en `evidence_citation_result` (por evaluación y c
 encola un trabajo `CITATIONS_PRECOMPUTE`; al salir de auditoría se descartan las guardadas (el dictamen queda).
 `backend-ai` devuelve un id estable por fragmento (`<evidenceId>::<posición>`): **reindexar el mismo archivo da los
 mismos ids**, así las decisiones del auditor sobreviven a un reindexado.
+
+## Diagnóstico de tiempos de un lote de guías (hallazgo 3.8)
+
+El lote de 10 guías con `evaluationId` tardó casi el doble que el de la prueba B8. Revisado en el código:
+**`evaluationId` solo sirve para saber de qué organización es el pedido** (`AiJobService.resolveOrganization`):
+no entra en los parámetros del trabajo ni en el prompt, y el contexto del marco que se agrega al prompt
+(los 3 fragmentos más parecidos del MCU) no depende de la evaluación. Es decir que el contexto de la
+evaluación **no agrega tokens**. La causa más probable es otra: la prueba corrió mientras la preclasificación
+de evidencia seguía calculando en `backend-ai` después del corte (hallazgo 3.3: varios pedidos de 1,5 a 4
+minutos saturando las 18 vCPU), que se corrige con la cancelación al desconectarse. Sin arreglo de código
+para este hallazgo; para confirmarlo hay que medir de nuevo sin otra actividad y comparar tokens y tiempos:
+
+```sql
+-- Tokens de entrada y de salida y tiempo de ejecución por lote (solo lectura)
+SELECT batch_id,
+       count(*)                                         AS guias,
+       round(avg(run_ms))                               AS run_ms_prom,
+       round(avg((metrics->>'prompt_eval_count')::int)) AS tokens_prompt_prom,
+       round(avg((metrics->>'eval_count')::int))        AS tokens_salida_prom
+FROM prisma.ai_job
+WHERE type = 'GUIDE' AND status = 'SUCCEEDED'
+GROUP BY batch_id ORDER BY max(finished_at) DESC LIMIT 10;
+```
+
+Si con el servidor quieto `tokens_prompt_prom` es parecido al del lote B8 y el tiempo vuelve a ser el de
+B8, la diferencia era carga ajena. Si el prompt es más largo, comparar las descripciones de los controles
+elegidos (hay controles con descripciones de varias líneas). `[POR VERIFICAR]` en el servidor.
+
+## Modo investigación (hito 5)
+
+Se enciende por organización desde el detalle de la organización (solo `PRISMA_ADMIN`): «Encender modo
+investigación». Mientras esté encendido, la IA guarda la traza de cada guía (con semilla aleatoria por pedido),
+de cada búsqueda de citas y de cada preclasificación; apagado no guarda nada. Quienes usan la organización ven
+un aviso violeta arriba. Las trazas se miran con «Cómo razonó la IA» (solo admin) en el plan de mejora, las
+citas y las observaciones, y se exportan en JSONL desde el mismo detalle. Consulta de solo lectura:
+
+```sql
+SELECT o.name, o.research_mode FROM prisma.organizations o WHERE o.research_mode;
+SELECT kind, count(*), min(created_at), max(created_at) FROM prisma.ai_trace GROUP BY kind;
+```
+
+Sin plazo de retención definido (`AI_TRACE_RETENTION_DAYS=0`) las trazas se acumulan: en la guía, `prompt` +
+`response` + `thinking` pesan unos pocos KB por traza. **Para apagar de golpe**: `UPDATE prisma.organizations SET
+research_mode = false` (no borra lo guardado).
 
 ## Lote de guías y evidencia global (hito 4)
 

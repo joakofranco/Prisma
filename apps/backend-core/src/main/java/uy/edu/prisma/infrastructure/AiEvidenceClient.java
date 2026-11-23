@@ -1,5 +1,6 @@
 package uy.edu.prisma.infrastructure;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import java.util.List;
 import java.util.Map;
@@ -164,7 +165,9 @@ public class AiEvidenceClient {
                       categoryName,
                       subcategoryName,
                       currentLevel,
-                      targetLevel))
+                      targetLevel,
+                      null,
+                      null))
               .retrieve()
               .body(RemediationTipsResponse.class);
       if (response == null) {
@@ -183,9 +186,19 @@ public class AiEvidenceClient {
 
   /** Guía generada por el LLM, con lo que Ollama informó (tiempos en ns y tokens). */
   public record GuideResult(
-      String summary, List<String> tips, String model, Map<String, Object> metrics) {
+      String summary,
+      List<String> tips,
+      String model,
+      Map<String, Object> metrics,
+      // Traza del modo investigación (C8): solo viene si se pidió.
+      Map<String, Object> trace) {
 
-    // Copias defensivas (SpotBugs EI_EXPOSE_REP): sin elementos nulos que rompan List.copyOf.
+    public GuideResult(
+        String summary, List<String> tips, String model, Map<String, Object> metrics) {
+      this(summary, tips, model, metrics, null);
+    }
+
+    // Copias defensivas (SpotBugs EI_EXPOSE_REP).
     public GuideResult {
       tips =
           tips == null
@@ -195,6 +208,10 @@ public class AiEvidenceClient {
           metrics == null
               ? Map.of()
               : java.util.Collections.unmodifiableMap(new java.util.HashMap<>(metrics));
+      trace =
+          trace == null
+              ? null
+              : java.util.Collections.unmodifiableMap(new java.util.HashMap<>(trace));
     }
 
     @Override
@@ -205,6 +222,11 @@ public class AiEvidenceClient {
     @Override
     public Map<String, Object> metrics() {
       return java.util.Collections.unmodifiableMap(metrics);
+    }
+
+    @Override
+    public Map<String, Object> trace() {
+      return trace == null ? null : java.util.Collections.unmodifiableMap(trace);
     }
   }
 
@@ -222,6 +244,32 @@ public class AiEvidenceClient {
       String subcategoryName,
       int currentLevel,
       int targetLevel) {
+    return generateGuide(
+        controlCode,
+        description,
+        functionName,
+        categoryName,
+        subcategoryName,
+        currentLevel,
+        targetLevel,
+        false,
+        null);
+  }
+
+  /**
+   * Con {@code trace} pide a backend-ai la traza del razonamiento y fija la {@code seed} (modo
+   * investigación, C8). Sin {@code trace} no viaja ninguna de las dos.
+   */
+  public GuideResult generateGuide(
+      String controlCode,
+      String description,
+      String functionName,
+      String categoryName,
+      String subcategoryName,
+      int currentLevel,
+      int targetLevel,
+      boolean trace,
+      Long seed) {
     RemediationTipsResponse response;
     try {
       response =
@@ -237,7 +285,9 @@ public class AiEvidenceClient {
                       categoryName,
                       subcategoryName,
                       currentLevel,
-                      targetLevel))
+                      targetLevel,
+                      trace ? Boolean.TRUE : null,
+                      trace ? seed : null))
               .retrieve()
               .body(RemediationTipsResponse.class);
     } catch (RestClientResponseException e) {
@@ -270,7 +320,24 @@ public class AiEvidenceClient {
         response.summary() != null ? response.summary() : "",
         response.tips() != null ? response.tips() : List.of(),
         response.model(),
-        response.metrics() != null ? response.metrics() : Map.of());
+        response.metrics() != null ? response.metrics() : Map.of(),
+        trace ? response.trace() : null);
+  }
+
+  /**
+   * Configuración efectiva del modelo para la traza del modo investigación (C8). No lanza: si
+   * backend-ai no responde devuelve solo el aviso, la traza igual se guarda.
+   */
+  @SuppressWarnings("unchecked")
+  public Map<String, Object> traceConfig() {
+    try {
+      Map<String, Object> config =
+          restClient.get().uri("/api/v1/runtime/trace-config").retrieve().body(Map.class);
+      return config != null ? config : Map.of();
+    } catch (Exception e) {
+      log.warn("No se pudo obtener la configuración del modelo para la traza: {}", e.getMessage());
+      return Map.of("unavailable", true);
+    }
   }
 
   private static AiGuideException readTimeout(Throwable cause) {
@@ -453,7 +520,10 @@ public class AiEvidenceClient {
       @JsonProperty("category_name") String categoryName,
       @JsonProperty("subcategory_name") String subcategoryName,
       @JsonProperty("current_level") int currentLevel,
-      @JsonProperty("target_level") int targetLevel) {}
+      @JsonProperty("target_level") int targetLevel,
+      // Modo investigación (C8): null = no se manda (backend-ai no arma ninguna traza).
+      @JsonInclude(JsonInclude.Include.NON_NULL) Boolean trace,
+      @JsonInclude(JsonInclude.Include.NON_NULL) Long seed) {}
 
   // generated/model/metrics los agrega backend-ai desde el hito 1 de la IA asíncrona; si falta
   // alguno (backend-ai viejo) el record los deja en null y suggestRemediation sigue igual.
@@ -462,7 +532,8 @@ public class AiEvidenceClient {
       List<String> tips,
       Boolean generated,
       String model,
-      Map<String, Object> metrics) {}
+      Map<String, Object> metrics,
+      Map<String, Object> trace) {}
 
   private record Citation(
       @JsonProperty("fragment_id") String fragmentId,

@@ -164,6 +164,8 @@ services:
       AI_JOBS_MAX_PENDING_PER_ORG: ${AI_JOBS_MAX_PENDING_PER_ORG:-20}
       AI_JOBS_MAX_BATCH_SIZE: ${AI_JOBS_MAX_BATCH_SIZE:-20}
       AI_JOBS_MAX_PENDING_BATCH_PER_ORG: ${AI_JOBS_MAX_PENDING_BATCH_PER_ORG:-60}
+      # Modo investigación (C8): días que se conservan las trazas. 0 = no se borran. [POR VERIFICAR]
+      AI_TRACE_RETENTION_DAYS: ${AI_TRACE_RETENTION_DAYS:-0}
       AI_JOBS_RESULT_TTL_DAYS: ${AI_JOBS_RESULT_TTL_DAYS:-30}
       AI_JOBS_MAX_ATTEMPTS: ${AI_JOBS_MAX_ATTEMPTS:-2}
       AI_JOBS_RETRY_BACKOFF_SECONDS: ${AI_JOBS_RETRY_BACKOFF_SECONDS:-30}
@@ -220,6 +222,8 @@ services:
       AI_SEED: ${AI_SEED:-}
       AI_NUM_THREAD: ${AI_NUM_THREAD:-}
       AI_THINK: ${AI_THINK:-false}
+      # Solo se informa en la traza del modo investigación (el valor real lo fija el servicio ollama).
+      OLLAMA_NUM_PARALLEL: ${OLLAMA_NUM_PARALLEL:-2}
       AI_WARMUP: ${AI_WARMUP:-true}
       AI_WARMUP_CHECK_SECONDS: ${AI_WARMUP_CHECK_SECONDS:-60}
       AI_PROMPT_MAX_TOKENS: ${AI_PROMPT_MAX_TOKENS:-}

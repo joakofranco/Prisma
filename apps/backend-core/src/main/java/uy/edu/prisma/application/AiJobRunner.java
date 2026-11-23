@@ -45,6 +45,14 @@ public class AiJobRunner {
     this.classificationService = classificationService;
   }
 
+  // Modo investigación (C8). Por setter y opcional: el servicio funciona igual sin trazas.
+  private AiTraceService traceService;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  public void setTraceService(AiTraceService traceService) {
+    this.traceService = traceService;
+  }
+
   public void run(AiJob job) {
     switch (job.getType()) {
       case GUIDE -> runGuide(job);
@@ -152,6 +160,10 @@ public class AiJobRunner {
     long started = System.nanoTime();
     try {
       Map<String, Object> p = job.getParams();
+      // Modo investigación (C8): solo si la organización lo tiene encendido se pide la traza y
+      // se fija una semilla aleatoria por pedido. Apagado, no viaja ni se guarda nada (D2).
+      boolean research = traceService != null && traceService.isEnabled(job.getOrganizationId());
+      Long seed = research ? traceService.newSeed() : null;
       GuideResult result =
           aiClient.generateGuide(
               str(p, "controlCode"),
@@ -160,8 +172,18 @@ public class AiJobRunner {
               str(p, "categoryName"),
               str(p, "subcategoryName"),
               ((Number) p.get("currentLevel")).intValue(),
-              ((Number) p.get("targetLevel")).intValue());
-      queue.complete(job.getId(), result, elapsedMs(started));
+              ((Number) p.get("targetLevel")).intValue(),
+              research,
+              seed);
+      UUID traceId = null;
+      if (research) {
+        try {
+          traceId = traceService.recordGuide(result.trace(), seed);
+        } catch (RuntimeException e) {
+          log.warn("No se pudo guardar la traza del trabajo {}: {}", job.getId(), e.getMessage());
+        }
+      }
+      queue.complete(job.getId(), result, elapsedMs(started), traceId);
     } catch (AiGuideException e) {
       queue.fail(job.getId(), e.getCode(), e.getMessage(), e.isRetryable(), elapsedMs(started));
     } catch (RuntimeException e) {

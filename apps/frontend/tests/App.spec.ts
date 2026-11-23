@@ -11,6 +11,8 @@ const authState = vi.hoisted(() => ({
 
 vi.mock('axios', () => ({ default: { get: http.get, isAxiosError: () => false } }));
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => authState.value }));
+// AppLayout (aunque se reemplace por un stub) importa el banner, que importa los servicios.
+vi.mock('@/services/resources', () => ({ organizationsService: {} }));
 
 import App from '../src/App.vue';
 

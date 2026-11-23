@@ -157,6 +157,8 @@ class VectorStore:
         subcategory_name: str | None,
         current_level: int,
         target_level: int,
+        trace: bool = False,
+        seed: int | None = None,
     ) -> dict[str, Any]:
         """Sugiere pasos concretos para cerrar una brecha puntual del catálogo MCU 5.0.
 
@@ -167,7 +169,8 @@ class VectorStore:
         catálogo no alcanza (a diferencia de evaluate_evidence, que sí necesita ceñirse
         estrictamente a la evidencia real aportada).
         """
-        documents = await self.query(f"{control_code}: {control_description}", k=3)
+        query_text = f"{control_code}: {control_description}"
+        documents = await self.query(query_text, k=3)
         context = "\n\n".join(doc.page_content for doc in documents)
         prompt = self._build_remediation_prompt(
             control_code,
@@ -183,11 +186,20 @@ class VectorStore:
         try:
             # En un hilo aparte: invoke() es bloqueante (decenas de segundos en CPU) y no debe
             # frenar el event loop (health, métricas y otros pedidos).
-            response = await self._invoke_llm(prompt)
+            response = await self._invoke_llm(prompt, seed=seed if trace else None)
             result = self._parse_remediation(str(response.content))
             result["generated"] = True
             result["model"] = self.settings.ollama_model
             result["metrics"] = self._llm_metrics(response, prompt)
+            if trace:
+                result["trace"] = await self._build_trace(
+                    prompt=prompt,
+                    response=response,
+                    seed=seed,
+                    query_text=query_text,
+                    documents=documents,
+                    metrics=result["metrics"],
+                )
             return result
         except Exception:
             logger.warning("No se pudo invocar el LLM para sugerir remediación")
@@ -241,7 +253,55 @@ class VectorStore:
     # ------------------------------------------------------------------
     # Internos
     # ------------------------------------------------------------------
-    async def _invoke_llm(self, prompt: str) -> Any:
+    async def _build_trace(
+        self,
+        *,
+        prompt: str,
+        response: Any,
+        seed: int | None,
+        query_text: str,
+        documents: list[Document],
+        metrics: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Traza del modo investigación (C8): configuración, semilla, prompt, respuesta cruda,
+        razonamiento (si el modelo lo devolvió) y los fragmentos del marco que se recuperaron.
+
+        Del catálogo MCU solo se guardan ids y puntajes de los fragmentos: es contenido público,
+        pero igual no se duplica el texto.
+        """
+        from app.rag.ollama_runtime import trace_config
+
+        retrieval: list[dict[str, Any]] = []
+        scored = getattr(self._vectorstore, "similarity_search_with_score", None)
+        if scored is not None:
+            try:
+                for doc, score in scored(query_text, k=3):
+                    retrieval.append(
+                        {
+                            "source": doc.metadata.get("source"),
+                            "id": getattr(doc, "id", None),
+                            "score": float(score),
+                        }
+                    )
+            except Exception:
+                logger.warning("No se pudieron obtener los puntajes de recuperación para la traza")
+        if not retrieval:
+            retrieval = [
+                {"source": d.metadata.get("source"), "id": getattr(d, "id", None)}
+                for d in documents
+            ]
+        extra = getattr(response, "additional_kwargs", None) or {}
+        return {
+            "config": await trace_config(self.settings),
+            "seed": seed,
+            "prompt": prompt,
+            "response": str(response.content),
+            "thinking": extra.get("reasoning_content") or extra.get("thinking"),
+            "retrieval": retrieval,
+            "metrics": metrics,
+        }
+
+    async def _invoke_llm(self, prompt: str, seed: int | None = None) -> Any:
         """Llama al LLM sin bloquear el event loop y de forma CANCELABLE.
 
         Con ``ainvoke`` (ChatOllama) cancelar la tarea cierra la conexión HTTP con Ollama, y Ollama
@@ -249,10 +309,17 @@ class VectorStore:
         abandonada seguiría ocupando una ranura (ver ``run_until_disconnect``). Los LLM sin
         ``ainvoke`` (simulados en los tests) caen al hilo.
         """
-        ainvoke = getattr(self.llm, "ainvoke", None)
+        llm = self.llm
+        if seed is not None:
+            # Semilla por pedido (modo investigación): una copia del modelo con la semilla, sin
+            # tocar la instancia compartida. Los LLM simulados de los tests no la soportan.
+            copy = getattr(llm, "model_copy", None)
+            if copy is not None:
+                llm = copy(update={"seed": seed})
+        ainvoke = getattr(llm, "ainvoke", None)
         if ainvoke is not None:
             return await ainvoke(prompt)
-        return await asyncio.to_thread(self.llm.invoke, prompt)
+        return await asyncio.to_thread(llm.invoke, prompt)
 
     def _connect(self) -> Chroma:
         # Ver app/rag/chroma_client.py: PersistentClient local.

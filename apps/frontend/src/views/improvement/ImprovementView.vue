@@ -257,6 +257,9 @@
                   <span class="font-medium">Comentarios:</span> {{ plan.comments }}
                 </p>
               </div>
+              <div class="flex items-center gap-1 shrink-0">
+                <AiTraceButton :load="() => aiTraceService.getPlanTrace(plan.id)" />
+              </div>
               <div v-if="canEditStatus" class="flex items-center gap-1 shrink-0">
                 <button
                   type="button"
@@ -602,6 +605,7 @@
     planDeadlinesService,
     reportsService,
     aiJobsService,
+    aiTraceService,
   } from '@/services/resources';
   import { DEFAULT_PLAN_DEADLINES, defaultDueDate, monthsFor } from '@/utils/planDeadlines';
   import { useAuthStore } from '@/stores/auth';
@@ -625,6 +629,7 @@
     type GapActionDraft,
   } from '@/components/improvement/MaturityGapSection.vue';
   import BaseModal from '@/components/common/BaseModal.vue';
+  import AiTraceButton from '@/components/ai/AiTraceButton.vue';
   import BaseInput from '@/components/common/BaseInput.vue';
   import BaseSelect from '@/components/common/BaseSelect.vue';
   import BaseTextarea from '@/components/common/BaseTextarea.vue';

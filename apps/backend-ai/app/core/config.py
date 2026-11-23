@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     # Razonamiento. Solo se pide si el modelo declara la capability "thinking" (en llama3/gemma3
     # Ollama responde 400 si se lo pedís).
     ai_think: bool = False
+    # Pedidos simultáneos de Ollama (OLLAMA_NUM_PARALLEL del servidor): solo se informa en la traza.
+    ollama_num_parallel: int | None = None
     # Precalentar LLM y embedding al arrancar (carga los modelos sin pedido de usuario).
     ai_warmup: bool = True
     # Cada cuántos segundos revisar que los modelos sigan cargados (/api/ps) y recargarlos si no
@@ -62,6 +64,7 @@ class Settings(BaseSettings):
         "ai_temperature",
         "ai_seed",
         "ai_num_thread",
+        "ollama_num_parallel",
         "ai_prompt_max_tokens",
         "ai_citation_min_score",
         "ai_classify_min_score",

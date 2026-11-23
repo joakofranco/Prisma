@@ -54,9 +54,10 @@ public class AiGuideService {
    *
    * @param controlId control de la acción (si viene, tiene que ser el de la guía)
    * @param finalText texto final de la acción; solo se guarda si la persona editó la guía
+   * @return id de la traza del modo investigación de la guía (C8), o null si no hay
    */
   @Transactional
-  public void markUsed(UUID guideId, UUID controlId, boolean edited, String finalText) {
+  public UUID markUsed(UUID guideId, UUID controlId, boolean edited, String finalText) {
     AiGeneratedGuide guide =
         guideRepo
             .findById(guideId)
@@ -78,6 +79,7 @@ public class AiGuideService {
     guide.setUsedAt(OffsetDateTime.now());
     guideRepo.save(guide);
     feedbackRepo.save(feedbackOf(guide, outcome, editedWithText ? finalText : null));
+    return guide.getTraceId();
   }
 
   private void assertAccess(AiGeneratedGuide guide) {

@@ -243,6 +243,66 @@ class AiEvidenceClientTest {
   }
 
   @Test
+  void generateGuideSendsTraceAndSeedOnlyInResearchModeAndReturnsTheTrace() {
+    server
+        .expect(requestTo(BASE_URL + "/api/v1/rag/remediation-tips"))
+        .andExpect(
+            org.springframework.test.web.client.match.MockRestRequestMatchers.jsonPath("$.trace")
+                .value(true))
+        .andExpect(
+            org.springframework.test.web.client.match.MockRestRequestMatchers.jsonPath("$.seed")
+                .value(1234))
+        .andRespond(
+            withSuccess(
+                "{\"summary\":\"S\",\"tips\":[\"A\"],\"generated\":true,"
+                    + "\"trace\":{\"prompt\":\"P\",\"seed\":1234}}",
+                MediaType.APPLICATION_JSON));
+
+    var result = client.generateGuide("PR.AC-1", "d", null, null, null, 0, 1, true, 1234L);
+
+    assertEquals("P", result.trace().get("prompt"));
+  }
+
+  @Test
+  void generateGuideWithoutResearchModeSendsNeitherTraceNorSeed() {
+    server
+        .expect(requestTo(BASE_URL + "/api/v1/rag/remediation-tips"))
+        .andExpect(
+            org.springframework.test.web.client.match.MockRestRequestMatchers.jsonPath("$.trace")
+                .doesNotExist())
+        .andExpect(
+            org.springframework.test.web.client.match.MockRestRequestMatchers.jsonPath("$.seed")
+                .doesNotExist())
+        .andRespond(
+            withSuccess(
+                "{\"summary\":\"S\",\"tips\":[\"A\"],\"trace\":{\"prompt\":\"P\"}}",
+                MediaType.APPLICATION_JSON));
+
+    var result = client.generateGuide("PR.AC-1", "d", null, null, null, 0, 1);
+
+    assertNull(result.trace(), "aunque backend-ai la mande, sin modo investigación se descarta");
+  }
+
+  @Test
+  void traceConfigReturnsTheModelConfig() {
+    server
+        .expect(requestTo(BASE_URL + "/api/v1/runtime/trace-config"))
+        .andRespond(
+            withSuccess(
+                "{\"model\":\"llama3:8b\",\"model_digest\":\"abc\"}", MediaType.APPLICATION_JSON));
+    assertEquals("abc", client.traceConfig().get("model_digest"));
+  }
+
+  @Test
+  void traceConfigDoesNotThrowWhenBackendAiFails() {
+    server
+        .expect(requestTo(BASE_URL + "/api/v1/runtime/trace-config"))
+        .andRespond(withServerError());
+
+    assertEquals(true, client.traceConfig().get("unavailable"));
+  }
+
+  @Test
   void generateGuideTreatsAFallbackTextAsARetryableFailure() {
     server
         .expect(requestTo(BASE_URL + "/api/v1/rag/remediation-tips"))

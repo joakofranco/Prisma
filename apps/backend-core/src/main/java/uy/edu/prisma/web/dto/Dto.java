@@ -77,7 +77,84 @@ public class Dto {
       // la pantalla de Reportes junto a los datos de la organización (PRI-367).
       String responsibleName,
       Boolean enabled,
-      OffsetDateTime createdAt) {}
+      OffsetDateTime createdAt,
+      // Modo investigación (C8): hay que avisarlo en pantalla a quienes usan la organización.
+      boolean researchMode) {
+
+    public OrganizationDto(
+        UUID id,
+        String name,
+        String identifier,
+        boolean identifierIsRut,
+        String sector,
+        String size,
+        UUID responsibleId,
+        String responsibleName,
+        Boolean enabled,
+        OffsetDateTime createdAt) {
+      this(
+          id,
+          name,
+          identifier,
+          identifierIsRut,
+          sector,
+          size,
+          responsibleId,
+          responsibleName,
+          enabled,
+          createdAt,
+          false);
+    }
+  }
+
+  /** Cuerpo de {@code PUT /api/organizations/{id}/research-mode}. */
+  public record ResearchModeDto(boolean enabled) {}
+
+  /**
+   * Traza de una llamada a la IA (modo investigación, C8). En tareas con evidencia {@code
+   * retrieval} trae solo ids y puntajes (D15).
+   */
+  public record AiTraceDto(
+      UUID id,
+      String kind,
+      Long seed,
+      Map<String, Object> config,
+      String prompt,
+      String response,
+      String thinking,
+      List<Map<String, Object>> retrieval,
+      Map<String, Object> metrics,
+      OffsetDateTime createdAt) {
+
+    // Copias defensivas (SpotBugs EI_EXPOSE_REP).
+    public AiTraceDto {
+      config =
+          config == null ? Map.of() : Collections.unmodifiableMap(new java.util.HashMap<>(config));
+      retrieval =
+          retrieval == null
+              ? List.of()
+              : Collections.unmodifiableList(new java.util.ArrayList<>(retrieval));
+      metrics =
+          metrics == null
+              ? Map.of()
+              : Collections.unmodifiableMap(new java.util.HashMap<>(metrics));
+    }
+
+    @Override
+    public Map<String, Object> config() {
+      return Collections.unmodifiableMap(config);
+    }
+
+    @Override
+    public List<Map<String, Object>> retrieval() {
+      return Collections.unmodifiableList(retrieval);
+    }
+
+    @Override
+    public Map<String, Object> metrics() {
+      return Collections.unmodifiableMap(metrics);
+    }
+  }
 
   public record CreateOrganizationDto(
       @NotBlank(message = "El nombre es obligatorio") String name,
@@ -1188,7 +1265,15 @@ public class Dto {
       Double score,
       @NotBlank(message = "El texto precargado es obligatorio")
           @Size(max = 40000, message = "El texto precargado es demasiado largo")
-          String prefillText) {}
+          String prefillText,
+      // Id de la cita guardada de la que sale (para enlazar su traza, C8); opcional.
+      UUID citationId) {
+
+    public CitationSourceDto(
+        String fileName, String location, String snippet, Double score, String prefillText) {
+      this(fileName, location, snippet, score, prefillText, null);
+    }
+  }
 
   public record UpdateAuditObservationDto(
       UUID controlId,

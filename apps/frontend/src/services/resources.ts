@@ -2,6 +2,7 @@ import apiClient from './api';
 import type {
   User,
   Organization,
+  AiTrace,
   Evaluation,
   EvaluationOverview,
   EvaluationResponse,
@@ -101,11 +102,34 @@ export const organizationsService = {
   update(id: string, data: Partial<Organization>) {
     return apiClient.put<Organization>(`/organizations/${id}`, data);
   },
+  /** Enciende o apaga el modo investigación de la IA (solo PRISMA_ADMIN, C8). */
+  setResearchMode(id: string, enabled: boolean) {
+    return apiClient.put<Organization>(`/organizations/${id}/research-mode`, { enabled });
+  },
   reactivate(id: string) {
     return apiClient.put<OrganizationReactivation>(`/organizations/${id}/enable`);
   },
   delete(id: string) {
     return apiClient.delete(`/organizations/${id}`);
+  },
+};
+
+/** «Cómo razonó la IA» (modo investigación, C8). Todo es solo para PRISMA_ADMIN. */
+export const aiTraceService = {
+  getPlanTrace(planId: string) {
+    return apiClient.get<AiTrace>(`/improvement-plans/${planId}/ai-trace`);
+  },
+  getCitationTrace(evaluationId: string, controlId: string, citationId: string) {
+    return apiClient.get<AiTrace>(
+      `/evidence/evaluation/${evaluationId}/control/${controlId}/citations/${citationId}/ai-trace`,
+    );
+  },
+  getObservationTrace(observationId: string) {
+    return apiClient.get<AiTrace>(`/audit/observations/${observationId}/ai-trace`);
+  },
+  /** Todas las trazas en JSONL, sin organización ni usuario. */
+  exportJsonl() {
+    return apiClient.get<Blob>('/ai/traces/export', { responseType: 'blob' });
   },
 };
 
