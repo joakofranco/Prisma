@@ -16,7 +16,7 @@ from langchain_core.documents import Document
 
 from app.core.config import Settings
 from app.main import app
-from app.rag.evidence_store import EvidenceStore
+from app.rag.evidence_store import EvidenceStore, IndexSearchError
 
 
 def _settings(tmp_path: Path, **overrides: object) -> Settings:
@@ -123,17 +123,176 @@ def test_citations_without_control_filters_only_by_evaluation(tmp_path: Path) ->
     assert fake.last_filter == {"evaluation_id": "eval-1"}
 
 
-def test_citations_returns_empty_on_query_error(tmp_path: Path) -> None:
+def test_citations_raise_a_recoverable_error_when_the_search_fails(tmp_path: Path) -> None:
     class BoomStore:
         def similarity_search_with_relevance_scores(self, query, k=5, filter=None):  # noqa: A002
             raise RuntimeError("chroma caído")
 
     store = EvidenceStore(settings=_settings(tmp_path))
     store._stores["org-a"] = BoomStore()
+    with pytest.raises(IndexSearchError) as err:
+        asyncio.run(
+            store.citations(organization_id="org-a", evaluation_id="e", control_id=None, query="q")
+        )
+    # Antes se tragaba el error y la API contestaba 200 con lista vacía («sin citas»).
+    assert err.value.code == "INDEX_UNAVAILABLE" and not err.value.inconsistent
+
+
+class _FlakyIndex:
+    """Falla con «Error finding id» las primeras ``failures`` búsquedas."""
+
+    def __init__(self, failures: int) -> None:
+        self.failures = failures
+        self.calls = 0
+
+    def similarity_search_with_relevance_scores(self, query, k=5, filter=None):  # noqa: A002
+        self.calls += 1
+        if self.calls <= self.failures:
+            raise RuntimeError("Error finding id")
+        return [(Document(page_content="texto", metadata={"evidence_id": "ev-1"}), 0.9)]
+
+
+def _reopen_with(store: EvidenceStore, index: _FlakyIndex) -> list[bool]:
+    """Después de reabrir, la próxima conexión devuelve ``index`` (simula el índice reabierto)."""
+    reopened: list[bool] = []
+    real_reopen = store.reopen
+
+    def spy() -> None:
+        reopened.append(True)
+        real_reopen()
+        store._stores["org-a"] = index
+
+    store.reopen = spy  # type: ignore[method-assign]
+    return reopened
+
+
+def test_error_finding_id_reopens_the_client_and_retries_once(tmp_path: Path) -> None:
+    store = EvidenceStore(settings=_settings(tmp_path), embeddings=FakeEmbeddings())
+    flaky = _FlakyIndex(failures=1)
+    store._stores["org-a"] = flaky
+    reopened = _reopen_with(store, flaky)
+
     result = asyncio.run(
         store.citations(organization_id="org-a", evaluation_id="e", control_id=None, query="q")
     )
-    assert result == []
+
+    assert reopened == [True]
+    assert [c["snippet"] for c in result] == ["texto"]
+    assert flaky.calls == 2
+
+
+def test_error_finding_id_that_persists_is_a_503_inconsistent_index(tmp_path: Path) -> None:
+    store = EvidenceStore(settings=_settings(tmp_path), embeddings=FakeEmbeddings())
+    broken = _FlakyIndex(failures=99)
+    store._stores["org-a"] = broken
+    _reopen_with(store, broken)
+
+    with pytest.raises(IndexSearchError) as err:
+        asyncio.run(
+            store.citations(organization_id="org-a", evaluation_id="e", control_id=None, query="q")
+        )
+
+    assert err.value.code == "INDEX_INCONSISTENT" and err.value.inconsistent
+    assert "reindexar" in str(err.value)
+    assert broken.calls == 2, "un solo reintento, no un bucle"
+
+
+def test_citations_endpoint_answers_503_retryable_instead_of_an_empty_200(
+    client: TestClient,
+) -> None:
+    class Boom:
+        async def citations(self, **kwargs):  # noqa: ANN003, ANN201
+            raise IndexSearchError("índice roto", inconsistent=True)
+
+    app.state.evidence_store = Boom()
+    response = client.post(
+        "/api/v1/evidence/citations",
+        json={"organization_id": "o", "evaluation_id": "e", "query": "q"},
+    )
+    assert response.status_code == 503
+    assert response.json() == {
+        "code": "INDEX_INCONSISTENT",
+        "detail": "índice roto",
+        "retryable": True,
+    }
+
+
+def _store_with_fake_files(tmp_path: Path, pages: int) -> EvidenceStore:
+    store = EvidenceStore(
+        settings=_settings(tmp_path, rag_chunk_size=60, rag_chunk_overlap=0),
+        embeddings=FakeEmbeddings(),
+    )
+
+    async def fake_load(url: str, name: str) -> list[Document]:
+        return [
+            Document(page_content=f"texto numero {i} de {name} " * 3, metadata={"source": name})
+            for i in range(pages)
+        ]
+
+    store._download_and_load = fake_load  # type: ignore[method-assign]
+    return store
+
+
+def test_delete_reindex_and_search_cycles_with_a_real_chroma(tmp_path: Path) -> None:
+    """Reproduce lo que pasó en el servidor (borrar por evidence_id, volver a indexar con ids
+    estables y buscar, varias veces y con dos evidencias) contra un Chroma REAL (1.5.9). Acá NO
+    apareció «Error finding id»: queda [POR VERIFICAR] si el defecto depende del volumen o de la
+    concurrencia del servidor. Lo que se verifica es que el ciclo es consistente y no devuelve
+    vacío."""
+    store = _store_with_fake_files(tmp_path, pages=4)
+
+    async def run() -> None:
+        for cycle in range(12):
+            for evidence_id in ("ev-a", "ev-b"):
+                await store.ingest(
+                    organization_id="org",
+                    evaluation_id="e1",
+                    evidence_id=evidence_id,
+                    control_id="c1",
+                    file_name=f"{evidence_id}.txt",
+                    file_url="u",
+                )
+            if cycle % 3 == 2:
+                store.delete_evidence("org", "ev-b")
+            found = await store.citations(
+                organization_id="org", evaluation_id="e1", control_id="c1", query="texto"
+            )
+            assert found, f"ciclo {cycle}: la búsqueda no puede quedar vacía"
+
+    asyncio.run(run())
+
+
+def test_all_fragments_of_a_reindexed_evidence_keep_their_ids(tmp_path: Path) -> None:
+    store = _store_with_fake_files(tmp_path, pages=3)
+
+    async def ids() -> set[str | None]:
+        await store.ingest(
+            organization_id="org",
+            evaluation_id="e",
+            evidence_id="ev-1",
+            control_id=None,
+            file_name="a.txt",
+            file_url="u",
+        )
+        found = await store.citations(
+            organization_id="org", evaluation_id="e", control_id=None, query="texto", top_k=20
+        )
+        return {c["fragment_id"] for c in found}
+
+    first = asyncio.run(ids())
+    second = asyncio.run(ids())
+    assert first and first == second
+
+
+def test_reopen_drops_the_cached_client_and_collections(tmp_path: Path) -> None:
+    store = EvidenceStore(settings=_settings(tmp_path), embeddings=FakeEmbeddings())
+    store._stores["org-a"] = object()
+    before = store._chroma_client()
+
+    store.reopen()
+
+    assert store._stores == {} and store._client is None
+    assert store._chroma_client() is not before
 
 
 # ----------------------------------------------------------------------------------
@@ -436,3 +595,91 @@ def test_an_empty_threshold_in_the_environment_means_no_threshold(
     assert Settings(_env_file=None).ai_citation_min_score is None  # type: ignore[call-arg]
     monkeypatch.setenv("AI_CITATION_MIN_SCORE", "0.35")
     assert Settings(_env_file=None).ai_citation_min_score == 0.35  # type: ignore[call-arg]
+
+
+# ----------------------------------------------------------------------------------
+# D6 — id estable de fragmento
+# ----------------------------------------------------------------------------------
+
+
+class RecordingStore:
+    """Chroma simulado que recuerda los ids con los que se agregaron los fragmentos."""
+
+    def __init__(self) -> None:
+        self.added: list[tuple[list[Document], list[str] | None]] = []
+
+    def add_documents(self, documents, ids=None):  # noqa: ANN001
+        self.added.append((documents, ids))
+
+
+def _ingest_twice(tmp_path: Path, monkeypatch) -> list[list[str] | None]:  # noqa: ANN001
+    store = EvidenceStore(settings=_settings(tmp_path), embeddings=FakeEmbeddings())
+    recording = RecordingStore()
+    store._stores["org-a"] = recording
+    store.delete_evidence = lambda *a, **k: None  # type: ignore[method-assign]
+
+    async def fake_load(self, url, name):  # noqa: ANN001
+        return [Document(page_content="uno dos tres " * 40, metadata={})]
+
+    monkeypatch.setattr(EvidenceStore, "_download_and_load", fake_load)
+    for _ in range(2):
+        asyncio.run(
+            store.ingest(
+                organization_id="org-a",
+                evaluation_id="eval-1",
+                evidence_id="ev-9",
+                control_id="ctl-1",
+                file_name="doc.txt",
+                file_url="http://x/doc.txt",
+            )
+        )
+    return [ids for _, ids in recording.added]
+
+
+def test_reindexing_the_same_file_gives_the_same_fragment_ids(tmp_path: Path, monkeypatch) -> None:
+    first, second = _ingest_twice(tmp_path, monkeypatch)
+
+    assert first is not None and len(first) > 1
+    assert first == second
+    assert first[0] == "ev-9::0" and first[1] == "ev-9::1"
+    assert len(set(first)) == len(first)
+
+
+def test_citations_return_the_fragment_id(tmp_path: Path) -> None:
+    store = EvidenceStore(settings=_settings(tmp_path))
+    store._stores["org-a"] = FakeCitationStore(
+        [(Document(id="ev-9::3", page_content="texto", metadata={"evidence_id": "ev-9"}), 0.8)]
+    )
+
+    result = asyncio.run(
+        store.citations(organization_id="org-a", evaluation_id="e", control_id=None, query="q")
+    )
+
+    assert result[0]["fragment_id"] == "ev-9::3"
+
+
+def test_a_citation_without_id_has_no_fragment_id(tmp_path: Path) -> None:
+    store = EvidenceStore(settings=_settings(tmp_path))
+    store._stores["org-a"] = _scored(0.9)
+
+    result = asyncio.run(
+        store.citations(organization_id="org-a", evaluation_id="e", control_id=None, query="q")
+    )
+
+    assert result[0]["fragment_id"] is None
+
+
+def test_the_citations_endpoint_exposes_fragment_id(client: TestClient) -> None:
+    from app.api.v1.evidence import EvidenceCitation
+
+    assert (
+        EvidenceCitation(
+            fragment_id="ev::1",
+            evidence_id="ev",
+            file_name="a",
+            location="l",
+            snippet="s",
+            score=0.5,
+        ).model_dump()["fragment_id"]
+        == "ev::1"
+    )

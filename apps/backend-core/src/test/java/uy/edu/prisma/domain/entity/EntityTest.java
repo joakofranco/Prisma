@@ -459,7 +459,10 @@ class EntityTest {
             now,
             "d",
             Evidence.ScanStatus.CLEAN,
-            false);
+            false,
+            Evidence.IndexStatus.NOT_INDEXABLE,
+            null,
+            null);
     assertEquals(id, all.getId());
     assertEquals(Evidence.ScanStatus.CLEAN, all.getScanStatus());
     assertNull(all.getEvaluation());

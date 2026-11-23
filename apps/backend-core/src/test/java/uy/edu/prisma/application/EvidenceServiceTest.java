@@ -72,6 +72,8 @@ class EvidenceServiceTest {
   @Mock private AiEvidenceClient aiClient;
   @Mock private ClamAvClient clamAv;
   @Mock private AuditLogService auditLog;
+  @Mock private EvidenceIndexService indexService;
+  @Mock private EvidenceCitationStore citationStore;
 
   private final StorageProperties properties =
       new StorageProperties(
@@ -101,7 +103,9 @@ class EvidenceServiceTest {
             aiClient,
             EvidenceFileValidatorTest.validatorFor(EvidenceFileValidatorTest.DEFAULT_FORMATS),
             clamAv,
-            auditLog);
+            auditLog,
+            indexService,
+            citationStore);
     eval =
         Evaluation.builder()
             .id(UUID.randomUUID())
@@ -263,21 +267,22 @@ class EvidenceServiceTest {
   }
 
   @Test
-  void uploadSucceedsEvenWhenAiIndexingFails() throws Exception {
+  void uploadDoesNotWaitForTheAssistantAndEnqueuesTheIndexing() throws Exception {
     MockMultipartFile file = new MockMultipartFile("file", "f.txt", "text/plain", new byte[] {9});
     when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
     when(s3Client.headBucket(any(HeadBucketRequest.class))).thenReturn(null);
-    when(internalPresigner.presignGetObject(any(GetObjectPresignRequest.class)))
-        .thenAnswer(inv -> signed("http://rustfs/signed"));
     when(evidenceRepo.save(any(Evidence.class))).thenAnswer(EvidenceServiceTest::simulatePersist);
+    // Aunque backend-ai estuviera caído, la subida no lo llama: indexar es un trabajo de la cola.
     when(aiClient.ingest(any(), any(), any(), any(), any(), any())).thenReturn(false);
 
     UploadEvidenceResponseDto result = service.upload(eval.getId(), null, null, file);
 
     assertNotNull(result.id());
-    verify(aiClient, times(1)).ingest(any(), any(), any(), isNull(), any(), any());
+    verify(aiClient, never()).ingest(any(), any(), any(), any(), any(), any());
     ArgumentCaptor<Evidence> captor = ArgumentCaptor.forClass(Evidence.class);
     verify(evidenceRepo, times(1)).save(captor.capture());
+    verify(indexService).enqueue(captor.getValue());
+    // El estado lo fija la cola, no la subida.
     assertFalse(captor.getValue().isAiIndexed());
   }
 
@@ -354,17 +359,14 @@ class EvidenceServiceTest {
   }
 
   @Test
-  void reindexUpdatesAiIndexedFlag() throws Exception {
+  void reindexEnqueuesTheIndexJobInsteadOfCallingTheAssistant() {
     when(evidenceRepo.findById(evidence.getId())).thenReturn(Optional.of(evidence));
-    when(internalPresigner.presignGetObject(any(GetObjectPresignRequest.class)))
-        .thenAnswer(inv -> signed("http://rustfs/signed"));
-    when(aiClient.ingest(any(), any(), any(), any(), any(), any())).thenReturn(true);
-    when(evidenceRepo.save(any(Evidence.class))).thenAnswer(EvidenceServiceTest::simulatePersist);
 
     EvidenceDto dto = service.reindex(evidence.getId());
 
-    assertTrue(dto.aiIndexed());
-    verify(aiClient, times(1)).ingest(any(), any(), any(), any(), any(), any());
+    assertNotNull(dto);
+    verify(indexService).enqueue(evidence);
+    verify(aiClient, never()).ingest(any(), any(), any(), any(), any(), any());
   }
 
   // ---- PRI-281: ZIP e imágenes se guardan pero no se mandan a backend-ai ----
@@ -667,7 +669,9 @@ class EvidenceServiceTest {
         aiClient,
         EvidenceFileValidatorTest.validatorWithMaxSize(maxSize),
         clamAv,
-        auditLog);
+        auditLog,
+        indexService,
+        citationStore);
   }
 
   @Test
@@ -725,23 +729,138 @@ class EvidenceServiceTest {
     verify(aiClient, never()).ingest(any(), any(), any(), any(), any(), any());
   }
 
-  @Test
-  void getCitationsDelegatesToAiClientWithControlQuery() {
-    eval.setStatus(Evaluation.Status.IN_AUDIT);
-    UUID controlId = UUID.randomUUID();
+  private CatalogControl auditControl(UUID controlId) {
     CatalogControl control =
         CatalogControl.builder().id(controlId).code("PR.AA-01").description("Control X").build();
-    List<EvidenceCitationDto> expected =
-        List.of(new EvidenceCitationDto(UUID.randomUUID(), "a.pdf", "Página 2", "texto", 0.9));
+    eval.setStatus(Evaluation.Status.IN_AUDIT);
     when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
     when(controlRepo.findById(controlId)).thenReturn(Optional.of(control));
+    return control;
+  }
+
+  private uy.edu.prisma.domain.entity.EvidenceCitationResult saved(
+      CatalogControl control, String status, boolean stale) {
+    return uy.edu.prisma.domain.entity.EvidenceCitationResult.builder()
+        .id(UUID.randomUUID())
+        .evaluation(eval)
+        .control(control)
+        .evidenceId(UUID.randomUUID())
+        .fragmentId("ev::1")
+        .fileName("a.pdf")
+        .location("Página 2")
+        .snippet("texto")
+        .score(0.9)
+        .position(0)
+        .status(uy.edu.prisma.domain.entity.EvidenceCitationResult.Status.valueOf(status))
+        .stale(stale)
+        .build();
+  }
+
+  @Test
+  void getCitationsSearchesWithTheControlQueryAndSavesTheResultWhenNothingIsSaved() {
+    UUID controlId = UUID.randomUUID();
+    CatalogControl control = auditControl(controlId);
+    List<EvidenceCitationDto> fresh =
+        List.of(new EvidenceCitationDto(UUID.randomUUID(), "a.pdf", "Página 2", "texto", 0.9));
+    when(citationStore.saved(eval.getId(), controlId)).thenReturn(List.of());
     when(aiClient.citations(
             eq(eval.getOrganization().getId()), eq(eval.getId()), eq(controlId), any()))
-        .thenReturn(expected);
+        .thenReturn(fresh);
+    when(citationStore.merge(eval, control, fresh))
+        .thenReturn(List.of(saved(control, "PENDING", false)));
 
     List<EvidenceCitationDto> result = service.getCitations(eval.getId(), controlId);
 
-    assertEquals(expected, result);
+    assertEquals(1, result.size());
+    assertEquals("PENDING", result.get(0).status());
+    assertNotNull(result.get(0).citationId());
+    assertEquals(controlId, result.get(0).controlId());
+    verify(aiClient).citations(any(), any(), eq(controlId), eq("PR.AA-01: Control X"));
+  }
+
+  @Test
+  void getCitationsReturnsWhatIsSavedWithoutSearchingAgain() {
+    UUID controlId = UUID.randomUUID();
+    CatalogControl control = auditControl(controlId);
+    when(citationStore.saved(eval.getId(), controlId))
+        .thenReturn(List.of(saved(control, "ACCEPTED", false)));
+
+    List<EvidenceCitationDto> result = service.getCitations(eval.getId(), controlId);
+
+    assertEquals("ACCEPTED", result.get(0).status());
+    verify(aiClient, never()).citations(any(), any(), any(), any());
+  }
+
+  @Test
+  void whenTheEvidenceChangedTheSearchIsRepeatedKeepingTheDecisions() {
+    UUID controlId = UUID.randomUUID();
+    CatalogControl control = auditControl(controlId);
+    when(citationStore.saved(eval.getId(), controlId))
+        .thenReturn(List.of(saved(control, "REJECTED", true)));
+    List<EvidenceCitationDto> fresh =
+        List.of(new EvidenceCitationDto(UUID.randomUUID(), "a.pdf", "Página 2", "texto", 0.9));
+    when(aiClient.citations(any(), any(), any(), any())).thenReturn(fresh);
+    when(citationStore.merge(eval, control, fresh))
+        .thenReturn(List.of(saved(control, "REJECTED", false)));
+
+    List<EvidenceCitationDto> result = service.getCitations(eval.getId(), controlId);
+
+    assertEquals("REJECTED", result.get(0).status());
+    verify(aiClient).citations(any(), any(), any(), any());
+    verify(citationStore).merge(eval, control, fresh);
+  }
+
+  @Test
+  void ifTheAssistantIsDownTheSavedStaleCitationsAreStillReturned() {
+    UUID controlId = UUID.randomUUID();
+    CatalogControl control = auditControl(controlId);
+    when(citationStore.saved(eval.getId(), controlId))
+        .thenReturn(List.of(saved(control, "ACCEPTED", true)));
+    when(aiClient.citations(any(), any(), any(), any()))
+        .thenThrow(new uy.edu.prisma.domain.exception.AiUnavailableException("IA caída", null));
+
+    List<EvidenceCitationDto> result = service.getCitations(eval.getId(), controlId);
+
+    assertEquals("ACCEPTED", result.get(0).status());
+    assertTrue(result.get(0).stale());
+  }
+
+  @Test
+  void refreshAlwaysSearchesAgainAndMerges() {
+    UUID controlId = UUID.randomUUID();
+    CatalogControl control = auditControl(controlId);
+    List<EvidenceCitationDto> fresh =
+        List.of(new EvidenceCitationDto(UUID.randomUUID(), "b.pdf", "Página 1", "otro", 0.7));
+    when(aiClient.citations(any(), any(), any(), any())).thenReturn(fresh);
+    when(citationStore.merge(eval, control, fresh))
+        .thenReturn(List.of(saved(control, "PENDING", false)));
+
+    service.refreshCitations(eval.getId(), controlId);
+
+    verify(aiClient).citations(any(), any(), eq(controlId), any());
+    verify(citationStore, never()).saved(any(), any());
+  }
+
+  @Test
+  void refreshOnlyWorksInAudit() {
+    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+
+    assertThrows(
+        uy.edu.prisma.domain.exception.ConflictException.class,
+        () -> service.refreshCitations(eval.getId(), UUID.randomUUID()));
+  }
+
+  @Test
+  void savedCitationsOfTheEvaluationDoNotSearch() {
+    UUID controlId = UUID.randomUUID();
+    CatalogControl control = auditControl(controlId);
+    when(citationStore.savedOfEvaluation(eval.getId()))
+        .thenReturn(List.of(saved(control, "ACCEPTED", false)));
+
+    List<EvidenceCitationDto> result = service.savedCitations(eval.getId());
+
+    assertEquals(1, result.size());
+    verify(aiClient, never()).citations(any(), any(), any(), any());
   }
 
   @Test
@@ -945,22 +1064,14 @@ class EvidenceServiceTest {
   }
 
   @Test
-  void uploadIndexesInAiUsingTheInternalEndpointNotThePublicOne() throws Exception {
+  void theUrlGivenToTheAssistantComesFromTheInternalPresignerNotThePublicOne() throws Exception {
     // La URL que backend-ai usa para bajar el archivo es server-to-server (dentro de la red de
     // contenedores): tiene que salir del presigner INTERNO, nunca del público (que apunta a un host
     // como localhost:9001 que solo tiene sentido desde el navegador del usuario).
-    MockMultipartFile file = new MockMultipartFile("file", "f.txt", "text/plain", new byte[] {9});
-    when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
-    when(s3Client.headBucket(any(HeadBucketRequest.class))).thenReturn(null);
     when(internalPresigner.presignGetObject(any(GetObjectPresignRequest.class)))
         .thenAnswer(inv -> signed("http://rustfs:9000/internal-signed"));
-    when(evidenceRepo.save(any(Evidence.class))).thenAnswer(EvidenceServiceTest::simulatePersist);
-    when(aiClient.ingest(any(), any(), any(), any(), any(), any())).thenReturn(true);
 
-    service.upload(eval.getId(), null, null, file);
-
-    verify(aiClient, times(1))
-        .ingest(any(), any(), any(), isNull(), any(), eq("http://rustfs:9000/internal-signed"));
+    assertEquals("http://rustfs:9000/internal-signed", service.internalFileUrl(evidence));
   }
 
   // ---- PRI-357 · RF-EVI-12: indexación automática al subir (CP219) ----
@@ -976,10 +1087,10 @@ class EvidenceServiceTest {
   }
 
   /**
-   * Sube un archivo con backend-ai disponible y comprueba que se indexó acotado a la organización y
-   * la evaluación, con el control asociado, y que la evidencia quedó con aiIndexed = true.
+   * Sube un archivo indexable y comprueba que quedó en cola para indexar (C7), con el control
+   * asociado y la evaluación; la subida en sí no llama a backend-ai.
    */
-  private void assertUploadIsIndexed(String fileName, String contentType, byte[] content)
+  private void assertUploadIsEnqueued(String fileName, String contentType, byte[] content)
       throws Exception {
     UUID controlId = UUID.randomUUID();
     CatalogControl control = CatalogControl.builder().id(controlId).build();
@@ -987,48 +1098,41 @@ class EvidenceServiceTest {
     when(evaluationRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
     when(controlRepo.findById(controlId)).thenReturn(Optional.of(control));
     when(s3Client.headBucket(any(HeadBucketRequest.class))).thenReturn(null);
-    when(internalPresigner.presignGetObject(any(GetObjectPresignRequest.class)))
-        .thenAnswer(inv -> signed("http://rustfs:9000/internal-signed"));
     when(evidenceRepo.save(any(Evidence.class))).thenAnswer(EvidenceServiceTest::simulatePersist);
-    when(aiClient.ingest(any(), any(), any(), any(), any(), any())).thenReturn(true);
 
     UploadEvidenceResponseDto result = service.upload(eval.getId(), controlId, null, file);
 
-    verify(aiClient, times(1))
-        .ingest(
-            eq(eval.getOrganization().getId()),
-            eq(eval.getId()),
-            eq(result.id()),
-            eq(controlId),
-            eq(fileName),
-            eq("http://rustfs:9000/internal-signed"));
     ArgumentCaptor<Evidence> captor = ArgumentCaptor.forClass(Evidence.class);
     verify(evidenceRepo, times(1)).save(captor.capture());
-    assertTrue(captor.getValue().isAiIndexed(), fileName + " debería quedar indexada");
+    verify(indexService).enqueue(captor.getValue());
+    assertEquals(result.id(), captor.getValue().getId());
+    assertEquals(fileName, captor.getValue().getFileName());
+    assertEquals(controlId, captor.getValue().getControl().getId());
+    verify(aiClient, never()).ingest(any(), any(), any(), any(), any(), any());
   }
 
   @Test
-  void uploadedPdfIsIndexedForTheOrganizationAndEvaluation() throws Exception {
-    assertUploadIsIndexed("politica.pdf", "application/pdf", "%PDF-1.4 contenido".getBytes());
+  void uploadedPdfIsEnqueuedForIndexing() throws Exception {
+    assertUploadIsEnqueued("politica.pdf", "application/pdf", "%PDF-1.4 contenido".getBytes());
   }
 
   @Test
-  void uploadedDocxIsIndexedForTheOrganizationAndEvaluation() throws Exception {
-    assertUploadIsIndexed(
+  void uploadedDocxIsEnqueuedForIndexing() throws Exception {
+    assertUploadIsEnqueued(
         "politica.docx",
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         docxBytes());
   }
 
   @Test
-  void uploadedTxtIsIndexedForTheOrganizationAndEvaluation() throws Exception {
-    assertUploadIsIndexed(
+  void uploadedTxtIsEnqueuedForIndexing() throws Exception {
+    assertUploadIsEnqueued(
         "politica.txt", "text/plain", "Política de accesos".getBytes(StandardCharsets.UTF_8));
   }
 
   @Test
-  void uploadedMarkdownIsIndexedForTheOrganizationAndEvaluation() throws Exception {
-    assertUploadIsIndexed(
+  void uploadedMarkdownIsEnqueuedForIndexing() throws Exception {
+    assertUploadIsEnqueued(
         "politica.md", "text/markdown", "# Política".getBytes(StandardCharsets.UTF_8));
   }
 

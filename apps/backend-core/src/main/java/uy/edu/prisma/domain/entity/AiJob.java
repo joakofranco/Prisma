@@ -23,7 +23,11 @@ import org.hibernate.type.SqlTypes;
 public class AiJob {
 
   public enum Type {
-    GUIDE
+    GUIDE,
+    /** Indexar una evidencia en backend-ai (C7). Trabajo del sistema: sin usuario solicitante. */
+    EVIDENCE_INDEX,
+    /** Buscar y guardar las citas de los controles con evidencia al pasar a auditoría (C2). */
+    CITATIONS_PRECOMPUTE
   }
 
   public enum Status {

@@ -13,7 +13,9 @@ import uy.edu.prisma.domain.entity.AuditControlVerdict;
 import uy.edu.prisma.domain.entity.AuditControlVerdict.Verdict;
 import uy.edu.prisma.domain.entity.CatalogControl;
 import uy.edu.prisma.domain.entity.Evaluation;
+import uy.edu.prisma.domain.entity.EvidenceCitationResult;
 import uy.edu.prisma.domain.entity.User;
+import uy.edu.prisma.domain.exception.ConflictException;
 import uy.edu.prisma.domain.exception.InvalidRequestException;
 import uy.edu.prisma.domain.exception.ResourceNotFoundException;
 import uy.edu.prisma.domain.exception.VerdictOverrideRequiredException;
@@ -39,18 +41,21 @@ public class AuditVerdictService {
   private final CatalogControlRepository controlRepo;
   private final CurrentUserService currentUser;
   private final AuditLogService auditLog;
+  private final EvidenceCitationStore citationStore;
 
   public AuditVerdictService(
       AuditControlVerdictRepository repo,
       EvaluationRepository evaluationRepo,
       CatalogControlRepository controlRepo,
       CurrentUserService currentUser,
-      AuditLogService auditLog) {
+      AuditLogService auditLog,
+      EvidenceCitationStore citationStore) {
     this.repo = repo;
     this.evaluationRepo = evaluationRepo;
     this.controlRepo = controlRepo;
     this.currentUser = currentUser;
     this.auditLog = auditLog;
+    this.citationStore = citationStore;
   }
 
   @Transactional(readOnly = true)
@@ -154,6 +159,90 @@ public class AuditVerdictService {
         Verdict.VALIDATED.name(),
         AuditControlVerdict.Source.CITATION.name(),
         true);
+  }
+
+  /**
+   * Se pasó de aceptada a rechazada una cita (C4a / D10). Si el dictamen vino de una cita ({@code
+   * source = CITATION}) y ya no queda ninguna cita aceptada del control, vuelve a «Sin dictamen»;
+   * si quedan otras aceptadas el dictamen se mantiene (y, si el respaldo registrado era la cita
+   * rechazada, pasa a otra); si el auditor lo fijó o confirmó a mano, no se toca. Devuelve el
+   * cambio ({@code verdict = null} = revertido) o {@code null} si no hubo ninguno.
+   */
+  public VerdictChangeDto onCitationRevoked(
+      Evaluation eval, CatalogControl control, UUID revokedCitationId) {
+    AuditControlVerdict entity =
+        repo.findByEvaluationIdAndControlId(eval.getId(), control.getId()).orElse(null);
+    if (entity == null || entity.getSource() != AuditControlVerdict.Source.CITATION) {
+      return null;
+    }
+    List<EvidenceCitationResult> remaining = citationStore.accepted(eval.getId(), control.getId());
+    if (!remaining.isEmpty()) {
+      Object backing =
+          entity.getSourceRef() != null ? entity.getSourceRef().get("citationId") : null;
+      if (revokedCitationId != null && revokedCitationId.toString().equals(backing)) {
+        entity.setSourceRef(refOf(remaining.get(0)));
+        repo.save(entity);
+      }
+      return null;
+    }
+    Map<String, Object> payload = new LinkedHashMap<>();
+    payload.put("controlId", control.getId().toString());
+    payload.put("verdict", null);
+    payload.put("previousVerdict", entity.getVerdict().name());
+    payload.put("source", "CITATION");
+    payload.put("reverted", true);
+    payload.put("reason", "CITATION_REJECTED");
+    payload.put("citation", entity.getSourceRef());
+    repo.delete(entity);
+    auditLog.record("SET_CONTROL_VERDICT", "evaluation:" + eval.getId(), toJson(payload));
+    return new VerdictChangeDto(control.getId(), null, null, true);
+  }
+
+  /**
+   * «Deshacer»: quita un dictamen que vino de aceptar una cita y deja esas citas otra vez sin
+   * decidir. Un dictamen fijado a mano no se deshace por acá.
+   */
+  public void undoCitationVerdict(UUID evaluationId, UUID controlId) {
+    Evaluation eval = findAccessibleEvaluation(evaluationId);
+    if (eval.getStatus() != Evaluation.Status.IN_AUDIT) {
+      throw new InvalidRequestException(
+          "Solo se puede deshacer un dictamen mientras la evaluación está en auditoría (estado"
+              + " actual: "
+              + eval.getStatus()
+              + ")");
+    }
+    AuditControlVerdict entity =
+        repo.findByEvaluationIdAndControlId(evaluationId, controlId)
+            .orElseThrow(() -> new ResourceNotFoundException("Dictamen del control", controlId));
+    if (entity.getSource() != AuditControlVerdict.Source.CITATION) {
+      throw new ConflictException(
+          "Solo se puede deshacer un dictamen que salió de aceptar una cita: este lo fijó el"
+              + " auditor a mano");
+    }
+    int reset = citationStore.resetAccepted(evaluationId, controlId);
+    Map<String, Object> payload = new LinkedHashMap<>();
+    payload.put("controlId", controlId.toString());
+    payload.put("verdict", null);
+    payload.put("previousVerdict", entity.getVerdict().name());
+    payload.put("source", "CITATION");
+    payload.put("reverted", true);
+    payload.put("reason", "UNDO");
+    payload.put("citationsReset", reset);
+    repo.delete(entity);
+    auditLog.record("SET_CONTROL_VERDICT", "evaluation:" + evaluationId, toJson(payload));
+  }
+
+  private static Map<String, Object> refOf(EvidenceCitationResult r) {
+    Map<String, Object> ref = new LinkedHashMap<>();
+    ref.put("citationId", r.getId().toString());
+    ref.put("fragmentId", r.getFragmentId());
+    ref.put("evidenceId", r.getEvidenceId() != null ? r.getEvidenceId().toString() : null);
+    ref.put("fileName", r.getFileName());
+    ref.put("location", r.getLocation());
+    ref.put("score", r.getScore());
+    String snippet = r.getSnippet();
+    ref.put("snippet", snippet.length() > 300 ? snippet.substring(0, 300) + "…" : snippet);
+    return ref;
   }
 
   private static String toJson(Map<String, Object> payload) {

@@ -979,7 +979,41 @@ public class Dto {
       UUID uploadedBy,
       OffsetDateTime uploadedAt,
       boolean aiIndexed,
-      String scanStatus) {}
+      String scanStatus,
+      // QUEUED / INDEXING / INDEXED / ERROR / NOT_INDEXABLE y, si corresponde, el motivo.
+      String indexStatus,
+      String indexError) {
+
+    public EvidenceDto(
+        UUID id,
+        UUID evaluationId,
+        UUID controlId,
+        String fileName,
+        Long fileSize,
+        String fileType,
+        String fileHash,
+        String description,
+        UUID uploadedBy,
+        OffsetDateTime uploadedAt,
+        boolean aiIndexed,
+        String scanStatus) {
+      this(
+          id,
+          evaluationId,
+          controlId,
+          fileName,
+          fileSize,
+          fileType,
+          fileHash,
+          description,
+          uploadedBy,
+          uploadedAt,
+          aiIndexed,
+          scanStatus,
+          aiIndexed ? "INDEXED" : "NOT_INDEXABLE",
+          null);
+    }
+  }
 
   /** Reglas de carga de evidencias: extensiones permitidas, sin punto, y tamaño máximo en bytes. */
   public record EvidenceRulesDto(List<String> allowedExtensions, long maxSizeBytes) {
@@ -995,7 +1029,25 @@ public class Dto {
   // Recuperación pura: ningún campo acá representa un veredicto. location es "Página N"
   // (PDF) o "Fragmento N" (DOCX/TXT) según lo que haya podido extraer backend-ai.
   public record EvidenceCitationDto(
-      UUID evidenceId, String fileName, String location, String snippet, double score) {}
+      UUID evidenceId,
+      String fileName,
+      String location,
+      String snippet,
+      double score,
+      // Id estable del fragmento (lo devuelve backend-ai) y, si la cita está guardada, su id, su
+      // estado (PENDING/ACCEPTED/REJECTED), su posición y el control al que pertenece.
+      String fragmentId,
+      UUID citationId,
+      String status,
+      Integer position,
+      UUID controlId,
+      boolean stale) {
+
+    public EvidenceCitationDto(
+        UUID evidenceId, String fileName, String location, String snippet, double score) {
+      this(evidenceId, fileName, location, snippet, score, null, null, null, null, null, false);
+    }
+  }
 
   // ---- Audit Observations ----
   public record AuditObservationDto(
@@ -1141,7 +1193,9 @@ public class Dto {
     }
   }
 
-  // Qué pasó con el dictamen de un control al aceptar una cita (changed=false: ya estaba Validado).
+  // Qué pasó con el dictamen de un control al decidir una cita. changed=false: ya estaba Validado.
+  // verdict=null y changed=true: se REVIRTIÓ (se rechazó la única cita de respaldo y el dictamen
+  // venía de la cita: vuelve a «Sin dictamen»).
   public record VerdictChangeDto(UUID controlId, String verdict, String source, boolean changed) {}
 
   public record CitationFeedbackResultDto(List<VerdictChangeDto> verdicts) {
@@ -1446,7 +1500,20 @@ public class Dto {
           @Pattern(regexp = "ACCEPTED|REJECTED", message = "Decisión inválida")
           String decision,
       // Evidencia de la que sale la cita: se guarda como respaldo del dictamen (source_ref).
-      UUID evidenceId) {
+      UUID evidenceId,
+      // Cita guardada sobre la que se decide (C2): se actualiza su estado en la misma transacción.
+      UUID citationId) {
+
+    public CitationFeedbackItemDto(
+        UUID controlId,
+        String fileName,
+        String location,
+        String snippet,
+        Double score,
+        String decision,
+        UUID evidenceId) {
+      this(controlId, fileName, location, snippet, score, decision, evidenceId, null);
+    }
 
     public CitationFeedbackItemDto(
         UUID controlId,
@@ -1455,7 +1522,7 @@ public class Dto {
         String snippet,
         Double score,
         String decision) {
-      this(controlId, fileName, location, snippet, score, decision, null);
+      this(controlId, fileName, location, snippet, score, decision, null, null);
     }
   }
 

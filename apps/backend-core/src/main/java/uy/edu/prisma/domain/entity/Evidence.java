@@ -20,6 +20,18 @@ public class Evidence {
     INFECTED
   }
 
+  /**
+   * Estado de la indexación para el asistente de IA (C7): en cola, indexando, indexada, con error
+   * (se puede reintentar) o no indexable (ZIP, imágenes, en cuarentena, infectada).
+   */
+  public enum IndexStatus {
+    QUEUED,
+    INDEXING,
+    INDEXED,
+    ERROR,
+    NOT_INDEXABLE
+  }
+
   @Id
   @GeneratedValue(strategy = GenerationType.UUID)
   private UUID id;
@@ -67,4 +79,16 @@ public class Evidence {
   @Column(name = "ai_indexed", nullable = false)
   @Builder.Default
   private boolean aiIndexed = false;
+
+  @Enumerated(EnumType.STRING)
+  @Column(name = "index_status", nullable = false, length = 20)
+  @Builder.Default
+  private IndexStatus indexStatus = IndexStatus.NOT_INDEXABLE;
+
+  /** Por qué falló o por qué no se indexa (para mostrarlo en pantalla). */
+  @Column(name = "index_error", columnDefinition = "TEXT")
+  private String indexError;
+
+  @Column(name = "indexed_at")
+  private OffsetDateTime indexedAt;
 }

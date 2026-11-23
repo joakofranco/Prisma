@@ -143,6 +143,26 @@ public class AiJobQueue {
     metrics.recordFinished(job.getType().name(), "SUCCEEDED", null);
   }
 
+  /** Termina bien un trabajo que no produce una guía (indexar evidencia, precalcular citas). */
+  @Transactional
+  public void completeWithoutResult(UUID jobId, long runMs) {
+    AiJob job = repo.findById(jobId).orElse(null);
+    if (job == null || job.getStatus() != Status.RUNNING) {
+      return;
+    }
+    OffsetDateTime now = OffsetDateTime.now();
+    job.setStatus(Status.SUCCEEDED);
+    job.setFinishedAt(now);
+    job.setExpiresAt(now.plusDays(props.resultTtlDays()));
+    job.setLockedUntil(null);
+    job.setErrorCode(null);
+    job.setErrorMessage(null);
+    job.setRunMs(runMs);
+    repo.save(job);
+    metrics.recordRun(runMs);
+    metrics.recordFinished(job.getType().name(), "SUCCEEDED", null);
+  }
+
   @Transactional
   public void fail(UUID jobId, String code, String message, boolean retryable, long runMs) {
     AiJob job = repo.findById(jobId).orElse(null);

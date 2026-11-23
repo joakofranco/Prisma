@@ -371,13 +371,28 @@ export interface Evidence {
   aiIndexed: boolean;
   /** Resultado del antivirus (RNF-09): CLEAN, QUARANTINED (a la espera del análisis) o INFECTED. */
   scanStatus?: 'CLEAN' | 'QUARANTINED' | 'INFECTED';
+  /** Estado de la indexación para el asistente de IA (C7). */
+  indexStatus?: IndexStatus;
+  /** Por qué falló o por qué no se indexa (para mostrarlo). */
+  indexError?: string | null;
 }
+
+/** En cola, indexando, indexada, con error (reintentable) o no indexable (ZIP, imágenes, cuarentena). */
+export type IndexStatus = 'QUEUED' | 'INDEXING' | 'INDEXED' | 'ERROR' | 'NOT_INDEXABLE';
 
 /**
  * Fragmento de evidencia recuperado por el asistente RAG para un control. Es sólo un puntero a
  * dónde mirar (archivo/ubicación/texto) — nunca un veredicto: el auditor valida manualmente.
  */
 export interface EvidenceCitation {
+  /** Id de la cita guardada (C2) y su estado: viajan al decidir para guardar la decisión. */
+  citationId?: string | null;
+  fragmentId?: string | null;
+  status?: 'PENDING' | 'ACCEPTED' | 'REJECTED' | 'VALIDATED' | null;
+  position?: number | null;
+  controlId?: string | null;
+  /** La evidencia del control cambió: la próxima búsqueda actualiza (conserva las decisiones). */
+  stale?: boolean;
   evidenceId: string | null;
   fileName: string | null;
   location: string | null;
@@ -395,13 +410,16 @@ export interface CitationFeedbackItem {
   decision: 'ACCEPTED' | 'REJECTED';
   /** Evidencia de la que sale la cita: queda como respaldo del dictamen. */
   evidenceId?: string | null;
+  /** Cita guardada sobre la que se decide (C2). */
+  citationId?: string | null;
 }
 
 /** Qué pasó con el dictamen de un control al aceptar una cita (C4a). */
 export interface VerdictChange {
   controlId: string;
-  verdict: AuditVerdict;
-  source: 'MANUAL' | 'CITATION';
+  /** null = se revirtió: vuelve a «Sin dictamen» (se rechazó la única cita de respaldo). */
+  verdict: AuditVerdict | null;
+  source: 'MANUAL' | 'CITATION' | null;
   /** false = ya estaba Validado: la cita queda como respaldo adicional. */
   changed: boolean;
 }

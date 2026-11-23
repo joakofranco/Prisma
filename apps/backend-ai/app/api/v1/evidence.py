@@ -33,6 +33,8 @@ class EvidenceIngestResponse(BaseModel):
 
 
 class EvidenceCitation(BaseModel):
+    # Id estable del fragmento (evidencia + posicion): permite conservar la decision del auditor.
+    fragment_id: str | None = None
     evidence_id: str | None
     file_name: str | None
     location: str | None

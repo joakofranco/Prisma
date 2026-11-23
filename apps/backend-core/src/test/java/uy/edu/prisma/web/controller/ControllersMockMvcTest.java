@@ -1075,12 +1075,99 @@ class ControllersMockMvcTest {
     var feedback =
         CitationFeedbackController.class.getMethod(
             "feedback", uy.edu.prisma.web.dto.Dto.CitationFeedbackBatchDto.class);
-    for (var method : List.of(search, feedback)) {
+    var refresh = EvidenceController.class.getMethod("refreshCitations", UUID.class, UUID.class);
+    var saved = EvidenceController.class.getMethod("savedCitations", UUID.class);
+    var undo =
+        AuditVerdictController.class.getMethod("undoCitationVerdict", UUID.class, UUID.class);
+    for (var method : List.of(search, feedback, refresh, saved, undo)) {
       var annotation =
           method.getAnnotation(org.springframework.security.access.prepost.PreAuthorize.class);
       assertNotNull(annotation, method.getName());
       assertEquals(expected, annotation.value(), method.getName());
     }
+  }
+
+  @Test
+  void refreshingCitationsRegeneratesThemAndReturnsTheSavedOnes() throws Exception {
+    UUID evalId = UUID.randomUUID();
+    UUID controlId = UUID.randomUUID();
+    UUID citationId = UUID.randomUUID();
+    when(evidenceService.refreshCitations(evalId, controlId))
+        .thenReturn(
+            List.of(
+                new EvidenceCitationDto(
+                    UUID.randomUUID(),
+                    "politica.pdf",
+                    "Página 2",
+                    "texto",
+                    0.87,
+                    "ev::2",
+                    citationId,
+                    "ACCEPTED",
+                    0,
+                    controlId,
+                    false)));
+
+    evidence
+        .perform(
+            post("/api/evidence/evaluation/{e}/control/{c}/citations/refresh", evalId, controlId))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$[0].citationId").value(citationId.toString()))
+        .andExpect(jsonPath("$[0].fragmentId").value("ev::2"))
+        .andExpect(jsonPath("$[0].status").value("ACCEPTED"))
+        .andExpect(jsonPath("$[0].position").value(0));
+  }
+
+  @Test
+  void savedCitationsOfAnEvaluationAreReturnedWithoutSearching() throws Exception {
+    UUID evalId = UUID.randomUUID();
+    when(evidenceService.savedCitations(evalId)).thenReturn(List.of());
+
+    evidence
+        .perform(get("/api/evidence/evaluation/{e}/citations", evalId))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$").isArray());
+    verify(evidenceService).savedCitations(evalId);
+  }
+
+  @Test
+  void undoingAVerdictFromACitationReturnsNoContent() throws Exception {
+    UUID evalId = UUID.randomUUID();
+    UUID controlId = UUID.randomUUID();
+
+    verdicts
+        .perform(delete("/api/audit/verdicts/{e}/controls/{c}/citation-verdict", evalId, controlId))
+        .andExpect(status().isNoContent());
+    verify(auditVerdictService).undoCitationVerdict(evalId, controlId);
+  }
+
+  @Test
+  void theEvidenceListExposesTheIndexingState() throws Exception {
+    UUID evalId = UUID.randomUUID();
+    when(evidenceService.listByEvaluation(evalId))
+        .thenReturn(
+            List.of(
+                new uy.edu.prisma.web.dto.Dto.EvidenceDto(
+                    UUID.randomUUID(),
+                    evalId,
+                    null,
+                    "f.pdf",
+                    1L,
+                    "application/pdf",
+                    "h",
+                    null,
+                    null,
+                    null,
+                    false,
+                    "CLEAN",
+                    "ERROR",
+                    "No se pudo indexar")));
+
+    evidence
+        .perform(get("/api/evidence/evaluation/{e}", evalId))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$[0].indexStatus").value("ERROR"))
+        .andExpect(jsonPath("$[0].indexError").value("No se pudo indexar"));
   }
 
   @Test

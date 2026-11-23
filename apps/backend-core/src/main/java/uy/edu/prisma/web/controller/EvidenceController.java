@@ -100,4 +100,19 @@ public class EvidenceController {
       @PathVariable UUID evaluationId, @PathVariable UUID controlId) {
     return ResponseEntity.ok(service.getCitations(evaluationId, controlId));
   }
+
+  /** «Actualizar»: busca de nuevo y conserva las decisiones de los fragmentos que siguen. */
+  @PreAuthorize("hasAnyRole('PRISMA_ADMIN','AUDITOR')")
+  @PostMapping("/evaluation/{evaluationId}/control/{controlId}/citations/refresh")
+  public ResponseEntity<List<EvidenceCitationDto>> refreshCitations(
+      @PathVariable UUID evaluationId, @PathVariable UUID controlId) {
+    return ResponseEntity.ok(service.refreshCitations(evaluationId, controlId));
+  }
+
+  /** Todas las citas ya guardadas de la evaluación (no busca): la pantalla las muestra al abrir. */
+  @PreAuthorize("hasAnyRole('PRISMA_ADMIN','AUDITOR')")
+  @GetMapping("/evaluation/{evaluationId}/citations")
+  public ResponseEntity<List<EvidenceCitationDto>> savedCitations(@PathVariable UUID evaluationId) {
+    return ResponseEntity.ok(service.savedCitations(evaluationId));
+  }
 }

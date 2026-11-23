@@ -72,7 +72,9 @@ class EvidenceUploadRealAntivirusTest {
         mock(AiEvidenceClient.class),
         EvidenceFileValidatorTest.validatorFor(EvidenceFileValidatorTest.DEFAULT_FORMATS),
         clamAv,
-        auditLog);
+        auditLog,
+        mock(EvidenceIndexService.class),
+        mock(EvidenceCitationStore.class));
   }
 
   private ClamAvClient realClamAv() {

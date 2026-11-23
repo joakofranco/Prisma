@@ -46,6 +46,7 @@ public class EvaluationService {
   private final CurrentUserService currentUser;
   private final AuditLogService auditLog;
   private final String certificationSecret;
+  private org.springframework.context.ApplicationEventPublisher events;
   private final Map<String, MaturityCatalogModel> maturityModels = new ConcurrentHashMap<>();
 
   public EvaluationService(
@@ -279,6 +280,12 @@ public class EvaluationService {
               Set.of(Evaluation.Status.APPROVED, Evaluation.Status.RETURNED),
           Evaluation.Status.APPROVED, Set.of(Evaluation.Status.ARCHIVED));
 
+  /** Inyección por setter para no cambiar el constructor; sin publicador (tests) no se publica. */
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setEvents(org.springframework.context.ApplicationEventPublisher events) {
+    this.events = events;
+  }
+
   public EvaluationDto updateStatus(UUID id, String status) {
     Evaluation eval =
         evalRepo.findById(id).orElseThrow(() -> new ResourceNotFoundException("Evaluación", id));
@@ -299,6 +306,11 @@ public class EvaluationService {
             evalRepo.save(eval),
             auditorNamesByOrganization(Set.of(eval.getOrganization().getId())));
     auditLog.record("UPDATE_STATUS", "evaluation:" + id, "{\"status\":\"" + status + "\"}");
+    if (events != null) {
+      // Las citas guardadas y el precálculo dependen del estado (ver CitationLifecycleListener).
+      events.publishEvent(
+          new EvaluationStatusChangedEvent(id, eval.getOrganization().getId(), current, target));
+    }
     if (target == Evaluation.Status.APPROVED) {
       auditLog.record(
           "CERTIFY",

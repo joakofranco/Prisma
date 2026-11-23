@@ -288,6 +288,16 @@ export const evidenceService = {
       `/evidence/evaluation/${evaluationId}/control/${controlId}/citations`,
     );
   },
+  /** Todas las citas ya guardadas de la evaluación (no busca): la pantalla las muestra al abrir. */
+  getSavedCitations(evaluationId: string) {
+    return apiClient.get<EvidenceCitation[]>(`/evidence/evaluation/${evaluationId}/citations`);
+  },
+  /** «Actualizar»: busca de nuevo y conserva las decisiones de los fragmentos que siguen. */
+  refreshCitations(evaluationId: string, controlId: string) {
+    return apiClient.post<EvidenceCitation[]>(
+      `/evidence/evaluation/${evaluationId}/control/${controlId}/citations/refresh`,
+    );
+  },
   /**
    * El auditor acepta o rechaza las citas de la IA. Aceptar una cita valida el control (C4a): la
    * respuesta dice qué pasó con el dictamen. Si habría que pisar un dictamen puesto a mano, el
@@ -319,6 +329,12 @@ export const auditService = {
   },
   getVerdicts(evaluationId: string) {
     return apiClient.get<ControlVerdict[]>(`/audit/verdicts/${evaluationId}`);
+  },
+  /** «Deshacer» un dictamen que salió de aceptar una cita (uno fijado a mano responde 409). */
+  undoCitationVerdict(evaluationId: string, controlId: string) {
+    return apiClient.delete<void>(
+      `/audit/verdicts/${evaluationId}/controls/${controlId}/citation-verdict`,
+    );
   },
   setVerdict(evaluationId: string, controlId: string, verdict: AuditVerdict) {
     return apiClient.put<ControlVerdict>(`/audit/verdicts/${evaluationId}/controls/${controlId}`, {

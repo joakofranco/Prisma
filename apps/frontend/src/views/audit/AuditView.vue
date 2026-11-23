@@ -83,7 +83,7 @@
                 data-testid="search-citations"
                 @click="searchCitations(c)"
               >
-                Buscar citas
+                {{ citationsByControl[c.controlId] ? 'Actualizar' : 'Buscar citas' }}
               </BaseButton>
             </div>
 
@@ -142,11 +142,11 @@
                     type="button"
                     class="text-xs font-medium px-2 py-1 rounded border"
                     :class="
-                      citationDecision[citationKey(c, i)] === 'ACCEPTED'
+                      decisionOf(c, cit, i) === 'ACCEPTED'
                         ? 'bg-green-600 text-white border-green-600'
                         : 'text-green-700 border-green-300 hover:bg-green-50 dark:text-green-400 dark:border-green-700 dark:hover:bg-green-950'
                     "
-                    :aria-pressed="citationDecision[citationKey(c, i)] === 'ACCEPTED'"
+                    :aria-pressed="decisionOf(c, cit, i) === 'ACCEPTED'"
                     title="El fragmento es relevante y respalda el control: lo pasa a Validado"
                     data-testid="accept-citation"
                     @click="decideCitation(c, cit, i, 'ACCEPTED')"
@@ -157,11 +157,11 @@
                     type="button"
                     class="text-xs font-medium px-2 py-1 rounded border"
                     :class="
-                      citationDecision[citationKey(c, i)] === 'REJECTED'
+                      decisionOf(c, cit, i) === 'REJECTED'
                         ? 'bg-red-600 text-white border-red-600'
                         : 'text-red-700 border-red-300 hover:bg-red-50 dark:text-red-400 dark:border-red-700 dark:hover:bg-red-950'
                     "
-                    :aria-pressed="citationDecision[citationKey(c, i)] === 'REJECTED'"
+                    :aria-pressed="decisionOf(c, cit, i) === 'REJECTED'"
                     title="El fragmento no sirve: no cambia el dictamen del control"
                     data-testid="reject-citation"
                     @click="decideCitation(c, cit, i, 'REJECTED')"
@@ -280,10 +280,21 @@
               </p>
               <p
                 v-if="verdictSources[c.id]"
-                class="text-xs text-green-700 dark:text-green-400 truncate"
-                data-testid="verdict-source"
+                class="flex items-center gap-2 text-xs text-green-700 dark:text-green-400"
               >
-                Validado por cita ({{ citationLabel(verdictSources[c.id]!) }})
+                <span class="truncate" data-testid="verdict-source"
+                  >Validado por cita ({{ citationLabel(verdictSources[c.id]!) }})</span
+                >
+                <button
+                  v-if="canSetVerdict"
+                  type="button"
+                  class="shrink-0 underline hover:no-underline"
+                  title="Quita el dictamen y deja la cita sin decidir"
+                  data-testid="undo-verdict"
+                  @click="undoVerdict(c.id)"
+                >
+                  Deshacer
+                </button>
               </p>
             </div>
             <select
@@ -596,6 +607,38 @@
     return `${control.controlId}:${index}`;
   }
 
+  // Decisión sobre una cita: lo que el auditor acaba de hacer o, si no, lo guardado en el servidor
+  // (las citas guardadas llegan con su estado: la decisión sobrevive a recargar la pantalla).
+  function decisionOf(
+    control: ControlWithEvidence,
+    citation: EvidenceCitation,
+    index: number,
+  ): 'ACCEPTED' | 'REJECTED' | undefined {
+    const local = citationDecision[citationKey(control, index)];
+    if (local) return local;
+    return citation.status === 'ACCEPTED' || citation.status === 'REJECTED'
+      ? citation.status
+      : undefined;
+  }
+
+  // «Deshacer»: quita un dictamen que salió de aceptar una cita; esas citas vuelven a quedar sin
+  // decidir. Uno fijado a mano no se deshace por acá (el servidor responde 409).
+  async function undoVerdict(controlId: string) {
+    try {
+      await auditService.undoCitationVerdict(evaluationId, controlId);
+      delete verdicts[controlId];
+      delete verdictSources[controlId];
+      Object.keys(citationDecision)
+        .filter((k) => k.startsWith(`${controlId}:`))
+        .forEach((k) => delete citationDecision[k]);
+      for (const cit of citationsByControl[controlId] ?? []) {
+        if (cit.status === 'ACCEPTED') cit.status = 'PENDING';
+      }
+    } catch (err) {
+      notification.error(getErrorMessage(err, 'No se pudo deshacer el dictamen'));
+    }
+  }
+
   // Puntaje de relevancia con dos decimales; las citas viejas pueden no traerlo.
   function formatScore(score: number | null | undefined) {
     return typeof score === 'number' ? score.toFixed(2).replace('.', ',') : '—';
@@ -640,6 +683,12 @@
     citation: EvidenceCitation,
   ) {
     for (const change of result?.verdicts ?? []) {
+      if (change.verdict === null) {
+        // Se rechazó la única cita de respaldo: el dictamen vuelve a «Sin dictamen».
+        delete verdicts[change.controlId];
+        delete verdictSources[change.controlId];
+        continue;
+      }
       verdicts[change.controlId] = change.verdict;
       if (change.changed && change.source === 'CITATION') {
         verdictSources[change.controlId] = {
@@ -670,11 +719,13 @@
             score: citation.score ?? null,
             decision,
             evidenceId: citation.evidenceId ?? null,
+            citationId: citation.citationId ?? null,
           },
         ],
         confirmOverride,
       );
       citationDecision[key] = decision;
+      citation.status = decision;
       applyVerdictChanges(data, citation);
     } catch (err) {
       const response = (
@@ -705,7 +756,7 @@
     index: number,
     decision: 'ACCEPTED' | 'REJECTED',
   ) {
-    if (citationDecision[citationKey(control, index)] === decision) return;
+    if (decisionOf(control, citation, index) === decision) return;
     await sendDecision(control, citation, index, decision, false);
   }
 
@@ -773,11 +824,34 @@
     }
   }
 
+  // Al abrir la evaluación en auditoría las citas ya están calculadas y guardadas, con sus
+  // decisiones: se muestran sin buscar. Si no hay (o la evaluación no está en auditoría) no pasa nada.
+  async function loadSavedCitations() {
+    if (evaluation.value?.status !== 'IN_AUDIT') return;
+    try {
+      const { data } = await evidenceService.getSavedCitations(evaluationId);
+      const grouped: Record<string, EvidenceCitation[]> = {};
+      for (const cit of data) {
+        if (!cit.controlId) continue;
+        (grouped[cit.controlId] ??= []).push(cit);
+      }
+      for (const [controlId, list] of Object.entries(grouped)) {
+        citationsByControl[controlId] = list.sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
+      }
+    } catch {
+      // sin citas guardadas: el auditor las busca con «Buscar citas»
+    }
+  }
+
   async function searchCitations(control: ControlWithEvidence) {
     searchingControlId.value = control.controlId;
     delete citationsError[control.controlId];
     try {
-      const { data } = await evidenceService.getCitations(evaluationId, control.controlId);
+      // Con citas ya cargadas es «Actualizar» (busca de nuevo y conserva las decisiones de los
+      // fragmentos que siguen apareciendo); la primera vez es la búsqueda (o lo guardado).
+      const { data } = citationsByControl[control.controlId]
+        ? await evidenceService.refreshCitations(evaluationId, control.controlId)
+        : await evidenceService.getCitations(evaluationId, control.controlId);
       citationsByControl[control.controlId] = data;
       // Una búsqueda nueva trae otra lista: las decisiones anteriores ya no corresponden.
       Object.keys(citationDecision)
@@ -1084,7 +1158,7 @@
 
   onMounted(() => {
     fetchObservations();
-    loadControlsWithEvidence();
+    loadControlsWithEvidence().then(loadSavedCitations);
     loadVerdicts();
   });
 </script>

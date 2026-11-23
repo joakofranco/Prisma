@@ -7,10 +7,13 @@ const auditService = vi.hoisted(() => ({
   updateObservation: vi.fn(),
   getVerdicts: vi.fn(),
   setVerdict: vi.fn(),
+  undoCitationVerdict: vi.fn(),
 }));
 const evidenceService = vi.hoisted(() => ({
   getByEvaluation: vi.fn(),
   getCitations: vi.fn(),
+  getSavedCitations: vi.fn(),
+  refreshCitations: vi.fn(),
   sendCitationFeedback: vi.fn(),
   download: vi.fn(),
 }));
@@ -434,6 +437,7 @@ describe('AuditView: citas de la IA (PRI-359)', () => {
           score: 0.7,
           decision: 'ACCEPTED',
           evidenceId: 'ev-1',
+          citationId: null,
         },
       ],
       false,
@@ -506,9 +510,11 @@ describe('AuditView: citas de la IA (PRI-359)', () => {
     await wrapper.findAll('[data-testid="accept-citation"]')[0].trigger('click');
     await flushPromises();
 
+    // Con citas ya cargadas el botón pasa a ser «Actualizar» y busca de nuevo.
+    evidenceService.refreshCitations.mockResolvedValue({ data: [citation(1), citation(2)] });
     await wrapper
       .findAll('button')
-      .find((b) => b.text().includes('Buscar citas'))!
+      .find((b) => b.text().includes('Actualizar'))!
       .trigger('click');
     await flushPromises();
 
@@ -1012,5 +1018,237 @@ describe('AuditView: aceptar una cita valida el control (C4a) y puntaje (C3.1)',
     await clickCreate();
 
     expect(auditService.createObservation.mock.calls[0][0]).not.toHaveProperty('citation');
+  });
+});
+
+describe('AuditView: citas guardadas, revertir y deshacer (C2 / hito 3)', () => {
+  const saved = (n: number, status: string, extra: Record<string, unknown> = {}) => ({
+    citationId: `cit-${n}`,
+    fragmentId: `ev-1::${n}`,
+    controlId: 'ctl-1',
+    status,
+    position: n,
+    evidenceId: 'ev-1',
+    fileName: `politica-${n}.pdf`,
+    location: `Página ${n}`,
+    snippet: `fragmento ${n}`,
+    score: 0.5 + n / 10,
+    ...extra,
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    document.body.innerHTML = '';
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    auditService.getObservations.mockResolvedValue({ data: [] });
+    auditService.getVerdicts.mockResolvedValue({ data: [] });
+    auditService.undoCitationVerdict.mockResolvedValue({ data: undefined });
+    evaluationsService.getFlags.mockResolvedValue({ data: [] });
+    evidenceService.getByEvaluation.mockResolvedValue({
+      data: [{ id: 'ev-1', controlId: 'ctl-1', fileName: 'politica-1.pdf' }],
+    });
+    evidenceService.getSavedCitations.mockResolvedValue({ data: [] });
+    evidenceService.getCitations.mockResolvedValue({ data: [saved(1, 'PENDING')] });
+    evidenceService.refreshCitations.mockResolvedValue({ data: [saved(1, 'PENDING')] });
+    evidenceService.sendCitationFeedback.mockResolvedValue({ data: { verdicts: [] } });
+    catalogService.getByVersion.mockResolvedValue({ data: catalog });
+  });
+
+  const acceptButtons = (wrapper: Awaited<ReturnType<typeof mountView>>) =>
+    wrapper.findAll('[data-testid="accept-citation"]');
+  const rejectButtons = (wrapper: Awaited<ReturnType<typeof mountView>>) =>
+    wrapper.findAll('[data-testid="reject-citation"]');
+  const searchButton = (wrapper: Awaited<ReturnType<typeof mountView>>) =>
+    wrapper.find('[data-testid="search-citations"]');
+
+  it('al abrir en auditoría muestra las citas guardadas con su decisión, sin buscar', async () => {
+    evidenceService.getSavedCitations.mockResolvedValue({
+      data: [saved(2, 'REJECTED'), saved(1, 'ACCEPTED'), saved(3, 'PENDING')],
+    });
+    const wrapper = await mountView('IN_AUDIT');
+
+    // Ordenadas por posición: 1 aceptada, 2 rechazada, 3 sin decidir.
+    expect(acceptButtons(wrapper)).toHaveLength(3);
+    expect(acceptButtons(wrapper).map((b) => b.attributes('aria-pressed'))).toEqual([
+      'true',
+      'false',
+      'false',
+    ]);
+    expect(rejectButtons(wrapper).map((b) => b.attributes('aria-pressed'))).toEqual([
+      'false',
+      'true',
+      'false',
+    ]);
+    expect(wrapper.text()).toContain('politica-1.pdf');
+    expect(evidenceService.getCitations).not.toHaveBeenCalled();
+    expect(evidenceService.refreshCitations).not.toHaveBeenCalled();
+  });
+
+  it('con citas guardadas el botón dice «Actualizar»; sin ellas, «Buscar citas»', async () => {
+    const without = await mountView('IN_AUDIT');
+    expect(searchButton(without).text()).toBe('Buscar citas');
+
+    evidenceService.getSavedCitations.mockResolvedValue({ data: [saved(1, 'PENDING')] });
+    const withSaved = await mountView('IN_AUDIT');
+    expect(searchButton(withSaved).text()).toBe('Actualizar');
+  });
+
+  it('«Actualizar» busca de nuevo (refresh) y trae las decisiones que conserva el servidor', async () => {
+    evidenceService.getSavedCitations.mockResolvedValue({ data: [saved(1, 'ACCEPTED')] });
+    evidenceService.refreshCitations.mockResolvedValue({
+      data: [saved(7, 'PENDING'), saved(1, 'ACCEPTED', { position: 1 })],
+    });
+    const wrapper = await mountView('IN_AUDIT');
+
+    await searchButton(wrapper).trigger('click');
+    await flushPromises();
+
+    expect(evidenceService.refreshCitations).toHaveBeenCalledWith('eval-1', 'ctl-1');
+    expect(evidenceService.getCitations).not.toHaveBeenCalled();
+    expect(acceptButtons(wrapper).map((b) => b.attributes('aria-pressed'))).toEqual([
+      'false',
+      'true',
+    ]);
+  });
+
+  it('fuera de auditoría no consulta las citas guardadas', async () => {
+    await mountView('RETURNED');
+
+    expect(evidenceService.getSavedCitations).not.toHaveBeenCalled();
+  });
+
+  it('si no se pueden leer las guardadas, la pantalla sigue funcionando', async () => {
+    evidenceService.getSavedCitations.mockRejectedValue(new Error('boom'));
+    const wrapper = await mountView('IN_AUDIT');
+
+    expect(searchButton(wrapper).text()).toBe('Buscar citas');
+    expect(notification.error).not.toHaveBeenCalled();
+  });
+
+  it('decidir una cita guardada envía su citationId', async () => {
+    evidenceService.getSavedCitations.mockResolvedValue({ data: [saved(1, 'PENDING')] });
+    const wrapper = await mountView('IN_AUDIT');
+
+    await acceptButtons(wrapper)[0].trigger('click');
+    await flushPromises();
+
+    expect(evidenceService.sendCitationFeedback.mock.calls[0][1][0]).toMatchObject({
+      citationId: 'cit-1',
+      decision: 'ACCEPTED',
+      controlId: 'ctl-1',
+    });
+    expect(acceptButtons(wrapper)[0].attributes('aria-pressed')).toBe('true');
+  });
+
+  it('la decisión de una cita guardada no se reenvía si ya está así', async () => {
+    evidenceService.getSavedCitations.mockResolvedValue({ data: [saved(1, 'ACCEPTED')] });
+    const wrapper = await mountView('IN_AUDIT');
+
+    await acceptButtons(wrapper)[0].trigger('click');
+    await flushPromises();
+
+    expect(evidenceService.sendCitationFeedback).not.toHaveBeenCalled();
+  });
+
+  it('rechazar la única cita de respaldo revierte el dictamen «por cita» en pantalla', async () => {
+    auditService.getVerdicts.mockResolvedValue({
+      data: [
+        {
+          controlId: 'ctl-1',
+          verdict: 'VALIDATED',
+          source: 'CITATION',
+          sourceRef: { fileName: 'politica-1.pdf', location: 'Página 1' },
+        },
+      ],
+    });
+    evidenceService.getSavedCitations.mockResolvedValue({ data: [saved(1, 'ACCEPTED')] });
+    evidenceService.sendCitationFeedback.mockResolvedValue({
+      data: { verdicts: [{ controlId: 'ctl-1', verdict: null, source: null, changed: true }] },
+    });
+    const wrapper = await mountView('IN_AUDIT');
+    expect(wrapper.find('[data-testid="verdict-source"]').exists()).toBe(true);
+
+    await rejectButtons(wrapper)[0].trigger('click');
+    await flushPromises();
+
+    const row = wrapper.findAll('[data-testid="verdict-row"]')[0];
+    expect((row.find('select').element as HTMLSelectElement).value).toBe('');
+    expect(wrapper.find('[data-testid="verdict-source"]').exists()).toBe(false);
+    expect(rejectButtons(wrapper)[0].attributes('aria-pressed')).toBe('true');
+  });
+
+  // ---- «Deshacer» ----
+
+  const withCitationVerdict = () => {
+    auditService.getVerdicts.mockResolvedValue({
+      data: [
+        {
+          controlId: 'ctl-1',
+          verdict: 'VALIDATED',
+          source: 'CITATION',
+          sourceRef: { fileName: 'politica-1.pdf', location: 'Página 1' },
+        },
+      ],
+    });
+    evidenceService.getSavedCitations.mockResolvedValue({ data: [saved(1, 'ACCEPTED')] });
+  };
+
+  it('un dictamen por cita ofrece «Deshacer»', async () => {
+    withCitationVerdict();
+    const wrapper = await mountView('IN_AUDIT');
+
+    expect(wrapper.find('[data-testid="undo-verdict"]').text()).toBe('Deshacer');
+    expect(wrapper.find('[data-testid="verdict-source"]').text()).toBe(
+      'Validado por cita (politica-1.pdf, Página 1)',
+    );
+  });
+
+  it('«Deshacer» quita el dictamen y deja la cita sin decidir', async () => {
+    withCitationVerdict();
+    const wrapper = await mountView('IN_AUDIT');
+
+    await wrapper.find('[data-testid="undo-verdict"]').trigger('click');
+    await flushPromises();
+
+    expect(auditService.undoCitationVerdict).toHaveBeenCalledWith('eval-1', 'ctl-1');
+    const row = wrapper.findAll('[data-testid="verdict-row"]')[0];
+    expect((row.find('select').element as HTMLSelectElement).value).toBe('');
+    expect(wrapper.find('[data-testid="verdict-source"]').exists()).toBe(false);
+    expect(acceptButtons(wrapper)[0].attributes('aria-pressed')).toBe('false');
+    expect(rejectButtons(wrapper)[0].attributes('aria-pressed')).toBe('false');
+  });
+
+  it('si no se puede deshacer muestra el mensaje del servidor y no cambia nada', async () => {
+    withCitationVerdict();
+    auditService.undoCitationVerdict.mockRejectedValue({
+      response: {
+        data: { message: 'Solo se puede deshacer un dictamen que salió de aceptar una cita' },
+      },
+    });
+    const wrapper = await mountView('IN_AUDIT');
+
+    await wrapper.find('[data-testid="undo-verdict"]').trigger('click');
+    await flushPromises();
+
+    expect(notification.error).toHaveBeenCalledWith(
+      'Solo se puede deshacer un dictamen que salió de aceptar una cita',
+    );
+    expect(wrapper.find('[data-testid="verdict-source"]').exists()).toBe(true);
+  });
+
+  it('un dictamen fijado a mano no ofrece «Deshacer»', async () => {
+    auditService.getVerdicts.mockResolvedValue({
+      data: [{ controlId: 'ctl-1', verdict: 'VALIDATED', source: 'MANUAL' }],
+    });
+    const wrapper = await mountView('IN_AUDIT');
+
+    expect(wrapper.find('[data-testid="undo-verdict"]').exists()).toBe(false);
+  });
+
+  it('fuera de auditoría no se puede deshacer', async () => {
+    withCitationVerdict();
+    const wrapper = await mountView('RETURNED');
+
+    expect(wrapper.find('[data-testid="undo-verdict"]').exists()).toBe(false);
   });
 });
