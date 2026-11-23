@@ -24,6 +24,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from app.core.config import Settings, get_settings
 from app.rag import loaders
 from app.rag.chroma_client import build_chroma_client
+from app.rag.collections import mcu_collection
 from app.rag.ollama_runtime import chat_kwargs, embedding_kwargs, estimate_tokens, guard_prompt
 
 logger = logging.getLogger(__name__)
@@ -54,7 +55,9 @@ class VectorStore:
             model=self.settings.ollama_model,
             **chat_kwargs(self.settings, think_supported),
         )
-        self.collection_name = "mcu-5.0"
+        # Una colección por modelo de embedding (ver app/rag/collections.py): cambiar de modelo
+        # no pisa el índice anterior y se puede volver atrás.
+        self.collection_name = mcu_collection(self.settings)
         self._vectorstore: Chroma | None = None
 
     # ------------------------------------------------------------------
@@ -70,6 +73,11 @@ class VectorStore:
                     "Colección %s ya indexada con %d fragmentos", self.collection_name, count
                 )
                 return
+            logger.info(
+                "Colección %s sin fragmentos (modelo de embedding %s): se indexa el marco",
+                self.collection_name,
+                self.settings.ollama_embedding_model,
+            )
             docs_dir = Path(self.settings.rag_docs_dir)
             documents = self._load_documents(docs_dir)
             if not documents:
@@ -78,16 +86,13 @@ class VectorStore:
                     self.settings.rag_docs_dir,
                 )
                 return
-            chunks = self._split().split_documents(documents)
-            # IDs deterministicos (source + posicion), no los UUID random que Chroma generaria
-            # por default: con backend-ai corriendo con mas de una replica contra el mismo
-            # servidor Chroma (ver chroma_client.py), dos pods pueden ver la coleccion vacia a la
-            # vez en un arranque en frio y disparar esta indexacion inicial en paralelo -- con
-            # IDs deterministicos, el segundo add_documents() actualiza (upsert) los mismos
-            # fragmentos en vez de duplicarlos.
-            ids = [
-                f"{doc.metadata.get('source', 'doc')}::chunk-{i}" for i, doc in enumerate(chunks)
-            ]
+            chunks, ids = self._chunk_framework(documents)
+            # IDs deterministicos, no los UUID random que Chroma generaria por default: con
+            # backend-ai corriendo con mas de una replica contra el mismo servidor Chroma (ver
+            # chroma_client.py), dos pods pueden ver la coleccion vacia a la vez en un arranque en
+            # frio y disparar esta indexacion inicial en paralelo -- con IDs deterministicos, el
+            # segundo add_documents() actualiza (upsert) los mismos fragmentos en vez de
+            # duplicarlos.
             self._vectorstore.add_documents(chunks, ids=ids)
             logger.info(
                 "Indexados %d fragmentos de %d documentos en %s",
@@ -332,6 +337,40 @@ class VectorStore:
     def _collection_count(self) -> int:
         client = build_chroma_client(self.settings)
         return int(client.get_or_create_collection(self.collection_name).count())
+
+    def _chunk_framework(self, documents: list[Document]) -> tuple[list[Document], list[str]]:
+        """Fragmentos del marco con sus ids. Un fragmento por requisito (``req_ctx``) para los
+        documentos con «### Requisito XX.N»; el resto se trocea de la forma genérica.
+
+        Id del requisito: ``<fuente>::req-XX.N`` (estable: no depende del orden ni del tamaño).
+        Id genérico: ``<fuente>::chunk-<n>``.
+        """
+        chunks: list[Document] = []
+        ids: list[str] = []
+        seen: set[str] = set()
+        generic: list[Document] = []
+        for doc in documents:
+            source = str(doc.metadata.get("source", "doc"))
+            fragments = loaders.split_by_requirement(doc)
+            if not fragments:
+                generic.append(doc)
+                continue
+            for fragment in fragments:
+                fragment_id = f"{source}::req-{fragment.metadata['requirement']}"
+                if fragment_id in seen:  # requisito repetido en el mismo documento: no se pisa
+                    n = 2
+                    while f"{fragment_id}-{n}" in seen:
+                        n += 1
+                    fragment_id = f"{fragment_id}-{n}"
+                seen.add(fragment_id)
+                chunks.append(fragment)
+                ids.append(fragment_id)
+        if generic:
+            generic_chunks = self._split().split_documents(generic)
+            for i, doc in enumerate(generic_chunks):
+                chunks.append(doc)
+                ids.append(f"{doc.metadata.get('source', 'doc')}::chunk-{i}")
+        return chunks, ids
 
     def _split(self) -> RecursiveCharacterTextSplitter:
         return loaders.build_splitter(self.settings.rag_chunk_size, self.settings.rag_chunk_overlap)

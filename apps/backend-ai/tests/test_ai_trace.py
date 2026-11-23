@@ -18,8 +18,8 @@ _REAL_TRACE_CONFIG = ollama_runtime.trace_config
 
 def _settings(**kw: Any) -> Settings:
     base: dict[str, Any] = {
-        "ollama_model": "llama3:8b",
-        "ollama_embedding_model": "nomic-embed-text",
+        "ollama_model": "nemotron-3-nano:30b",
+        "ollama_embedding_model": "bge-m3",
         "internal_api_key": "",
     }
     base.update(kw)
@@ -65,7 +65,7 @@ def _config(monkeypatch: pytest.MonkeyPatch) -> None:
     SeedLLM.seen = []
 
     async def fake(settings: Settings) -> dict[str, Any]:
-        return {"model": "llama3:8b", "model_digest": "abc", "num_ctx": 16384}
+        return {"model": "nemotron-3-nano:30b", "model_digest": "abc", "num_ctx": 16384}
 
     monkeypatch.setattr(ollama_runtime, "trace_config", fake)
 
