@@ -44,12 +44,96 @@
         </div>
         <p class="text-sm text-slate-500 dark:text-slate-400 mb-4">
           Busca en la evidencia cargada por esta organización los fragmentos que podrían respaldar
-          cada control (documento, página y texto exacto). Es sólo una guía de dónde mirar: la
-          validación final siempre la registra el auditor como Observación.
+          cada control (documento, página y texto exacto), con su puntaje de relevancia.
+          <strong>Aceptar una cita</strong> indica que el fragmento es relevante y respalda el
+          control: lo pasa a «Validado» (podés cambiarlo en el dictamen). Si el fragmento sirve pero
+          no alcanza, no lo rechaces: usá <strong>Registrar como observación</strong> y agregá tus
+          notas. Rechazar una cita no cambia el dictamen.
         </p>
 
         <div
-          v-if="controlsWithEvidence.length === 0"
+          v-if="globalEvidences.length > 0"
+          class="mb-4 p-3 rounded-lg bg-indigo-50 border border-indigo-100 dark:bg-indigo-950 dark:border-indigo-900"
+          data-testid="global-evidence"
+        >
+          <p class="text-sm font-medium text-indigo-900 dark:text-indigo-200">
+            Evidencia sin control asignado
+          </p>
+          <p class="text-xs text-indigo-800 dark:text-indigo-300 mt-1">
+            Sus fragmentos entran en las citas de <strong>cualquier</strong> control, marcados «Sin
+            control asignado». La IA sugiere a qué controles podría pertenecer: aceptar una
+            sugerencia <strong>no asigna</strong> el archivo, solo suma ese control a la lista para
+            buscar sus citas.
+          </p>
+          <ul class="mt-2 space-y-2">
+            <li
+              v-for="ev in globalEvidences"
+              :key="ev.id"
+              class="text-xs text-slate-700 dark:text-slate-200"
+              data-testid="global-evidence-item"
+            >
+              <span class="font-medium">{{ ev.fileName }}</span>
+              <span class="text-slate-500 dark:text-slate-400"> · {{ indexLabel(ev) }}</span>
+              <button
+                v-if="canRetryClassification(ev)"
+                type="button"
+                class="ml-2 font-medium px-2 py-0.5 rounded border text-indigo-700 border-indigo-300 hover:bg-indigo-100 dark:text-indigo-300 dark:border-indigo-700 dark:hover:bg-indigo-900"
+                title="Si la IA no llegó a sugerir controles (por ejemplo por un corte), pedila de nuevo"
+                data-testid="retry-classification"
+                @click="retryClassification(ev)"
+              >
+                Reintentar sugerencias
+              </button>
+              <div
+                v-for="sug in visibleSuggestions(ev.id)"
+                :key="sug.id"
+                class="mt-1 ml-3 flex flex-wrap items-center gap-2"
+                data-testid="suggestion"
+              >
+                <span>
+                  Podría pertenecer a <strong>{{ sug.controlCode }}</strong> (confianza
+                  {{ formatScore(sug.score) }})
+                </span>
+                <span
+                  v-if="sug.calibrated !== true"
+                  class="text-[11px] font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
+                  title="Todavía no hay un umbral calibrado con datos reales: el puntaje orienta, pero no garantiza que el control sea el correcto. Revisá el contenido antes de aceptar."
+                  data-testid="suggestion-uncalibrated"
+                >
+                  Sin confianza calibrada
+                </span>
+                <template v-if="sug.status === 'PENDING' && canWriteObservations">
+                  <button
+                    type="button"
+                    class="font-medium px-2 py-0.5 rounded border text-green-700 border-green-300 hover:bg-green-50 dark:text-green-400 dark:border-green-700 dark:hover:bg-green-950"
+                    data-testid="accept-suggestion"
+                    @click="decideSuggestion(sug, 'ACCEPTED')"
+                  >
+                    Aceptar
+                  </button>
+                  <button
+                    type="button"
+                    class="font-medium px-2 py-0.5 rounded border text-red-700 border-red-300 hover:bg-red-50 dark:text-red-400 dark:border-red-700 dark:hover:bg-red-950"
+                    data-testid="reject-suggestion"
+                    @click="decideSuggestion(sug, 'REJECTED')"
+                  >
+                    Rechazar
+                  </button>
+                </template>
+                <span
+                  v-else-if="sug.status === 'ACCEPTED'"
+                  class="text-green-700 dark:text-green-400"
+                  data-testid="suggestion-accepted"
+                >
+                  Aceptada: buscá sus citas abajo
+                </span>
+              </div>
+            </li>
+          </ul>
+        </div>
+
+        <div
+          v-if="citationControls.length === 0 && globalEvidences.length === 0"
           class="text-center py-6 text-slate-500 dark:text-slate-400 text-sm"
         >
           Aún no hay evidencia cargada para esta evaluación.
@@ -57,7 +141,7 @@
 
         <div v-else class="space-y-3">
           <div
-            v-for="c in controlsWithEvidence"
+            v-for="c in citationControls"
             :key="c.controlId"
             class="border border-slate-200 dark:border-slate-700 rounded-lg p-4"
           >
@@ -80,7 +164,7 @@
                 data-testid="search-citations"
                 @click="searchCitations(c)"
               >
-                Buscar citas
+                {{ citationsByControl[c.controlId] ? 'Actualizar' : 'Buscar citas' }}
               </BaseButton>
             </div>
 
@@ -109,6 +193,30 @@
                   <p class="text-xs font-medium text-slate-700 dark:text-slate-200 truncate">
                     {{ cit.fileName }} <span v-if="cit.location">· {{ cit.location }}</span>
                   </p>
+                  <span class="flex items-center gap-2 shrink-0">
+                    <span
+                      v-if="cit.unassigned"
+                      class="text-[11px] font-medium px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200"
+                      title="Viene de evidencia sin control asignado"
+                      data-testid="citation-unassigned"
+                    >
+                      Sin control asignado
+                    </span>
+                    <span
+                      v-if="isBestCitation(c.controlId, i)"
+                      class="text-[11px] font-medium px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300"
+                      data-testid="best-citation"
+                    >
+                      Mejor coincidencia
+                    </span>
+                    <span
+                      class="text-[11px] text-slate-500 dark:text-slate-400"
+                      data-testid="citation-score"
+                      title="Puntaje de relevancia de la búsqueda"
+                    >
+                      Relevancia {{ formatScore(cit.score) }}
+                    </span>
+                  </span>
                   <button
                     v-if="canViewDocument"
                     class="text-xs text-blue-600 hover:underline shrink-0 dark:text-blue-400"
@@ -123,11 +231,12 @@
                     type="button"
                     class="text-xs font-medium px-2 py-1 rounded border"
                     :class="
-                      citationDecision[citationKey(c, i)] === 'ACCEPTED'
+                      decisionOf(c, cit, i) === 'ACCEPTED'
                         ? 'bg-green-600 text-white border-green-600'
                         : 'text-green-700 border-green-300 hover:bg-green-50 dark:text-green-400 dark:border-green-700 dark:hover:bg-green-950'
                     "
-                    :aria-pressed="citationDecision[citationKey(c, i)] === 'ACCEPTED'"
+                    :aria-pressed="decisionOf(c, cit, i) === 'ACCEPTED'"
+                    title="El fragmento es relevante y respalda el control: lo pasa a Validado"
                     data-testid="accept-citation"
                     @click="decideCitation(c, cit, i, 'ACCEPTED')"
                   >
@@ -137,11 +246,12 @@
                     type="button"
                     class="text-xs font-medium px-2 py-1 rounded border"
                     :class="
-                      citationDecision[citationKey(c, i)] === 'REJECTED'
+                      decisionOf(c, cit, i) === 'REJECTED'
                         ? 'bg-red-600 text-white border-red-600'
                         : 'text-red-700 border-red-300 hover:bg-red-50 dark:text-red-400 dark:border-red-700 dark:hover:bg-red-950'
                     "
-                    :aria-pressed="citationDecision[citationKey(c, i)] === 'REJECTED'"
+                    :aria-pressed="decisionOf(c, cit, i) === 'REJECTED'"
+                    title="El fragmento no sirve: no cambia el dictamen del control"
                     data-testid="reject-citation"
                     @click="decideCitation(c, cit, i, 'REJECTED')"
                   >
@@ -150,10 +260,20 @@
                   <button
                     type="button"
                     class="text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400"
+                    title="Crea una observación de auditoría con el texto de la cita; no dictamina el control"
+                    data-testid="register-observation"
                     @click="openObservationForCitation(c, cit)"
                   >
-                    Registrar validación
+                    Registrar como observación
                   </button>
+                </div>
+                <div v-if="cit.citationId" class="mt-2">
+                  <AiTraceButton
+                    :load="
+                      () =>
+                        aiTraceService.getCitationTrace(evaluationId, c.controlId, cit.citationId!)
+                    "
+                  />
                 </div>
               </div>
             </div>
@@ -254,6 +374,24 @@
               <p class="text-sm font-medium text-slate-900 dark:text-white">{{ c.code }}</p>
               <p class="text-xs text-slate-500 dark:text-slate-400 truncate">
                 {{ c.description }}
+              </p>
+              <p
+                v-if="verdictSources[c.id]"
+                class="flex items-center gap-2 text-xs text-green-700 dark:text-green-400"
+              >
+                <span class="truncate" data-testid="verdict-source"
+                  >Validado por cita ({{ citationLabel(verdictSources[c.id]!) }})</span
+                >
+                <button
+                  v-if="canSetVerdict"
+                  type="button"
+                  class="shrink-0 underline hover:no-underline"
+                  title="Quita el dictamen y deja la cita sin decidir"
+                  data-testid="undo-verdict"
+                  @click="undoVerdict(c.id)"
+                >
+                  Deshacer
+                </button>
               </p>
             </div>
             <select
@@ -370,6 +508,9 @@
                   {{ formatDate(obs.createdAt) }}
                   <span v-if="obs.createdByName"> — Registrada por {{ obs.createdByName }}</span>
                 </p>
+                <div class="mt-2">
+                  <AiTraceButton :load="() => aiTraceService.getObservationTrace(obs.id)" />
+                </div>
               </div>
               <div v-if="canWriteObservations" class="flex gap-1 shrink-0">
                 <button
@@ -432,6 +573,22 @@
         </BaseButton>
       </template>
     </BaseModal>
+
+    <BaseModal v-model="showOverrideModal" title="Reemplazar el dictamen" size="sm">
+      <p class="text-sm text-slate-700 dark:text-slate-200" data-testid="override-message">
+        El control <strong>{{ pendingOverride?.control.code }}</strong> ya tiene el dictamen
+        <strong>«{{ pendingOverride ? verdictLabel(pendingOverride.currentVerdict) : '' }}»</strong>
+        puesto a mano. Aceptar esta cita lo reemplaza por <strong>«Validado»</strong>.
+      </p>
+      <template #footer>
+        <BaseButton variant="secondary" data-testid="override-cancel" @click="cancelOverride">
+          Cancelar
+        </BaseButton>
+        <BaseButton variant="primary" data-testid="override-confirm" @click="confirmOverride">
+          Reemplazar por Validado
+        </BaseButton>
+      </template>
+    </BaseModal>
   </div>
 </template>
 
@@ -443,11 +600,13 @@
     evidenceService,
     evaluationsService,
     catalogService,
+    aiTraceService,
   } from '@/services/resources';
   import { formatDate, getErrorMessage } from '@/utils/helpers';
   import { useNotification } from '@/composables/useUtils';
   import BaseButton from '@/components/common/BaseButton.vue';
   import BaseModal from '@/components/common/BaseModal.vue';
+  import AiTraceButton from '@/components/ai/AiTraceButton.vue';
   import BaseSelect from '@/components/common/BaseSelect.vue';
   import BaseTextarea from '@/components/common/BaseTextarea.vue';
   import { useAuthStore } from '@/stores/auth';
@@ -474,8 +633,11 @@
     AuditObservation,
     Evaluation,
     AuditVerdict,
+    CitationFeedbackResult,
     Evidence,
     EvidenceCitation,
+    EvidenceSuggestion,
+    CitationSource,
     MaturityCatalog,
   } from '@/types';
 
@@ -510,6 +672,8 @@
     subcategoryId: '',
     // Evidencia citada de la que sale la observación (RF-EVI-15): solo al registrarla desde una cita.
     evidenceId: undefined as string | undefined,
+    // La cita y el texto precargado (C4b): al guardar, el servidor registra la diferencia.
+    citation: undefined as CitationSource | undefined,
   });
 
   // RF-AUD-05: además de por control, el auditor puede atar una observación a una subcategoría
@@ -535,6 +699,95 @@
 
   const evidences = ref<Evidence[]>([]);
   const controlsWithEvidence = ref<ControlWithEvidence[]>([]);
+
+  // Evidencia sin control asignado (global) y las sugerencias de la IA sobre a qué controles podría
+  // pertenecer (D7): solo sugerencias, aceptar una no asigna el archivo.
+  const globalEvidences = computed(() =>
+    evidences.value.filter((e) => !e.controlId && (e.scanStatus ?? 'CLEAN') === 'CLEAN'),
+  );
+  const suggestions = ref<EvidenceSuggestion[]>([]);
+
+  function visibleSuggestions(evidenceId: string) {
+    return suggestions.value
+      .filter((s) => s.evidenceId === evidenceId && s.status !== 'REJECTED')
+      .sort((a, b) => a.rank - b.rank);
+  }
+
+  function indexLabel(ev: Evidence) {
+    const labels: Record<string, string> = {
+      INDEXED: 'indexada',
+      QUEUED: 'en cola para indexar',
+      INDEXING: 'indexando…',
+      ERROR: 'error al indexar',
+      NOT_INDEXABLE: 'no se indexa',
+    };
+    return ev.indexStatus
+      ? (labels[ev.indexStatus] ?? ev.indexStatus)
+      : ev.aiIndexed
+        ? 'indexada'
+        : '—';
+  }
+
+  // Controles para buscar citas: los que tienen evidencia propia y los de sugerencias aceptadas
+  // sobre evidencia global (la evidencia global ya entra en las citas de cualquier control).
+  const citationControls = computed<ControlWithEvidence[]>(() => {
+    const known = new Set(controlsWithEvidence.value.map((c) => c.controlId));
+    const extra = suggestions.value
+      .filter((s) => s.status === 'ACCEPTED' && !known.has(s.controlId))
+      .filter((s, i, all) => all.findIndex((o) => o.controlId === s.controlId) === i)
+      .map((s) => ({
+        controlId: s.controlId,
+        code: s.controlCode,
+        description: s.controlDescription,
+      }));
+    return [...controlsWithEvidence.value, ...extra];
+  });
+
+  async function loadSuggestions() {
+    if (evaluation.value?.status !== 'IN_AUDIT' || globalEvidences.value.length === 0) return;
+    try {
+      const { data } = await evidenceService.getSuggestions(evaluationId);
+      suggestions.value = data;
+    } catch {
+      // sin sugerencias todavía (la IA las calcula en segundo plano): no es un error
+    }
+  }
+
+  // Solo PRISMA_ADMIN, en auditoría, con la evidencia ya indexada y sin sugerencias (3.6).
+  function canRetryClassification(ev: Evidence) {
+    return (
+      authStore.hasAnyRole('PRISMA_ADMIN') &&
+      canWriteObservations.value &&
+      (ev.indexStatus === 'INDEXED' || (!ev.indexStatus && ev.aiIndexed)) &&
+      suggestions.value.every((s) => s.evidenceId !== ev.id)
+    );
+  }
+
+  async function retryClassification(ev: Evidence) {
+    try {
+      const { data } = await evidenceService.retryClassification(ev.id);
+      notification.success(
+        data.queued
+          ? 'Preclasificación en cola: las sugerencias aparecen en unos minutos'
+          : 'La preclasificación ya está en curso',
+      );
+    } catch (err) {
+      notification.error(getErrorMessage(err, 'No se pudo reintentar la preclasificación'));
+    }
+  }
+
+  async function decideSuggestion(sug: EvidenceSuggestion, decision: 'ACCEPTED' | 'REJECTED') {
+    try {
+      const { data } = await evidenceService.decideSuggestion(sug.id, decision);
+      const idx = suggestions.value.findIndex((s) => s.id === sug.id);
+      if (idx !== -1)
+        suggestions.value[idx] = { ...suggestions.value[idx], ...(data ?? {}), status: decision };
+    } catch (err) {
+      notification.error(
+        getErrorMessage(err, 'No se pudo registrar la decisión sobre la sugerencia'),
+      );
+    }
+  }
   const searchingControlId = ref<string | null>(null);
   const citationsByControl = reactive<Record<string, EvidenceCitation[]>>({});
   // «La IA no está disponible» es distinto de «sin resultados» (PRI-359).
@@ -546,29 +799,171 @@
     return `${control.controlId}:${index}`;
   }
 
+  // Decisión sobre una cita: lo que el auditor acaba de hacer o, si no, lo guardado en el servidor
+  // (las citas guardadas llegan con su estado: la decisión sobrevive a recargar la pantalla).
+  function decisionOf(
+    control: ControlWithEvidence,
+    citation: EvidenceCitation,
+    index: number,
+  ): 'ACCEPTED' | 'REJECTED' | undefined {
+    const local = citationDecision[citationKey(control, index)];
+    if (local) return local;
+    return citation.status === 'ACCEPTED' || citation.status === 'REJECTED'
+      ? citation.status
+      : undefined;
+  }
+
+  // «Deshacer»: quita un dictamen que salió de aceptar una cita; esas citas vuelven a quedar sin
+  // decidir. Uno fijado a mano no se deshace por acá (el servidor responde 409).
+  async function undoVerdict(controlId: string) {
+    try {
+      await auditService.undoCitationVerdict(evaluationId, controlId);
+      delete verdicts[controlId];
+      delete verdictSources[controlId];
+      Object.keys(citationDecision)
+        .filter((k) => k.startsWith(`${controlId}:`))
+        .forEach((k) => delete citationDecision[k]);
+      for (const cit of citationsByControl[controlId] ?? []) {
+        if (cit.status === 'ACCEPTED') cit.status = 'PENDING';
+      }
+    } catch (err) {
+      notification.error(getErrorMessage(err, 'No se pudo deshacer el dictamen'));
+    }
+  }
+
+  // Puntaje de relevancia con dos decimales; las citas viejas pueden no traerlo.
+  function formatScore(score: number | null | undefined) {
+    return typeof score === 'number' ? score.toFixed(2).replace('.', ',') : '—';
+  }
+
+  // «Mejor coincidencia»: la cita de mayor puntaje del control (solo si hay más de una).
+  function isBestCitation(controlId: string, index: number) {
+    const list = citationsByControl[controlId] ?? [];
+    if (list.length < 2) return false;
+    const scores = list.map((c) => (typeof c.score === 'number' ? c.score : -Infinity));
+    return scores.indexOf(Math.max(...scores)) === index;
+  }
+
+  // Dictamen que salió de aceptar una cita: se muestra «Validado por cita (archivo, página)».
+  interface VerdictSource {
+    fileName?: string | null;
+    location?: string | null;
+  }
+  const verdictSources = reactive<Record<string, VerdictSource | undefined>>({});
+
+  function citationLabel(src: VerdictSource) {
+    return [src.fileName, src.location].filter(Boolean).join(', ') || 'sin detalle';
+  }
+
+  function verdictLabel(verdict: string) {
+    return VERDICT_LABELS[verdict as AuditVerdict] ?? verdict;
+  }
+
+  // Aceptar una cita valida el control (C4a). Si habría que pisar un dictamen puesto a mano, el
+  // servidor pide confirmación (409 VERDICT_OVERRIDE_REQUIRED): se muestra un aviso y, si el
+  // auditor confirma, se repite el pedido.
+  const showOverrideModal = ref(false);
+  const pendingOverride = ref<{
+    control: ControlWithEvidence;
+    citation: EvidenceCitation;
+    index: number;
+    currentVerdict: string;
+  } | null>(null);
+
+  function applyVerdictChanges(
+    result: CitationFeedbackResult | undefined,
+    citation: EvidenceCitation,
+  ) {
+    for (const change of result?.verdicts ?? []) {
+      if (change.verdict === null) {
+        // Se rechazó la única cita de respaldo: el dictamen vuelve a «Sin dictamen».
+        delete verdicts[change.controlId];
+        delete verdictSources[change.controlId];
+        continue;
+      }
+      verdicts[change.controlId] = change.verdict;
+      if (change.changed && change.source === 'CITATION') {
+        verdictSources[change.controlId] = {
+          fileName: citation.fileName,
+          location: citation.location,
+        };
+      }
+    }
+  }
+
+  async function sendDecision(
+    control: ControlWithEvidence,
+    citation: EvidenceCitation,
+    index: number,
+    decision: 'ACCEPTED' | 'REJECTED',
+    confirmOverride: boolean,
+  ) {
+    const key = citationKey(control, index);
+    try {
+      const { data } = await evidenceService.sendCitationFeedback(
+        evaluationId,
+        [
+          {
+            controlId: control.controlId,
+            fileName: citation.fileName,
+            location: citation.location,
+            snippet: citation.snippet,
+            score: citation.score ?? null,
+            decision,
+            evidenceId: citation.evidenceId ?? null,
+            citationId: citation.citationId ?? null,
+          },
+        ],
+        confirmOverride,
+      );
+      citationDecision[key] = decision;
+      citation.status = decision;
+      applyVerdictChanges(data, citation);
+    } catch (err) {
+      const response = (
+        err as {
+          response?: {
+            status?: number;
+            data?: { code?: string; details?: Record<string, string[]> };
+          };
+        }
+      ).response;
+      if (response?.status === 409 && response.data?.code === 'VERDICT_OVERRIDE_REQUIRED') {
+        pendingOverride.value = {
+          control,
+          citation,
+          index,
+          currentVerdict: response.data.details?.currentVerdict?.[0] ?? '',
+        };
+        showOverrideModal.value = true;
+        return;
+      }
+      notification.error(getErrorMessage(err, 'No se pudo registrar la decisión sobre la cita'));
+    }
+  }
+
   async function decideCitation(
     control: ControlWithEvidence,
     citation: EvidenceCitation,
     index: number,
     decision: 'ACCEPTED' | 'REJECTED',
   ) {
-    const key = citationKey(control, index);
-    if (citationDecision[key] === decision) return;
-    try {
-      await evidenceService.sendCitationFeedback(evaluationId, [
-        {
-          controlId: control.controlId,
-          fileName: citation.fileName,
-          location: citation.location,
-          snippet: citation.snippet,
-          score: citation.score ?? null,
-          decision,
-        },
-      ]);
-      citationDecision[key] = decision;
-    } catch (err) {
-      notification.error(getErrorMessage(err, 'No se pudo registrar la decisión sobre la cita'));
+    if (decisionOf(control, citation, index) === decision) return;
+    await sendDecision(control, citation, index, decision, false);
+  }
+
+  async function confirmOverride() {
+    const pending = pendingOverride.value;
+    showOverrideModal.value = false;
+    pendingOverride.value = null;
+    if (pending) {
+      await sendDecision(pending.control, pending.citation, pending.index, 'ACCEPTED', true);
     }
+  }
+
+  function cancelOverride() {
+    showOverrideModal.value = false;
+    pendingOverride.value = null;
   }
 
   async function loadControlsWithEvidence() {
@@ -621,11 +1016,34 @@
     }
   }
 
+  // Al abrir la evaluación en auditoría las citas ya están calculadas y guardadas, con sus
+  // decisiones: se muestran sin buscar. Si no hay (o la evaluación no está en auditoría) no pasa nada.
+  async function loadSavedCitations() {
+    if (evaluation.value?.status !== 'IN_AUDIT') return;
+    try {
+      const { data } = await evidenceService.getSavedCitations(evaluationId);
+      const grouped: Record<string, EvidenceCitation[]> = {};
+      for (const cit of data) {
+        if (!cit.controlId) continue;
+        (grouped[cit.controlId] ??= []).push(cit);
+      }
+      for (const [controlId, list] of Object.entries(grouped)) {
+        citationsByControl[controlId] = list.sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
+      }
+    } catch {
+      // sin citas guardadas: el auditor las busca con «Buscar citas»
+    }
+  }
+
   async function searchCitations(control: ControlWithEvidence) {
     searchingControlId.value = control.controlId;
     delete citationsError[control.controlId];
     try {
-      const { data } = await evidenceService.getCitations(evaluationId, control.controlId);
+      // Con citas ya cargadas es «Actualizar» (busca de nuevo y conserva las decisiones de los
+      // fragmentos que siguen apareciendo); la primera vez es la búsqueda (o lo guardado).
+      const { data } = citationsByControl[control.controlId]
+        ? await evidenceService.refreshCitations(evaluationId, control.controlId)
+        : await evidenceService.getCitations(evaluationId, control.controlId);
       citationsByControl[control.controlId] = data;
       // Una búsqueda nueva trae otra lista: las decisiones anteriores ya no corresponden.
       Object.keys(citationDecision)
@@ -679,6 +1097,16 @@
     newObs.description =
       `Revisión de evidencia para ${control.code} — "${citation.fileName ?? 'evidencia'}"` +
       `${citation.location ? ` (${citation.location})` : ''}: ${citation.snippet}`;
+    // El texto precargado queda guardado: al guardar la observación el servidor registra si el
+    // auditor lo conservó o lo reescribió (C4b). Si cierra el formulario sin guardar, no se envía.
+    newObs.citation = {
+      fileName: citation.fileName,
+      location: citation.location,
+      snippet: citation.snippet,
+      score: citation.score ?? null,
+      prefillText: newObs.description,
+      ...(citation.citationId ? { citationId: citation.citationId } : {}),
+    };
     showCreateModal.value = true;
   }
 
@@ -690,6 +1118,7 @@
     newObs.controlId = undefined;
     newObs.subcategoryId = '';
     newObs.evidenceId = undefined;
+    newObs.citation = undefined;
     newObs.description = '';
     showCreateModal.value = true;
   }
@@ -766,6 +1195,7 @@
     obsError.value = '';
     newObs.type = obs.type;
     newObs.description = obs.description;
+    newObs.citation = undefined;
     showCreateModal.value = true;
   }
 
@@ -811,6 +1241,7 @@
         evidenceId: newObs.evidenceId,
         type: newObs.type,
         description: newObs.description,
+        ...(newObs.citation ? { citation: newObs.citation } : {}),
       });
       notification.success('Observación creada');
       showCreateModal.value = false;
@@ -818,6 +1249,7 @@
       newObs.controlId = undefined;
       newObs.subcategoryId = '';
       newObs.evidenceId = undefined;
+      newObs.citation = undefined;
       newObs.description = '';
       await fetchObservations();
     } catch (err) {
@@ -886,7 +1318,15 @@
         if (fl.flaggedByName) flagAuthors[fl.controlId] = fl.flaggedByName;
       }
       verdictControls.value = flattenControls(catalog as MaturityCatalog);
-      for (const v of saved) verdicts[v.controlId] = v.verdict;
+      for (const v of saved) {
+        verdicts[v.controlId] = v.verdict;
+        if (v.source === 'CITATION') {
+          verdictSources[v.controlId] = {
+            fileName: v.sourceRef?.fileName,
+            location: v.sourceRef?.location,
+          };
+        }
+      }
     } catch (err) {
       console.error(err);
     }
@@ -898,6 +1338,8 @@
     savingVerdictId.value = controlId;
     try {
       await auditService.setVerdict(evaluationId, controlId, value as AuditVerdict);
+      // Lo fijó el auditor a mano: ya no es un dictamen «por cita».
+      delete verdictSources[controlId];
     } catch (err) {
       if (previous) verdicts[controlId] = previous;
       else delete verdicts[controlId];
@@ -909,7 +1351,7 @@
 
   onMounted(() => {
     fetchObservations();
-    loadControlsWithEvidence();
+    loadControlsWithEvidence().then(() => Promise.all([loadSavedCitations(), loadSuggestions()]));
     loadVerdicts();
   });
 </script>

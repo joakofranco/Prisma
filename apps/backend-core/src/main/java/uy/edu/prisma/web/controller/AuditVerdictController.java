@@ -27,6 +27,15 @@ public class AuditVerdictController {
     return ResponseEntity.ok(service.listByEvaluation(evaluationId));
   }
 
+  /** «Deshacer» un dictamen que salió de aceptar una cita (uno fijado a mano responde 409). */
+  @DeleteMapping("/{evaluationId}/controls/{controlId}/citation-verdict")
+  @PreAuthorize("hasAnyRole('PRISMA_ADMIN','AUDITOR')")
+  public ResponseEntity<Void> undoCitationVerdict(
+      @PathVariable UUID evaluationId, @PathVariable UUID controlId) {
+    service.undoCitationVerdict(evaluationId, controlId);
+    return ResponseEntity.noContent().build();
+  }
+
   @PutMapping("/{evaluationId}/controls/{controlId}")
   @PreAuthorize("hasAnyRole('PRISMA_ADMIN','AUDITOR')")
   public ResponseEntity<ControlVerdictDto> set(

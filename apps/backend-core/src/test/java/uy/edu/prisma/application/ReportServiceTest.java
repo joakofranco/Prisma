@@ -111,6 +111,75 @@ class ReportServiceTest {
     assertEquals('K', xlsx[1]);
   }
 
+  // ---- PRI-378: el reporte final (PDF y Excel) lleva las observaciones del auditor ----
+
+  private static List<AuditObservation> twoObservations() {
+    return List.of(
+        AuditObservation.builder()
+            .type(AuditObservation.ObservationType.NON_CONFORMITY)
+            .description("Falta política documentada de respaldo")
+            .status(AuditObservation.ObservationStatus.OPEN)
+            .createdAt(OffsetDateTime.now())
+            .build(),
+        AuditObservation.builder()
+            .type(AuditObservation.ObservationType.RECOMMENDATION)
+            .description("Revisar el inventario de activos")
+            .status(AuditObservation.ObservationStatus.RESOLVED)
+            .createdAt(OffsetDateTime.now())
+            .build());
+  }
+
+  @Test
+  void finalPdfIncludesTheAuditObservations() throws Exception {
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(matRepo.findByEvaluationId(eval.getId())).thenReturn(results());
+    when(obsRepo.findByEvaluationIdOrderByCreatedAtDesc(eval.getId()))
+        .thenReturn(twoObservations());
+
+    String text = allText(service.generatePdf(eval.getId()));
+
+    assertTrue(text.contains("Observaciones de Auditoría"), "sección de observaciones");
+    assertTrue(text.contains("Falta política documentada de respaldo"), text);
+    assertTrue(text.contains("Revisar el inventario de activos"), text);
+    assertTrue(text.contains("Abierta") && text.contains("Resuelta"), "estados");
+  }
+
+  @Test
+  void finalPdfSaysSoWhenThereAreNoObservations() throws Exception {
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(matRepo.findByEvaluationId(eval.getId())).thenReturn(results());
+    when(obsRepo.findByEvaluationIdOrderByCreatedAtDesc(eval.getId())).thenReturn(List.of());
+
+    String text = allText(service.generatePdf(eval.getId()));
+
+    assertTrue(text.contains("Observaciones de Auditoría"), text);
+    assertTrue(text.contains("Sin observaciones registradas."), text);
+  }
+
+  @Test
+  void finalExcelHasAnObservationsSheetWithTheAuditObservations() throws Exception {
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(matRepo.findByEvaluationId(eval.getId())).thenReturn(results());
+    when(obsRepo.findByEvaluationIdOrderByCreatedAtDesc(eval.getId()))
+        .thenReturn(twoObservations());
+
+    try (org.apache.poi.xssf.usermodel.XSSFWorkbook workbook =
+        new org.apache.poi.xssf.usermodel.XSSFWorkbook(
+            new java.io.ByteArrayInputStream(service.generateExcel(eval.getId())))) {
+      org.apache.poi.ss.usermodel.Sheet sheet = workbook.getSheet("Observaciones");
+
+      assertNotNull(sheet, "falta la hoja Observaciones");
+      assertEquals("Descripción", sheet.getRow(0).getCell(1).getStringCellValue());
+      assertEquals(
+          "Falta política documentada de respaldo",
+          sheet.getRow(1).getCell(1).getStringCellValue());
+      assertEquals("Abierta", sheet.getRow(1).getCell(2).getStringCellValue());
+      assertEquals(
+          "Revisar el inventario de activos", sheet.getRow(2).getCell(1).getStringCellValue());
+      assertEquals("Resuelta", sheet.getRow(2).getCell(2).getStringCellValue());
+    }
+  }
+
   @Test
   void generatePdfThrowsWhenEvaluationMissing() {
     UUID id = UUID.randomUUID();
@@ -920,8 +989,8 @@ class ReportServiceTest {
 
   /**
    * Validación con veraPDF si está disponible: define {@code VERAPDF_CLI} con el ejecutable (por
-   * ejemplo {@code verapdf}). Se omite si no está definido (ver docs/Codigo.md para correrlo con
-   * Docker).
+   * ejemplo {@code verapdf}). Se omite si no está definido (ver docs/arquitectura/Codigo.md para
+   * correrlo con Docker).
    */
   @org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable(
       named = "VERAPDF_CLI",
@@ -953,8 +1022,9 @@ class ReportServiceTest {
   }
 
   /**
-   * Vuelca los PDF de reportes a un directorio para validarlos con veraPDF (ver docs/Codigo.md).
-   * Solo corre con {@code -Dpdfa.dumpDir=<directorio>}; en el CI normal se omite.
+   * Vuelca los PDF de reportes a un directorio para validarlos con veraPDF (ver
+   * docs/arquitectura/Codigo.md). Solo corre con {@code -Dpdfa.dumpDir=<directorio>}; en el CI
+   * normal se omite.
    */
   @org.junit.jupiter.api.condition.EnabledIfSystemProperty(named = "pdfa.dumpDir", matches = ".+")
   @Test
@@ -1127,5 +1197,49 @@ class ReportServiceTest {
     withExecutiveData(functionResults(6, 3), List.of());
 
     assertFalse(allText(service.generateExecutivePdf(eval.getId())).contains("por Categoría"));
+  }
+
+  @Test
+  void improvementPlanPdfIncludesTheBaselineComparison() throws Exception {
+    java.time.LocalDate today = java.time.LocalDate.now();
+    ImprovementPlan postponed =
+        plan(
+            "Revisar privilegios",
+            ImprovementPlan.Priority.HIGH,
+            today.plusDays(20),
+            ImprovementPlan.PlanStatus.PENDING,
+            1);
+    postponed.setBaselineDueDate(today.minusDays(4));
+    postponed.setBaselinePriority(ImprovementPlan.Priority.MEDIUM);
+    postponed.setBaselineResponsible("Bruno");
+    ImprovementPlan done =
+        plan(
+            "Capacitar al personal",
+            ImprovementPlan.Priority.LOW,
+            today.minusDays(2),
+            ImprovementPlan.PlanStatus.COMPLETED,
+            2);
+    done.setBaselineDueDate(today.minusDays(2));
+    done.setBaselinePriority(ImprovementPlan.Priority.LOW);
+    done.setBaselineResponsible("Ana");
+    done.setCompletedAt(OffsetDateTime.now().minusDays(3));
+    when(evalRepo.findById(eval.getId())).thenReturn(Optional.of(eval));
+    when(planRepo.findByEvaluationIdOrderByCreatedAtDesc(eval.getId()))
+        .thenReturn(List.of(postponed, done));
+
+    String text = allText(service.generateImprovementPlanPdf(eval.getId())).replaceAll("\\s+", " ");
+
+    assertTrue(text.contains("Comparativa con la línea base"));
+    assertTrue(text.contains("AVANCE PLANIFICADO"));
+    assertTrue(text.contains("100 %"));
+    assertTrue(text.contains("50 %"));
+    assertTrue(text.contains("-50 pts"));
+    assertTrue(text.contains("+24 días"));
+    assertTrue(text.contains("Atrasada (4 días)"));
+    assertTrue(text.contains("En plazo"));
+    assertTrue(text.contains("Alta (antes: Media)"));
+    assertTrue(text.contains("Ana (antes: Bruno)"));
+    assertTrue(text.contains("Cumplimiento contra la fecha original"));
+    assertTrue(text.contains("Corrimiento de la fecha límite (días)"));
   }
 }

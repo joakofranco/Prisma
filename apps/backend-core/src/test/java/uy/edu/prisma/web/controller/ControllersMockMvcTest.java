@@ -34,13 +34,19 @@ class ControllersMockMvcTest {
   @Mock private OrganizationService organizationService;
   @Mock private UserService userService;
   @Mock private EvidenceService evidenceService;
+
+  @Mock
+  private uy.edu.prisma.application.EvidenceClassificationService evidenceClassificationService;
+
   @Mock private AuditObservationService auditObservationService;
   @Mock private AuditVerdictService auditVerdictService;
   @Mock private EvaluationFlagService evaluationFlagService;
   @Mock private ImprovementPlanService improvementPlanService;
+  @Mock private uy.edu.prisma.application.AiJobService aiJobService;
   @Mock private AiCitationFeedbackService aiCitationFeedbackService;
   @Mock private ReportService reportService;
   @Mock private uy.edu.prisma.application.TechnicalReportService technicalReportService;
+  @Mock private uy.edu.prisma.application.ReportSealingService reportSealingService;
   @Mock private EmailSettingsService emailSettingsService;
   @Mock private PlanDeadlineSettingsService planDeadlineSettingsService;
   @Mock private SessionSettingsService sessionSettingsService;
@@ -82,7 +88,10 @@ class ControllersMockMvcTest {
     organizations =
         MockMvcBuilders.standaloneSetup(new OrganizationController(organizationService)).build();
     users = MockMvcBuilders.standaloneSetup(new UserController(userService)).build();
-    evidence = MockMvcBuilders.standaloneSetup(new EvidenceController(evidenceService)).build();
+    evidence =
+        MockMvcBuilders.standaloneSetup(
+                new EvidenceController(evidenceService, evidenceClassificationService))
+            .build();
     citationFeedback =
         MockMvcBuilders.standaloneSetup(new CitationFeedbackController(aiCitationFeedbackService))
             .build();
@@ -95,11 +104,15 @@ class ControllersMockMvcTest {
     verdicts =
         MockMvcBuilders.standaloneSetup(new AuditVerdictController(auditVerdictService)).build();
     improvement =
-        MockMvcBuilders.standaloneSetup(new ImprovementPlanController(improvementPlanService))
+        MockMvcBuilders.standaloneSetup(
+                new ImprovementPlanController(improvementPlanService, aiJobService))
             .build();
+    lenient()
+        .when(reportSealingService.seal(any(), any(), any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
     reports =
         MockMvcBuilders.standaloneSetup(
-                new ReportsController(reportService, technicalReportService))
+                new ReportsController(reportService, technicalReportService, reportSealingService))
             .build();
     emailSettings =
         MockMvcBuilders.standaloneSetup(new EmailSettingsController(emailSettingsService)).build();
@@ -918,7 +931,9 @@ class ControllersMockMvcTest {
     // La guía de IA y su retroalimentación se usan al crear acciones del plan: mismos roles que
     // POST /api/improvement.
     String expected = "hasAnyRole('PRISMA_ADMIN','ORG_RESPONSIBLE')";
-    for (var name : List.of("suggestionTips", "suggestionFeedback")) {
+    for (var name :
+        List.of(
+            "suggestionTips", "suggestionTipsAsync", "suggestionTipsBatch", "suggestionFeedback")) {
       var method =
           java.util.Arrays.stream(ImprovementPlanController.class.getMethods())
               .filter(m -> m.getName().equals(name))
@@ -1014,7 +1029,14 @@ class ControllersMockMvcTest {
   }
 
   @Test
-  void citationFeedbackReturnsNoContent() throws Exception {
+  void citationFeedbackReturnsTheVerdictChanges() throws Exception {
+    UUID controlId = UUID.randomUUID();
+    when(aiCitationFeedbackService.record(any()))
+        .thenReturn(
+            new uy.edu.prisma.web.dto.Dto.CitationFeedbackResultDto(
+                List.of(
+                    new uy.edu.prisma.web.dto.Dto.VerdictChangeDto(
+                        controlId, "VALIDATED", "CITATION", true))));
     citationFeedback
         .perform(
             post("/api/evidence/citations/feedback")
@@ -1026,7 +1048,10 @@ class ControllersMockMvcTest {
                         + UUID.randomUUID()
                         + "\",\"fileName\":\"a.pdf\",\"location\":\"Página 1\","
                         + "\"snippet\":\"texto\",\"score\":0.7,\"decision\":\"ACCEPTED\"}]}"))
-        .andExpect(status().isNoContent());
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.verdicts[0].controlId").value(controlId.toString()))
+        .andExpect(jsonPath("$.verdicts[0].verdict").value("VALIDATED"))
+        .andExpect(jsonPath("$.verdicts[0].source").value("CITATION"));
     verify(aiCitationFeedbackService).record(any());
   }
 
@@ -1059,12 +1084,176 @@ class ControllersMockMvcTest {
     var feedback =
         CitationFeedbackController.class.getMethod(
             "feedback", uy.edu.prisma.web.dto.Dto.CitationFeedbackBatchDto.class);
-    for (var method : List.of(search, feedback)) {
+    var refresh = EvidenceController.class.getMethod("refreshCitations", UUID.class, UUID.class);
+    var saved = EvidenceController.class.getMethod("savedCitations", UUID.class);
+    var undo =
+        AuditVerdictController.class.getMethod("undoCitationVerdict", UUID.class, UUID.class);
+    var suggestions = EvidenceController.class.getMethod("suggestions", UUID.class);
+    var decide =
+        EvidenceController.class.getMethod(
+            "decideSuggestion", UUID.class, uy.edu.prisma.web.dto.Dto.SuggestionDecisionDto.class);
+    for (var method : List.of(search, feedback, refresh, saved, undo, suggestions, decide)) {
       var annotation =
           method.getAnnotation(org.springframework.security.access.prepost.PreAuthorize.class);
       assertNotNull(annotation, method.getName());
       assertEquals(expected, annotation.value(), method.getName());
     }
+  }
+
+  @Test
+  void refreshingCitationsRegeneratesThemAndReturnsTheSavedOnes() throws Exception {
+    UUID evalId = UUID.randomUUID();
+    UUID controlId = UUID.randomUUID();
+    UUID citationId = UUID.randomUUID();
+    when(evidenceService.refreshCitations(evalId, controlId))
+        .thenReturn(
+            List.of(
+                new EvidenceCitationDto(
+                    UUID.randomUUID(),
+                    "politica.pdf",
+                    "Página 2",
+                    "texto",
+                    0.87,
+                    "ev::2",
+                    citationId,
+                    "ACCEPTED",
+                    0,
+                    controlId,
+                    false)));
+
+    evidence
+        .perform(
+            post("/api/evidence/evaluation/{e}/control/{c}/citations/refresh", evalId, controlId))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$[0].citationId").value(citationId.toString()))
+        .andExpect(jsonPath("$[0].fragmentId").value("ev::2"))
+        .andExpect(jsonPath("$[0].status").value("ACCEPTED"))
+        .andExpect(jsonPath("$[0].position").value(0));
+  }
+
+  @Test
+  void suggestionsOfAnEvaluationAreListed() throws Exception {
+    UUID evalId = UUID.randomUUID();
+    when(evidenceClassificationService.list(evalId))
+        .thenReturn(
+            List.of(
+                new uy.edu.prisma.web.dto.Dto.EvidenceSuggestionDto(
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    "politica.pdf",
+                    UUID.randomUUID(),
+                    "CA.1-2",
+                    "desc",
+                    0.81,
+                    1,
+                    "PENDING")));
+
+    evidence
+        .perform(get("/api/evidence/evaluation/{e}/suggestions", evalId))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$[0].controlCode").value("CA.1-2"))
+        .andExpect(jsonPath("$[0].score").value(0.81))
+        .andExpect(jsonPath("$[0].status").value("PENDING"));
+  }
+
+  @Test
+  void retryingTheClassificationAnswersAcceptedWithWhetherItWasQueued() throws Exception {
+    UUID id = UUID.randomUUID();
+    when(evidenceClassificationService.retry(id)).thenReturn(true);
+
+    evidence
+        .perform(post("/api/evidence/{id}/classification/retry", id))
+        .andExpect(status().isAccepted())
+        .andExpect(jsonPath("$.queued").value(true));
+
+    when(evidenceClassificationService.retry(id)).thenReturn(false);
+    evidence
+        .perform(post("/api/evidence/{id}/classification/retry", id))
+        .andExpect(status().isAccepted())
+        .andExpect(jsonPath("$.queued").value(false));
+  }
+
+  @Test
+  void decidingASuggestionDelegatesAndRejectsAnInvalidDecision() throws Exception {
+    UUID id = UUID.randomUUID();
+    when(evidenceClassificationService.decide(id, "ACCEPTED"))
+        .thenReturn(
+            new uy.edu.prisma.web.dto.Dto.EvidenceSuggestionDto(
+                id,
+                UUID.randomUUID(),
+                "p.pdf",
+                UUID.randomUUID(),
+                "CA.1-2",
+                "d",
+                0.8,
+                1,
+                "ACCEPTED"));
+
+    evidence
+        .perform(
+            post("/api/evidence/suggestions/{id}/decision", id)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"decision\":\"ACCEPTED\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("ACCEPTED"));
+    evidence
+        .perform(
+            post("/api/evidence/suggestions/{id}/decision", id)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"decision\":\"MAYBE\"}"))
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
+  void savedCitationsOfAnEvaluationAreReturnedWithoutSearching() throws Exception {
+    UUID evalId = UUID.randomUUID();
+    when(evidenceService.savedCitations(evalId)).thenReturn(List.of());
+
+    evidence
+        .perform(get("/api/evidence/evaluation/{e}/citations", evalId))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$").isArray());
+    verify(evidenceService).savedCitations(evalId);
+  }
+
+  @Test
+  void undoingAVerdictFromACitationReturnsNoContent() throws Exception {
+    UUID evalId = UUID.randomUUID();
+    UUID controlId = UUID.randomUUID();
+
+    verdicts
+        .perform(delete("/api/audit/verdicts/{e}/controls/{c}/citation-verdict", evalId, controlId))
+        .andExpect(status().isNoContent());
+    verify(auditVerdictService).undoCitationVerdict(evalId, controlId);
+  }
+
+  @Test
+  void theEvidenceListExposesTheIndexingState() throws Exception {
+    UUID evalId = UUID.randomUUID();
+    when(evidenceService.listByEvaluation(evalId))
+        .thenReturn(
+            List.of(
+                new uy.edu.prisma.web.dto.Dto.EvidenceDto(
+                    UUID.randomUUID(),
+                    evalId,
+                    null,
+                    "f.pdf",
+                    1L,
+                    "application/pdf",
+                    "h",
+                    null,
+                    null,
+                    null,
+                    false,
+                    "CLEAN",
+                    "ERROR",
+                    "No se pudo indexar")));
+
+    evidence
+        .perform(get("/api/evidence/evaluation/{e}", evalId))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$[0].indexStatus").value("ERROR"))
+        .andExpect(jsonPath("$[0].indexError").value("No se pudo indexar"));
   }
 
   @Test
@@ -1143,6 +1332,50 @@ class ControllersMockMvcTest {
   }
 
   @Test
+  void improvementBaselineReturnsTheComparison() throws Exception {
+    UUID evalId = UUID.randomUUID();
+    when(improvementPlanService.baseline(evalId))
+        .thenReturn(
+            new uy.edu.prisma.web.dto.Dto.PlanBaselineDto(
+                new uy.edu.prisma.web.dto.Dto.PlanBaselineSummaryDto(
+                    1, 1, 15, 0, 0, 0, 0, 1, 1, 0, 100, 0, -100),
+                List.of(
+                    new uy.edu.prisma.web.dto.Dto.PlanBaselineItemDto(
+                        UUID.randomUUID(),
+                        "PS.1-1",
+                        "Acción",
+                        "PENDING",
+                        "2026-11-01",
+                        "2026-11-16",
+                        15,
+                        true,
+                        "HIGH",
+                        "HIGH",
+                        false,
+                        "Ana",
+                        "Ana",
+                        false,
+                        null,
+                        "DELAYED",
+                        4))));
+
+    improvement
+        .perform(get("/api/improvement/{evaluationId}/baseline", evalId))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.summary.deviationPoints").value(-100))
+        .andExpect(jsonPath("$.items[0].dueDateShiftDays").value(15))
+        .andExpect(jsonPath("$.items[0].compliance").value("DELAYED"));
+  }
+
+  @Test
+  void improvementBaselineIsOpenToEveryRoleWithAccessToTheOrganization() throws Exception {
+    assertNull(
+        ImprovementPlanController.class
+            .getMethod("baseline", UUID.class)
+            .getAnnotation(org.springframework.security.access.prepost.PreAuthorize.class));
+  }
+
+  @Test
   void improvementSuggestionTips() throws Exception {
     when(improvementPlanService.tips(any()))
         .thenReturn(new RemediationTipsDto("Resumen", List.of("Paso 1", "Paso 2")));
@@ -1157,6 +1390,71 @@ class ControllersMockMvcTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.summary").value("Resumen"))
         .andExpect(jsonPath("$.tips[0]").value("Paso 1"));
+  }
+
+  @Test
+  void improvementSuggestionTipsAsyncReturnsAcceptedWithTheJobId() throws Exception {
+    UUID jobId = UUID.randomUUID();
+    when(aiJobService.enqueueGuide(any()))
+        .thenReturn(new uy.edu.prisma.web.dto.Dto.AiJobAcceptedDto(jobId, "QUEUED"));
+
+    improvement
+        .perform(
+            post("/api/improvement/suggestions/tips/async")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"controlId\":\""
+                        + UUID.randomUUID()
+                        + "\","
+                        + "\"currentLevel\":0,\"targetLevel\":1}"))
+        .andExpect(status().isAccepted())
+        .andExpect(jsonPath("$.jobId").value(jobId.toString()))
+        .andExpect(jsonPath("$.status").value("QUEUED"));
+  }
+
+  @Test
+  void improvementSuggestionTipsAsyncRequiresTheControl() throws Exception {
+    improvement
+        .perform(
+            post("/api/improvement/suggestions/tips/async")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"currentLevel\":0,\"targetLevel\":1}"))
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
+  void improvementTipsBatchReturnsAcceptedWithTheBatchAndItsJobs() throws Exception {
+    UUID batchId = UUID.randomUUID();
+    UUID controlId = UUID.randomUUID();
+    UUID jobId = UUID.randomUUID();
+    when(aiJobService.enqueueGuideBatch(any()))
+        .thenReturn(
+            new uy.edu.prisma.web.dto.Dto.GuideBatchAcceptedDto(
+                batchId,
+                List.of(new uy.edu.prisma.web.dto.Dto.BatchItemDto(controlId, jobId, "QUEUED"))));
+
+    improvement
+        .perform(
+            post("/api/improvement/suggestions/tips/batch")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"items\":[{\"controlId\":\""
+                        + controlId
+                        + "\",\"currentLevel\":0,\"targetLevel\":2}]}"))
+        .andExpect(status().isAccepted())
+        .andExpect(jsonPath("$.batchId").value(batchId.toString()))
+        .andExpect(jsonPath("$.jobs[0].jobId").value(jobId.toString()))
+        .andExpect(jsonPath("$.jobs[0].status").value("QUEUED"));
+  }
+
+  @Test
+  void improvementTipsBatchRequiresAtLeastOneControl() throws Exception {
+    improvement
+        .perform(
+            post("/api/improvement/suggestions/tips/batch")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"items\":[]}"))
+        .andExpect(status().isBadRequest());
   }
 
   @Test
@@ -1363,6 +1661,51 @@ class ControllersMockMvcTest {
         .perform(get("/api/reports/{id}/pdf", id))
         .andExpect(status().isOk())
         .andExpect(content().contentType(MediaType.APPLICATION_PDF));
+  }
+
+  @Test
+  void verifyReportReturnsTheVerificationOfTheUploadedPdf() throws Exception {
+    var dto =
+        new uy.edu.prisma.web.dto.Dto.ReportVerificationDto(
+            true, true, true, true, true, true, null, null, true, true, "abc", "ok", List.of());
+    when(reportSealingService.verify(any())).thenReturn(dto);
+
+    reports
+        .perform(
+            org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart(
+                    "/api/reports/verify")
+                .file(
+                    new org.springframework.mock.web.MockMultipartFile(
+                        "file", "reporte.pdf", "application/pdf", "%PDF-1.4".getBytes())))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.valid").value(true))
+        .andExpect(jsonPath("$.sha256").value("abc"));
+  }
+
+  @Test
+  void verifyReportRejectsAnEmptyFile() {
+    var error =
+        assertThrows(
+            jakarta.servlet.ServletException.class,
+            () ->
+                reports.perform(
+                    org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart(
+                            "/api/reports/verify")
+                        .file(
+                            new org.springframework.mock.web.MockMultipartFile(
+                                "file", "reporte.pdf", "application/pdf", new byte[0]))));
+
+    assertInstanceOf(
+        uy.edu.prisma.domain.exception.InvalidRequestException.class, error.getCause());
+  }
+
+  @Test
+  void verifyReportIsOpenToAdminOrgResponsibleAndAuditor() throws Exception {
+    var annotation =
+        ReportsController.class
+            .getMethod("verify", org.springframework.web.multipart.MultipartFile.class)
+            .getAnnotation(org.springframework.security.access.prepost.PreAuthorize.class);
+    assertEquals("hasAnyRole('PRISMA_ADMIN','ORG_RESPONSIBLE','AUDITOR')", annotation.value());
   }
 
   @Test

@@ -9,8 +9,20 @@ import {
   ROLE_LABELS,
 } from './constants';
 
+// PRI-381: una fecha sin hora ("2027-02-15", p. ej. un vencimiento) se interpreta como día
+// calendario LOCAL. new Date("2027-02-15") la toma como medianoche UTC y en Uruguay (UTC-3) mostraba
+// el día anterior. Las fechas con hora (createdAt, approvedAt...) no cambian.
+const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+function toDate(date: string | Date): Date {
+  const match = typeof date === 'string' ? DATE_ONLY.exec(date) : null;
+  return match
+    ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
+    : new Date(date);
+}
+
 export function formatDate(date: string | Date): string {
-  return format(new Date(date), 'dd/MM/yyyy', { locale: es });
+  return format(toDate(date), 'dd/MM/yyyy', { locale: es });
 }
 
 export function formatDateTime(date: string | Date): string {

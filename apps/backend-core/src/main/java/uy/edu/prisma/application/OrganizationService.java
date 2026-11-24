@@ -297,6 +297,26 @@ public class OrganizationService {
     return new OrganizationReactivationDto(result, stillDisabled);
   }
 
+  /**
+   * Enciende o apaga el modo investigación (C8) de la organización. Solo PRISMA_ADMIN (lo exige el
+   * controlador). Con el modo apagado no se registra ninguna traza (D2); apagarlo NO borra las que
+   * ya se guardaron. Cada cambio queda en la auditoría.
+   */
+  public OrganizationDto setResearchMode(UUID id, boolean enabled) {
+    Organization org =
+        repo.findById(id).orElseThrow(() -> new ResourceNotFoundException("Organización", id));
+    if (org.isResearchMode() == enabled) {
+      return toDto(org);
+    }
+    org.setResearchMode(enabled);
+    OrganizationDto result = toDto(repo.save(org));
+    auditLog.record(
+        enabled ? "RESEARCH_MODE_ON" : "RESEARCH_MODE_OFF",
+        "organization:" + id,
+        "{\"researchMode\":" + enabled + "}");
+    return result;
+  }
+
   private OrganizationDto toDto(Organization o) {
     return new OrganizationDto(
         o.getId(),
@@ -308,7 +328,8 @@ public class OrganizationService {
         o.getResponsible() != null ? o.getResponsible().getId() : null,
         responsibleName(o.getResponsible()),
         o.getEnabled(),
-        o.getCreatedAt());
+        o.getCreatedAt(),
+        o.isResearchMode());
   }
 
   private static String responsibleName(User responsible) {

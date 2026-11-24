@@ -80,7 +80,17 @@ class EntityTest {
     UUID id = UUID.randomUUID();
     Organization all =
         new Organization(
-            id, "N", "NIT", true, "S", "Z", null, true, OffsetDateTime.now(), OffsetDateTime.now());
+            id,
+            "N",
+            "NIT",
+            true,
+            "S",
+            "Z",
+            null,
+            true,
+            false,
+            OffsetDateTime.now(),
+            OffsetDateTime.now());
     assertEquals(id, all.getId());
     assertEquals("N", all.getName());
     assertEquals("NIT", all.getIdentifier());
@@ -89,6 +99,7 @@ class EntityTest {
     assertEquals("Z", all.getSize());
     assertNull(all.getResponsible());
     assertTrue(all.getEnabled());
+    assertFalse(all.isResearchMode());
 
     Organization built =
         Organization.builder().id(id).name("N2").identifier("N2").sector("S2").size("Z2").build();
@@ -459,7 +470,10 @@ class EntityTest {
             now,
             "d",
             Evidence.ScanStatus.CLEAN,
-            false);
+            false,
+            Evidence.IndexStatus.NOT_INDEXABLE,
+            null,
+            null);
     assertEquals(id, all.getId());
     assertEquals(Evidence.ScanStatus.CLEAN, all.getScanStatus());
     assertNull(all.getEvaluation());
@@ -555,7 +569,15 @@ class EntityTest {
             ImprovementPlan.PlanStatus.IN_PROGRESS,
             java.time.LocalDate.of(2026, 12, 31),
             "Comentario",
+            java.time.LocalDate.of(2026, 11, 30),
+            ImprovementPlan.Priority.MEDIUM,
+            "Original",
+            now,
             now);
+    assertEquals(java.time.LocalDate.of(2026, 11, 30), all.getBaselineDueDate());
+    assertEquals(ImprovementPlan.Priority.MEDIUM, all.getBaselinePriority());
+    assertEquals("Original", all.getBaselineResponsible());
+    assertEquals(now, all.getCompletedAt());
     assertEquals("Comentario", all.getComments());
     assertEquals(id, all.getId());
     assertNull(all.getEvaluation());

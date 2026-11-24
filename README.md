@@ -15,15 +15,14 @@
 
 ## 👥 Equipo
 
-| Integrante | Rol (según el anteproyecto, `docs/Proyecto.md`) |
+| Integrante | Rol (según el anteproyecto, `docs/proyecto/Proyecto.md`) |
 |---|---|
-| **Fernando Araujo** | Arquitecto de Software y Desarrollador Full Stack |
+| **Luis Araujo** | Arquitecto de Software y Desarrollador Full Stack |
 | **Federico De Armas** | Analista Funcional y QA Tester |
 | **Joaquín Franco** | PM y QA Tester |
 
-El historial de commits del repositorio es, a la fecha, enteramente de Fernando Araujo — no existen
-ramas personales por integrante (`dev/<nombre>`); ver [Estrategia de branching](#estrategia-de-branching)
-para el flujo real usado.
+Los tres integrantes contribuyen al repositorio mediante ramas cortas y Pull Requests; ver
+[Estrategia de branching](#estrategia-de-branching).
 
 ---
 
@@ -63,8 +62,8 @@ Funcionalidades operativas:
   niveles 1-4) y de brechas por función/categoría/subcategoría, y un **ciclo de vida** con estados
   Borrador → En Curso → Lista para Auditoría → En Auditoría → Aprobada / Devuelta → Archivada
   (con stepper visual y glosario de estados en el detalle de cada evaluación).
-- **Evidencias**: carga de documentos asociados a un control, almacenados en RustFS (S3-compatible)
-  con URLs de descarga firmadas.
+- **Evidencias**: carga de documentos asociados a un control, analizados con ClamAV y almacenados
+  en RustFS (S3-compatible); la descarga pasa por `backend-core`, que valida el acceso en cada una.
 - **Asistente de IA sobre evidencia (RAG)**: dado un control, busca en la evidencia ya cargada por
   esa organización y cita el fragmento relevante indicando documento, página y sección (heurística
   de encabezados sobre PDF/DOCX/TXT), vía FastAPI + LangChain + Ollama (modelo local, sin salir
@@ -82,7 +81,7 @@ Funcionalidades operativas:
 - **Seguridad**: autenticación/SSO vía Keycloak (JWT), HTTPS same-origin forzado, aislamiento
   multi-tenant validado en cada operación del backend.
 
-Explícitamente **fuera de alcance** (ver `docs/Proyecto.md`): PRISMA no reemplaza el trabajo
+Explícitamente **fuera de alcance** (ver `docs/proyecto/Proyecto.md`): PRISMA no reemplaza el trabajo
 profesional de un auditor, no realiza auditorías formales ni emite certificaciones oficiales de
 madurez.
 
@@ -90,44 +89,65 @@ madurez.
 
 ## Arquitectura general
 
-PRISMA se implementa como una **arquitectura de microservicios contenerizada**, con separación clara de responsabilidades:
+PRISMA se implementa como un conjunto de **servicios contenerizados**, con separación clara de responsabilidades. Nginx es la única puerta de entrada; el resto se comunica por la red interna de Docker.
 
+```mermaid
+flowchart TB
+  usuario([Navegador]) -->|HTTPS| nginx
+
+  subgraph borde["Borde"]
+    nginx["Nginx<br/>reverse proxy, TLS,<br/>límite de tasa"]
+    fail2ban["fail2ban<br/>bloqueo de IPs"]
+    fail2ban -. lee el log y bloquea .-> nginx
+  end
+
+  subgraph app["Aplicación"]
+    frontend["Frontend<br/>Vue 3 + Vite"]
+    core["Backend Core<br/>Spring Boot"]
+    ai["Backend AI<br/>FastAPI + RAG"]
+  end
+
+  subgraph datos["Datos y servicios de apoyo"]
+    postgres[("PostgreSQL<br/>Flyway")]
+    rustfs[("RustFS<br/>evidencias, S3")]
+    chroma[("ChromaDB<br/>embebida en backend-ai")]
+    keycloak["Keycloak<br/>SSO, RBAC, MFA"]
+    clamav["ClamAV<br/>antivirus"]
+    ollama["Ollama<br/>Llama 3 local"]
+    redis[("Redis<br/>sin uso activo")]
+  end
+
+  subgraph obs["Observabilidad y operación"]
+    prometheus["Prometheus<br/>+ exporters"]
+    alertmanager["Alertmanager<br/>alertas por correo"]
+    grafana["Grafana"]
+    loki["Loki + Promtail"]
+    elastic["Elasticsearch<br/>+ Kibana + Filebeat"]
+    backups["Respaldos diarios<br/>Ofelia + backup-runner"]
+  end
+
+  nginx --> frontend
+  nginx -->|/api| core
+  nginx -->|/auth| keycloak
+  core --> postgres
+  core --> rustfs
+  core --> keycloak
+  core --> clamav
+  core -->|red interna| ai
+  ai --> ollama
+  ai --> chroma
+  ai --> rustfs
+  prometheus --> alertmanager
+  prometheus --> grafana
+  loki --> grafana
+  backups --> postgres
+  backups --> rustfs
 ```
-                          ┌──────────────────────────┐
-                          │   Nginx (Reverse Proxy)  │
-                          │      + HTTPS/TLS         │
-                          └───────────┬──────────────┘
-                                      │
-              ┌───────────────────────┼───────────────────────┐
-              ▼                       ▼                       ▼
-      ┌───────────────┐     ┌──────────────────┐     ┌──────────────────┐
-      │  Vue 3 + Vite │     │  Spring Boot API │     │   FastAPI + RAG  │
-      │   (Frontend)  │◄───►│   (Core Backend) │◄───►│  (IA / Ollama)   │
-      └───────────────┘     └────────┬─────────┘     └─────────┬────────┘
-                                     │                          │
-                            ┌────────┴─────────┐                ▼
-                            ▼                  ▼         ┌──────────────┐
-                    ┌──────────────┐  ┌──────────────┐   │    Ollama    │
-                    │  PostgreSQL  │  │   RustFS     │   │ (Llama 3 LLM │
-                    │  (relacional,│  │ (Evidencias  │   │  local para  │
-                    │   Flyway)    │  │  S3 API)     │   │     RAG)     │
-                    └──────────────┘  └──────────────┘   └──────────────┘
-                    ┌──────────────┐  ┌──────────────┐   ┌──────────────┐
-                    │  Keycloak    │  │  SonarQube   │   │    Redis     │
-                    │ (SSO, RBAC,  │  │ (self-hosted,│   │ (declarado en│
-                    │  JWT)        │  │  calidad)    │   │  el stack;   │
-                    └──────────────┘  └──────────────┘   │  sin uso     │
-                    ┌──────────────┐  ┌──────────────┐   │  activo hoy) │
-                    │  Portainer   │  │  Watchtower  │   └──────────────┘
-                    │ (Gestión de  │  │ (Auto-update │   ┌──────────────┐
-                    │ contenedores)│  │  contenedor) │   │  Prometheus  │
-                    └──────────────┘  └──────────────┘   │  + Grafana   │
-                                                          │  + Loki      │
-                                                          │ (monitoreo)  │
-                                                          └──────────────┘
-```
+
+Además del diagrama: **SonarQube** (calidad de código), **Portainer** y **pgAdmin** (gestión), **Watchtower** (actualización de imágenes) y **Mailpit** (buzón de pruebas de las alertas). El detalle de cada componente está en [`docs/arquitectura/Arquitectura.md`](docs/arquitectura/Arquitectura.md) y [`docs/operacion/CI-CD-Infra.md`](docs/operacion/CI-CD-Infra.md).
 
 ---
+
 
 ## Estructura del monorepo
 
@@ -140,10 +160,15 @@ prisma/
 │
 ├── infra/                         # Infraestructura como código (IaC)
 │   ├── docker/                    # Dockerfiles multi-stage por servicio
-│   ├── keycloak/                  # Realm import (realm-prisma.json) + configuración SSO
-│   ├── monitoring/                # Dashboards de Grafana + reglas/config de Prometheus y Loki
-│   └── nginx/                     # Reverse proxy + certificado TLS local
-│   # (terraform/ todavía no existe: provisioning cloud queda como trabajo futuro, ver docs/Proyecto.md)
+│   ├── fail2ban/                  # Jails y filtros que bloquean IPs abusivas en nginx
+│   ├── keycloak/                  # Realm import (realm-prisma.json), temas y configuración SSO
+│   ├── monitoring/                # Prometheus, Alertmanager, Grafana, Loki, Promtail, Filebeat y Kibana
+│   ├── nginx/                     # Reverse proxy + certificado TLS local
+│   ├── postgres/                  # Configuración de PostgreSQL
+│   └── tls/                       # CA interna y certificados por servicio (TLS entre contenedores)
+│
+├── perf/                          # Pruebas de performance con JMeter: planes, casos y scripts
+├── scripts/                       # Backups, Keycloak (MFA, política de acceso), certificados, secretos de producción, MCU 5.0, versión
 │
 ├── .github/
 │   ├── workflows/                 # Pipelines CI/CD (GitHub Actions)
@@ -153,11 +178,19 @@ prisma/
 │   └── branch-protection.yml      # Reglas de protección de ramas
 │
 ├── docs/                          # Documentación técnica y funcional
+│   ├── arquitectura/              # Arquitectura, código, API, modelo de datos y diagramas
+│   ├── desarrollo/                # Entorno local y testing
+│   ├── operacion/                 # Runbook, despliegue, CI/CD, TLS, correo y publicación
+│   ├── proyecto/                  # Anteproyecto, historias de usuario y entregas académicas
+│   └── mcu-5.0/                   # Marco de Ciberseguridad (fuente del catálogo y base de conocimiento del RAG)
 ├── sonar-project.properties       # Config de SonarQube/SonarScanner (raíz del repo)
 │
 ├── docker-compose.yml             # Orquestación completa (perfiles: app/security/observability/quality/management/proxy/full)
 ├── docker-compose.dev.yml         # Overrides de desarrollo
+├── docker-compose.mvp.yml         # Stack mínimo sin LLM (`make mvp-up`)
 ├── docker-compose.prod.yml        # Overrides producción-like
+├── docker-compose.cloudflare.yml  # Publicación con Cloudflare Tunnel (ver docs/operacion/PUBLICACION-CLOUDFLARE.md)
+├── docker-stack.yml               # Despliegue en Docker Swarm con réplicas (`make swarm-deploy`)
 ├── .env.example                   # Plantilla de variables de entorno
 ├── Makefile                       # Atajos: `make up`, `make test`, etc.
 └── README.md                      # (este archivo)
@@ -174,17 +207,20 @@ prisma/
 | **Backend IA** | FastAPI + LangChain + Ollama (Llama 3) + ChromaDB | RAG sobre evidencia cargada y sobre la documentación del MCU 5.0. |
 | **BD Relacional** | PostgreSQL 17 | Esquema versionado con Flyway (`apps/backend-core/src/main/resources/db/migration`). |
 | **Caché / sesiones** | Redis 7 | Dependencia declarada en el stack; sin uso activo todavía en el código (no hay sesiones ni rate-limiting implementados sobre Redis a la fecha). |
-| **Almacenamiento** | RustFS (S3-compatible) | Evidencias con URLs firmadas. |
+| **Almacenamiento** | RustFS (S3-compatible) | Evidencias; la descarga se sirve por `backend-core`. |
 | **SSO / IAM** | Keycloak 26 | Servido bajo `/auth` (`KC_HTTP_RELATIVE_PATH`), JWT, RBAC. |
-| **Reverse Proxy** | Nginx 1.30 | HTTPS con certificado local (ver `docs/Certificados-TLS.md`). |
-| **Monitoreo** | Prometheus + Grafana + Loki + Promtail + cAdvisor + node/postgres/redis-exporter | Métricas + logs centralizados. |
-| **Logs centralizados (alt.)** | Elasticsearch + Kibana + Filebeat (perfil `elastic`) | Segunda vía de logs para búsqueda libre entre seguridad/BD/apps — no reemplaza a Loki, corre aparte. Ver `docs/CI-CD-Infra.md`. |
+| **Reverse Proxy** | Nginx 1.30 | HTTPS con certificado local (ver `docs/operacion/Certificados-TLS.md`). |
+| **Antivirus** | ClamAV | Analiza cada evidencia antes de guardarla. |
+| **Protección de borde** | Límite de tasa de Nginx + fail2ban | Bloqueo temporal de IPs por abuso, fuerza bruta en el login o escaneo. Ver `docs/operacion/RUNBOOK.md`. |
+| **Monitoreo** | Prometheus + Alertmanager + Grafana + Loki + Promtail + cAdvisor + blackbox/node/postgres/redis/elasticsearch-exporter | Métricas, logs centralizados y alertas por correo (Mailpit como buzón de pruebas). |
+| **Respaldos** | Ofelia (`backup-scheduler`) + `backup-runner` | Backup diario de PostgreSQL y evidencias; `make backup` / `make restore`. |
+| **Logs centralizados (alt.)** | Elasticsearch + Kibana + Filebeat (perfil `elastic`) | Segunda vía de logs para búsqueda libre entre seguridad/BD/apps — no reemplaza a Loki, corre aparte. Ver `docs/operacion/CI-CD-Infra.md`. |
 | **Monitoreo de frontend** | LogRocket (SaaS, opcional) | Session replay, errores JS y performance real de usuario. Apagado por defecto (requiere cuenta propia y `VITE_LOGROCKET_APP_ID`), ver `apps/frontend/src/plugins/logrocket.ts`. |
 | **Calidad de código** | SonarQube CE (self-hosted) | SAST + cobertura + code smells; ver nota sobre `sonarqube.yml` más arriba. |
 | **Seguridad SCA** | Trivy (FS + imágenes) + OWASP Dependency-Check + Gitleaks + CodeQL + Snyk (opcional) | Ver [Flujo CI/CD](#flujo-cicd). |
 | **Gestión de contenedores** | Portainer CE | UI web para los contenedores de Docker Compose. |
 | **Auto-update** | Watchtower | Refresco de imágenes locales cuando cambia el tag. |
-| **Orquestación** | Docker Compose | Una migración a Kubernetes es viable: ver `docs/mcu-5.0/Kubernetes-Analisis-Viabilidad.md`. |
+| **Orquestación** | Docker Compose; Docker Swarm de un nodo para alta disponibilidad (`docker-stack.yml`) | Ver `docs/operacion/RUNBOOK.md`. Una migración a Kubernetes se analizó y no se implementó: `docs/proyecto/Kubernetes-Analisis-Viabilidad.md`. |
 | **CI/CD** | GitHub Actions | Ver [Flujo CI/CD](#flujo-cicd). |
 
 ---
@@ -208,13 +244,13 @@ Cada desarrollador debe tener instalado localmente:
 ```bash
 # 1) Clonar el repo
 git clone https://github.com/joakofranco/Prisma.git
-cd proyecto_prisma
+cd Prisma
 
 # 2) Copiar variables de entorno y ajustar contraseñas/puertos locales
 cp .env.example .env
 
 # 3) Generar el certificado TLS autofirmado de nginx (una vez; sin esto el contenedor
-#    de nginx no arranca -- ver docs/Certificados-TLS.md)
+#    de nginx no arranca -- ver docs/operacion/Certificados-TLS.md)
 make certs      # también genera la CA interna que cifra nginx/backend-core -> Keycloak
 
 # 4) Levantar TODA la stack (frontend, backends, BD, IAM, monitoreo, etc.)
@@ -256,7 +292,8 @@ Una vez arriba, las URLs por defecto son (los puertos se pueden cambiar en `.env
 | **Backend Core (Swagger)** | http://localhost:8081/swagger-ui | — |
 | **Backend AI (docs)** | http://localhost:8000/docs | — |
 | **Keycloak** | http://localhost:8180/auth | `admin` / valor de `KEYCLOAK_ADMIN_PASSWORD` en tu `.env` |
-| **Portainer** | http://localhost:9000 | (setup inicial en la UI) |
+| **Portainer** | http://localhost:9000 | `admin` / contenido de `.secrets/portainer_admin_password` (ver `docs/operacion/RUNBOOK.md`) |
+| **Mailpit** (buzón de alertas) | http://localhost:8025 | — |
 | **SonarQube** | http://localhost:9003 | `admin` / `admin` (Sonar pide cambiarla al primer login) |
 | **Grafana** | http://localhost:3000 | `admin` / valor de `GF_SECURITY_ADMIN_PASSWORD` en tu `.env` |
 | **Prometheus** | http://localhost:9090 | — |
@@ -264,7 +301,7 @@ Una vez arriba, las URLs por defecto son (los puertos se pueden cambiar en `.env
 | **RustFS Console** | http://localhost:9002 | `RUSTFS_ACCESS_KEY` / `RUSTFS_SECRET_KEY` de tu `.env` |
 | **pgAdmin** | http://localhost:5050 | `admin@prisma.uy` / `admin` |
 | **Ollama API** | http://localhost:11434 | — |
-| **Nginx (HTTPS)** | https://localhost | certificado local autofirmado, ver `docs/Certificados-TLS.md` |
+| **Nginx (HTTPS)** | https://localhost | certificado local autofirmado, ver `docs/operacion/Certificados-TLS.md` |
 
 ---
 
@@ -281,11 +318,11 @@ Hay cuatro niveles, cada uno con un mecanismo de despliegue distinto:
 
 Los tres ambientes remotos (dev, staging, prod) los despliega el workflow **`deploy.yml`** una vez
 configurados — no hace falta correr nada a mano en el día a día. Pero cada uno necesita una puesta
-a punto manual la primera vez (servidor + secrets de GitHub, placeholders `CHANGE_ME_*` a
-rotar, configuración de Keycloak). La guía paso a paso de **cómo instalar cada uno desde cero**,
+a punto manual la primera vez (servidor + secrets de GitHub, contraseñas de producción generadas
+con `make prod-up`, configuración de Keycloak). La guía paso a paso de **cómo instalar cada uno desde cero**,
 pensada para alguien que nunca lo hizo, vive en
-[`docs/Ambientes-Despliegue.md`](docs/Ambientes-Despliegue.md); el detalle de cada job del workflow
-que los dispara está en [`docs/CI-CD-Infra.md`](docs/CI-CD-Infra.md) (sección "5. `deploy.yml`").
+[`docs/operacion/Ambientes-Despliegue.md`](docs/operacion/Ambientes-Despliegue.md); el detalle de cada job del workflow
+que los dispara está en [`docs/operacion/CI-CD-Infra.md`](docs/operacion/CI-CD-Infra.md) (sección "5. `deploy.yml`").
 
 ---
 
@@ -296,17 +333,18 @@ personales por integrante:
 
 - **`main`** — protegida, historial de release.
 - **`dev`** — rama de integración.
-- **`fix/<descripción>`** / **`feature/<descripción>`** — ramas de corta duración creadas desde
-  `main`, mergeadas de vuelta a `main` vía Pull Request (ver `.github/CODEOWNERS` y
-  `.github/branch-protection.yml` para las reglas de protección reales).
+- **`fix/<descripción>`** / **`feat/<descripción>`** / **`chore/<descripción>`** — ramas de corta
+  duración creadas desde `dev` y mergeadas de vuelta a `dev` vía Pull Request; `dev` se promueve a
+  `main` (ver `.github/CODEOWNERS` y `.github/branch-protection.yml` para las reglas de protección
+  reales).
 
 No existen (todavía) ramas personales `dev/<nombre>` por integrante ni ramas `release/*`.
 
 ### Convención de nombres
 
-- `feature/RF-EVA-09-workflow-auditoria`
-- `fix/PRISMA-123-fix-jwt-refresh`
-- `hotfix/prod-2026-08-critical-idor`
+- `feat/RF-AUD-10-ciclos-auditoria`
+- `feat/PRI-362-boton-test-smtp`
+- `fix/correo-cuenta-sistema`
 
 ### Convención de commits
 
@@ -330,9 +368,9 @@ Cada `push` y cada `pull request` dispara pipelines automáticos definidos en `.
 | Workflow | Trigger | Qué hace |
 |---|---|---|
 | **`ci.yml`** | `push` + `PR` | Detecta qué apps cambiaron y corre en paralelo: lint + type-check + tests + coverage + build de frontend, backend-core (spotless/checkstyle/spotbugs/pmd + JUnit + Testcontainers) y backend-ai (ruff/black/mypy + pytest); valida además `docker-compose`, Dockerfiles (hadolint) y YAML (yamllint). |
-| **`security.yml`** | `push`/`PR` a `main` + semanal (cron) | Gitleaks (secretos), Trivy (filesystem + imágenes de los 3 servicios), OWASP Dependency-Check, CodeQL, y Snyk (opcional, solo si está seteada la variable de repo `ENABLE_SNYK`). |
-| **`sonarqube.yml`** | `push` + `PR` | Análisis SAST contra la instancia de SonarQube configurada — **opcional**, solo corre si la variable de repo `SONAR_HOST_URL` está seteada. |
-| **`build-and-push.yml`** | `push` a `main`/`dev` + tags `v*` | Construye las imágenes de las 3 apps y las publica en GHCR. |
+| **`security.yml`** | `push`/`PR` a `main` y `dev` + semanal (cron) + manual | Gitleaks (secretos), Trivy (filesystem + imágenes de los 3 servicios), OWASP Dependency-Check, CodeQL, y Snyk (opcional, solo si está seteada la variable de repo `ENABLE_SNYK`). |
+| **`sonarqube.yml`** | `push`/`PR` a `main` y `dev` | Análisis SAST contra la instancia de SonarQube configurada — **opcional**, solo corre si la variable de repo `SONAR_HOST_URL` está seteada. |
+| **`build-and-push.yml`** | `push` a `main`/`dev` + tags `v*.*.*` + manual | Construye las imágenes de las 3 apps y las publica en GHCR. |
 | **`deploy.yml`** | `push` a `dev`, tags `v*.*.*`/`v*-rc*`, o manual (`workflow_dispatch`) | Único workflow de despliegue: determina el entorno destino (dev automático, staging/prod manual con aprobación vía GitHub Environments) según el trigger. |
 | **`pr-checks.yml`** | Apertura/actualización de PR | Título (Conventional Commits), tamaño del PR, labels requeridas, rama al día con la base, ESLint (`--max-warnings 0`) y Prettier del frontend. |
 
@@ -363,13 +401,13 @@ docker compose --profile full up -d
 
 ### Perfiles definidos
 
-- `app` → frontend, backend-core, backend-ai, postgres, redis, ollama
-- `security` → keycloak, keycloak-db, rustfs
-- `observability` → prometheus, grafana, loki, promtail, cadvisor, node-exporter, postgres-exporter, redis-exporter
+- `app` → frontend, backend-core, backend-ai, postgres, redis, ollama, clamav
+- `security` → keycloak, keycloak-db, rustfs, nginx, fail2ban
+- `observability` → prometheus, alertmanager, grafana, loki, promtail, cadvisor, mailpit, blackbox-exporter, node-exporter, postgres-exporter, redis-exporter, elasticsearch-exporter
 - `elastic` → elasticsearch, kibana, filebeat (logs de seguridad/BD/apps, aparte de Loki)
 - `quality` → sonarqube, sonar-db
-- `management` → portainer, watchtower, pgadmin
-- `proxy` → nginx (con TLS local)
+- `management` → portainer, watchtower, pgadmin, backup-runner, backup-scheduler
+- `proxy` → nginx (con TLS local), fail2ban
 - `full` → todos los anteriores
 
 ---
@@ -400,6 +438,13 @@ make backup / restore   # Backup y restauración diarios de Postgres + evidencia
 make sonar               # Corre el scanner de SonarQube local contra el contenedor propio
 make security-scan       # Trivy local (filesystem)
 make certs / certs-force # Genera/regenera el certificado TLS local de nginx
+make internal-ca         # Genera la CA interna y los certificados TLS por servicio
+make mfa-enable / mfa-status / mfa-disable   # MFA obligatoria en Keycloak para los roles administrativos
+make auth-policy / auth-policy-status        # Vigencia del enlace de recuperación y bloqueo por intentos fallidos
+make swarm-deploy / swarm-ps / swarm-down    # Despliegue con réplicas en Docker Swarm (docker-stack.yml)
+make prod-up / prod-secrets                  # Producción: generar las contraseñas al azar, mostrarlas y levantar el stack
+make perf-setup / perf CASO=... / perf-all   # Pruebas de performance con JMeter (ver docs/desarrollo/PERFORMANCE.md)
+make vuln-scan                               # Escaneo de vulnerabilidades (Trivy) con tablero en Grafana (ver docs/operacion/Vulnerabilidades.md)
 make health              # Verifica que frontend/backend-core/backend-ai respondan OK
 make clean / nuke        # Baja la stack; `nuke` además borra volúmenes (¡destructivo!)
 ```
@@ -412,37 +457,43 @@ MCU 5.0 se carga como parte de esas mismas migraciones.
 
 ## Documentación adicional
 
+El índice completo, ordenado por área, está en [`docs/README.md`](docs/README.md).
+
 ### Arquitectura y código
 
-- 📄 [`docs/Arquitectura.md`](docs/Arquitectura.md) — Detalles de la arquitectura.
-- 📄 [`docs/Codigo.md`](docs/Codigo.md) — Catálogo de módulos y clases del monorepo.
-- 📄 [`docs/API.md`](docs/API.md) — Contratos de las APIs.
+- 📄 [`docs/arquitectura/Arquitectura.md`](docs/arquitectura/Arquitectura.md) — Detalles de la arquitectura.
+- 📄 [`docs/arquitectura/Codigo.md`](docs/arquitectura/Codigo.md) — Catálogo de módulos y clases del monorepo.
+- 📄 [`docs/arquitectura/API.md`](docs/arquitectura/API.md) — Contratos de las APIs.
 
 ### Modelo de datos y diagramas UML
 
-- 📄 [`docs/HistoriasDeUsuario.md`](docs/HistoriasDeUsuario.md) — Historias de usuario del sistema completo, con criterios de aceptación.
-- 📄 [`docs/diagramas/casos-de-uso.md`](docs/diagramas/casos-de-uso.md) — Actores y casos de uso.
-- 📄 [`docs/diagramas/diagrama-clases.md`](docs/diagramas/diagrama-clases.md) — Diagrama de clases (UML) del dominio.
-- 📄 [`docs/diagramas/modelo-entidad-relacion.md`](docs/diagramas/modelo-entidad-relacion.md) — Modelo entidad-relación completo.
-- 📄 [`docs/diagramas/normalizacion-bd.md`](docs/diagramas/normalizacion-bd.md) — Normalización (1FN/2FN/3FN) de la base de datos.
-- 📄 [`docs/mapeo-jpa.md`](docs/mapeo-jpa.md) — Mapeo objeto-relacional (JPA/Hibernate) de cada entidad.
+- 📄 [`docs/proyecto/HistoriasDeUsuario.md`](docs/proyecto/HistoriasDeUsuario.md) — Historias de usuario del sistema completo, con criterios de aceptación.
+- 📄 [`docs/arquitectura/diagramas/casos-de-uso.md`](docs/arquitectura/diagramas/casos-de-uso.md) — Actores y casos de uso.
+- 📄 [`docs/arquitectura/diagramas/diagrama-clases.md`](docs/arquitectura/diagramas/diagrama-clases.md) — Diagrama de clases (UML) del dominio.
+- 📄 [`docs/arquitectura/diagramas/modelo-entidad-relacion.md`](docs/arquitectura/diagramas/modelo-entidad-relacion.md) — Modelo entidad-relación completo.
+- 📄 [`docs/arquitectura/diagramas/normalizacion-bd.md`](docs/arquitectura/diagramas/normalizacion-bd.md) — Normalización (1FN/2FN/3FN) de la base de datos.
+- 📄 [`docs/arquitectura/mapeo-jpa.md`](docs/arquitectura/mapeo-jpa.md) — Mapeo objeto-relacional (JPA/Hibernate) de cada entidad.
 
 ### Seguridad y operación
 
 - 📄 [`docs/SECURITY.md`](docs/SECURITY.md) — Modelo de amenazas, controles OWASP y endurecimientos recientes.
-- 📄 [`docs/Testing.md`](docs/Testing.md) — Las 4 suites automatizadas (JUnit/Testcontainers, pytest, Vitest, Playwright) + metodología de QA manual contra el stack real.
-- 📄 [`docs/Certificados-TLS.md`](docs/Certificados-TLS.md) — HTTPS, certificado autofirmado y su renovación.
-- 📄 [`docs/Notificaciones-Email.md`](docs/Notificaciones-Email.md) — Configurar el SMTP para el email de "¿Olvidaste tu contraseña?".
-- 📄 [`docs/RUNBOOK.md`](docs/RUNBOOK.md) — Operación, incidentes y recuperación.
-- 📄 [`docs/CI-CD-Infra.md`](docs/CI-CD-Infra.md) — Pipelines de CI/CD e infraestructura.
-- 📄 [`docs/Ambientes-Despliegue.md`](docs/Ambientes-Despliegue.md) — Instructivo paso a paso para levantar PRISMA en cada ambiente (local, dev remoto, staging, producción).
-- 📄 [`docs/mcu-5.0/Kubernetes-Analisis-Viabilidad.md`](docs/mcu-5.0/Kubernetes-Analisis-Viabilidad.md) — Análisis de viabilidad de una eventual migración a Kubernetes (no implementada).
+- 📄 [`docs/desarrollo/Testing.md`](docs/desarrollo/Testing.md) — Las 4 suites automatizadas (JUnit/Testcontainers, pytest, Vitest, Playwright) + metodología de QA manual contra el stack real.
+- 📄 [`apps/frontend/e2e/README.md`](apps/frontend/e2e/README.md) — Cómo correr las pruebas E2E con Playwright.
+- 📄 [`docs/desarrollo/PERFORMANCE.md`](docs/desarrollo/PERFORMANCE.md) — Pruebas de performance con JMeter e informe en PDF.
+- 📄 [`docs/operacion/Certificados-TLS.md`](docs/operacion/Certificados-TLS.md) — HTTPS, certificado autofirmado y su renovación.
+- 📄 [`docs/operacion/Notificaciones-Email.md`](docs/operacion/Notificaciones-Email.md) — Configurar el SMTP para el email de "¿Olvidaste tu contraseña?".
+- 📄 [`docs/operacion/Gmail-SMTP.md`](docs/operacion/Gmail-SMTP.md) — Usar una cuenta de Gmail como servidor SMTP.
+- 📄 [`docs/operacion/PUBLICACION-CLOUDFLARE.md`](docs/operacion/PUBLICACION-CLOUDFLARE.md) — Publicar PRISMA en internet con un VPS y Cloudflare Tunnel.
+- 📄 [`docs/operacion/RUNBOOK.md`](docs/operacion/RUNBOOK.md) — Operación, incidentes y recuperación.
+- 📄 [`docs/operacion/CI-CD-Infra.md`](docs/operacion/CI-CD-Infra.md) — Pipelines de CI/CD e infraestructura.
+- 📄 [`docs/operacion/Ambientes-Despliegue.md`](docs/operacion/Ambientes-Despliegue.md) — Instructivo paso a paso para levantar PRISMA en cada ambiente (local, dev remoto, staging, producción).
+- 📄 [`docs/proyecto/Kubernetes-Analisis-Viabilidad.md`](docs/proyecto/Kubernetes-Analisis-Viabilidad.md) — Análisis de viabilidad de una eventual migración a Kubernetes (no implementada).
 
 ### Contribución y contexto del proyecto
 
 - 📄 [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) — Cómo contribuir + convenciones.
-- 📄 [`docs/Dev-Config.md`](docs/Dev-Config.md) — Setup detallado por SO (Windows/Mac/Linux).
-- 📄 [`docs/Proyecto.md`](docs/Proyecto.md) — Anteproyecto de grado (UTEC): equipo, alcance, viabilidad y objetivos.
+- 📄 [`docs/desarrollo/Dev-Config.md`](docs/desarrollo/Dev-Config.md) — Setup detallado por SO (Windows/Mac/Linux).
+- 📄 [`docs/proyecto/Proyecto.md`](docs/proyecto/Proyecto.md) — Anteproyecto de grado (UTEC): equipo, alcance, viabilidad y objetivos.
 - 📄 [`docs/mcu-5.0/`](docs/mcu-5.0/) — Marco de Ciberseguridad AGESIC v5.0 (fuente del catálogo).
 
 ---

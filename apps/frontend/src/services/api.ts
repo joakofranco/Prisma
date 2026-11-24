@@ -23,11 +23,13 @@ apiClient.interceptors.response.use(
     const authStore = useAuthStore();
     const originalRequest = error.config as
       (typeof error.config & { _retried?: boolean }) | undefined;
+    const isSessionEvent = originalRequest?.url?.includes('/account/session-event') ?? false;
     if (
       error.response?.status === 401 &&
       authStore.isAuthenticated &&
       originalRequest &&
-      !originalRequest._retried
+      !originalRequest._retried &&
+      !isSessionEvent
     ) {
       // refreshToken() nunca lanza: devuelve false si el refresh token también venció.
       const refreshed = await authStore.refreshToken();

@@ -37,6 +37,11 @@ scrape_configs:
     static_configs:
       - targets: ['backend-ai:8000']
 
+  - job_name: pushgateway
+    honor_labels: true
+    static_configs:
+      - targets: ['pushgateway:9091']
+
   - job_name: node-exporter
     static_configs:
       - targets: ['node-exporter:9100']

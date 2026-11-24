@@ -53,6 +53,8 @@ export interface Organization {
   /** Nombre (o email) del responsable; null si no tiene (PRI-367, lo muestra Reportes). */
   responsibleName?: string | null;
   enabled: boolean;
+  /** Modo investigación de la IA (C8): mientras está encendido se guardan las trazas. */
+  researchMode?: boolean;
   createdAt: string;
 }
 
@@ -371,13 +373,30 @@ export interface Evidence {
   aiIndexed: boolean;
   /** Resultado del antivirus (RNF-09): CLEAN, QUARANTINED (a la espera del análisis) o INFECTED. */
   scanStatus?: 'CLEAN' | 'QUARANTINED' | 'INFECTED';
+  /** Estado de la indexación para el asistente de IA (C7). */
+  indexStatus?: IndexStatus;
+  /** Por qué falló o por qué no se indexa (para mostrarlo). */
+  indexError?: string | null;
 }
+
+/** En cola, indexando, indexada, con error (reintentable) o no indexable (ZIP, imágenes, cuarentena). */
+export type IndexStatus = 'QUEUED' | 'INDEXING' | 'INDEXED' | 'ERROR' | 'NOT_INDEXABLE';
 
 /**
  * Fragmento de evidencia recuperado por el asistente RAG para un control. Es sólo un puntero a
  * dónde mirar (archivo/ubicación/texto) — nunca un veredicto: el auditor valida manualmente.
  */
 export interface EvidenceCitation {
+  /** Id de la cita guardada (C2) y su estado: viajan al decidir para guardar la decisión. */
+  citationId?: string | null;
+  fragmentId?: string | null;
+  status?: 'PENDING' | 'ACCEPTED' | 'REJECTED' | 'VALIDATED' | null;
+  position?: number | null;
+  controlId?: string | null;
+  /** La evidencia del control cambió: la próxima búsqueda actualiza (conserva las decisiones). */
+  stale?: boolean;
+  /** El fragmento sale de evidencia sin control asignado (global). */
+  unassigned?: boolean;
   evidenceId: string | null;
   fileName: string | null;
   location: string | null;
@@ -393,6 +412,49 @@ export interface CitationFeedbackItem {
   snippet: string;
   score: number | null;
   decision: 'ACCEPTED' | 'REJECTED';
+  /** Evidencia de la que sale la cita: queda como respaldo del dictamen. */
+  evidenceId?: string | null;
+  /** Cita guardada sobre la que se decide (C2). */
+  citationId?: string | null;
+}
+
+/** Qué pasó con el dictamen de un control al aceptar una cita (C4a). */
+export interface VerdictChange {
+  controlId: string;
+  /** null = se revirtió: vuelve a «Sin dictamen» (se rechazó la única cita de respaldo). */
+  verdict: AuditVerdict | null;
+  source: 'MANUAL' | 'CITATION' | null;
+  /** false = ya estaba Validado: la cita queda como respaldo adicional. */
+  changed: boolean;
+}
+
+export interface CitationFeedbackResult {
+  verdicts: VerdictChange[];
+}
+
+/** La cita de la que sale una observación y el texto que la app precargó (C4b). */
+export interface CitationSource {
+  fileName: string | null;
+  location: string | null;
+  snippet: string;
+  score: number | null;
+  prefillText: string;
+  /** Cita guardada de la que sale (para enlazar su traza, C8). */
+  citationId?: string | null;
+}
+
+/** Traza de una llamada a la IA (modo investigación). En evidencia solo hay ids y puntajes. */
+export interface AiTrace {
+  id: string;
+  kind: 'GUIDE' | 'CITATIONS' | 'CLASSIFY';
+  seed: number | null;
+  config: Record<string, unknown>;
+  prompt: string | null;
+  response: string | null;
+  thinking: string | null;
+  retrieval: Record<string, unknown>[];
+  metrics: Record<string, unknown>;
+  createdAt: string;
 }
 
 export interface AuditObservation {
@@ -433,6 +495,14 @@ export interface ControlVerdict {
   setBy: string | null;
   setByName: string | null;
   updatedAt: string | null;
+  /** MANUAL (lo fijó el auditor) o CITATION (se aceptó una cita de la IA). */
+  source?: 'MANUAL' | 'CITATION';
+  /** La cita que respalda el dictamen cuando source = CITATION. */
+  sourceRef?: {
+    evidenceId?: string | null;
+    fileName?: string | null;
+    location?: string | null;
+  } | null;
 }
 
 export interface ImprovementPlan {
@@ -447,6 +517,50 @@ export interface ImprovementPlan {
   /** Comentarios libres del ítem (RF-PLN-02), hasta 2000 caracteres. */
   comments?: string | null;
   createdAt: string;
+}
+
+export type PlanCompliance =
+  'ON_TIME' | 'LATE' | 'DELAYED' | 'IN_TERM' | 'NO_CLOSE_DATE' | 'NO_DATE';
+
+export interface PlanBaselineItem {
+  id: string;
+  controlCode: string | null;
+  action: string;
+  status: ImprovementPlan['status'];
+  baselineDueDate: string | null;
+  dueDate: string | null;
+  dueDateShiftDays: number | null;
+  replanned: boolean;
+  baselinePriority: ImprovementPlan['priority'];
+  priority: ImprovementPlan['priority'];
+  priorityChanged: boolean;
+  baselineResponsible: string | null;
+  responsible: string | null;
+  responsibleChanged: boolean;
+  completedAt: string | null;
+  compliance: PlanCompliance;
+  delayDays: number | null;
+}
+
+export interface PlanBaselineSummary {
+  total: number;
+  replanned: number;
+  averageShiftDays: number | null;
+  priorityChanged: number;
+  responsibleChanged: number;
+  onTime: number;
+  late: number;
+  delayed: number;
+  plannedDue: number;
+  completed: number;
+  plannedPercent: number | null;
+  actualPercent: number | null;
+  deviationPoints: number | null;
+}
+
+export interface PlanBaselineComparison {
+  summary: PlanBaselineSummary;
+  items: PlanBaselineItem[];
 }
 
 // Sugerencia generada por el motor de reglas (RF-PLN-01). Todavía no es un ImprovementPlan
@@ -473,6 +587,69 @@ export interface RemediationTips {
   tips: string[];
   /** false = texto de reemplazo porque la IA falló: no se ofrece para usar ni se registra. */
   generated?: boolean;
+  /** Id de la guía persistida (trabajo asíncrono): se manda al crear la acción para registrar
+   * el feedback en el servidor. */
+  guideId?: string;
+}
+
+/** Estados de un trabajo de IA (cola asíncrona). */
+export type AiJobStatus = 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED' | 'EXPIRED';
+
+/** Guía ya generada y guardada por el servidor. */
+export interface GeneratedGuide {
+  id: string;
+  controlId: string;
+  summary: string;
+  tips: string[];
+  model?: string | null;
+}
+
+/** Trabajo de IA: se consulta por id hasta que termina. */
+export interface AiJob {
+  id: string;
+  type: 'GUIDE';
+  status: AiJobStatus;
+  /** Solo en cola: 1 = el próximo. */
+  queuePosition: number | null;
+  attempts: number;
+  maxAttempts: number;
+  errorCode: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  /** Solo cuando terminó bien. */
+  guide: GeneratedGuide | null;
+  /** Control de la guía y lote al que pertenece (si se pidió como lote). */
+  controlId?: string | null;
+  batchId?: string | null;
+}
+
+/** Lote de guías: un trabajo por control (los que ya tenían uno lo reutilizan). */
+export interface GuideBatchAccepted {
+  batchId: string;
+  jobs: { controlId: string; jobId: string; status: AiJobStatus }[];
+}
+
+/** Sugerencia de la IA de a qué control podría pertenecer una evidencia sin control (D7). */
+export interface EvidenceSuggestion {
+  id: string;
+  evidenceId: string;
+  fileName: string;
+  controlId: string;
+  controlCode: string;
+  controlDescription: string;
+  /** Puntaje de relevancia (0-1 aprox.): «confianza». */
+  score: number;
+  rank: number;
+  status: 'PENDING' | 'ACCEPTED' | 'REJECTED';
+  /** false = el puntaje no tiene un umbral calibrado con datos reales (AI_CLASSIFY_MIN_SCORE). */
+  calibrated?: boolean;
+}
+
+export interface AiJobAccepted {
+  jobId: string;
+  status: AiJobStatus;
 }
 
 /** Qué se hizo con una guía de IA (PRI-370): alimenta el dataset de fine-tuning. */
@@ -484,6 +661,150 @@ export interface AiSuggestionFeedback {
   originalTips: string[];
   outcome: 'ACCEPTED_UNEDITED' | 'ACCEPTED_EDITED' | 'REJECTED';
   editedText?: string;
+}
+
+/** RF-VIZ-07 (PRI-321): una evaluación aprobada (o archivada tras aprobarse) en la tendencia. */
+export interface MaturityTrendPoint {
+  evaluationId: string;
+  evaluationName: string;
+  /** Estado de la evaluación (EVALUATION_STATUS_CONFIG). */
+  status: string;
+  /** true = en curso o en auditoría: valor de hoy, todavía no validado por el auditor. */
+  provisional: boolean;
+  /** Fecha del punto: la de aprobación, o «ahora» para una provisoria. */
+  date: string;
+  approvedAt: string | null;
+  /** null = sin perfil comunitario («Catálogo completo»). */
+  profileId: string | null;
+  profileName: string;
+  compliantControls: number;
+  totalControls: number;
+  /** Controles cumplidos sobre los del alcance, con un decimal (0–100). */
+  compliancePercent: number;
+  /** Madurez global sin redondear, con dos decimales (0–4). */
+  maturityAverage: number;
+  /** Nivel global oficial (entero). */
+  globalMaturity: number | null;
+}
+
+/** Tendencia de UNA organización (multitenant: nunca mezcla organizaciones). */
+export interface MaturityTrend {
+  // null: el administrador sin organización elegida y sin ninguna con actividad.
+  organizationId: string | null;
+  organizationName: string | null;
+  points: MaturityTrendPoint[];
+}
+
+/** Un control que pasó a «Cumple» (gained) o dejó de cumplirse (lost) en una semana. */
+export interface ControlChange {
+  controlId: string;
+  code: string;
+  description: string;
+  functionName: string;
+  changedAt: string;
+  changedBy: string | null;
+}
+
+/** Escala del avance: día, semana o mes. */
+export type ProgressGranularity = 'DAY' | 'WEEK' | 'MONTH';
+
+/** Un período (día, semana o mes) del avance de una evaluación. */
+export interface ProgressPeriod {
+  periodStart: string;
+  periodEnd: string;
+  compliantControls: number;
+  answeredControls: number;
+  totalControls: number;
+  /** Respuestas guardadas en el período (aunque repitan el valor). */
+  responseActivity: number;
+  /** Evidencias subidas en el período. */
+  evidenceActivity: number;
+  gained: ControlChange[];
+  lost: ControlChange[];
+}
+
+/** RF-VIZ-07 (PRI-321): avance semana a semana, reconstruido con la bitácora de respuestas. */
+export interface EvaluationProgress {
+  evaluationId: string;
+  evaluationName: string;
+  status: string;
+  statusLabel: string;
+  profileName: string;
+  startedAt: string | null;
+  compliantControls: number;
+  answeredControls: number;
+  totalControls: number;
+  last30DaysDelta: number;
+  /** Controles respondidos ganados en los últimos 30 días (el trabajo, aunque no cambie «Cumple»). */
+  last30DaysAnsweredDelta: number;
+  /** Escala usada (con «automática», la elige el backend según lo que dura la historia). */
+  granularity: ProgressGranularity;
+  /** El primero es un período vacío anterior al inicio: la curva arranca en 0. */
+  periods: ProgressPeriod[];
+  statusEvents: { status: string; label: string; occurredAt: string }[];
+}
+
+/** RF-VIZ-06 (PRI-320): evaluación finalizada que se puede elegir para comparar. */
+export interface ComparisonCandidate {
+  id: string;
+  name: string;
+  profileName: string;
+  approvedAt: string | null;
+  globalMaturity: number | null;
+}
+
+/** Una de las dos evaluaciones comparadas, con su medición. */
+export interface ComparedEvaluation {
+  id: string;
+  name: string;
+  profileName: string;
+  approvedAt: string | null;
+  globalMaturity: number | null;
+  maturityAverage: number;
+  compliantControls: number;
+  totalControls: number;
+  compliancePercent: number;
+}
+
+/** Nivel promedio de una función en A y en B (0–4); null si esa evaluación no la tiene. */
+export interface FunctionDelta {
+  functionId: string;
+  functionName: string;
+  levelA: number | null;
+  levelB: number | null;
+  delta: number | null;
+}
+
+/** Nivel de una subcategoría en A y en B; levelA o levelB null = está en una sola. */
+export interface SubcategoryDelta {
+  subcategoryId: string;
+  code: string | null;
+  name: string;
+  functionId: string;
+  functionName: string;
+  categoryName: string;
+  levelA: number | null;
+  levelB: number | null;
+  delta: number | null;
+  targetLevel: number | null;
+}
+
+/** RF-VIZ-06 (PRI-320): comparativo entre dos evaluaciones de la misma organización. */
+export interface EvaluationComparison {
+  organizationId: string;
+  organizationName: string;
+  evaluationA: ComparedEvaluation;
+  evaluationB: ComparedEvaluation;
+  sameProfile: boolean;
+  subcategoriesUp: number;
+  subcategoriesDown: number;
+  subcategoriesSame: number;
+  onlyInA: number;
+  onlyInB: number;
+  /** Una frase con lo principal: cambio global, mayor mejora y mayor baja. */
+  reading: string;
+  functions: FunctionDelta[];
+  subcategories: SubcategoryDelta[];
 }
 
 export interface DashboardStats {
@@ -661,4 +982,31 @@ export interface CatalogImportPayload {
       }[];
     }[];
   }[];
+}
+
+export interface ReportSignature {
+  role: 'PRISMA' | 'USER' | 'UNKNOWN';
+  signerName: string;
+  signerEmail: string | null;
+  signerUserId: string | null;
+  signedAt: string | null;
+  integrityValid: boolean;
+  trusted: boolean;
+  coversWholeDocument: boolean;
+}
+
+export interface ReportVerification {
+  sealingAvailable: boolean;
+  signed: boolean;
+  sealedByPrisma: boolean;
+  signedByUser: boolean;
+  intact: boolean;
+  registered: boolean;
+  registeredAt: string | null;
+  registeredUserId: string | null;
+  userMatchesRegistry: boolean;
+  valid: boolean;
+  sha256: string;
+  message: string;
+  signatures: ReportSignature[];
 }

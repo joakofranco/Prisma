@@ -8,6 +8,10 @@ const routes: RouteRecordRaw[] = [
     redirect: '/dashboard',
   },
   {
+    path: '/login',
+    redirect: '/dashboard',
+  },
+  {
     path: '/dashboard',
     name: 'Dashboard',
     component: () => import('@/views/dashboard/DashboardView.vue'),
@@ -49,6 +53,17 @@ const routes: RouteRecordRaw[] = [
       requiresAuth: true,
       title: 'Nueva Evaluación',
       roles: ['PRISMA_ADMIN', 'ORG_RESPONSIBLE', 'INTERNAL_EVALUATOR'],
+    },
+  },
+  {
+    // RF-VIZ-06 (PRI-320): actores del RF (Responsable y Auditor) más el Administrador.
+    path: '/evaluations/compare',
+    name: 'EvaluationCompare',
+    component: () => import('@/views/evaluations/EvaluationCompareView.vue'),
+    meta: {
+      requiresAuth: true,
+      title: 'Comparar evaluaciones',
+      roles: ['PRISMA_ADMIN', 'ORG_RESPONSIBLE', 'AUDITOR'],
     },
   },
   {

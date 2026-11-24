@@ -10,6 +10,7 @@ devuelven contexto vacío en lugar de tumbar el proceso.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from pathlib import Path
@@ -23,6 +24,8 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from app.core.config import Settings, get_settings
 from app.rag import loaders
 from app.rag.chroma_client import build_chroma_client
+from app.rag.collections import mcu_collection
+from app.rag.ollama_runtime import chat_kwargs, embedding_kwargs, estimate_tokens, guard_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -37,17 +40,24 @@ class VectorStore:
         settings: Settings | None = None,
         embeddings: Any | None = None,
         llm: Any | None = None,
+        think_supported: bool = False,
     ) -> None:
         self.settings = settings or get_settings()
         self.embeddings = embeddings or OllamaEmbeddings(
             base_url=self.settings.ollama_host,
             model=self.settings.ollama_embedding_model,
+            **embedding_kwargs(self.settings),
         )
+        # num_ctx/keep_alive/num_predict (+ temperature/seed/num_thread si están definidos): ver
+        # app/rag/ollama_runtime.py. "reasoning" solo si el modelo declara la capability.
         self.llm = llm or ChatOllama(
             base_url=self.settings.ollama_host,
             model=self.settings.ollama_model,
+            **chat_kwargs(self.settings, think_supported),
         )
-        self.collection_name = "mcu-5.0"
+        # Una colección por modelo de embedding (ver app/rag/collections.py): cambiar de modelo
+        # no pisa el índice anterior y se puede volver atrás.
+        self.collection_name = mcu_collection(self.settings)
         self._vectorstore: Chroma | None = None
 
     # ------------------------------------------------------------------
@@ -63,6 +73,11 @@ class VectorStore:
                     "Colección %s ya indexada con %d fragmentos", self.collection_name, count
                 )
                 return
+            logger.info(
+                "Colección %s sin fragmentos (modelo de embedding %s): se indexa el marco",
+                self.collection_name,
+                self.settings.ollama_embedding_model,
+            )
             docs_dir = Path(self.settings.rag_docs_dir)
             documents = self._load_documents(docs_dir)
             if not documents:
@@ -71,16 +86,13 @@ class VectorStore:
                     self.settings.rag_docs_dir,
                 )
                 return
-            chunks = self._split().split_documents(documents)
-            # IDs deterministicos (source + posicion), no los UUID random que Chroma generaria
-            # por default: con backend-ai corriendo con mas de una replica contra el mismo
-            # servidor Chroma (ver chroma_client.py), dos pods pueden ver la coleccion vacia a la
-            # vez en un arranque en frio y disparar esta indexacion inicial en paralelo -- con
-            # IDs deterministicos, el segundo add_documents() actualiza (upsert) los mismos
-            # fragmentos en vez de duplicarlos.
-            ids = [
-                f"{doc.metadata.get('source', 'doc')}::chunk-{i}" for i, doc in enumerate(chunks)
-            ]
+            chunks, ids = self._chunk_framework(documents)
+            # IDs deterministicos, no los UUID random que Chroma generaria por default: con
+            # backend-ai corriendo con mas de una replica contra el mismo servidor Chroma (ver
+            # chroma_client.py), dos pods pueden ver la coleccion vacia a la vez en un arranque en
+            # frio y disparar esta indexacion inicial en paralelo -- con IDs deterministicos, el
+            # segundo add_documents() actualiza (upsert) los mismos fragmentos en vez de
+            # duplicarlos.
             self._vectorstore.add_documents(chunks, ids=ids)
             logger.info(
                 "Indexados %d fragmentos de %d documentos en %s",
@@ -130,8 +142,12 @@ class VectorStore:
             "No pude generar una respuesta. Verifica que el índice RAG y Ollama "
             "estén disponibles."
         )
+        # Fuera del try: un prompt que no entra en el contexto es un error explícito
+        # (PromptTooLargeError), no un "no pude generar" genérico ni un recorte silencioso.
+        prompt = self._build_prompt(context, question)
+        guard_prompt(self.settings, prompt)
         try:
-            response = self.llm.invoke(self._build_prompt(context, question))
+            response = await self._invoke_llm(prompt)
             answer_text = str(response.content)
         except Exception:
             logger.warning("No se pudo invocar el LLM; se responde sin generación")
@@ -146,6 +162,8 @@ class VectorStore:
         subcategory_name: str | None,
         current_level: int,
         target_level: int,
+        trace: bool = False,
+        seed: int | None = None,
     ) -> dict[str, Any]:
         """Sugiere pasos concretos para cerrar una brecha puntual del catálogo MCU 5.0.
 
@@ -156,7 +174,8 @@ class VectorStore:
         catálogo no alcanza (a diferencia de evaluate_evidence, que sí necesita ceñirse
         estrictamente a la evidencia real aportada).
         """
-        documents = await self.query(f"{control_code}: {control_description}", k=3)
+        query_text = f"{control_code}: {control_description}"
+        documents = await self.query(query_text, k=3)
         context = "\n\n".join(doc.page_content for doc in documents)
         prompt = self._build_remediation_prompt(
             control_code,
@@ -168,12 +187,33 @@ class VectorStore:
             target_level,
             context,
         )
+        guard_prompt(self.settings, prompt)
         try:
-            response = self.llm.invoke(prompt)
-            return self._parse_remediation(str(response.content))
+            # En un hilo aparte: invoke() es bloqueante (decenas de segundos en CPU) y no debe
+            # frenar el event loop (health, métricas y otros pedidos).
+            response = await self._invoke_llm(prompt, seed=seed if trace else None)
+            result = self._parse_remediation(str(response.content))
+            result["generated"] = True
+            result["model"] = self.settings.ollama_model
+            result["metrics"] = self._llm_metrics(response, prompt)
+            if trace:
+                result["trace"] = await self._build_trace(
+                    prompt=prompt,
+                    response=response,
+                    seed=seed,
+                    query_text=query_text,
+                    documents=documents,
+                    metrics=result["metrics"],
+                )
+            return result
         except Exception:
             logger.warning("No se pudo invocar el LLM para sugerir remediación")
+            # generated=False: backend-core (cola asíncrona) lo trata como falla reintentable en
+            # vez de guardar este texto de reemplazo como si fuera una guía.
             return {
+                "generated": False,
+                "model": self.settings.ollama_model,
+                "metrics": {},
                 "summary": "",
                 "tips": [
                     "No se pudo generar una sugerencia automática en este momento -- "
@@ -218,6 +258,74 @@ class VectorStore:
     # ------------------------------------------------------------------
     # Internos
     # ------------------------------------------------------------------
+    async def _build_trace(
+        self,
+        *,
+        prompt: str,
+        response: Any,
+        seed: int | None,
+        query_text: str,
+        documents: list[Document],
+        metrics: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Traza del modo investigación (C8): configuración, semilla, prompt, respuesta cruda,
+        razonamiento (si el modelo lo devolvió) y los fragmentos del marco que se recuperaron.
+
+        Del catálogo MCU solo se guardan ids y puntajes de los fragmentos: es contenido público,
+        pero igual no se duplica el texto.
+        """
+        from app.rag.ollama_runtime import trace_config
+
+        retrieval: list[dict[str, Any]] = []
+        scored = getattr(self._vectorstore, "similarity_search_with_score", None)
+        if scored is not None:
+            try:
+                for doc, score in scored(query_text, k=3):
+                    retrieval.append(
+                        {
+                            "source": doc.metadata.get("source"),
+                            "id": getattr(doc, "id", None),
+                            "score": float(score),
+                        }
+                    )
+            except Exception:
+                logger.warning("No se pudieron obtener los puntajes de recuperación para la traza")
+        if not retrieval:
+            retrieval = [
+                {"source": d.metadata.get("source"), "id": getattr(d, "id", None)}
+                for d in documents
+            ]
+        extra = getattr(response, "additional_kwargs", None) or {}
+        return {
+            "config": await trace_config(self.settings),
+            "seed": seed,
+            "prompt": prompt,
+            "response": str(response.content),
+            "thinking": extra.get("reasoning_content") or extra.get("thinking"),
+            "retrieval": retrieval,
+            "metrics": metrics,
+        }
+
+    async def _invoke_llm(self, prompt: str, seed: int | None = None) -> Any:
+        """Llama al LLM sin bloquear el event loop y de forma CANCELABLE.
+
+        Con ``ainvoke`` (ChatOllama) cancelar la tarea cierra la conexión HTTP con Ollama, y Ollama
+        aborta la generación; con ``invoke`` en un hilo no se podría cortar y la respuesta
+        abandonada seguiría ocupando una ranura (ver ``run_until_disconnect``). Los LLM sin
+        ``ainvoke`` (simulados en los tests) caen al hilo.
+        """
+        llm = self.llm
+        if seed is not None:
+            # Semilla por pedido (modo investigación): una copia del modelo con la semilla, sin
+            # tocar la instancia compartida. Los LLM simulados de los tests no la soportan.
+            copy = getattr(llm, "model_copy", None)
+            if copy is not None:
+                llm = copy(update={"seed": seed})
+        ainvoke = getattr(llm, "ainvoke", None)
+        if ainvoke is not None:
+            return await ainvoke(prompt)
+        return await asyncio.to_thread(llm.invoke, prompt)
+
     def _connect(self) -> Chroma:
         # Ver app/rag/chroma_client.py: PersistentClient local.
         return Chroma(
@@ -229,6 +337,40 @@ class VectorStore:
     def _collection_count(self) -> int:
         client = build_chroma_client(self.settings)
         return int(client.get_or_create_collection(self.collection_name).count())
+
+    def _chunk_framework(self, documents: list[Document]) -> tuple[list[Document], list[str]]:
+        """Fragmentos del marco con sus ids. Un fragmento por requisito (``req_ctx``) para los
+        documentos con «### Requisito XX.N»; el resto se trocea de la forma genérica.
+
+        Id del requisito: ``<fuente>::req-XX.N`` (estable: no depende del orden ni del tamaño).
+        Id genérico: ``<fuente>::chunk-<n>``.
+        """
+        chunks: list[Document] = []
+        ids: list[str] = []
+        seen: set[str] = set()
+        generic: list[Document] = []
+        for doc in documents:
+            source = str(doc.metadata.get("source", "doc"))
+            fragments = loaders.split_by_requirement(doc)
+            if not fragments:
+                generic.append(doc)
+                continue
+            for fragment in fragments:
+                fragment_id = f"{source}::req-{fragment.metadata['requirement']}"
+                if fragment_id in seen:  # requisito repetido en el mismo documento: no se pisa
+                    n = 2
+                    while f"{fragment_id}-{n}" in seen:
+                        n += 1
+                    fragment_id = f"{fragment_id}-{n}"
+                seen.add(fragment_id)
+                chunks.append(fragment)
+                ids.append(fragment_id)
+        if generic:
+            generic_chunks = self._split().split_documents(generic)
+            for i, doc in enumerate(generic_chunks):
+                chunks.append(doc)
+                ids.append(f"{doc.metadata.get('source', 'doc')}::chunk-{i}")
+        return chunks, ids
 
     def _split(self) -> RecursiveCharacterTextSplitter:
         return loaders.build_splitter(self.settings.rag_chunk_size, self.settings.rag_chunk_overlap)
@@ -295,6 +437,25 @@ class VectorStore:
             # como sugerencia que dejar la lista de tips vacía silenciosamente.
             tips = lines or [text.strip()]
         return {"summary": summary, "tips": tips}
+
+    @staticmethod
+    def _llm_metrics(response: Any, prompt: str) -> dict[str, Any]:
+        """Tiempos (ns) y tokens que Ollama informa en la respuesta, para la medición (WP3).
+
+        Los modelos simulados de los tests no traen metadata: devuelve solo lo estimado.
+        """
+        meta = getattr(response, "response_metadata", None) or {}
+        keys = (
+            "total_duration",
+            "load_duration",
+            "prompt_eval_count",
+            "prompt_eval_duration",
+            "eval_count",
+            "eval_duration",
+        )
+        metrics: dict[str, Any] = {k: meta[k] for k in keys if meta.get(k) is not None}
+        metrics["prompt_tokens_estimated"] = estimate_tokens(prompt)
+        return metrics
 
     @staticmethod
     def _strip_list_marker(line: str) -> str:

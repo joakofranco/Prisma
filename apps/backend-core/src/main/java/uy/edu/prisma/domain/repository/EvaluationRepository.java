@@ -12,6 +12,12 @@ import uy.edu.prisma.domain.entity.Evaluation;
 
 public interface EvaluationRepository extends JpaRepository<Evaluation, UUID> {
 
+  List<Evaluation> findAllByStatus(Evaluation.Status status);
+
+  /** Solo la organización de la evaluación, sin cargar la entidad ni sus relaciones. */
+  @Query("SELECT e.organization.id FROM Evaluation e WHERE e.id = :id")
+  java.util.Optional<UUID> findOrganizationId(@Param("id") UUID id);
+
   Page<Evaluation> findByOrganizationIdAndStatusOrderByCreatedAtDesc(
       UUID organizationId, Evaluation.Status status, Pageable pageable);
 
@@ -42,6 +48,11 @@ public interface EvaluationRepository extends JpaRepository<Evaluation, UUID> {
           + "EXISTS (SELECT 1 FROM ImprovementPlan p WHERE p.evaluation.id = e.id) OR "
           + "EXISTS (SELECT 1 FROM MaturityResult m WHERE m.evaluation.id = e.id))")
   List<UUID> findIdsWithData(@Param("ids") Collection<UUID> ids);
+
+  // RF-VIZ-07 (PRI-321): evaluaciones de UNA organizacion en ciertos estados (la tendencia usa
+  // las aprobadas y archivadas; MaturityTrendService descarta las archivadas sin aprobar).
+  List<Evaluation> findByOrganizationIdAndStatusIn(
+      UUID organizationId, Collection<Evaluation.Status> statuses);
 
   long countByStatus(Evaluation.Status status);
 

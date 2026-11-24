@@ -1,6 +1,7 @@
 package uy.edu.prisma.application;
 
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -34,6 +35,7 @@ import uy.edu.prisma.web.dto.Dto.AiSuggestionFeedbackBatchDto;
 import uy.edu.prisma.web.dto.Dto.AiSuggestionFeedbackDto;
 import uy.edu.prisma.web.dto.Dto.CreateImprovementPlanDto;
 import uy.edu.prisma.web.dto.Dto.ImprovementPlanDto;
+import uy.edu.prisma.web.dto.Dto.PlanBaselineDto;
 import uy.edu.prisma.web.dto.Dto.RemediationTipsDto;
 import uy.edu.prisma.web.dto.Dto.RemediationTipsRequestDto;
 import uy.edu.prisma.web.dto.Dto.SuggestedImprovementDto;
@@ -57,6 +59,7 @@ public class ImprovementPlanService {
   private final AuditLogService auditLog;
   private final PlanDeadlineSettingsService deadlines;
   private final AiSuggestionFeedbackRepository feedbackRepo;
+  private final AiGuideService guideService;
 
   public ImprovementPlanService(
       ImprovementPlanRepository repo,
@@ -67,7 +70,8 @@ public class ImprovementPlanService {
       CurrentUserService currentUser,
       AuditLogService auditLog,
       PlanDeadlineSettingsService deadlines,
-      AiSuggestionFeedbackRepository feedbackRepo) {
+      AiSuggestionFeedbackRepository feedbackRepo,
+      AiGuideService guideService) {
     this.repo = repo;
     this.evaluationRepo = evaluationRepo;
     this.controlRepo = controlRepo;
@@ -77,6 +81,7 @@ public class ImprovementPlanService {
     this.auditLog = auditLog;
     this.deadlines = deadlines;
     this.feedbackRepo = feedbackRepo;
+    this.guideService = guideService;
   }
 
   // On-demand (un control a la vez, ver AiEvidenceClient.suggestRemediation): no necesita
@@ -147,6 +152,17 @@ public class ImprovementPlanService {
         .toList();
   }
 
+  public PlanBaselineDto baseline(UUID evaluationId) {
+    Evaluation eval =
+        evaluationRepo
+            .findById(evaluationId)
+            .orElseThrow(() -> new ResourceNotFoundException("Evaluación", evaluationId));
+    currentUser.assertOrganizationAccess(eval.getOrganization().getId());
+    repo.markOverdue();
+    return PlanBaseline.compare(
+        repo.findByEvaluationIdOrderByCreatedAtDesc(evaluationId), LocalDate.now());
+  }
+
   public ImprovementPlanDto create(CreateImprovementPlanDto dto) {
     Evaluation eval =
         evaluationRepo
@@ -183,9 +199,36 @@ public class ImprovementPlanService {
             .priority(priority)
             .status(PlanStatus.PENDING)
             .dueDate(dueDate)
+            .baselineDueDate(dueDate)
+            .baselinePriority(priority)
+            .baselineResponsible(dto.responsible())
             .comments(normalizeComments(dto.comments()))
             .build();
-    return toDto(repo.save(plan));
+    ImprovementPlan saved = repo.save(plan);
+    // Guía de IA asíncrona (C5): en la misma transacción que crea la acción se la marca como
+    // usada y se registra el feedback (sin organización ni usuario, V32).
+    if (dto.guideId() != null) {
+      UUID traceId =
+          guideService.markUsed(
+              dto.guideId(), dto.controlId(), Boolean.TRUE.equals(dto.guideEdited()), dto.action());
+      // Modo investigación (C8): la traza de la guía pasa a ser la de esta acción.
+      if (traceId != null && traceService != null) {
+        traceService.link(
+            traceId,
+            uy.edu.prisma.domain.entity.AiTraceLink.ResourceType.IMPROVEMENT_PLAN,
+            saved.getId(),
+            eval.getOrganization().getId());
+      }
+    }
+    return toDto(saved);
+  }
+
+  // Modo investigación (C8). Por setter y opcional: el servicio funciona igual sin trazas.
+  private AiTraceService traceService;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  public void setTraceService(AiTraceService traceService) {
+    this.traceService = traceService;
   }
 
   /**
@@ -269,6 +312,13 @@ public class ImprovementPlanService {
     plan.setResponsible(responsible);
     plan.setPriority(priority);
     plan.setDueDate(dueDate);
+    if (status == PlanStatus.COMPLETED) {
+      if (plan.getStatus() != PlanStatus.COMPLETED) {
+        plan.setCompletedAt(OffsetDateTime.now());
+      }
+    } else {
+      plan.setCompletedAt(null);
+    }
     plan.setStatus(status);
     plan.setComments(comments);
     ImprovementPlan saved = repo.save(plan);
@@ -353,12 +403,12 @@ public class ImprovementPlanService {
 
   /**
    * RF-PLN-01 — Generacion automatica de plan por brechas. Motor de reglas (no LLM, ver
-   * docs/Proyecto.md): recorre los controles del catalogo de la evaluacion y, para cada uno cuya
-   * respuesta este por debajo del nivel objetivo, arma una sugerencia con accion, prioridad (segun
-   * el tamano de la brecha) y fecha limite sugerida. No persiste nada — el frontend muestra las
-   * sugerencias para que el usuario las revise/edite y recien ahi las cree via POST
-   * /api/improvement. Los controles que ya tienen un plan de mejora asociado se excluyen para no
-   * repetir sugerencias en llamadas sucesivas.
+   * docs/proyecto/Proyecto.md): recorre los controles del catalogo de la evaluacion y, para cada
+   * uno cuya respuesta este por debajo del nivel objetivo, arma una sugerencia con accion,
+   * prioridad (segun el tamano de la brecha) y fecha limite sugerida. No persiste nada — el
+   * frontend muestra las sugerencias para que el usuario las revise/edite y recien ahi las cree via
+   * POST /api/improvement. Los controles que ya tienen un plan de mejora asociado se excluyen para
+   * no repetir sugerencias en llamadas sucesivas.
    *
    * <p>Precondicion (RF-PLN-01): la madurez de la evaluacion tiene que estar calculada
    * (globalMaturity != null; «Calculada» no existe como estado) y la evaluacion no puede estar en

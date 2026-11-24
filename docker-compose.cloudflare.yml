@@ -12,7 +12,7 @@
 #   visitante y el límite de tasa, fail2ban y el control de VPN de Servicios funcionan por visitante.
 # - Ningún puerto queda abierto a internet: los que sirven a los administradores se publican solo
 #   en INTERNAL_BIND_IP (la IP de la VPN en el VPS; por defecto 127.0.0.1) y el resto se quita.
-# Ver docs/PUBLICACION-CLOUDFLARE.md.
+# Ver docs/operacion/PUBLICACION-CLOUDFLARE.md.
 # =====================================================================
 
 services:

@@ -7,10 +7,22 @@
           Gestión de evaluaciones de madurez en ciberseguridad
         </p>
       </div>
-      <BaseButton variant="primary" @click="router.push('/evaluations/new')">
-        <PlusIcon class="w-4 h-4" />
-        Nueva Evaluación
-      </BaseButton>
+      <div class="flex flex-wrap items-center gap-2">
+        <!-- RF-VIZ-06 (PRI-320): comparar dos evaluaciones finalizadas de una organización. -->
+        <BaseButton
+          v-if="canCompare"
+          variant="secondary"
+          data-testid="open-compare"
+          @click="router.push('/evaluations/compare')"
+        >
+          <ArrowsRightLeftIcon class="w-4 h-4" />
+          Comparar evaluaciones
+        </BaseButton>
+        <BaseButton variant="primary" @click="router.push('/evaluations/new')">
+          <PlusIcon class="w-4 h-4" />
+          Nueva Evaluación
+        </BaseButton>
+      </div>
     </div>
 
     <div class="flex items-center gap-3 flex-wrap">
@@ -139,6 +151,7 @@
   import { evaluationsService } from '@/services/resources';
   import {
     PlusIcon,
+    ArrowsRightLeftIcon,
     EyeIcon,
     PencilSquareIcon,
     MagnifyingGlassCircleIcon,
@@ -151,6 +164,9 @@
   const store = useEvaluationsStore();
   const orgStore = useOrganizationsStore();
   const authStore = useAuthStore();
+  const canCompare = computed(() =>
+    authStore.hasAnyRole('PRISMA_ADMIN', 'ORG_RESPONSIBLE', 'AUDITOR'),
+  );
 
   // Ver el comentario en OrganizationsView.vue: hay que usar storeToRefs, no desestructurar el
   // store directamente, o la tabla deja de reaccionar a fetchEvaluations().

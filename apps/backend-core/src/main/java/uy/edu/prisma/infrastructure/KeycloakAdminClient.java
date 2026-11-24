@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -44,6 +45,8 @@ public class KeycloakAdminClient {
 
   private volatile String cachedToken;
   private volatile Instant tokenExpiresAt = Instant.EPOCH;
+
+  private final Map<String, CachedToken> publicHostTokens = new ConcurrentHashMap<>();
 
   public KeycloakAdminClient(
       @Qualifier("keycloakAdminRestClient") RestClient keycloakAdminRestClient,
@@ -96,7 +99,8 @@ public class KeycloakAdminClient {
               lifespanSeconds,
               clientId,
               redirectUri)
-          .header("Authorization", "Bearer " + adminToken())
+          .header("Authorization", "Bearer " + adminTokenForPublicHost(redirectUri))
+          .headers(headers -> addPublicHostHeaders(headers, redirectUri))
           .contentType(MediaType.APPLICATION_JSON)
           .body(actions)
           .retrieve()
@@ -105,6 +109,34 @@ public class KeycloakAdminClient {
       log.warn(
           "Keycloak no pudo enviar el correo de acciones a {}: {}", keycloakId, e.getMessage());
       throw new EmailDeliveryException(e);
+    }
+  }
+
+  /**
+   * PRI-379: Keycloak corre con hostname dinámico (arma cada URL con el host de la llamada que
+   * recibe, ver docker-compose.yml) y backend-core lo llama por la red interna, así que sin esto el
+   * enlace del correo salía con {@code https://keycloak:8443/...}, que ningún destinatario puede
+   * abrir. Se le indica el host público con los mismos {@code X-Forwarded-*} que le manda nginx
+   * (KC_PROXY_HEADERS=xforwarded), tomado de la URL pública de la app ({@code PRISMA_APP_URL}): es
+   * configuración, no input del usuario, así que no hay forma de inyectar otro host en el correo.
+   * Si la URL no es válida no se agrega nada y queda el comportamiento anterior.
+   */
+  private static void addPublicHostHeaders(
+      org.springframework.http.HttpHeaders headers, String publicUrl) {
+    try {
+      java.net.URI uri = java.net.URI.create(publicUrl);
+      if (uri.getScheme() == null || uri.getHost() == null) {
+        return;
+      }
+      boolean defaultPort =
+          uri.getPort() == -1
+              || ("https".equals(uri.getScheme()) && uri.getPort() == 443)
+              || ("http".equals(uri.getScheme()) && uri.getPort() == 80);
+      String host = defaultPort ? uri.getHost() : uri.getHost() + ":" + uri.getPort();
+      headers.set("X-Forwarded-Proto", uri.getScheme());
+      headers.set("X-Forwarded-Host", host);
+    } catch (IllegalArgumentException e) {
+      log.warn("PRISMA_APP_URL no es una URL válida; el correo saldrá con el host interno");
     }
   }
 
@@ -631,6 +663,43 @@ public class KeycloakAdminClient {
     tokenExpiresAt = Instant.now().plusSeconds(Math.max(response.expiresIn() - 10, 5));
     return cachedToken;
   }
+
+  private synchronized String adminTokenForPublicHost(String publicUrl) {
+    org.springframework.http.HttpHeaders forwarded = new org.springframework.http.HttpHeaders();
+    addPublicHostHeaders(forwarded, publicUrl);
+    if (forwarded.isEmpty()) {
+      return adminToken();
+    }
+    CachedToken cached = publicHostTokens.get(publicUrl);
+    if (cached != null && Instant.now().isBefore(cached.expiresAt())) {
+      return cached.value();
+    }
+    MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
+    form.add("grant_type", "client_credentials");
+    form.add("client_id", properties.clientId());
+    form.add("client_secret", properties.clientSecret());
+
+    TokenResponse response =
+        restClient
+            .post()
+            .uri("/realms/{realm}/protocol/openid-connect/token", properties.realm())
+            .headers(headers -> headers.addAll(forwarded))
+            .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+            .body(form)
+            .retrieve()
+            .body(TokenResponse.class);
+    if (response == null) {
+      throw new IllegalStateException("No se pudo obtener un token de administración de Keycloak");
+    }
+    CachedToken fresh =
+        new CachedToken(
+            response.accessToken(),
+            Instant.now().plusSeconds(Math.max(response.expiresIn() - 10, 5)));
+    publicHostTokens.put(publicUrl, fresh);
+    return fresh.value();
+  }
+
+  private record CachedToken(String value, Instant expiresAt) {}
 
   private record TokenResponse(
       @JsonProperty("access_token") String accessToken,

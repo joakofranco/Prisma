@@ -166,3 +166,13 @@ CLAUDE.md
 postman/
 .postman/
 
+
+# Material de trabajo local (rondas de pruebas, evidencias): no se versiona.
+trabajo/
+
+# Pruebas de performance: resultados y datos generados (credenciales de usuarios PERF-).
+perf/results/
+perf/data/
+
+# Resultados de make vuln-scan (informes de Trivy).
+vuln-reports/

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import {
   formatDate,
   formatDateTime,
@@ -37,6 +37,35 @@ describe('formatDate / formatDateTime', () => {
     // segmento de fecha (estable) y que la hora tenga el formato HH:mm esperado.
     const result = formatDateTime('2026-09-06T12:00:00Z');
     expect(result).toMatch(/^06\/09\/2026 \d{2}:\d{2}$/);
+  });
+});
+
+// PRI-381: el backend manda los vencimientos como fecha SIN hora ("2027-02-15"). new Date() la toma
+// como medianoche UTC y, en una zona al oeste de UTC (Uruguay, UTC-3), mostraba el día anterior.
+describe('formatDate con fecha sin hora (PRI-381)', () => {
+  const originalTz = process.env.TZ;
+  afterEach(() => {
+    if (originalTz === undefined) delete process.env.TZ;
+    else process.env.TZ = originalTz;
+  });
+
+  it.each(['America/Montevideo', 'UTC', 'Pacific/Auckland', 'America/Los_Angeles'])(
+    'muestra el mismo día calendario en %s',
+    (tz) => {
+      process.env.TZ = tz;
+      expect(formatDate('2027-02-15')).toBe('15/02/2027');
+      expect(formatDate('2027-08-20')).toBe('20/08/2027');
+    },
+  );
+
+  it('conserva el parche de PlanDeadlinesPanel (fecha + T00:00:00 sigue siendo hora local)', () => {
+    process.env.TZ = 'America/Montevideo';
+    expect(formatDate('2027-02-15T00:00:00')).toBe('15/02/2027');
+  });
+
+  it('no cambia el formato de las fechas con hora (createdAt, approvedAt...)', () => {
+    process.env.TZ = 'America/Montevideo';
+    expect(formatDate('2026-09-06T12:00:00Z')).toBe('06/09/2026');
   });
 });
 

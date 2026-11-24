@@ -10,6 +10,7 @@ import uy.edu.prisma.web.dto.Dto.CreateOrganizationDto;
 import uy.edu.prisma.web.dto.Dto.OrganizationDto;
 import uy.edu.prisma.web.dto.Dto.OrganizationReactivationDto;
 import uy.edu.prisma.web.dto.Dto.PaginatedDto;
+import uy.edu.prisma.web.dto.Dto.ResearchModeDto;
 
 @RestController
 @RequestMapping("/api/organizations")
@@ -54,6 +55,14 @@ public class OrganizationController {
   // Reactivar una organización inactiva (ver OrganizationService.enable). Se separa del PUT de
   // edición a propósito: cambiar el estado es una acción con consecuencias propias (queda en la
   // bitácora y avisa de los usuarios que siguen deshabilitados), no un campo más del formulario.
+  /** Enciende o apaga el modo investigación de la IA para la organización (C8). */
+  @PutMapping("/{id}/research-mode")
+  @PreAuthorize("hasRole('PRISMA_ADMIN')")
+  public ResponseEntity<OrganizationDto> researchMode(
+      @PathVariable UUID id, @RequestBody ResearchModeDto body) {
+    return ResponseEntity.ok(service.setResearchMode(id, body.enabled()));
+  }
+
   @PutMapping("/{id}/enable")
   @PreAuthorize("hasRole('PRISMA_ADMIN')")
   public ResponseEntity<OrganizationReactivationDto> enable(@PathVariable UUID id) {

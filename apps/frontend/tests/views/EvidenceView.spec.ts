@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
 
 const evidenceService = vi.hoisted(() => ({
@@ -825,5 +825,186 @@ describe('EvidenceView: acciones según el estado de la evaluación', () => {
 
     expect(button('[data-testid="reindex-evidence"]')).toBeNull();
     expect(document.body.textContent).toContain('Indexado');
+  });
+});
+
+describe('EvidenceView: estado de indexación y reintentos (C7)', () => {
+  const base = {
+    id: 'e1',
+    evaluationId: 'eval-1',
+    controlId: null,
+    fileName: 'politica.pdf',
+    fileSize: 100,
+    fileType: 'application/pdf',
+    description: '',
+    uploadedBy: 'u',
+    uploadedAt: '2026-11-01T10:00:00Z',
+    aiIndexed: false,
+    scanStatus: 'CLEAN',
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    document.body.innerHTML = '';
+    authState.roles = ['PRISMA_ADMIN'];
+    evidenceService.getAllowedFormats.mockResolvedValue(FORMATS);
+    evaluationsService.getResponses.mockResolvedValue({ data: [] });
+    catalogService.getByVersion.mockResolvedValue({ data: { functions: [] } });
+    evaluationsService.getById.mockResolvedValue({
+      data: { catalogVersion: '5.0', status: 'IN_PROGRESS' },
+    });
+  });
+
+  async function mountWith(list: unknown[]) {
+    evidenceService.getByEvaluation.mockResolvedValue({ data: list });
+    const wrapper = mount(EvidenceView, {
+      attachTo: document.body,
+      global: { stubs: { RouterLink: true } },
+    });
+    await flushPromises();
+    return wrapper;
+  }
+
+  const q = (testid: string) => document.body.querySelector(`[data-testid="${testid}"]`);
+
+  it('muestra «En cola para indexar» y «Indexando…»', async () => {
+    await mountWith([
+      { ...base, indexStatus: 'QUEUED' },
+      { ...base, id: 'e2', indexStatus: 'INDEXING' },
+    ]);
+
+    expect(q('index-queued')!.textContent).toContain('En cola para indexar');
+    expect(q('index-indexing')!.textContent).toContain('Indexando');
+  });
+
+  it('una evidencia indexada dice «Indexado» y no ofrece reintento', async () => {
+    await mountWith([{ ...base, aiIndexed: true, indexStatus: 'INDEXED' }]);
+
+    expect(document.body.textContent).toContain('Indexado');
+    expect(q('reindex-evidence')).toBeNull();
+    expect(q('index-error')).toBeNull();
+  });
+
+  it('con error muestra el motivo y un botón «Reintentar»', async () => {
+    await mountWith([
+      {
+        ...base,
+        indexStatus: 'ERROR',
+        indexError: 'No se pudo indexar la evidencia: el asistente no respondió',
+      },
+    ]);
+
+    expect(q('index-error')!.textContent).toContain('Error al indexar');
+    expect(q('index-error')!.getAttribute('title')).toContain('el asistente no respondió');
+    expect(q('reindex-evidence')!.textContent).toContain('Reintentar');
+  });
+
+  it('«Reintentar» vuelve a encolar y avisa que quedó en cola', async () => {
+    evidenceService.reindex.mockResolvedValue({
+      data: { ...base, indexStatus: 'QUEUED', indexError: null },
+    });
+    await mountWith([{ ...base, indexStatus: 'ERROR', indexError: 'falló' }]);
+
+    (q('reindex-evidence') as HTMLButtonElement).click();
+    await flushPromises();
+
+    expect(evidenceService.reindex).toHaveBeenCalledWith('e1');
+    expect(notification.success).toHaveBeenCalledWith('La evidencia quedó en cola para indexar');
+    expect(q('index-queued')).not.toBeNull();
+    expect(q('index-error')).toBeNull();
+  });
+
+  it('un ZIP o lo que está en cuarentena dice «Sin análisis de IA» con el motivo', async () => {
+    await mountWith([
+      {
+        ...base,
+        fileType: 'application/zip',
+        indexStatus: 'NOT_INDEXABLE',
+        indexError: null,
+      },
+      {
+        ...base,
+        id: 'e2',
+        scanStatus: 'QUARANTINED',
+        indexStatus: 'NOT_INDEXABLE',
+        indexError: 'En cuarentena: se indexa cuando el análisis la libere.',
+      },
+    ]);
+
+    const labels = Array.from(document.body.querySelectorAll('span')).filter((n) =>
+      n.textContent?.includes('Sin análisis de IA'),
+    );
+    expect(labels).toHaveLength(2);
+    expect(labels[1].getAttribute('title')).toContain('En cuarentena');
+    expect(q('reindex-evidence')).toBeNull();
+  });
+
+  describe('consulta periódica mientras se indexa', () => {
+    beforeEach(() => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] }));
+    afterEach(() => vi.useRealTimers());
+
+    it('mientras hay evidencias en cola vuelve a consultar y muestra el estado nuevo', async () => {
+      evidenceService.getByEvaluation
+        .mockResolvedValueOnce({ data: [{ ...base, indexStatus: 'QUEUED' }] })
+        .mockResolvedValue({
+          data: [{ ...base, aiIndexed: true, indexStatus: 'INDEXED' }],
+        });
+      mount(EvidenceView, { attachTo: document.body, global: { stubs: { RouterLink: true } } });
+      await flushPromises();
+      expect(q('index-queued')).not.toBeNull();
+
+      await vi.advanceTimersByTimeAsync(3000);
+      await flushPromises();
+
+      expect(evidenceService.getByEvaluation).toHaveBeenCalledTimes(2);
+      expect(q('index-queued')).toBeNull();
+      expect(document.body.textContent).toContain('Indexado');
+    });
+
+    it('cuando ya no hay nada pendiente deja de consultar', async () => {
+      evidenceService.getByEvaluation.mockResolvedValue({
+        data: [{ ...base, aiIndexed: true, indexStatus: 'INDEXED' }],
+      });
+      mount(EvidenceView, { attachTo: document.body, global: { stubs: { RouterLink: true } } });
+      await flushPromises();
+
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      expect(evidenceService.getByEvaluation).toHaveBeenCalledTimes(1);
+    });
+
+    it('al salir de la pantalla corta la consulta', async () => {
+      evidenceService.getByEvaluation.mockResolvedValue({
+        data: [{ ...base, indexStatus: 'INDEXING' }],
+      });
+      const wrapper = mount(EvidenceView, {
+        attachTo: document.body,
+        global: { stubs: { RouterLink: true } },
+      });
+      await flushPromises();
+      wrapper.unmount();
+      evidenceService.getByEvaluation.mockClear();
+
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      expect(evidenceService.getByEvaluation).not.toHaveBeenCalled();
+    });
+
+    it('una falla de red al consultar no corta el seguimiento', async () => {
+      evidenceService.getByEvaluation
+        .mockResolvedValueOnce({ data: [{ ...base, indexStatus: 'QUEUED' }] })
+        .mockRejectedValueOnce(new Error('network'))
+        .mockResolvedValue({ data: [{ ...base, aiIndexed: true, indexStatus: 'INDEXED' }] });
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      mount(EvidenceView, { attachTo: document.body, global: { stubs: { RouterLink: true } } });
+      await flushPromises();
+
+      await vi.advanceTimersByTimeAsync(3000);
+      await flushPromises();
+      await vi.advanceTimersByTimeAsync(5000);
+      await flushPromises();
+
+      expect(document.body.textContent).toContain('Indexado');
+    });
   });
 });

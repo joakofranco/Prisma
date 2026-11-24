@@ -63,6 +63,7 @@ services:
       APP_ENV: production
       SPRING_PROFILES_ACTIVE: production
       LOGGING_LEVEL_ROOT: WARN
+      PDF_SIGNING_ENABLED: "true"
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}?sslmode=verify-full&sslrootcert=/etc/prisma/tls/ca.crt
       SERVER_SSL_ENABLED: "true"
       SERVER_SSL_CERTIFICATE: /etc/prisma/tls/backend-core.crt
@@ -78,7 +79,7 @@ services:
     # NOTA: sin "replicas" -- container_name (fijo en docker-compose.yml) es incompatible con
     # escalar a más de una réplica vía docker compose (Compose lo rechaza al cargar el archivo).
     # Escalar horizontalmente requeriría un orquestador (ver
-    # docs/mcu-5.0/Kubernetes-Analisis-Viabilidad.md).
+    # docs/proyecto/Kubernetes-Analisis-Viabilidad.md).
     deploy:
       resources:
         limits: { cpus: '2.0', memory: 2G }
@@ -123,7 +124,7 @@ services:
         limits: { cpus: '0.5', memory: 256M }
 
   # "start" (no "start-dev"): modo apto para producción. KC_HOSTNAME_STRICT=false conserva el "hostname
-  # dinámico" (docs/Certificados-TLS.md) que "start" fija a un único hostname por defecto.
+  # dinámico" (docs/operacion/Certificados-TLS.md) que "start" fija a un único hostname por defecto.
   keycloak:
     restart: always
     command: ["start", "--import-realm"]

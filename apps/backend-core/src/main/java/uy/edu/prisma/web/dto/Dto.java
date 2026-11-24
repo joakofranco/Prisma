@@ -77,7 +77,84 @@ public class Dto {
       // la pantalla de Reportes junto a los datos de la organización (PRI-367).
       String responsibleName,
       Boolean enabled,
-      OffsetDateTime createdAt) {}
+      OffsetDateTime createdAt,
+      // Modo investigación (C8): hay que avisarlo en pantalla a quienes usan la organización.
+      boolean researchMode) {
+
+    public OrganizationDto(
+        UUID id,
+        String name,
+        String identifier,
+        boolean identifierIsRut,
+        String sector,
+        String size,
+        UUID responsibleId,
+        String responsibleName,
+        Boolean enabled,
+        OffsetDateTime createdAt) {
+      this(
+          id,
+          name,
+          identifier,
+          identifierIsRut,
+          sector,
+          size,
+          responsibleId,
+          responsibleName,
+          enabled,
+          createdAt,
+          false);
+    }
+  }
+
+  /** Cuerpo de {@code PUT /api/organizations/{id}/research-mode}. */
+  public record ResearchModeDto(boolean enabled) {}
+
+  /**
+   * Traza de una llamada a la IA (modo investigación, C8). En tareas con evidencia {@code
+   * retrieval} trae solo ids y puntajes (D15).
+   */
+  public record AiTraceDto(
+      UUID id,
+      String kind,
+      Long seed,
+      Map<String, Object> config,
+      String prompt,
+      String response,
+      String thinking,
+      List<Map<String, Object>> retrieval,
+      Map<String, Object> metrics,
+      OffsetDateTime createdAt) {
+
+    // Copias defensivas (SpotBugs EI_EXPOSE_REP).
+    public AiTraceDto {
+      config =
+          config == null ? Map.of() : Collections.unmodifiableMap(new java.util.HashMap<>(config));
+      retrieval =
+          retrieval == null
+              ? List.of()
+              : Collections.unmodifiableList(new java.util.ArrayList<>(retrieval));
+      metrics =
+          metrics == null
+              ? Map.of()
+              : Collections.unmodifiableMap(new java.util.HashMap<>(metrics));
+    }
+
+    @Override
+    public Map<String, Object> config() {
+      return Collections.unmodifiableMap(config);
+    }
+
+    @Override
+    public List<Map<String, Object>> retrieval() {
+      return Collections.unmodifiableList(retrieval);
+    }
+
+    @Override
+    public Map<String, Object> metrics() {
+      return Collections.unmodifiableMap(metrics);
+    }
+  }
 
   public record CreateOrganizationDto(
       @NotBlank(message = "El nombre es obligatorio") String name,
@@ -782,6 +859,164 @@ public class Dto {
       UUID id, String code, String description, int targetLevel, String status) {}
 
   // ---- Dashboard ----
+  /** RF-VIZ-07 (PRI-321): tendencia de UNA organización, un punto por evaluación finalizada. */
+  public record MaturityTrendDto(
+      UUID organizationId, String organizationName, List<MaturityTrendPointDto> points) {
+    public MaturityTrendDto {
+      points = points == null ? List.of() : List.copyOf(points);
+    }
+  }
+
+  /**
+   * Una evaluación aprobada (o archivada tras aprobarse). {@code profileId} null = sin perfil
+   * comunitario («Catálogo completo»). {@code compliancePercent}: controles cumplidos sobre los del
+   * alcance, con un decimal. {@code maturityAverage}: madurez global sin redondear, con dos
+   * decimales; {@code globalMaturity} es el nivel entero oficial.
+   */
+  public record MaturityTrendPointDto(
+      UUID evaluationId,
+      String evaluationName,
+      // Estado de la evaluación y si el valor es provisorio (en curso, en auditoría o devuelta:
+      // avance declarado, todavía no validado por el auditor).
+      String status,
+      boolean provisional,
+      // Fecha del punto: la de aprobación, o «ahora» para una provisoria.
+      OffsetDateTime date,
+      OffsetDateTime approvedAt,
+      UUID profileId,
+      String profileName,
+      int compliantControls,
+      int totalControls,
+      double compliancePercent,
+      double maturityAverage,
+      Integer globalMaturity) {}
+
+  /**
+   * RF-VIZ-07 (PRI-321): avance semana a semana de una evaluación, reconstruido con la bitácora de
+   * respuestas. {@code last30DaysDelta}: controles cumplidos ganados (o perdidos, negativo) en los
+   * últimos 30 días.
+   */
+  public record EvaluationProgressDto(
+      UUID evaluationId,
+      String evaluationName,
+      String status,
+      String statusLabel,
+      String profileName,
+      OffsetDateTime startedAt,
+      int compliantControls,
+      int answeredControls,
+      int totalControls,
+      int last30DaysDelta,
+      // Controles respondidos ganados en los últimos 30 días: el trabajo, aunque no cambie
+      // «Cumple».
+      int last30DaysAnsweredDelta,
+      // Escala usada: DAY, WEEK o MONTH (AUTO la elige según lo que dura la historia).
+      String granularity,
+      // El primero es un período vacío anterior al inicio: la curva arranca en 0.
+      List<ProgressPeriodDto> periods,
+      List<ProgressStatusEventDto> statusEvents) {
+    public EvaluationProgressDto {
+      periods = periods == null ? List.of() : List.copyOf(periods);
+      statusEvents = statusEvents == null ? List.of() : List.copyOf(statusEvents);
+    }
+  }
+
+  /**
+   * Un período (día, semana o mes): estado al cerrarlo, actividad (respuestas guardadas, aunque
+   * repitan el valor, y evidencias subidas) y qué controles cambiaron.
+   */
+  public record ProgressPeriodDto(
+      java.time.LocalDate periodStart,
+      java.time.LocalDate periodEnd,
+      int compliantControls,
+      int answeredControls,
+      int totalControls,
+      int responseActivity,
+      int evidenceActivity,
+      List<ControlChangeDto> gained,
+      List<ControlChangeDto> lost) {
+    public ProgressPeriodDto {
+      gained = gained == null ? List.of() : List.copyOf(gained);
+      lost = lost == null ? List.of() : List.copyOf(lost);
+    }
+  }
+
+  /** Un control que pasó a «Cumple» (gained) o dejó de cumplirse (lost) en esa semana. */
+  public record ControlChangeDto(
+      UUID controlId,
+      String code,
+      String description,
+      String functionName,
+      OffsetDateTime changedAt,
+      String changedBy) {}
+
+  /** Cambio de estado de la evaluación (marca vertical en el gráfico de avance). */
+  public record ProgressStatusEventDto(String status, String label, OffsetDateTime occurredAt) {}
+
+  /** RF-VIZ-06 (PRI-320): evaluación finalizada que se puede elegir para comparar. */
+  public record ComparisonCandidateDto(
+      UUID id,
+      String name,
+      String profileName,
+      OffsetDateTime approvedAt,
+      Integer globalMaturity) {}
+
+  /** Una de las dos evaluaciones comparadas, con su medición (la misma de la tendencia). */
+  public record ComparedEvaluationDto(
+      UUID id,
+      String name,
+      String profileName,
+      OffsetDateTime approvedAt,
+      Integer globalMaturity,
+      double maturityAverage,
+      int compliantControls,
+      int totalControls,
+      double compliancePercent) {}
+
+  /** Nivel promedio de una función en A y en B (0–4, dos decimales); null si no la tiene. */
+  public record FunctionDeltaDto(
+      UUID functionId, String functionName, Double levelA, Double levelB, Double delta) {}
+
+  /**
+   * Nivel de una subcategoría en A y en B. {@code levelA} o {@code levelB} null = está en una sola
+   * evaluación (perfiles distintos): sin delta.
+   */
+  public record SubcategoryDeltaDto(
+      UUID subcategoryId,
+      String code,
+      String name,
+      UUID functionId,
+      String functionName,
+      String categoryName,
+      Integer levelA,
+      Integer levelB,
+      Integer delta,
+      Integer targetLevel) {}
+
+  /**
+   * RF-VIZ-06 (PRI-320): comparativo entre dos evaluaciones de la MISMA organización. {@code
+   * reading}: una frase con lo principal (cambio global, mayor mejora y mayor baja).
+   */
+  public record EvaluationComparisonDto(
+      UUID organizationId,
+      String organizationName,
+      ComparedEvaluationDto evaluationA,
+      ComparedEvaluationDto evaluationB,
+      boolean sameProfile,
+      int subcategoriesUp,
+      int subcategoriesDown,
+      int subcategoriesSame,
+      int onlyInA,
+      int onlyInB,
+      String reading,
+      List<FunctionDeltaDto> functions,
+      List<SubcategoryDeltaDto> subcategories) {
+    public EvaluationComparisonDto {
+      functions = functions == null ? List.of() : List.copyOf(functions);
+      subcategories = subcategories == null ? List.of() : List.copyOf(subcategories);
+    }
+  }
+
   public record DashboardStatsDto(
       long totalEvaluations,
       long activeOrganizations,
@@ -821,7 +1056,41 @@ public class Dto {
       UUID uploadedBy,
       OffsetDateTime uploadedAt,
       boolean aiIndexed,
-      String scanStatus) {}
+      String scanStatus,
+      // QUEUED / INDEXING / INDEXED / ERROR / NOT_INDEXABLE y, si corresponde, el motivo.
+      String indexStatus,
+      String indexError) {
+
+    public EvidenceDto(
+        UUID id,
+        UUID evaluationId,
+        UUID controlId,
+        String fileName,
+        Long fileSize,
+        String fileType,
+        String fileHash,
+        String description,
+        UUID uploadedBy,
+        OffsetDateTime uploadedAt,
+        boolean aiIndexed,
+        String scanStatus) {
+      this(
+          id,
+          evaluationId,
+          controlId,
+          fileName,
+          fileSize,
+          fileType,
+          fileHash,
+          description,
+          uploadedBy,
+          uploadedAt,
+          aiIndexed,
+          scanStatus,
+          aiIndexed ? "INDEXED" : "NOT_INDEXABLE",
+          null);
+    }
+  }
 
   /** Reglas de carga de evidencias: extensiones permitidas, sin punto, y tamaño máximo en bytes. */
   public record EvidenceRulesDto(List<String> allowedExtensions, long maxSizeBytes) {
@@ -837,7 +1106,67 @@ public class Dto {
   // Recuperación pura: ningún campo acá representa un veredicto. location es "Página N"
   // (PDF) o "Fragmento N" (DOCX/TXT) según lo que haya podido extraer backend-ai.
   public record EvidenceCitationDto(
-      UUID evidenceId, String fileName, String location, String snippet, double score) {}
+      UUID evidenceId,
+      String fileName,
+      String location,
+      String snippet,
+      double score,
+      // Id estable del fragmento (lo devuelve backend-ai) y, si la cita está guardada, su id, su
+      // estado (PENDING/ACCEPTED/REJECTED), su posición y el control al que pertenece.
+      String fragmentId,
+      UUID citationId,
+      String status,
+      Integer position,
+      UUID controlId,
+      boolean stale,
+      // true = el fragmento sale de evidencia SIN control asignado (global): «sin control
+      // asignado».
+      boolean unassigned) {
+
+    public EvidenceCitationDto(
+        UUID evidenceId, String fileName, String location, String snippet, double score) {
+      this(
+          evidenceId,
+          fileName,
+          location,
+          snippet,
+          score,
+          null,
+          null,
+          null,
+          null,
+          null,
+          false,
+          false);
+    }
+
+    public EvidenceCitationDto(
+        UUID evidenceId,
+        String fileName,
+        String location,
+        String snippet,
+        double score,
+        String fragmentId,
+        UUID citationId,
+        String status,
+        Integer position,
+        UUID controlId,
+        boolean stale) {
+      this(
+          evidenceId,
+          fileName,
+          location,
+          snippet,
+          score,
+          fragmentId,
+          citationId,
+          status,
+          position,
+          controlId,
+          stale,
+          false);
+    }
+  }
 
   // ---- Audit Observations ----
   public record AuditObservationDto(
@@ -899,7 +1228,21 @@ public class Dto {
       String status,
       // Evidencia citada de la que sale la observación (opcional, RF-EVI-15): tiene que ser de la
       // misma evaluación.
-      UUID evidenceId) {
+      UUID evidenceId,
+      // Presente cuando la observación se crea desde «Registrar como observación» de una cita: al
+      // guardarla se registra la diferencia entre el texto precargado y el final (C4b).
+      @Valid CitationSourceDto citation) {
+
+    public CreateAuditObservationDto(
+        UUID evaluationId,
+        UUID controlId,
+        UUID subcategoryId,
+        String type,
+        String description,
+        String status,
+        UUID evidenceId) {
+      this(evaluationId, controlId, subcategoryId, type, description, status, evidenceId, null);
+    }
 
     public CreateAuditObservationDto(
         UUID evaluationId,
@@ -908,7 +1251,27 @@ public class Dto {
         String type,
         String description,
         String status) {
-      this(evaluationId, controlId, subcategoryId, type, description, status, null);
+      this(evaluationId, controlId, subcategoryId, type, description, status, null, null);
+    }
+  }
+
+  // La cita de la que sale una observación y el texto que la app precargó en el formulario.
+  public record CitationSourceDto(
+      @Size(max = 255, message = "El nombre del archivo es demasiado largo") String fileName,
+      @Size(max = 255, message = "La ubicación es demasiado larga") String location,
+      @NotBlank(message = "El fragmento es obligatorio")
+          @Size(max = 20000, message = "El fragmento es demasiado largo")
+          String snippet,
+      Double score,
+      @NotBlank(message = "El texto precargado es obligatorio")
+          @Size(max = 40000, message = "El texto precargado es demasiado largo")
+          String prefillText,
+      // Id de la cita guardada de la que sale (para enlazar su traza, C8); opcional.
+      UUID citationId) {
+
+    public CitationSourceDto(
+        String fileName, String location, String snippet, Double score, String prefillText) {
+      this(fileName, location, snippet, score, prefillText, null);
     }
   }
 
@@ -929,7 +1292,53 @@ public class Dto {
   // ---- Audit control verdicts (dictamen) ----
   // verdict: VALIDATED | NOT_VALIDATED | NEEDS_MORE_EVIDENCE.
   public record ControlVerdictDto(
-      UUID controlId, String verdict, UUID setBy, String setByName, OffsetDateTime updatedAt) {}
+      UUID controlId,
+      String verdict,
+      UUID setBy,
+      String setByName,
+      OffsetDateTime updatedAt,
+      // MANUAL (lo fijó el auditor) o CITATION (se aceptó una cita de la IA); sourceRef es la cita.
+      String source,
+      Map<String, Object> sourceRef) {
+
+    public ControlVerdictDto(
+        UUID controlId, String verdict, UUID setBy, String setByName, OffsetDateTime updatedAt) {
+      this(controlId, verdict, setBy, setByName, updatedAt, "MANUAL", null);
+    }
+
+    // Copia defensiva (SpotBugs EI_EXPOSE_REP).
+    public ControlVerdictDto {
+      sourceRef =
+          sourceRef == null
+              ? null
+              : Collections.unmodifiableMap(new java.util.HashMap<>(sourceRef));
+    }
+
+    @Override
+    public Map<String, Object> sourceRef() {
+      return sourceRef == null ? null : Collections.unmodifiableMap(sourceRef);
+    }
+  }
+
+  // Qué pasó con el dictamen de un control al decidir una cita. changed=false: ya estaba Validado.
+  // verdict=null y changed=true: se REVIRTIÓ (se rechazó la única cita de respaldo y el dictamen
+  // venía de la cita: vuelve a «Sin dictamen»).
+  public record VerdictChangeDto(UUID controlId, String verdict, String source, boolean changed) {}
+
+  public record CitationFeedbackResultDto(List<VerdictChangeDto> verdicts) {
+
+    public CitationFeedbackResultDto {
+      verdicts =
+          verdicts == null
+              ? List.of()
+              : Collections.unmodifiableList(new java.util.ArrayList<>(verdicts));
+    }
+
+    @Override
+    public List<VerdictChangeDto> verdicts() {
+      return Collections.unmodifiableList(verdicts);
+    }
+  }
 
   public record SetControlVerdictDto(
       @NotBlank(message = "El dictamen es obligatorio") String verdict) {}
@@ -952,6 +1361,85 @@ public class Dto {
       String comments,
       OffsetDateTime createdAt) {}
 
+  public record PlanBaselineItemDto(
+      UUID id,
+      String controlCode,
+      String action,
+      String status,
+      String baselineDueDate,
+      String dueDate,
+      Integer dueDateShiftDays,
+      boolean replanned,
+      String baselinePriority,
+      String priority,
+      boolean priorityChanged,
+      String baselineResponsible,
+      String responsible,
+      boolean responsibleChanged,
+      String completedAt,
+      String compliance,
+      Integer delayDays) {}
+
+  public record PlanBaselineSummaryDto(
+      int total,
+      int replanned,
+      Integer averageShiftDays,
+      int priorityChanged,
+      int responsibleChanged,
+      int onTime,
+      int late,
+      int delayed,
+      int plannedDue,
+      int completed,
+      Integer plannedPercent,
+      Integer actualPercent,
+      Integer deviationPoints) {}
+
+  public record PlanBaselineDto(PlanBaselineSummaryDto summary, List<PlanBaselineItemDto> items) {
+    public PlanBaselineDto {
+      items = items == null ? List.of() : List.copyOf(items);
+    }
+
+    @Override
+    public List<PlanBaselineItemDto> items() {
+      return Collections.unmodifiableList(items);
+    }
+  }
+
+  public record ReportSignatureDto(
+      String role,
+      String signerName,
+      String signerEmail,
+      String signerUserId,
+      String signedAt,
+      boolean integrityValid,
+      boolean trusted,
+      boolean coversWholeDocument) {}
+
+  public record ReportVerificationDto(
+      boolean sealingAvailable,
+      boolean signed,
+      boolean sealedByPrisma,
+      boolean signedByUser,
+      boolean intact,
+      boolean registered,
+      String registeredAt,
+      String registeredUserId,
+      boolean userMatchesRegistry,
+      boolean valid,
+      String sha256,
+      String message,
+      List<ReportSignatureDto> signatures) {
+    public ReportVerificationDto {
+      signatures = signatures == null ? List.of() : List.copyOf(signatures);
+    }
+
+    @Override
+    public List<ReportSignatureDto> signatures() {
+      return Collections.unmodifiableList(signatures);
+    }
+  }
+
   public record CreateImprovementPlanDto(
       UUID evaluationId,
       UUID controlId,
@@ -960,7 +1448,23 @@ public class Dto {
       String priority,
       String dueDate,
       @Size(max = 2000, message = "Los comentarios no pueden superar los 2000 caracteres")
-          String comments) {}
+          String comments,
+      // Guía de IA (trabajo asíncrono) con la que se arma la acción: al crearla se marca como
+      // usada y se registra el feedback en el servidor. guideEdited = la persona la modificó.
+      UUID guideId,
+      Boolean guideEdited) {
+
+    public CreateImprovementPlanDto(
+        UUID evaluationId,
+        UUID controlId,
+        String action,
+        String responsible,
+        String priority,
+        String dueDate,
+        String comments) {
+      this(evaluationId, controlId, action, responsible, priority, dueDate, comments, null, null);
+    }
+  }
 
   public record UpdateImprovementPlanDto(
       String action,
@@ -1008,6 +1512,161 @@ public class Dto {
       String subcategoryName,
       @Min(0) @Max(4) int currentLevel,
       @Min(0) @Max(4) int targetLevel) {}
+
+  // Pedido de una guía de IA asíncrona: se identifica por el control del catálogo (el código y la
+  // descripción los resuelve el servidor). evaluationId es opcional y, si viene, define la
+  // organización dueña del trabajo.
+  public record GuideJobRequestDto(
+      @NotNull(message = "El control es obligatorio") UUID controlId,
+      UUID evaluationId,
+      String functionName,
+      String categoryName,
+      String subcategoryName,
+      @Min(0) @Max(4) int currentLevel,
+      @Min(0) @Max(4) int targetLevel) {}
+
+  public record AiJobAcceptedDto(UUID jobId, String status) {}
+
+  // Guía ya generada y guardada (C5). Para usarla en una acción se manda guideId al crearla.
+  public record GeneratedGuideDto(
+      UUID id, UUID controlId, String summary, List<String> tips, String model) {
+
+    public GeneratedGuideDto {
+      tips =
+          tips == null ? List.of() : Collections.unmodifiableList(new java.util.ArrayList<>(tips));
+    }
+
+    @Override
+    public List<String> tips() {
+      return Collections.unmodifiableList(tips);
+    }
+  }
+
+  // Estado de un trabajo de IA. queuePosition solo mientras está en cola (1 = el próximo); guide
+  // solo cuando terminó bien; errorCode/errorMessage cuando falló (o en el último reintento).
+  public record AiJobDto(
+      UUID id,
+      String type,
+      String status,
+      Integer queuePosition,
+      int attempts,
+      int maxAttempts,
+      String errorCode,
+      String errorMessage,
+      OffsetDateTime createdAt,
+      OffsetDateTime startedAt,
+      OffsetDateTime finishedAt,
+      GeneratedGuideDto guide,
+      // Control de la guía (para ubicar el trabajo en una pantalla con varios) y lote al que
+      // pertenece, si fue pedido como lote.
+      UUID controlId,
+      UUID batchId) {
+
+    public AiJobDto(
+        UUID id,
+        String type,
+        String status,
+        Integer queuePosition,
+        int attempts,
+        int maxAttempts,
+        String errorCode,
+        String errorMessage,
+        OffsetDateTime createdAt,
+        OffsetDateTime startedAt,
+        OffsetDateTime finishedAt,
+        GeneratedGuideDto guide) {
+      this(
+          id,
+          type,
+          status,
+          queuePosition,
+          attempts,
+          maxAttempts,
+          errorCode,
+          errorMessage,
+          createdAt,
+          startedAt,
+          finishedAt,
+          guide,
+          null,
+          null);
+    }
+  }
+
+  // Lote de guías (F3): un GUIDE por control, con prioridad de lote. Los controles que ya tenían un
+  // trabajo activo reutilizan ese trabajo (no se duplica).
+  public record GuideBatchRequestDto(
+      @NotEmpty(message = "Elegí al menos un control")
+          @Size(max = 100, message = "Demasiados controles")
+          List<@Valid GuideJobRequestDto> items) {
+    public GuideBatchRequestDto {
+      items = items == null ? List.of() : List.copyOf(items);
+    }
+  }
+
+  public record BatchItemDto(UUID controlId, UUID jobId, String status) {}
+
+  public record GuideBatchAcceptedDto(UUID batchId, List<BatchItemDto> jobs) {
+
+    public GuideBatchAcceptedDto {
+      jobs =
+          jobs == null ? List.of() : Collections.unmodifiableList(new java.util.ArrayList<>(jobs));
+    }
+
+    @Override
+    public List<BatchItemDto> jobs() {
+      return Collections.unmodifiableList(jobs);
+    }
+  }
+
+  public record BatchCancelDto(int cancelled) {}
+
+  // Sugerencia de control para una evidencia sin control asignado (C1 / D7). Solo sugerencia.
+  public record EvidenceSuggestionDto(
+      UUID id,
+      UUID evidenceId,
+      String fileName,
+      UUID controlId,
+      String controlCode,
+      String controlDescription,
+      double score,
+      int rank,
+      String status,
+      // false mientras AI_CLASSIFY_MIN_SCORE no esté definido: el puntaje no tiene un umbral
+      // calibrado con datos reales y la sugerencia se muestra «sin confianza calibrada» (3.4).
+      boolean calibrated) {
+
+    public EvidenceSuggestionDto(
+        UUID id,
+        UUID evidenceId,
+        String fileName,
+        UUID controlId,
+        String controlCode,
+        String controlDescription,
+        double score,
+        int rank,
+        String status) {
+      this(
+          id,
+          evidenceId,
+          fileName,
+          controlId,
+          controlCode,
+          controlDescription,
+          score,
+          rank,
+          status,
+          false);
+    }
+  }
+
+  /** Respuesta de reintentar la preclasificación: {@code queued=false} = ya había un trabajo. */
+  public record ClassificationRetryDto(boolean queued) {}
+
+  public record SuggestionDecisionDto(
+      @NotNull(message = "La decisión es obligatoria")
+          @Pattern(regexp = "ACCEPTED|REJECTED", message = "Decisión inválida")
+          String decision) {}
 
   // generated=false es el texto de reemplazo cuando la IA falla: el frontend no lo ofrece para
   // usar en la acción ni lo registra como retroalimentación (PRI-370).
@@ -1076,15 +1735,48 @@ public class Dto {
       Double score,
       @NotNull(message = "La decisión es obligatoria")
           @Pattern(regexp = "ACCEPTED|REJECTED", message = "Decisión inválida")
-          String decision) {}
+          String decision,
+      // Evidencia de la que sale la cita: se guarda como respaldo del dictamen (source_ref).
+      UUID evidenceId,
+      // Cita guardada sobre la que se decide (C2): se actualiza su estado en la misma transacción.
+      UUID citationId) {
+
+    public CitationFeedbackItemDto(
+        UUID controlId,
+        String fileName,
+        String location,
+        String snippet,
+        Double score,
+        String decision,
+        UUID evidenceId) {
+      this(controlId, fileName, location, snippet, score, decision, evidenceId, null);
+    }
+
+    public CitationFeedbackItemDto(
+        UUID controlId,
+        String fileName,
+        String location,
+        String snippet,
+        Double score,
+        String decision) {
+      this(controlId, fileName, location, snippet, score, decision, null, null);
+    }
+  }
 
   public record CitationFeedbackBatchDto(
       @NotNull(message = "La evaluación es obligatoria") UUID evaluationId,
       @NotEmpty(message = "Debe enviar al menos un registro")
           @Size(max = 100, message = "Demasiados registros")
-          List<@Valid CitationFeedbackItemDto> items) {
+          List<@Valid CitationFeedbackItemDto> items,
+      // true = el auditor confirmó reemplazar un dictamen puesto a mano («No validado» o «Requiere
+      // más evidencia») al aceptar una cita (C4a). Sin esto el servidor responde 409.
+      Boolean confirmVerdictOverride) {
     public CitationFeedbackBatchDto {
       items = items == null ? List.of() : List.copyOf(items);
+    }
+
+    public CitationFeedbackBatchDto(UUID evaluationId, List<CitationFeedbackItemDto> items) {
+      this(evaluationId, items, null);
     }
 
     @Override

@@ -2,6 +2,7 @@ import apiClient from './api';
 import type {
   User,
   Organization,
+  AiTrace,
   Evaluation,
   EvaluationOverview,
   EvaluationResponse,
@@ -13,12 +14,20 @@ import type {
   Evidence,
   EvidenceCitation,
   CitationFeedbackItem,
+  CitationFeedbackResult,
   EvidenceRules,
   AuditObservation,
   AuditLog,
   ImprovementPlan,
+  PlanBaselineComparison,
+  ReportVerification,
   SuggestedImprovement,
   RemediationTips,
+  AiJob,
+  AiJobAccepted,
+  GuideBatchAccepted,
+  EvidenceSuggestion,
+  CitationSource,
   AiSuggestionFeedback,
   MaturityResult,
   DashboardStats,
@@ -39,6 +48,11 @@ import type {
   ControlGuideImportResult,
   OrganizationReactivation,
   InviteUserPayload,
+  MaturityTrend,
+  EvaluationProgress,
+  ProgressGranularity,
+  ComparisonCandidate,
+  EvaluationComparison,
 } from '@/types';
 
 export const usersService = {
@@ -88,11 +102,34 @@ export const organizationsService = {
   update(id: string, data: Partial<Organization>) {
     return apiClient.put<Organization>(`/organizations/${id}`, data);
   },
+  /** Enciende o apaga el modo investigación de la IA (solo PRISMA_ADMIN, C8). */
+  setResearchMode(id: string, enabled: boolean) {
+    return apiClient.put<Organization>(`/organizations/${id}/research-mode`, { enabled });
+  },
   reactivate(id: string) {
     return apiClient.put<OrganizationReactivation>(`/organizations/${id}/enable`);
   },
   delete(id: string) {
     return apiClient.delete(`/organizations/${id}`);
+  },
+};
+
+/** «Cómo razonó la IA» (modo investigación, C8). Todo es solo para PRISMA_ADMIN. */
+export const aiTraceService = {
+  getPlanTrace(planId: string) {
+    return apiClient.get<AiTrace>(`/improvement-plans/${planId}/ai-trace`);
+  },
+  getCitationTrace(evaluationId: string, controlId: string, citationId: string) {
+    return apiClient.get<AiTrace>(
+      `/evidence/evaluation/${evaluationId}/control/${controlId}/citations/${citationId}/ai-trace`,
+    );
+  },
+  getObservationTrace(observationId: string) {
+    return apiClient.get<AiTrace>(`/audit/observations/${observationId}/ai-trace`);
+  },
+  /** Todas las trazas en JSONL, sin organización ni usuario. */
+  exportJsonl() {
+    return apiClient.get<Blob>('/ai/traces/export', { responseType: 'blob' });
   },
 };
 
@@ -277,9 +314,46 @@ export const evidenceService = {
       `/evidence/evaluation/${evaluationId}/control/${controlId}/citations`,
     );
   },
-  /** El auditor acepta o rechaza las citas de la IA (la evaluación solo valida acceso y estado). */
-  sendCitationFeedback(evaluationId: string, items: CitationFeedbackItem[]) {
-    return apiClient.post<void>('/evidence/citations/feedback', { evaluationId, items });
+  /** Sugerencias de a qué controles podría pertenecer cada evidencia sin control (solo sugerencias). */
+  getSuggestions(evaluationId: string) {
+    return apiClient.get<EvidenceSuggestion[]>(`/evidence/evaluation/${evaluationId}/suggestions`);
+  },
+  /** Reintenta la preclasificación de una evidencia global (solo PRISMA_ADMIN, en auditoría). */
+  retryClassification(evidenceId: string) {
+    return apiClient.post<{ queued: boolean }>(`/evidence/${evidenceId}/classification/retry`);
+  },
+  /** Acepta o rechaza una sugerencia: NO asigna la evidencia; deja feedback anónimo. */
+  decideSuggestion(suggestionId: string, decision: 'ACCEPTED' | 'REJECTED') {
+    return apiClient.post<EvidenceSuggestion>(`/evidence/suggestions/${suggestionId}/decision`, {
+      decision,
+    });
+  },
+  /** Todas las citas ya guardadas de la evaluación (no busca): la pantalla las muestra al abrir. */
+  getSavedCitations(evaluationId: string) {
+    return apiClient.get<EvidenceCitation[]>(`/evidence/evaluation/${evaluationId}/citations`);
+  },
+  /** «Actualizar»: busca de nuevo y conserva las decisiones de los fragmentos que siguen. */
+  refreshCitations(evaluationId: string, controlId: string) {
+    return apiClient.post<EvidenceCitation[]>(
+      `/evidence/evaluation/${evaluationId}/control/${controlId}/citations/refresh`,
+    );
+  },
+  /**
+   * El auditor acepta o rechaza las citas de la IA. Aceptar una cita valida el control (C4a): la
+   * respuesta dice qué pasó con el dictamen. Si habría que pisar un dictamen puesto a mano, el
+   * servidor responde 409 `VERDICT_OVERRIDE_REQUIRED` y hay que repetir con
+   * `confirmVerdictOverride = true`.
+   */
+  sendCitationFeedback(
+    evaluationId: string,
+    items: CitationFeedbackItem[],
+    confirmVerdictOverride = false,
+  ) {
+    return apiClient.post<CitationFeedbackResult>('/evidence/citations/feedback', {
+      evaluationId,
+      items,
+      ...(confirmVerdictOverride ? { confirmVerdictOverride: true } : {}),
+    });
   },
 };
 
@@ -287,7 +361,7 @@ export const auditService = {
   getObservations(evaluationId: string) {
     return apiClient.get<AuditObservation[]>(`/audit/observations/${evaluationId}`);
   },
-  createObservation(data: Partial<AuditObservation>) {
+  createObservation(data: Partial<AuditObservation> & { citation?: CitationSource }) {
     return apiClient.post<AuditObservation>('/audit/observations', data);
   },
   updateObservation(id: string, data: Partial<AuditObservation>) {
@@ -295,6 +369,12 @@ export const auditService = {
   },
   getVerdicts(evaluationId: string) {
     return apiClient.get<ControlVerdict[]>(`/audit/verdicts/${evaluationId}`);
+  },
+  /** «Deshacer» un dictamen que salió de aceptar una cita (uno fijado a mano responde 409). */
+  undoCitationVerdict(evaluationId: string, controlId: string) {
+    return apiClient.delete<void>(
+      `/audit/verdicts/${evaluationId}/controls/${controlId}/citation-verdict`,
+    );
   },
   setVerdict(evaluationId: string, controlId: string, verdict: AuditVerdict) {
     return apiClient.put<ControlVerdict>(`/audit/verdicts/${evaluationId}/controls/${controlId}`, {
@@ -320,6 +400,9 @@ export const improvementService = {
   getByEvaluation(evaluationId: string) {
     return apiClient.get<ImprovementPlan[]>(`/improvement/${evaluationId}`);
   },
+  getBaseline(evaluationId: string) {
+    return apiClient.get<PlanBaselineComparison>(`/improvement/${evaluationId}/baseline`);
+  },
   getSuggestions(evaluationId: string) {
     return apiClient.get<SuggestedImprovement[]>(`/improvement/${evaluationId}/suggestions`);
   },
@@ -336,11 +419,41 @@ export const improvementService = {
   }) {
     return apiClient.post<RemediationTips>('/improvement/suggestions/tips', data);
   },
+  /** Versión asíncrona de la guía: encola un trabajo (202) y se consulta con aiJobsService. El
+   * código y la descripción del control los resuelve el servidor a partir de controlId. */
+  requestTipsAsync(data: {
+    controlId: string;
+    evaluationId?: string;
+    functionName?: string;
+    categoryName?: string;
+    subcategoryName?: string;
+    currentLevel: number;
+    targetLevel: number;
+  }) {
+    return apiClient.post<AiJobAccepted>('/improvement/suggestions/tips/async', data);
+  },
+  /**
+   * Lote de guías (F3): una por control, en segundo plano y con prioridad de lote. Responde con el
+   * lote y el trabajo de cada control; el avance se consulta con `aiJobsService.getMany`.
+   */
+  requestTipsBatch(
+    items: {
+      controlId: string;
+      evaluationId?: string;
+      functionName?: string;
+      categoryName?: string;
+      subcategoryName?: string;
+      currentLevel: number;
+      targetLevel: number;
+    }[],
+  ) {
+    return apiClient.post<GuideBatchAccepted>('/improvement/suggestions/tips/batch', { items });
+  },
   /** Registra qué se hizo con las guías de IA (usada, editada o descartada). */
   sendSuggestionFeedback(items: AiSuggestionFeedback[]) {
     return apiClient.post<void>('/improvement/suggestions/feedback', { items });
   },
-  create(data: Partial<ImprovementPlan>) {
+  create(data: Partial<ImprovementPlan> & { guideId?: string; guideEdited?: boolean }) {
     return apiClient.post<ImprovementPlan>('/improvement', data);
   },
   update(id: string, data: Partial<ImprovementPlan>) {
@@ -349,6 +462,13 @@ export const improvementService = {
 };
 
 export const reportsService = {
+  verify(file: File) {
+    const data = new FormData();
+    data.append('file', file);
+    return apiClient.post<ReportVerification>('/reports/verify', data, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
   generatePDF(evaluationId: string) {
     return apiClient.get(`/reports/${evaluationId}/pdf`, { responseType: 'blob' });
   },
@@ -382,9 +502,40 @@ export const reportsService = {
   },
 };
 
+// RF-VIZ-06 (PRI-320): comparativo entre dos evaluaciones finalizadas de la misma organización.
+export const comparisonService = {
+  /** Evaluaciones finalizadas de la organización (sin organización: la del responsable). */
+  candidates(organizationId?: string) {
+    return apiClient.get<ComparisonCandidate[]>('/evaluations/compare/candidates', {
+      params: organizationId ? { organizationId } : {},
+    });
+  },
+  compare(a: string, b: string) {
+    return apiClient.get<EvaluationComparison>('/evaluations/compare', { params: { a, b } });
+  },
+  downloadPdf(a: string, b: string) {
+    return apiClient.get<Blob>('/evaluations/compare/pdf', {
+      params: { a, b },
+      responseType: 'blob',
+    });
+  },
+};
+
 export const dashboardService = {
   getStats(tenantId?: string) {
     return apiClient.get<DashboardStats>('/dashboard/stats', { params: { tenantId } });
+  },
+  /** RF-VIZ-07: tendencia de una organización. El responsable no la elige (es la suya). */
+  getMaturityTrend(organizationId?: string) {
+    return apiClient.get<MaturityTrend>('/dashboard/maturity-trend', {
+      params: organizationId ? { organizationId } : {},
+    });
+  },
+  /** Avance de una evaluación por día, semana o mes (sin escala: la elige el backend). */
+  getEvaluationProgress(evaluationId: string, granularity?: ProgressGranularity) {
+    return apiClient.get<EvaluationProgress>(`/dashboard/evaluations/${evaluationId}/progress`, {
+      params: granularity ? { granularity } : {},
+    });
   },
 };
 
@@ -435,5 +586,27 @@ export const emailSettingsService = {
   },
   test(recipientEmail: string) {
     return apiClient.post<void>('/admin/email-settings/test', { recipientEmail });
+  },
+};
+
+/** Trabajos de IA asíncronos (cola): consultar, listar los propios y cancelar. */
+export const aiJobsService = {
+  get(id: string) {
+    return apiClient.get<AiJob>(`/ai/jobs/${id}`);
+  },
+  listMine() {
+    return apiClient.get<AiJob[]>('/ai/jobs', { params: { mine: true } });
+  },
+  /** Solo cancela si sigue en cola. */
+  cancel(id: string) {
+    return apiClient.delete<AiJob>(`/ai/jobs/${id}`);
+  },
+  /** Estado de varios trabajos de una vez (avance de un lote), con la guía de los que terminaron. */
+  getMany(ids: string[]) {
+    return apiClient.get<AiJob[]>(`/ai/jobs?ids=${ids.join(',')}`);
+  },
+  /** Cancela de un lote lo que sigue en cola; lo que ya corre termina. */
+  cancelBatch(batchId: string) {
+    return apiClient.delete<{ cancelled: number }>(`/ai/jobs/batches/${batchId}`);
   },
 };

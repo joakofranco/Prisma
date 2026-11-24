@@ -39,6 +39,25 @@ processors:
       target: ""
       overwrite_keys: true
       add_error_key: false
+  # Campos propios para el tablero de alertas de seguridad de Kibana: el access.log de NGINX
+  # (formato "main" de infra/nginx/nginx.conf) y la línea BANEO que escribe fail2ban
+  # (infra/fail2ban/ban-log.sh). Si una línea no coincide, queda como texto plano sin error.
+  - dissect:
+      when:
+        regexp:
+          container.name: "^/?prisma-nginx$"
+      tokenizer: '%{nginx.ip} - %{?usuario} [%{?hora}] "%{nginx.method} %{nginx.path} %{?protocolo}" %{nginx.status} %{?bytes} "%{?referer}" "%{?agente}" "%{?reenviada}" rt=%{nginx.rt}'
+      field: "message"
+      target_prefix: ""
+      ignore_failure: true
+  - dissect:
+      when:
+        contains:
+          message: "BANEO ip="
+      tokenizer: 'BANEO ip=%{f2b.ip} pais="%{f2b.pais}" jail=%{f2b.jail} motivo="%{f2b.motivo}"'
+      field: "message"
+      target_prefix: ""
+      ignore_failure: true
 
 output.elasticsearch:
   hosts: ["${ELASTICSEARCH_HOSTS}"]
